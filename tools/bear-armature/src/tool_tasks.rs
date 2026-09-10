@@ -14,6 +14,7 @@ pub(crate) struct ToolTaskRecord {
     pub(crate) tool_call_id: String,
     pub(crate) tool_name: String,
     pub(crate) turn_token: Option<Uuid>,
+    pub(crate) execution_ownership: ToolExecutionOwnership,
     pub(crate) phase: ToolTaskPhase,
     pub(crate) input_args: Option<Value>,
     pub(crate) display: Option<Value>,
@@ -33,6 +34,7 @@ impl ToolTaskRegistry {
         tool_call_id: &str,
         tool_name: &str,
         turn_token: Option<Uuid>,
+        execution_ownership: ToolExecutionOwnership,
     ) -> bool {
         let now = std::time::Instant::now();
         let mut tasks = self.tasks.lock().await;
@@ -47,6 +49,7 @@ impl ToolTaskRegistry {
                 tool_call_id: tool_call_id.to_string(),
                 tool_name: tool_name.to_string(),
                 turn_token,
+                execution_ownership,
                 phase: ToolTaskPhase::Received,
                 input_args: None,
                 display: None,
@@ -161,6 +164,10 @@ impl ToolTaskRegistry {
         self.cancel_matching(session_id, None).await;
     }
 
+    pub(crate) async fn cancel_turn(&self, session_id: &str, turn_token: Uuid) {
+        self.cancel_matching(session_id, Some(turn_token)).await;
+    }
+
     async fn cancel_matching(&self, session_id: &str, turn_token: Option<Uuid>) {
         let mut tasks = self.tasks.lock().await;
         let now = std::time::Instant::now();
@@ -189,6 +196,7 @@ impl ToolTaskRegistry {
     pub(crate) async fn has_active_execution(&self, session_id: &str) -> bool {
         self.tasks.lock().await.values().any(|task| {
             task.session_id == session_id
+                && task.execution_ownership == ToolExecutionOwnership::ArmatureLocal
                 && matches!(
                     task.phase,
                     ToolTaskPhase::ExecutionStarted
@@ -208,6 +216,12 @@ impl ToolTaskRegistry {
             .cloned()
             .collect()
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ToolExecutionOwnership {
+    ArmatureLocal,
+    DenDisplayOnly,
 }
 
 fn is_generic_completion(text: &str) -> bool {
@@ -272,10 +286,38 @@ mod tests {
         let registry = ToolTaskRegistry::default();
         assert!(
             registry
-                .try_register("session-a", "call-a", "run_command", Some(Uuid::new_v4()))
+                .try_register(
+                    "session-a",
+                    "call-a",
+                    "run_command",
+                    Some(Uuid::new_v4()),
+                    ToolExecutionOwnership::ArmatureLocal,
+                )
                 .await
         );
-        assert!(!registry.has_active_execution("session-a").await);
+        assert!(
+            registry
+                .try_register(
+                    "session-a",
+                    "call-display",
+                    "memory_search",
+                    Some(Uuid::new_v4()),
+                    ToolExecutionOwnership::DenDisplayOnly,
+                )
+                .await
+        );
+        registry
+            .set_phase(
+                "session-a",
+                "call-display",
+                "memory_search",
+                ToolTaskPhase::ExecutionStarted,
+            )
+            .await;
+        assert!(
+            !registry.has_active_execution("session-a").await,
+            "Den-owned display cards must not count as Armature-local execution"
+        );
 
         registry
             .set_phase(
@@ -298,17 +340,35 @@ mod tests {
         let turn = Uuid::new_v4();
         assert!(
             registry
-                .try_register("session-a", "call-a", "list_jobs", Some(turn))
+                .try_register(
+                    "session-a",
+                    "call-a",
+                    "list_jobs",
+                    Some(turn),
+                    ToolExecutionOwnership::ArmatureLocal,
+                )
                 .await
         );
         assert!(
             registry
-                .try_register("session-a", "call-b", "create_job", Some(Uuid::new_v4()))
+                .try_register(
+                    "session-a",
+                    "call-b",
+                    "create_job",
+                    Some(Uuid::new_v4()),
+                    ToolExecutionOwnership::ArmatureLocal,
+                )
                 .await
         );
         assert!(
             registry
-                .try_register("session-b", "call-c", "list_jobs", Some(turn))
+                .try_register(
+                    "session-b",
+                    "call-c",
+                    "list_jobs",
+                    Some(turn),
+                    ToolExecutionOwnership::ArmatureLocal,
+                )
                 .await
         );
 
@@ -324,7 +384,13 @@ mod tests {
         let turn = Uuid::new_v4();
         assert!(
             registry
-                .try_register("session-a", "call-a", "fs_read_text_file", Some(turn))
+                .try_register(
+                    "session-a",
+                    "call-a",
+                    "fs_read_text_file",
+                    Some(turn),
+                    ToolExecutionOwnership::ArmatureLocal,
+                )
                 .await
         );
         registry.cancel_session("session-a").await;
@@ -355,7 +421,13 @@ mod tests {
         let registry = ToolTaskRegistry::default();
         assert!(
             registry
-                .try_register("session-1", "call-1", "fs_list_directory", None)
+                .try_register(
+                    "session-1",
+                    "call-1",
+                    "fs_list_directory",
+                    None,
+                    ToolExecutionOwnership::ArmatureLocal,
+                )
                 .await
         );
         registry
@@ -382,22 +454,46 @@ mod tests {
 
         assert!(
             registry
-                .try_register("session-1", "call-1", "fs_read_text_file", None)
+                .try_register(
+                    "session-1",
+                    "call-1",
+                    "fs_read_text_file",
+                    None,
+                    ToolExecutionOwnership::ArmatureLocal,
+                )
                 .await
         );
         assert!(
             !registry
-                .try_register("session-1", "call-1", "fs_read_text_file", None)
+                .try_register(
+                    "session-1",
+                    "call-1",
+                    "fs_read_text_file",
+                    None,
+                    ToolExecutionOwnership::ArmatureLocal,
+                )
                 .await
         );
         assert!(
             registry
-                .try_register("session-1", "call-2", "fs_read_text_file", None)
+                .try_register(
+                    "session-1",
+                    "call-2",
+                    "fs_read_text_file",
+                    None,
+                    ToolExecutionOwnership::ArmatureLocal,
+                )
                 .await
         );
         assert!(
             registry
-                .try_register("session-2", "call-1", "fs_read_text_file", None)
+                .try_register(
+                    "session-2",
+                    "call-1",
+                    "fs_read_text_file",
+                    None,
+                    ToolExecutionOwnership::ArmatureLocal,
+                )
                 .await
         );
     }

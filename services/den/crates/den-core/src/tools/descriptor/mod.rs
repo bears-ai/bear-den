@@ -619,11 +619,11 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_LISTS_REQUEST_HANDOFF,
             "Request task-list handoff",
-            "Request review, promotion, or sync of selected task-list items or changes into durable Docket work. Local-only task-list items may become Docket work through this boundary; Docket-backed items may request reviewed reconciliation.",
+            "Request review, promotion, or sync of items from the current task list into durable Docket work. The runtime derives the current task list and its metadata from this session; provide only the desired outcome and, optionally, a subset of item IDs.",
             "bear.activity",
             &["task_list.handoff.request"],
             CHAT_AND_PAIR_PROFILES,
-            json!({"type":"object","properties":{"task_list":{"type":"object","description":"TaskListProjection returned by get_job, get_task_list_status, or checkout_task_list."},"item_ids":{"type":"array","items":{"type":"string"}},"title":{"type":"string"},"summary":{"type":"string"},"requested_outcome":{"type":"string"}},"required":["task_list","item_ids","title","summary","requested_outcome"],"additionalProperties":false}),
+            json!({"type":"object","properties":{"item_ids":{"type":"array","items":{"type":"string"},"description":"Optional subset of item IDs from the current task list; omit to hand off the whole list."},"requested_outcome":{"type":"string","description":"What the receiving workflow should accomplish."}},"required":["requested_outcome"],"additionalProperties":false}),
         ),
         descriptor(
             DEN_JOB_CREATE,

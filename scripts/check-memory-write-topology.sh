@@ -42,9 +42,9 @@ is_allowed() {
     file="$1"
     # Test code may construct throwaway managers: anything in a `tests/`
     # directory (integration tests, `src/**/tests/` modules) or a
-    # `*tests.rs` sibling-file test module.
+    # `test.rs` / `*tests.rs` sibling-file test module.
     case "$file" in
-        */tests/* | *tests.rs) return 0 ;;
+        */tests/* | */test.rs | *tests.rs) return 0 ;;
     esac
     for allowed in "${allowlist[@]}"; do
         if [ "$file" = "$allowed" ]; then

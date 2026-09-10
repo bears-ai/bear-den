@@ -13,12 +13,13 @@ use crate::{
     is_den_server_tool_request, plan_entries_from_plan_update_event,
     project_den_owned_tool_request, send_agent_message_chunk_for_turn,
     send_agent_thought_chunk_for_turn, send_tool_call_update_for_turn, spawn_tool_request_task,
-    stream_allows_prompt_end_response, truncate_for_log, AdapterSharedState, AdapterState,
-    CompletedTurnWithoutText, Config, SseFrameOutcome, SseStreamDiagnostics, ToolCallUpdatePayload,
+    truncate_for_log, AdapterSharedState, AdapterState, CompletedTurnWithoutText, Config,
+    SseFrameOutcome, SseStreamDiagnostics, ToolCallUpdatePayload,
 };
 
 const BEARWIRE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const BEARWIRE_PROMPT_TIMEOUT: Duration = Duration::from_secs(600);
+const BEARWIRE_DEADLINE_RECONCILIATION_TIMEOUT: Duration = Duration::from_secs(10);
 const BEARWIRE_EVENT_FETCH_FAILURE_GRACE: Duration = Duration::from_secs(10);
 const BEARWIRE_EVENT_FETCH_MAX_BACKOFF: Duration = Duration::from_secs(5);
 const BEARWIRE_TOOL_RAW_OUTPUT_PREVIEW_CHARS: usize = 24 * 1024;
@@ -537,10 +538,383 @@ pub(crate) async fn handle_prompt(
     .await
 }
 
+fn cancellation_matches_prompt_turn(
+    notice: &crate::CancellationNotice,
+    session_id: &str,
+    turn_token: Uuid,
+) -> bool {
+    notice.scope == crate::CancellationScope::PromptAndTools
+        && notice.session_id == session_id
+        && notice
+            .turn_token
+            .is_none_or(|cancelled_turn| cancelled_turn == turn_token)
+}
+
+fn tools_cancellation_notice(
+    session_id: &str,
+    turn_token: Uuid,
+    origin: crate::CancellationOrigin,
+) -> crate::CancellationNotice {
+    crate::CancellationNotice {
+        session_id: session_id.to_string(),
+        turn_token: Some(turn_token),
+        conversation_id: None,
+        scope: crate::CancellationScope::ToolsOnly,
+        origin,
+    }
+}
+
+async fn settle_terminal_delivery_tools(
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    turn_token: Uuid,
+    reason: &str,
+) -> Result<()> {
+    let terminalization_result =
+        crate::terminalize_tool_cards_for_turn(shared_state, session_id, turn_token, reason).await;
+    let _ = shared_state.cancellation_tx.send(tools_cancellation_notice(
+        session_id,
+        turn_token,
+        crate::CancellationOrigin::RunTerminal,
+    ));
+    shared_state
+        .tool_tasks
+        .cancel_turn(session_id, turn_token)
+        .await;
+    terminalization_result
+}
+
+fn terminal_event_tool_card_reason(current_run_id: &str, event: &Value) -> Option<&'static str> {
+    if current_run_id != "<unknown>"
+        && event_run_id(event).is_some_and(|event_run_id| event_run_id != current_run_id)
+    {
+        return None;
+    }
+    match event.get("type").and_then(Value::as_str) {
+        Some("run.completed") => Some("Run completed; result unavailable."),
+        Some("run.blocked") => Some("Run blocked; result unavailable."),
+        Some("run.failed") => Some("Run failed; result unavailable."),
+        Some("run.cancelled") => Some("Run cancelled; result unavailable."),
+        Some("run.interrupted") => Some("Run interrupted; result unavailable."),
+        _ => None,
+    }
+}
+
+async fn handle_bearwire_event_with_terminal_cleanup(
+    config: &Config,
+    adapter_state: &mut AdapterState,
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    current_run_id: &str,
+    event: &Value,
+    frame_sequence: Option<i64>,
+    diagnostics: &mut SseStreamDiagnostics,
+    turn_token: Uuid,
+) -> Result<SseFrameOutcome> {
+    let terminal_reason = terminal_event_tool_card_reason(current_run_id, event);
+    let event_result = handle_bearwire_event(
+        config,
+        adapter_state,
+        shared_state,
+        session_id,
+        current_run_id,
+        event,
+        frame_sequence,
+        diagnostics,
+        turn_token,
+    )
+    .await;
+    if let Some(reason) = terminal_reason {
+        settle_terminal_delivery_tools(shared_state, session_id, turn_token, reason).await?;
+    }
+    event_result
+}
+
+fn cancelled_run_frame_outcome() -> SseFrameOutcome {
+    SseFrameOutcome {
+        saw_done: true,
+        saw_error: true,
+        saw_visible_output: true,
+        ..Default::default()
+    }
+}
+
+async fn wait_for_matching_prompt_cancellation(
+    cancellation_rx: &mut tokio::sync::broadcast::Receiver<crate::CancellationNotice>,
+    session_id: &str,
+    turn_token: Uuid,
+) {
+    loop {
+        match cancellation_rx.recv().await {
+            Ok(notice) if cancellation_matches_prompt_turn(&notice, session_id, turn_token) => {
+                return
+            }
+            Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                std::future::pending::<()>().await
+            }
+        }
+    }
+}
+
+async fn report_missing_terminal_event(
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    run_id: &str,
+    turn_token: Uuid,
+    outcome: RunTerminalOutcome,
+    state_summary: &str,
+) -> Result<()> {
+    tracing::error!(
+        target: "bear_armature::lifecycle",
+        session_id,
+        run_id,
+        terminal_state = ?outcome,
+        state = %state_summary,
+        "BearWire protocol violation: canonical terminal run state has no matching terminal event"
+    );
+    eprintln!(
+        "bear-armature: BearWire protocol violation session_id={} run_id={} terminal_state={:?} state={}",
+        session_id,
+        run_id,
+        outcome,
+        truncate_for_log(state_summary, 500),
+    );
+    let message = format!(
+        "**Armature**: Den reported this run as {}, but its matching `{}` event was missing. The Armature stopped waiting to avoid leaving this prompt active. Run `{}`.",
+        outcome.as_str(),
+        outcome.event_type(),
+        truncate_for_log(run_id, 120),
+    );
+    send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, &message).await
+}
+
+async fn reconcile_run_state_projection(
+    config: &Config,
+    adapter_state: &mut AdapterState,
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    run_id: &str,
+    state: &Value,
+    diagnostics: &mut SseStreamDiagnostics,
+    turn_token: Uuid,
+    deadline_expired: bool,
+) -> Result<Option<SseFrameOutcome>> {
+    let event = match reconciliation_decision(state, deadline_expired) {
+        ReconciliationDecision::DeliverTerminalEvent(event) => Some(event),
+        ReconciliationDecision::TerminalEventMissing(outcome) => {
+            let summary = canonical_run_state_summary(state);
+            settle_terminal_delivery_tools(
+                shared_state,
+                session_id,
+                turn_token,
+                outcome.tool_card_reason(),
+            )
+            .await?;
+            report_missing_terminal_event(
+                shared_state,
+                session_id,
+                run_id,
+                turn_token,
+                outcome,
+                &summary,
+            )
+            .await?;
+            if outcome.is_error() {
+                return Err(anyhow!(
+                    "BearWire protocol violation: terminal run state had no matching event. run_id={run_id}; {summary}"
+                ));
+            }
+            let mut projected = SseFrameOutcome::default();
+            projected.saw_done = true;
+            projected.saw_visible_output = true;
+            return Ok(Some(projected));
+        }
+        ReconciliationDecision::DeadlineExceeded => {
+            let summary = canonical_run_state_summary(state);
+            tracing::error!(
+                target: "bear_armature::lifecycle",
+                session_id,
+                run_id,
+                state = %summary,
+                "BearWire delivery deadline expired while canonical run state remained nonterminal"
+            );
+            return Err(anyhow!(
+                "BearWire delivery deadline expired after {}s while the run remained nonterminal. run_id={run_id}; {summary}",
+                BEARWIRE_PROMPT_TIMEOUT.as_secs()
+            ));
+        }
+        ReconciliationDecision::Continue => match decode_run_state(state) {
+            DecodedRunState::Nonterminal => latest_terminal_event_from_run_state(state),
+            DecodedRunState::Terminal(_) => None,
+        },
+    };
+
+    match event {
+        Some(event) => handle_bearwire_event_with_terminal_cleanup(
+            config,
+            adapter_state,
+            shared_state,
+            session_id,
+            run_id,
+            event,
+            None,
+            diagnostics,
+            turn_token,
+        )
+        .await
+        .map(Some),
+        None => Ok(None),
+    }
+}
+
+fn observe_frame_outcome(
+    outcome: &SseFrameOutcome,
+    saw_done: &mut bool,
+    saw_visible_output: &mut bool,
+    saw_tool_activity: &mut bool,
+    saw_error: &mut bool,
+) {
+    *saw_done |= outcome.saw_done;
+    *saw_visible_output |= outcome.saw_visible_output;
+    *saw_tool_activity |= outcome.saw_tool_activity;
+    *saw_error |= outcome.saw_error;
+}
+
+async fn reconcile_after_delivery_deadline(
+    http: &reqwest::Client,
+    config: &Config,
+    adapter_state: &mut AdapterState,
+    shared_state: &AdapterSharedState,
+    response: crate::PromptResponseGuard,
+    session_id: &str,
+    run_id: &str,
+    turn_token: Uuid,
+) -> Result<()> {
+    let reconciliation_result = if run_id == "<unknown>" {
+        Err(anyhow!(
+            "BearWire delivery deadline expired before run.start supplied a run_id"
+        ))
+    } else {
+        let mut diagnostics = SseStreamDiagnostics::default();
+        match tokio::time::timeout(BEARWIRE_DEADLINE_RECONCILIATION_TIMEOUT, async {
+            let state = fetch_run_state(http, config, session_id, run_id)
+                .await
+                .context(
+                    "BearWire delivery deadline expired and run.state reconciliation failed",
+                )?;
+            reconcile_run_state_projection(
+                config,
+                adapter_state,
+                shared_state,
+                session_id,
+                run_id,
+                &state,
+                &mut diagnostics,
+                turn_token,
+                true,
+            )
+            .await
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(anyhow!(
+                "BearWire delivery deadline reconciliation exceeded {}s",
+                BEARWIRE_DEADLINE_RECONCILIATION_TIMEOUT.as_secs()
+            )),
+        }
+    };
+
+    let terminalization_result = crate::terminalize_tool_cards_for_turn(
+        shared_state,
+        session_id,
+        turn_token,
+        "Delivery deadline exceeded; result unavailable.",
+    )
+    .await;
+    let _ = shared_state.cancellation_tx.send(tools_cancellation_notice(
+        session_id,
+        turn_token,
+        crate::CancellationOrigin::DeliveryDeadline,
+    ));
+    shared_state
+        .tool_tasks
+        .cancel_turn(session_id, turn_token)
+        .await;
+
+    terminalization_result?;
+    let outcome = reconciliation_result?
+        .expect("expired deadline reconciliation must produce a terminal outcome");
+    if !outcome.saw_done {
+        return Err(anyhow!(
+            "BearWire deadline reconciliation did not terminate projection. run_id={run_id}"
+        ));
+    }
+    if let Some(response_id) = response.claim() {
+        crate::write_prompt_end_turn_response(response_id).await
+    } else {
+        Ok(())
+    }
+}
+
 /// Project an already-started Den run into the current ACP prompt until Den
 /// reaches a canonical prompt boundary. `/focus` uses this after the deep Den
 /// command has selected and launched Docket-owned execution.
 pub(crate) async fn follow_run(
+    http: &reqwest::Client,
+    config: &Config,
+    adapter_state: &mut AdapterState,
+    shared_state: &AdapterSharedState,
+    response: crate::PromptResponseGuard,
+    session_id: &str,
+    run_result: Value,
+    turn_token: Uuid,
+) -> Result<()> {
+    let mut cancellation_rx = shared_state.cancellation_tx.subscribe();
+    if !crate::is_current_prompt_turn(shared_state, session_id, turn_token, "follow_run_start")
+        .await
+    {
+        return Ok(());
+    }
+    let run_id = run_result
+        .get("run_id")
+        .or_else(|| run_result.pointer("/pair_binding/run/id"))
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown>")
+        .to_string();
+    let delivery = tokio::time::timeout(
+        BEARWIRE_PROMPT_TIMEOUT,
+        follow_run_inner(
+            http,
+            config,
+            adapter_state,
+            shared_state,
+            response.clone(),
+            session_id,
+            run_result,
+            turn_token,
+        ),
+    );
+    tokio::select! {
+        _ = wait_for_matching_prompt_cancellation(&mut cancellation_rx, session_id, turn_token) => Ok(()),
+        result = delivery => match result {
+            Ok(result) => result,
+            Err(_) => reconcile_after_delivery_deadline(
+                http,
+                config,
+                adapter_state,
+                shared_state,
+                response,
+                session_id,
+                &run_id,
+                turn_token,
+            ).await,
+        },
+    }
+}
+
+async fn follow_run_inner(
     http: &reqwest::Client,
     config: &Config,
     adapter_state: &mut AdapterState,
@@ -579,49 +953,8 @@ pub(crate) async fn follow_run(
     let mut logged_initial_wait = false;
     let mut consecutive_fetch_errors = 0usize;
     let mut first_fetch_error_at: Option<Instant> = None;
-    let mut logged_active_prompt_timeout = false;
 
     'poll: loop {
-        // A running Den turn may be between continuations: it can have no local
-        // execution and no open obligation just before it publishes its next
-        // tool request. Keep replaying instead of abandoning that handoff window.
-        // ponytail: This has no separate idle deadline; cancellation/Den's run
-        // timeout remains the authority. Add one only with a durable heartbeat.
-        if started.elapsed() >= BEARWIRE_PROMPT_TIMEOUT
-            && !shared_state
-                .tool_tasks
-                .has_active_execution(session_id)
-                .await
-        {
-            if run_id == "<unknown>" {
-                break;
-            }
-            match fetch_run_state(http, config, session_id, run_id).await {
-                Ok(state) if canonical_run_state_allows_prompt_end(&state) => break,
-                Ok(state) => {
-                    if !logged_active_prompt_timeout {
-                        logged_active_prompt_timeout = true;
-                        tracing::warn!(
-                            target: "bear_armature::lifecycle",
-                            session_id,
-                            run_id,
-                            state = %canonical_run_state_summary(&state),
-                            "BearWire prompt timeout reached while run remains active; continuing event replay"
-                        );
-                    }
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        target: "bear_armature::lifecycle",
-                        session_id,
-                        run_id,
-                        error = %err,
-                        "BearWire prompt timeout reached and run state could not be reconciled"
-                    );
-                    break;
-                }
-            }
-        }
         // Own this session's ACP projection lane before fetching the page. A
         // detached local tool can keep executing, but cannot emit an ACP update
         // ahead of lifecycle frames that are already in flight.
@@ -654,23 +987,26 @@ pub(crate) async fn follow_run(
                     match fetch_run_state(http, config, session_id, run_id).await {
                         Ok(state) => {
                             state_reachable = true;
-                            if let Some(event) = latest_terminal_event_from_run_state(&state) {
-                                let outcome = handle_bearwire_event(
-                                    config,
-                                    adapter_state,
-                                    shared_state,
-                                    session_id,
-                                    run_id,
-                                    event,
-                                    None,
-                                    &mut diagnostics,
-                                    turn_token,
-                                )
-                                .await?;
-                                saw_done |= outcome.saw_done;
-                                saw_visible_output |= outcome.saw_visible_output;
-                                saw_tool_activity |= outcome.saw_tool_activity;
-                                saw_error |= outcome.saw_error;
+                            let reconciled = reconcile_run_state_projection(
+                                config,
+                                adapter_state,
+                                shared_state,
+                                session_id,
+                                run_id,
+                                &state,
+                                &mut diagnostics,
+                                turn_token,
+                                false,
+                            )
+                            .await?;
+                            if let Some(outcome) = reconciled {
+                                observe_frame_outcome(
+                                    &outcome,
+                                    &mut saw_done,
+                                    &mut saw_visible_output,
+                                    &mut saw_tool_activity,
+                                    &mut saw_error,
+                                );
                                 if saw_done {
                                     break 'poll;
                                 }
@@ -732,7 +1068,7 @@ pub(crate) async fn follow_run(
             let Some(event) = frame.event else {
                 continue;
             };
-            let outcome = match handle_bearwire_event(
+            let event_result = handle_bearwire_event_with_terminal_cleanup(
                 config,
                 adapter_state,
                 shared_state,
@@ -743,8 +1079,8 @@ pub(crate) async fn follow_run(
                 &mut diagnostics,
                 turn_token,
             )
-            .await
-            {
+            .await;
+            let outcome = match event_result {
                 Ok(outcome) => outcome,
                 Err(err) if event.get("type").and_then(Value::as_str) == Some("run.failed") => {
                     return Err(err);
@@ -821,6 +1157,30 @@ pub(crate) async fn follow_run(
             last_obligation_sync = Some(Instant::now());
             match fetch_run_state(http, config, session_id, run_id).await {
                 Ok(state) => {
+                    let reconciled = reconcile_run_state_projection(
+                        config,
+                        adapter_state,
+                        shared_state,
+                        session_id,
+                        run_id,
+                        &state,
+                        &mut diagnostics,
+                        turn_token,
+                        false,
+                    )
+                    .await?;
+                    if let Some(outcome) = reconciled {
+                        observe_frame_outcome(
+                            &outcome,
+                            &mut saw_done,
+                            &mut saw_visible_output,
+                            &mut saw_tool_activity,
+                            &mut saw_error,
+                        );
+                        if saw_done {
+                            break 'poll;
+                        }
+                    }
                     if let Some(summary) = run_state_obligation_summary(&state) {
                         let should_log_summary = last_run_state_summary.as_deref()
                             != Some(summary.as_str())
@@ -871,72 +1231,9 @@ pub(crate) async fn follow_run(
         sleep(BEARWIRE_POLL_INTERVAL).await;
     }
 
-    // See docs/architecture/bearwire-run-stream-completion.md. Stream observations
-    // are transport diagnostics; a missing terminal event must be reconciled against
-    // canonical run state before changing this prompt-end decision.
-    let (canonical_run_state_allows_end, canonical_run_state_summary) =
-        if saw_done || run_id == "<unknown>" {
-            (false, None)
-        } else {
-            match fetch_run_state(http, config, session_id, run_id).await {
-                Ok(state) => {
-                    // Canonical recovery can create a permission projection; route
-                    // it through the same session lane even though it has no event
-                    // page frame sequence.
-                    let recovery_projection = shared_state
-                        .projection_dispatcher
-                        .begin_live_page(session_id, turn_token)
-                        .await;
-                    recovery_projection.observe_frame(None);
-                    service_run_state_tool_obligations(
-                        config,
-                        shared_state,
-                        session_id,
-                        run_id,
-                        &state,
-                        turn_token,
-                    )
-                    .await?;
-                    drop(recovery_projection);
-                    let summary = canonical_run_state_summary(&state);
-                    let allows_end = canonical_run_state_allows_prompt_end(&state);
-                    (allows_end, Some(summary))
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        target: "bear_armature::lifecycle",
-                        session_id,
-                        run_id,
-                        error = %err,
-                        "BearWire final run.state reconciliation failed"
-                    );
-                    (
-                        false,
-                        Some(format!(
-                            "fetch_error={}",
-                            truncate_for_log(&err.to_string(), 360)
-                        )),
-                    )
-                }
-            }
-        };
-    if !stream_allows_prompt_end_response(
-        saw_visible_output,
-        saw_error,
-        saw_done,
-        saw_tool_activity,
-        canonical_run_state_allows_end,
-    ) {
-        let reason = if saw_visible_output || saw_tool_activity {
-            "Den BearWire delivery ended before a terminal run event"
-        } else {
-            "Den BearWire delivery ended without visible output, tool activity, or a terminal run event"
-        };
+    if !saw_done {
         return Err(anyhow!(
-            "{reason}. run_id={run_id}. canonical_run_state={}. Diagnostics: {}",
-            canonical_run_state_summary
-                .as_deref()
-                .unwrap_or("not_fetched"),
+            "BearWire follow_run exited without a terminal delivery decision. run_id={run_id}. Diagnostics: {}",
             diagnostics.summary()
         ));
     }
@@ -1177,19 +1474,127 @@ async fn fetch_run_state(
     .await
 }
 
-fn latest_terminal_event_from_run_state(state: &Value) -> Option<&Value> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RunTerminalOutcome {
+    Completed,
+    Failed,
+    Cancelled,
+    Blocked,
+}
+
+impl RunTerminalOutcome {
+    fn from_persisted_state(state: &str) -> Option<Self> {
+        match state {
+            "completed" => Some(Self::Completed),
+            "failed" => Some(Self::Failed),
+            "cancelled" => Some(Self::Cancelled),
+            "blocked" => Some(Self::Blocked),
+            _ => None,
+        }
+    }
+
+    fn event_type(self) -> &'static str {
+        match self {
+            Self::Completed => "run.completed",
+            Self::Failed => "run.failed",
+            Self::Cancelled => "run.cancelled",
+            Self::Blocked => "run.blocked",
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+            Self::Blocked => "blocked",
+        }
+    }
+
+    fn tool_card_reason(self) -> &'static str {
+        match self {
+            Self::Completed => "Run completed; result unavailable.",
+            Self::Failed => "Run failed; result unavailable.",
+            Self::Cancelled => "Run cancelled; result unavailable.",
+            Self::Blocked => "Run blocked; result unavailable.",
+        }
+    }
+
+    fn is_error(self) -> bool {
+        self == Self::Failed
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DecodedRunState {
+    Nonterminal,
+    Terminal(RunTerminalOutcome),
+}
+
+#[derive(Debug, PartialEq)]
+enum ReconciliationDecision<'a> {
+    Continue,
+    DeliverTerminalEvent(&'a Value),
+    TerminalEventMissing(RunTerminalOutcome),
+    DeadlineExceeded,
+}
+
+fn recent_run_events(state: &Value) -> impl DoubleEndedIterator<Item = &Value> {
     state
-        .get("recent_events")?
-        .as_array()?
-        .iter()
-        .rev()
-        .filter_map(|entry| entry.get("event"))
-        .find(|event| {
-            matches!(
-                event.get("type").and_then(Value::as_str),
-                Some("run.completed" | "run.failed" | "run.cancelled" | "run.interrupted")
+        .get("recent_events")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.get("event").or(Some(entry)))
+}
+
+fn latest_terminal_event_from_run_state(state: &Value) -> Option<&Value> {
+    recent_run_events(state).rev().find(|event| {
+        matches!(
+            event.get("type").and_then(Value::as_str),
+            Some(
+                "run.completed"
+                    | "run.failed"
+                    | "run.cancelled"
+                    | "run.blocked"
+                    | "run.interrupted"
             )
-        })
+        )
+    })
+}
+
+fn decode_run_state(state: &Value) -> DecodedRunState {
+    state
+        .pointer("/run/state")
+        .and_then(Value::as_str)
+        .and_then(RunTerminalOutcome::from_persisted_state)
+        .map(DecodedRunState::Terminal)
+        .unwrap_or(DecodedRunState::Nonterminal)
+}
+
+fn reconciliation_decision(state: &Value, deadline_expired: bool) -> ReconciliationDecision<'_> {
+    let has_open_obligations = state
+        .get("open_obligations")
+        .and_then(Value::as_array)
+        .is_some_and(|obligations| !obligations.is_empty());
+
+    if let DecodedRunState::Terminal(outcome) = decode_run_state(state) {
+        if !has_open_obligations {
+            let matching_event = recent_run_events(state).rev().find(|event| {
+                event.get("type").and_then(Value::as_str) == Some(outcome.event_type())
+            });
+            return matching_event.map_or(
+                ReconciliationDecision::TerminalEventMissing(outcome),
+                ReconciliationDecision::DeliverTerminalEvent,
+            );
+        }
+    }
+
+    if deadline_expired {
+        ReconciliationDecision::DeadlineExceeded
+    } else {
+        ReconciliationDecision::Continue
+    }
 }
 
 fn event_fetch_retry_delay(consecutive_errors: usize) -> Duration {
@@ -1226,15 +1631,6 @@ fn canonical_run_state_summary(state: &Value) -> String {
     format!(
         "state={run_state}, terminal_reason={terminal_reason}, open_obligations={open_obligations}, recent_event_types={recent_event_types:?}"
     )
-}
-fn canonical_run_state_allows_prompt_end(state: &Value) -> bool {
-    let run_state = state.pointer("/run/state").and_then(Value::as_str);
-    let has_open_obligations = state
-        .get("open_obligations")
-        .and_then(Value::as_array)
-        .is_some_and(|obligations| !obligations.is_empty());
-
-    matches!(run_state, Some("completed" | "paused")) && !has_open_obligations
 }
 
 fn run_state_obligation_summary(state: &Value) -> Option<String> {
@@ -2383,19 +2779,7 @@ async fn handle_bearwire_event(
                 .await?;
         }
         "run.cancelled" => {
-            // Den has already made the run terminal. Stop any local tool futures from
-            // this delivery promptly; this is best effort only and never controls Den's
-            // run or Docket authority.
-            let _ = shared_state
-                .cancellation_tx
-                .send(crate::CancellationNotice {
-                    session_id: session_id.to_string(),
-                    turn_token: Some(turn_token),
-                    conversation_id: None,
-                });
-            outcome.saw_done = true;
-            outcome.saw_error = true;
-            outcome.saw_visible_output = true;
+            outcome = cancelled_run_frame_outcome();
             diagnostics.saw_error = true;
             diagnostics.saw_visible_output = true;
             let message = format_den_status("The request was cancelled.");
@@ -2790,59 +3174,223 @@ mod tests {
     }
 
     #[test]
-    fn terminal_event_is_recovered_from_canonical_run_state() {
-        let state = json!({
-            "recent_events": [
-                { "event": { "type": "run.started" } },
-                { "event": { "type": "run.failed", "run_id": "run-1" } }
-            ]
-        });
-        assert_eq!(
-            latest_terminal_event_from_run_state(&state)
-                .and_then(|event| event.get("type"))
-                .and_then(Value::as_str),
-            Some("run.failed")
+    fn missed_terminal_event_recovery_includes_blocked_and_interrupted() {
+        for event_type in ["run.failed", "run.blocked", "run.interrupted"] {
+            let state = json!({
+                "recent_events": [
+                    { "event": { "type": "run.started" } },
+                    { "event": { "type": event_type, "run_id": "run-1" } }
+                ]
+            });
+            assert_eq!(
+                latest_terminal_event_from_run_state(&state)
+                    .and_then(|event| event.get("type"))
+                    .and_then(Value::as_str),
+                Some(event_type)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn follow_run_cancellation_ignores_tools_only_and_stale_turns() {
+        let (tx, mut rx) = tokio::sync::broadcast::channel(4);
+        let current_turn = Uuid::new_v4();
+        tx.send(tools_cancellation_notice(
+            "session-1",
+            current_turn,
+            crate::CancellationOrigin::RunTerminal,
+        ))
+        .unwrap();
+        tx.send(crate::CancellationNotice {
+            session_id: "session-1".to_string(),
+            turn_token: Some(Uuid::new_v4()),
+            conversation_id: None,
+            scope: crate::CancellationScope::PromptAndTools,
+            origin: crate::CancellationOrigin::Steering,
+        })
+        .unwrap();
+        tx.send(crate::CancellationNotice {
+            session_id: "session-1".to_string(),
+            turn_token: Some(current_turn),
+            conversation_id: None,
+            scope: crate::CancellationScope::PromptAndTools,
+            origin: crate::CancellationOrigin::SessionCancel,
+        })
+        .unwrap();
+
+        tokio::time::timeout(
+            Duration::from_millis(50),
+            wait_for_matching_prompt_cancellation(&mut rx, "session-1", current_turn),
+        )
+        .await
+        .expect("matching prompt cancellation must wake follow_run");
+    }
+
+    #[tokio::test]
+    async fn run_cancelled_handler_stops_tools_without_consuming_prompt_completion() {
+        let (cancellation_tx, _) = tokio::sync::broadcast::channel(8);
+        let mut cancellation_rx = cancellation_tx.subscribe();
+        let shared_state = crate::AdapterSharedState {
+            transport: crate::JsonRpcTransport::default(),
+            client_capabilities: std::sync::Arc::new(tokio::sync::Mutex::new(Value::Null)),
+            session_contexts: std::sync::Arc::new(tokio::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
+            last_plan_update_hashes: std::sync::Arc::new(tokio::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
+            surface_tool_statuses: std::sync::Arc::new(tokio::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
+            tool_tasks: crate::ToolTaskRegistry::default(),
+            mcp_registry: crate::tools::mcp::McpRegistry::default(),
+            approval_cache: crate::approvals::ApprovalCache::default(),
+            cancellation_tx,
+            active_prompts: std::sync::Arc::new(tokio::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
+            projection_dispatcher: crate::AcpProjectionDispatcher::default(),
+        };
+        let turn_token = Uuid::new_v4();
+        let response = crate::PromptResponseGuard::new(json!("prompt-1"));
+        shared_state.active_prompts.lock().await.insert(
+            "session-1".to_string(),
+            crate::ActivePromptTurn {
+                token: turn_token,
+                conversation_id: None,
+                response: response.clone(),
+            },
         );
+        let config = crate::Config {
+            api_url: "http://127.0.0.1:1".to_string(),
+            bear: "test-bear".to_string(),
+            token: "test-token".to_string(),
+            client: "zed".to_string(),
+        };
+        shared_state
+            .tool_tasks
+            .try_register(
+                "session-1",
+                "call-local",
+                "fs_read_text_file",
+                Some(turn_token),
+                crate::ToolExecutionOwnership::ArmatureLocal,
+            )
+            .await;
+        crate::record_surface_tool_status(
+            &shared_state,
+            "session-1",
+            "call-local",
+            crate::SurfaceToolStatus::InProgress,
+        )
+        .await;
+        let mut adapter_state = crate::AdapterState::default();
+        let mut diagnostics = crate::SseStreamDiagnostics::default();
+
+        let outcome = handle_bearwire_event_with_terminal_cleanup(
+            &config,
+            &mut adapter_state,
+            &shared_state,
+            "session-1",
+            "run-1",
+            &json!({ "type": "run.cancelled", "run_id": "run-1" }),
+            Some(1),
+            &mut diagnostics,
+            turn_token,
+        )
+        .await
+        .unwrap();
+        let notice = cancellation_rx.recv().await.unwrap();
+
+        assert!(outcome.saw_done);
+        assert!(shared_state
+            .tool_tasks
+            .list_for_session("session-1")
+            .await
+            .is_empty());
+        assert_eq!(
+            crate::current_surface_tool_status(&shared_state, "session-1", "call-local").await,
+            Some(crate::SurfaceToolStatus::Failed)
+        );
+        assert_eq!(notice.scope, crate::CancellationScope::ToolsOnly);
+        assert_eq!(notice.origin, crate::CancellationOrigin::RunTerminal);
+        assert!(!cancellation_matches_prompt_turn(
+            &notice,
+            "session-1",
+            turn_token
+        ));
+        assert_eq!(response.claim(), Some(json!("prompt-1")));
     }
 
     #[test]
-    fn retryable_interruption_is_recovered_as_a_terminal_delivery_event() {
-        let state = json!({
-            "recent_events": [
-                { "event": { "type": "run.started" } },
-                { "event": { "type": "run.interrupted", "run_id": "run-1", "data": { "retryable": true } } }
-            ]
-        });
-        assert_eq!(
-            latest_terminal_event_from_run_state(&state)
-                .and_then(|event| event.get("type"))
-                .and_then(Value::as_str),
-            Some("run.interrupted")
-        );
+    fn reconciliation_decodes_all_terminal_outcomes_and_matching_events() {
+        for (state_name, event_type) in [
+            ("completed", "run.completed"),
+            ("failed", "run.failed"),
+            ("cancelled", "run.cancelled"),
+            ("blocked", "run.blocked"),
+        ] {
+            let event = json!({ "type": event_type, "run_id": "run-1" });
+            let state = json!({
+                "run": { "state": state_name },
+                "open_obligations": [],
+                "recent_events": [{ "event": event.clone() }]
+            });
+            assert!(matches!(
+                reconciliation_decision(&state, false),
+                ReconciliationDecision::DeliverTerminalEvent(event)
+                    if event.get("type").and_then(Value::as_str) == Some(event_type)
+            ));
+            assert!(terminal_event_tool_card_reason("run-1", &event)
+                .is_some_and(|reason| reason.contains("result unavailable")));
+        }
+        assert!(terminal_event_tool_card_reason(
+            "run-1",
+            &json!({ "type": "run.interrupted", "run_id": "run-1" })
+        )
+        .is_some_and(|reason| reason.contains("result unavailable")));
     }
 
     #[test]
-    fn canonical_run_state_allows_clean_paused_or_completed_prompt_end() {
-        assert!(canonical_run_state_allows_prompt_end(&json!({
-            "run": { "state": "paused" },
-            "open_obligations": []
-        })));
-        assert!(canonical_run_state_allows_prompt_end(&json!({
+    fn reconciliation_flags_missing_terminal_event_instead_of_spinning() {
+        let state = json!({
             "run": { "state": "completed" },
-            "open_obligations": []
-        })));
+            "open_obligations": [],
+            "recent_events": [{ "event": { "type": "run.started" } }]
+        });
+        assert_eq!(
+            reconciliation_decision(&state, false),
+            ReconciliationDecision::TerminalEventMissing(RunTerminalOutcome::Completed)
+        );
     }
 
     #[test]
-    fn canonical_run_state_does_not_end_with_open_obligation_or_running_run() {
-        assert!(!canonical_run_state_allows_prompt_end(&json!({
-            "run": { "state": "paused" },
-            "open_obligations": [{ "id": "obl-1" }]
-        })));
-        assert!(!canonical_run_state_allows_prompt_end(&json!({
-            "run": { "state": "running" },
-            "open_obligations": []
-        })));
+    fn deadline_reconciliation_rejects_paused_active_and_obligated_terminal_states() {
+        for state in [
+            json!({ "run": { "state": "paused" }, "open_obligations": [] }),
+            json!({ "run": { "state": "running" }, "open_obligations": [] }),
+            json!({
+                "run": { "state": "completed" },
+                "open_obligations": [{ "id": "obl-1" }],
+                "recent_events": [{ "event": { "type": "run.completed" } }]
+            }),
+        ] {
+            assert_eq!(
+                reconciliation_decision(&state, false),
+                ReconciliationDecision::Continue
+            );
+            assert_eq!(
+                reconciliation_decision(&state, true),
+                ReconciliationDecision::DeadlineExceeded
+            );
+        }
+        let notice = tools_cancellation_notice(
+            "session-1",
+            Uuid::new_v4(),
+            crate::CancellationOrigin::DeliveryDeadline,
+        );
+        assert_eq!(notice.scope, crate::CancellationScope::ToolsOnly);
+        assert_eq!(notice.origin, crate::CancellationOrigin::DeliveryDeadline);
     }
 
     #[test]

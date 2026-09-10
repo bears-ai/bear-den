@@ -19,6 +19,11 @@ fn classify_prompt_failure(error_chain: &str) -> (&'static str, String) {
         || error_chain.starts_with("BEARS prompt stopped:")
     {
         ("bearwire_run_failed", error_chain.to_string())
+    } else if error_chain.contains("BearWire delivery deadline expired") {
+        (
+            "bearwire_delivery_deadline",
+            "Den did not reach a terminal outcome before the work-surface delivery deadline. This prompt was stopped; try again or inspect the run status before retrying.".to_string(),
+        )
     } else if error_chain.contains("Den BearWire delivery ended before a terminal run event")
         || error_chain.contains("Den BearWire delivery ended without visible output, tool activity, or a terminal run event")
     {
@@ -73,12 +78,12 @@ mod prompt_failure_tests {
     }
 
     #[test]
-    fn classifies_missing_terminal_event() {
+    fn classifies_delivery_deadline_as_a_terminal_prompt_failure() {
         let (kind, message) = classify_prompt_failure(
-            "Den BearWire delivery ended before a terminal run event. run_id=run-1. Diagnostics: frames=1",
+            "BearWire delivery deadline expired after 600s while the run remained nonterminal",
         );
-        assert_eq!(kind, "bearwire_missing_terminal_event");
-        assert!(message.contains("final outcome"));
+        assert_eq!(kind, "bearwire_delivery_deadline");
+        assert!(message.contains("prompt was stopped"));
     }
 
     #[test]
@@ -165,7 +170,7 @@ use tokio::{
     sync::{broadcast, mpsc, Mutex as TokioMutex},
     time::{timeout, Duration},
 };
-use tool_tasks::{log_tool_task_phase, ToolTaskPhase, ToolTaskRegistry};
+use tool_tasks::{log_tool_task_phase, ToolExecutionOwnership, ToolTaskPhase, ToolTaskRegistry};
 use tools::chrome::{
     chrome_capability_status_line, chrome_tools_available, handle_chrome_console_messages,
     handle_chrome_network_requests, handle_chrome_open, handle_chrome_screenshot,
@@ -248,11 +253,28 @@ struct AdapterSharedState {
     projection_dispatcher: AcpProjectionDispatcher,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CancellationScope {
+    PromptAndTools,
+    ToolsOnly,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CancellationOrigin {
+    SessionCancel,
+    SessionClose,
+    Steering,
+    RunTerminal,
+    DeliveryDeadline,
+}
+
 #[derive(Clone, Debug)]
 struct CancellationNotice {
     session_id: String,
     turn_token: Option<Uuid>,
     conversation_id: Option<String>,
+    scope: CancellationScope,
+    origin: CancellationOrigin,
 }
 
 #[derive(Clone, Debug)]
@@ -1405,16 +1427,6 @@ fn classify_completed_turn_without_text(
     } else {
         CompletedTurnWithoutText::Expected
     }
-}
-
-fn stream_allows_prompt_end_response(
-    _saw_visible_output: bool,
-    _saw_error: bool,
-    saw_done: bool,
-    _saw_tool_activity: bool,
-    canonical_run_state_allows_prompt_end: bool,
-) -> bool {
-    saw_done || canonical_run_state_allows_prompt_end
 }
 
 #[derive(Clone, Default)]
@@ -5226,6 +5238,71 @@ fn session_lifecycle_result(mode: &str) -> Result<Value> {
     )?)
 }
 
+async fn terminalize_active_prompt_for_lifecycle(
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    origin: CancellationOrigin,
+    tool_card_reason: &str,
+) -> Result<()> {
+    let active_turn = shared_state
+        .active_prompts
+        .lock()
+        .await
+        .get(session_id)
+        .cloned();
+    let terminalization_result = if let Some(turn) = active_turn.as_ref() {
+        terminalize_tool_cards_for_turn(shared_state, session_id, turn.token, tool_card_reason)
+            .await
+    } else {
+        Ok(())
+    };
+    let _ = shared_state.cancellation_tx.send(CancellationNotice {
+        session_id: session_id.to_string(),
+        turn_token: active_turn.as_ref().map(|turn| turn.token),
+        conversation_id: active_turn
+            .as_ref()
+            .and_then(|turn| turn.conversation_id.clone()),
+        scope: if active_turn.is_some() {
+            CancellationScope::PromptAndTools
+        } else {
+            CancellationScope::ToolsOnly
+        },
+        origin,
+    });
+    if let Some(turn) = active_turn.as_ref() {
+        shared_state
+            .tool_tasks
+            .cancel_turn(session_id, turn.token)
+            .await;
+    } else {
+        shared_state.tool_tasks.cancel_session(session_id).await;
+    }
+
+    let prompt_response_result = if let Some(turn) = active_turn.as_ref() {
+        if let Some(response_id) = turn.response.claim() {
+            write_prompt_end_turn_response(response_id).await
+        } else {
+            Ok(())
+        }
+    } else {
+        Ok(())
+    };
+
+    if let Some(turn) = active_turn.as_ref() {
+        let mut active = shared_state.active_prompts.lock().await;
+        if active
+            .get(session_id)
+            .is_some_and(|current| current.token == turn.token)
+        {
+            active.remove(session_id);
+        }
+    }
+    clear_surface_tool_statuses_for_session(shared_state, session_id).await;
+
+    terminalization_result?;
+    prompt_response_result
+}
+
 async fn handle_session_close(
     http: &reqwest::Client,
     config: &Config,
@@ -5247,15 +5324,16 @@ async fn handle_session_close(
         .lock()
         .await
         .remove(session_id);
-    shared_state.active_prompts.lock().await.remove(session_id);
-    clear_surface_tool_statuses_for_session(shared_state, session_id).await;
-    shared_state.tool_tasks.cancel_session(session_id).await;
-    let _ = shared_state.cancellation_tx.send(CancellationNotice {
-        session_id: session_id.to_string(),
-        turn_token: None,
-        conversation_id: None,
-    });
-    post_session_lifecycle_action(http, config, session_id, "close").await
+    let prompt_result = terminalize_active_prompt_for_lifecycle(
+        shared_state,
+        session_id,
+        CancellationOrigin::SessionClose,
+        "Session closed; result unavailable.",
+    )
+    .await;
+    let close_result = post_session_lifecycle_action(http, config, session_id, "close").await;
+    prompt_result?;
+    close_result
 }
 
 async fn handle_session_cancel(
@@ -5274,15 +5352,17 @@ async fn handle_session_cancel(
         .lock()
         .await
         .remove(session_id);
-    shared_state.active_prompts.lock().await.remove(session_id);
-    clear_surface_tool_statuses_for_session(shared_state, session_id).await;
-    shared_state.tool_tasks.cancel_session(session_id).await;
-    let _ = shared_state.cancellation_tx.send(CancellationNotice {
-        session_id: session_id.to_string(),
-        turn_token: None,
-        conversation_id: None,
-    });
-    post_session_lifecycle_action(http, config, session_id, "cancel").await
+
+    let prompt_result = terminalize_active_prompt_for_lifecycle(
+        shared_state,
+        session_id,
+        CancellationOrigin::SessionCancel,
+        "Cancelled by user; result unavailable.",
+    )
+    .await;
+    let den_cancel_result = post_session_lifecycle_action(http, config, session_id, "cancel").await;
+    prompt_result?;
+    den_cancel_result
 }
 
 async fn post_session_lifecycle_action(
@@ -7556,6 +7636,8 @@ async fn register_prompt_turn_for_session(
                 session_id: session_id.to_string(),
                 turn_token: Some(previous.token),
                 conversation_id: previous.conversation_id.clone(),
+                scope: CancellationScope::PromptAndTools,
+                origin: CancellationOrigin::Steering,
             });
         }
     }
@@ -7997,9 +8079,21 @@ pub(crate) fn spawn_tool_request_task(
         };
         let tool_call_id = canonical.tool_call.id.clone();
         let tool_name = canonical.tool_call.name.clone();
+        let den_owned_display_only = is_den_server_tool_request(&event);
+        let execution_ownership = if den_owned_display_only {
+            ToolExecutionOwnership::DenDisplayOnly
+        } else {
+            ToolExecutionOwnership::ArmatureLocal
+        };
         if !shared_state
             .tool_tasks
-            .try_register(&session_id, &tool_call_id, &tool_name, Some(turn_token))
+            .try_register(
+                &session_id,
+                &tool_call_id,
+                &tool_name,
+                Some(turn_token),
+                execution_ownership,
+            )
             .await
         {
             tracing::trace!(
@@ -8012,7 +8106,6 @@ pub(crate) fn spawn_tool_request_task(
             );
             return;
         }
-        let den_owned_display_only = is_den_server_tool_request(&event);
         if !den_owned_display_only && canonical.client_obligation_id().is_err() {
             tracing::warn!(
                 target: "bear_armature::lifecycle",
@@ -8331,7 +8424,13 @@ pub(crate) async fn project_den_owned_tool_request(
     }
     if shared_state
         .tool_tasks
-        .try_register(session_id, tool_call_id, tool_name, Some(turn_token))
+        .try_register(
+            session_id,
+            tool_call_id,
+            tool_name,
+            Some(turn_token),
+            ToolExecutionOwnership::DenDisplayOnly,
+        )
         .await
     {
         shared_state
@@ -11505,6 +11604,54 @@ async fn clear_surface_tool_statuses_for_session(
         .retain(|key, _| !key.starts_with(&prefix));
 }
 
+async fn terminalize_tool_cards_for_turn(
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    turn_token: Uuid,
+    reason: &str,
+) -> Result<()> {
+    let reason = reason.trim();
+    let reason = if reason.is_empty() {
+        "Tool result unavailable.".to_string()
+    } else {
+        truncate_for_log(reason, 240)
+    };
+    let records = shared_state.tool_tasks.list_for_session(session_id).await;
+    for record in records
+        .into_iter()
+        .filter(|record| record.turn_token == Some(turn_token))
+    {
+        let displayed_nonterminal =
+            current_surface_tool_status(shared_state, session_id, &record.tool_call_id)
+                .await
+                .is_some_and(|status| !status.is_terminal());
+        if !displayed_nonterminal {
+            continue;
+        }
+        send_tool_call_update_for_turn(
+            shared_state,
+            session_id,
+            turn_token,
+            &record.tool_call_id,
+            &record.tool_name,
+            ToolCallUpdatePayload {
+                status: "failed",
+                text: &reason,
+                request: Some(ToolRequestPresentation {
+                    tool_call_id: record.tool_call_id.clone(),
+                    tool_name: record.tool_name.clone(),
+                    arguments: record.input_args,
+                    display: record.display,
+                }),
+                raw_output: None,
+                extra_content: Vec::new(),
+            },
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 async fn record_surface_tool_status(
     shared_state: &AdapterSharedState,
     session_id: &str,
@@ -13067,7 +13214,7 @@ mod tests {
             "acp-session".to_string(),
             ActivePromptTurn {
                 token: turn_token,
-                response: PromptResponseGuard::new(json!("test")),
+                response: PromptResponseGuard::new(json!("cancel-prompt-exactly-once")),
                 conversation_id: Some("conv-1".to_string()),
             },
         );
@@ -13076,23 +13223,67 @@ mod tests {
                 .tool_tasks
                 .try_register(
                     "acp-session",
-                    "call-1",
+                    "call-local",
                     "fs_read_text_file",
                     Some(turn_token),
+                    ToolExecutionOwnership::ArmatureLocal,
                 )
                 .await
+        );
+        assert!(
+            record_surface_tool_status(
+                &shared,
+                "acp-session",
+                "call-local",
+                SurfaceToolStatus::InProgress,
+            )
+            .await
+        );
+        assert!(
+            shared
+                .tool_tasks
+                .try_register(
+                    "acp-session",
+                    "call-den-display",
+                    "memory_search",
+                    Some(turn_token),
+                    ToolExecutionOwnership::DenDisplayOnly,
+                )
+                .await
+        );
+        shared
+            .tool_tasks
+            .remember_presentation(
+                "acp-session",
+                "call-den-display",
+                "memory_search",
+                json!({ "query": "liveness" }),
+                None,
+            )
+            .await;
+        assert!(
+            record_surface_tool_status(
+                &shared,
+                "acp-session",
+                "call-den-display",
+                SurfaceToolStatus::InProgress,
+            )
+            .await
         );
         let mut cancel_rx = shared.cancellation_tx.subscribe();
         let http = reqwest::Client::new();
 
-        handle_session_cancel(
-            &http,
-            &config,
-            &shared,
-            json!({ "sessionId": "acp-session" }),
-        )
-        .await
-        .unwrap();
+        let (result, output) = capture_json_output_for_test(|| async {
+            handle_session_cancel(
+                &http,
+                &config,
+                &shared,
+                json!({ "sessionId": "acp-session" }),
+            )
+            .await
+        })
+        .await;
+        result.unwrap();
 
         assert!(shared
             .active_prompts
@@ -13105,10 +13296,32 @@ mod tests {
             .list_for_session("acp-session")
             .await
             .is_empty());
+        let prompt_responses = output
+            .iter()
+            .filter(|frame| frame.get("id") == Some(&json!("cancel-prompt-exactly-once")))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            prompt_responses.len(),
+            1,
+            "cancellation must answer the original prompt exactly once: {output:#?}"
+        );
+        for tool_call_id in ["call-local", "call-den-display"] {
+            assert!(
+                output.iter().any(|frame| {
+                    frame.get("method").and_then(Value::as_str) == Some("session/update")
+                        && frame.to_string().contains(tool_call_id)
+                        && frame.to_string().contains("\"status\":\"failed\"")
+                        && frame.to_string().contains("Cancelled by user")
+                }),
+                "displayed card {tool_call_id} must be terminalized before prompt cleanup: {output:#?}"
+            );
+        }
         let notice = cancel_rx.recv().await.expect("cancellation notice");
         assert_eq!(notice.session_id, "acp-session");
-        assert_eq!(notice.turn_token, None);
-        assert_eq!(notice.conversation_id, None);
+        assert_eq!(notice.turn_token, Some(turn_token));
+        assert_eq!(notice.conversation_id.as_deref(), Some("conv-1"));
+        assert_eq!(notice.scope, CancellationScope::PromptAndTools);
+        assert_eq!(notice.origin, CancellationOrigin::SessionCancel);
     }
 
     #[tokio::test]
@@ -13168,7 +13381,7 @@ mod tests {
             "acp-session".to_string(),
             ActivePromptTurn {
                 token: turn_token,
-                response: PromptResponseGuard::new(json!("test")),
+                response: PromptResponseGuard::new(json!("close-prompt-exactly-once")),
                 conversation_id: Some("conv-1".to_string()),
             },
         );
@@ -13180,25 +13393,29 @@ mod tests {
                     "call-1",
                     "fs_read_text_file",
                     Some(turn_token),
+                    ToolExecutionOwnership::ArmatureLocal,
                 )
                 .await
         );
         let mut cancel_rx = shared.cancellation_tx.subscribe();
         let http = reqwest::Client::new();
 
-        handle_request(
-            &http,
-            &mut runtime,
-            &mut adapter_state,
-            &shared,
-            JsonRpcRequest {
-                id: None,
-                method: "session/close".to_string(),
-                params: json!({ "sessionId": "acp-session" }),
-            },
-        )
-        .await
-        .unwrap();
+        let (result, output) = capture_json_output_for_test(|| async {
+            handle_request(
+                &http,
+                &mut runtime,
+                &mut adapter_state,
+                &shared,
+                JsonRpcRequest {
+                    id: None,
+                    method: "session/close".to_string(),
+                    params: json!({ "sessionId": "acp-session" }),
+                },
+            )
+            .await
+        })
+        .await;
+        result.unwrap();
 
         let request_line = request_line.lock().await.clone().unwrap_or_default();
         assert!(
@@ -13216,9 +13433,20 @@ mod tests {
             .list_for_session("acp-session")
             .await
             .is_empty());
+        assert_eq!(
+            output
+                .iter()
+                .filter(|frame| frame.get("id") == Some(&json!("close-prompt-exactly-once")))
+                .count(),
+            1,
+            "session close must settle the active prompt exactly once: {output:#?}"
+        );
         let notice = cancel_rx.recv().await.expect("close cancellation notice");
         assert_eq!(notice.session_id, "acp-session");
-        assert_eq!(notice.turn_token, None);
+        assert_eq!(notice.turn_token, Some(turn_token));
+        assert_eq!(notice.conversation_id.as_deref(), Some("conv-1"));
+        assert_eq!(notice.scope, CancellationScope::PromptAndTools);
+        assert_eq!(notice.origin, CancellationOrigin::SessionClose);
     }
 
     #[tokio::test]
@@ -13283,6 +13511,7 @@ mod tests {
                     "call-1",
                     "fs_read_text_file",
                     Some(turn_token),
+                    ToolExecutionOwnership::ArmatureLocal,
                 )
                 .await
         );
@@ -13316,7 +13545,10 @@ mod tests {
             .is_empty());
         let notice = cancel_rx.recv().await.expect("cancellation notice");
         assert_eq!(notice.session_id, "acp-session");
-        assert_eq!(notice.turn_token, None);
+        assert_eq!(notice.turn_token, Some(turn_token));
+        assert_eq!(notice.conversation_id.as_deref(), Some("conv-1"));
+        assert_eq!(notice.scope, CancellationScope::PromptAndTools);
+        assert_eq!(notice.origin, CancellationOrigin::SessionCancel);
     }
 
     #[tokio::test]
@@ -13451,6 +13683,8 @@ mod tests {
                 session_id: "other-session".to_string(),
                 turn_token: None,
                 conversation_id: None,
+                scope: CancellationScope::ToolsOnly,
+                origin: CancellationOrigin::RunTerminal,
             });
         });
 
@@ -13487,6 +13721,8 @@ mod tests {
                 session_id: "acp-session".to_string(),
                 turn_token: Some(turn_token),
                 conversation_id: None,
+                scope: CancellationScope::ToolsOnly,
+                origin: CancellationOrigin::RunTerminal,
             })
             .expect("send cancellation before wait");
 
@@ -13518,6 +13754,8 @@ mod tests {
                 session_id: "acp-session".to_string(),
                 turn_token: Some(turn_token),
                 conversation_id: None,
+                scope: CancellationScope::PromptAndTools,
+                origin: CancellationOrigin::SessionCancel,
             });
         });
 
@@ -14200,41 +14438,6 @@ mod tests {
         assert_eq!(payload["update"]["entries"][0]["status"], "pending");
         assert_eq!(payload["update"]["entries"][1]["priority"], "medium");
         assert_eq!(payload["update"]["entries"][1]["status"], "in_progress");
-    }
-
-    #[test]
-    fn error_without_run_terminal_does_not_allow_prompt_end_response() {
-        assert!(!stream_allows_prompt_end_response(
-            false, true, false, false, false
-        ));
-    }
-
-    #[test]
-    fn visible_output_without_terminal_does_not_allow_prompt_end_response() {
-        assert!(!stream_allows_prompt_end_response(
-            true, false, false, false, false
-        ));
-    }
-
-    #[test]
-    fn run_done_allows_prompt_end_response_without_output_or_tool_activity() {
-        assert!(stream_allows_prompt_end_response(
-            false, false, true, false, false
-        ));
-    }
-
-    #[test]
-    fn tool_activity_alone_does_not_allow_prompt_end_response() {
-        assert!(!stream_allows_prompt_end_response(
-            false, false, false, true, false
-        ));
-    }
-
-    #[test]
-    fn canonical_run_state_allows_prompt_end_after_a_missed_terminal_event() {
-        assert!(stream_allows_prompt_end_response(
-            true, false, false, true, true
-        ));
     }
 
     #[test]

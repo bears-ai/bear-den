@@ -1,3 +1,4 @@
+use serde::Serialize;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
@@ -42,32 +43,7 @@ pub async fn invoke_den_tool(
     context: DenToolInvocationContext,
 ) -> Result<Value, CustomError> {
     if matches!(tool_name, DEN_TASK_FOCUS | DEN_TASK_FOCUS_PROVIDER) {
-        let ctx = DenToolContext::new(pool, config, stores);
-        den_core::tools::dispatch::authorize_den_tool(&ctx, DEN_TASK_FOCUS, &context)
-            .await
-            .map_err(CustomError::from)?;
-        let bear = den_service::bears::db::get_bear(pool, context.bear_id)
-            .await
-            .map_err(CustomError::from)?
-            .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
-        let state = den_service::DenState::new(
-            pool.clone(),
-            std::sync::Arc::new(config.clone()),
-            std::sync::Arc::new(den_service::bifrost::BifrostClient::new(config)),
-            stores.clone(),
-        );
-        return den_bearwire::start_pair_current_task(
-            &state,
-            context.user_id,
-            bear,
-            &context.session_id,
-        )
-        .await
-        .and_then(|result| {
-            serde_json::to_value(result).map_err(|error| {
-                CustomError::System(format!("serialize Pair task start failed: {error}"))
-            })
-        });
+        return Err(focus_current_task_containment_error());
     }
 
     if tool_name == DEN_WORK_PREPARE_RUST_DEPENDENCIES {
@@ -187,6 +163,34 @@ pub async fn invoke_den_tool(
     den_core::tools::dispatch::invoke_den_tool(&ctx, tool_name, arguments, context)
         .await
         .map_err(CustomError::from)
+}
+
+#[derive(Serialize)]
+struct FocusCurrentTaskContainmentDiagnostic {
+    code: &'static str,
+    component: &'static str,
+    operation: &'static str,
+    reason: &'static str,
+    retryable: bool,
+    mutation_applied: bool,
+    message: &'static str,
+}
+
+fn focus_current_task_containment_error() -> CustomError {
+    let diagnostic = FocusCurrentTaskContainmentDiagnostic {
+        code: "focus_current_task_temporarily_unavailable",
+        component: "den.tools.session",
+        operation: DEN_TASK_FOCUS,
+        reason: "canonical_runtime_state_unavailable",
+        retryable: true,
+        mutation_applied: false,
+        message: "Task focus was blocked before lifecycle mutation because canonical runtime state is unavailable to this tool executor.",
+    };
+
+    CustomError::Session(
+        serde_json::to_string(&diagnostic)
+            .expect("static focus-current-task containment diagnostic is serializable"),
+    )
 }
 
 /// Den-owned bridge from an authorized work run to its active sandbox provider.

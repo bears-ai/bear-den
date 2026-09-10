@@ -7,8 +7,9 @@
 # remaining (non-allow-listed) lint into a hard failure.
 set -euo pipefail
 
-# ADR-0031 write topology: no MemoryStoreManager::new outside sanctioned sites.
+# Production topology: constructors only at sanctioned composition roots/tests.
 bash "$(dirname "$0")/check-memory-write-topology.sh"
+bash "$(dirname "$0")/check-den-state-topology.sh"
 
 cd "$(dirname "$0")/../services/den"
 

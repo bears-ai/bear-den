@@ -142,9 +142,8 @@ pub(crate) async fn run_headless(http: &reqwest::Client, runtime: &RuntimeConfig
     )
     .await;
 
-    // ponytail: bearwire::handle_prompt has its own 600s internal ceiling per
-    // turn; long work orders hit that before multi-hour deadlines. Upgrade
-    // path: thread the checkout deadline into the poll loop.
+    // BearWire has its own delivery fuse; this outer deadline remains the
+    // stricter headless checkout boundary and checkpoint trigger.
     let turn = tokio::time::timeout(
         deadline,
         bearwire::handle_prompt(
