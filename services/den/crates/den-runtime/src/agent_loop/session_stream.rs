@@ -54,7 +54,7 @@ use crate::{
 use den_core::tools::{
     arguments::DenToolChannelContext,
     constants::{
-        DEN_TASK_CREATE_PROVIDER, DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER,
+        DEN_TASK_CREATE_PROVIDER, DEN_TASK_FOCUS_PROVIDER, DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER,
         DEN_TASK_LISTS_UPDATE_PROVIDER, DEN_TASK_LIST_SYNC_PROVIDER,
         DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER, DEN_TASK_UPDATE_PROVIDER, DEN_TOOL_OUTPUT_READ,
     },
@@ -267,6 +267,10 @@ fn render_checkpoint_task_follow_through_guidance(
             }
         }),
     )
+}
+
+fn is_focus_tool(tool_name: &str) -> bool {
+    tool_name == DEN_TASK_FOCUS_PROVIDER
 }
 
 fn focus_task_id(orientation: &ObjectiveOrientation) -> Option<&str> {
@@ -613,6 +617,9 @@ impl SessionTrackingStream {
                 request_id = ?self.request_id,
                 conversation_id = %self.conversation_id,
                 client_session_id = %self.client_session_id,
+                run_id = ?self.run_id,
+                focus_tool_pending = self.tool_calls.values().any(|(tool_name, _)| is_focus_tool(tool_name)),
+                focus_task_id = ?self.store.get(&self.session_key).and_then(|session| focus_task_id(&session.objective_orientation).map(str::to_owned)),
                 tool_call_count = outstanding_tools.len(),
                 outstanding_tools = ?outstanding_tools,
                 "native runtime ended its stream while awaiting client-owned tool results"
@@ -2503,6 +2510,20 @@ impl Stream for SessionTrackingStream {
                     tool_call_id.clone(),
                     (tool_name.clone(), arguments.to_string()),
                 );
+                if is_focus_tool(&tool_name) {
+                    tracing::info!(
+                        event = "pair_focus_tool_requested",
+                        session_key = %self.session_key,
+                        conversation_id = %self.conversation_id,
+                        client_session_id = %self.client_session_id,
+                        request_id = ?self.request_id,
+                        run_id = ?self.run_id,
+                        tool_call_id = %tool_call_id,
+                        focus_task_id = ?self.store.get(&self.session_key).and_then(|session| focus_task_id(&session.objective_orientation).map(str::to_owned)),
+                        objective_orientation = self.store.get(&self.session_key).map(|session| session.objective_orientation.kind()),
+                        "received Pair focus tool request"
+                    );
+                }
                 self.sync_assistant_tool_step_to_session();
                 let approval_required = provider_tool_requires_approval(&tool_name);
                 let event = RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
@@ -3002,6 +3023,12 @@ mod tests {
         dropped
             .await
             .expect("pending stream is dropped on cancellation");
+    }
+
+    #[test]
+    fn focus_tool_detection_only_matches_the_canonical_provider() {
+        assert!(is_focus_tool(DEN_TASK_FOCUS_PROVIDER));
+        assert!(!is_focus_tool("select_current_task"));
     }
 
     #[test]
