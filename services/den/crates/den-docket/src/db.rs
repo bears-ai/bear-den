@@ -3633,7 +3633,7 @@ fn validate_docket_task_run_state_update(
 fn has_primary_output_evidence(result_refs: Option<&Value>) -> bool {
     result_refs
         .and_then(Value::as_object)
-        .is_some_and(|refs| refs.contains_key("primary_output") || refs.contains_key("validation"))
+        .is_some_and(|refs| refs.contains_key("primary_output"))
 }
 
 pub(super) fn validate_primary_output_evidence(

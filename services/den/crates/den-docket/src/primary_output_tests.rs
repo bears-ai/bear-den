@@ -53,7 +53,7 @@ fn rejects_incomplete_primary_output_evidence() {
     })))
     .is_err());
     assert!(validate_primary_output_evidence(Some(&json!({
-        "validation": {"result": "passed"}
+        "primary_output": {"kind": "git_commit"}
     })))
     .is_err());
 }
