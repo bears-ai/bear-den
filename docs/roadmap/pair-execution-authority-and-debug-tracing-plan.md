@@ -1,10 +1,19 @@
 # Plan: Authoritative focused execution control and diagnostic transition tracing
 
-**Status:** In progress; authoritative focused-execution aggregate completed 2026-09-11
+**Status:** In progress; focused-execution aggregate and terminal lifecycle stabilization completed 2026-09-11
 
 **Scope:** Focused Docket execution start, authoritative status projection, BearWire diagnostics, and client debug views
 
 `pair` is a trust-profile/capability shorthand, not an execution identity. Execution state and authority are named for sessions, tasks, runs, hosts, and attempts.
+
+### Completed stabilization phase P3
+
+- Terminal writes are limited to typed `complete_run`, `fail_run`, and `cancel_run` methods; callers cannot choose a contradictory event type.
+- Run-level `blocked` was migrated to retryable or non-retryable `failed`; Docket task and work-run `blocked` states remain distinct.
+- Controller registrations and native execution sessions are run-scoped, and terminal paths evict the exact native run.
+- `run.cancel` requires the target `run_id`; stale cancellation cannot affect a successor run.
+- Client-wait persistence locks and validates the durable run, so late tool events cannot reopen terminal runs or create new obligations.
+- Orphan focus recovery consumes `FocusedExecutionSnapshot` and emits a typed `run.failed` followed by `run.recovered`, never a failed run carrying `run.recovering` as its terminal event.
 
 ## Problem
 

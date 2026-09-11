@@ -107,9 +107,9 @@ pub struct TurnStatusUpdate {
 #[derive(Debug, Clone)]
 pub struct ActiveTurnCancelRegistration {
     pub client_session_id: String,
+    pub run_id: String,
     pub request_id: Uuid,
     pub conversation_id: Option<String>,
-    pub run_ids: Vec<String>,
     pub cancel_tx: watch::Sender<bool>,
 }
 
@@ -117,26 +117,20 @@ pub struct ActiveTurnCancelRegistration {
 pub struct ActiveTurnCancelHandle {
     registry: ActiveTurnCancelRegistry,
     client_session_id: String,
+    run_id: String,
     request_id: Uuid,
-}
-
-impl ActiveTurnCancelHandle {
-    pub fn record_run_id(&self, run_id: &str) -> bool {
-        self.registry
-            .record_run_id(&self.client_session_id, self.request_id, run_id)
-    }
 }
 
 impl Drop for ActiveTurnCancelHandle {
     fn drop(&mut self) {
         self.registry
-            .unregister_if_matches(&self.client_session_id, self.request_id);
+            .unregister_if_matches(&self.client_session_id, &self.run_id, self.request_id);
     }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct ActiveTurnCancelRegistry {
-    inner: Arc<Mutex<HashMap<String, ActiveTurnCancelRegistration>>>,
+    inner: Arc<Mutex<HashMap<(String, String), ActiveTurnCancelRegistration>>>,
 }
 
 impl ActiveTurnCancelRegistry {
@@ -147,19 +141,22 @@ impl ActiveTurnCancelRegistry {
     pub fn register(
         &self,
         client_session_id: impl Into<String>,
+        run_id: impl Into<String>,
         request_id: Uuid,
         conversation_id: Option<String>,
     ) -> (ActiveTurnCancelHandle, watch::Receiver<bool>) {
         let client_session_id = client_session_id.into();
+        let run_id = run_id.into();
+        let key = (client_session_id.clone(), run_id.clone());
         let (cancel_tx, cancel_rx) = watch::channel(false);
         if let Ok(mut inner) = self.inner.lock() {
             inner.insert(
-                client_session_id.clone(),
+                key,
                 ActiveTurnCancelRegistration {
                     client_session_id: client_session_id.clone(),
+                    run_id: run_id.clone(),
                     request_id,
                     conversation_id,
-                    run_ids: Vec::new(),
                     cancel_tx,
                 },
             );
@@ -168,52 +165,43 @@ impl ActiveTurnCancelRegistry {
             ActiveTurnCancelHandle {
                 registry: self.clone(),
                 client_session_id,
+                run_id,
                 request_id,
             },
             cancel_rx,
         )
     }
 
-    pub fn cancel_session(&self, client_session_id: &str) -> Option<ActiveTurnCancelRegistration> {
-        let registration = self.inner.lock().ok()?.get(client_session_id).cloned()?;
+    pub fn cancel_run(
+        &self,
+        client_session_id: &str,
+        run_id: &str,
+    ) -> Option<ActiveTurnCancelRegistration> {
+        let key = (client_session_id.to_string(), run_id.to_string());
+        let registration = self.inner.lock().ok()?.get(&key).cloned()?;
         let _ = registration.cancel_tx.send(true);
         Some(registration)
     }
 
-    pub fn record_run_id(&self, client_session_id: &str, request_id: Uuid, run_id: &str) -> bool {
-        let run_id = run_id.trim();
-        if run_id.is_empty() {
-            return false;
-        }
-        let Ok(mut inner) = self.inner.lock() else {
-            return false;
-        };
-        let Some(registration) = inner.get_mut(client_session_id) else {
-            return false;
-        };
-        if registration.request_id != request_id {
-            return false;
-        }
-        if registration.run_ids.iter().any(|known| known == run_id) {
-            return false;
-        }
-        registration.run_ids.push(run_id.to_string());
-        true
-    }
-
-    pub fn active_for_session(
+    pub fn active_for_run(
         &self,
         client_session_id: &str,
+        run_id: &str,
     ) -> Option<ActiveTurnCancelRegistration> {
-        self.inner.lock().ok()?.get(client_session_id).cloned()
+        self.inner
+            .lock()
+            .ok()?
+            .get(&(client_session_id.to_string(), run_id.to_string()))
+            .cloned()
     }
 
-    pub fn runtime_snapshot_for_session(
+    pub fn runtime_snapshot_for_run(
         &self,
         client_session_id: &str,
+        run_id: &str,
         tool_turns: &ToolTurnCoordinator,
     ) -> Value {
-        let Some(active) = self.active_for_session(client_session_id) else {
+        let Some(active) = self.active_for_run(client_session_id, run_id) else {
             return json!({
                 "state": "idle",
                 "active_turn": {
@@ -223,7 +211,7 @@ impl ActiveTurnCancelRegistry {
                     "pending_adapter_tools": 0,
                     "pending_den_tools": 0,
                     "pending_permissions": 0,
-                    "run_ids": [],
+                    "run_id": run_id,
                 },
                 "last_terminal": Value::Null,
                 "last_recovery": Value::Null,
@@ -253,7 +241,7 @@ impl ActiveTurnCancelRegistry {
                 "phase": phase,
                 "request_id": active.request_id,
                 "conversation_id": active.conversation_id,
-                "run_ids": active.run_ids,
+                "run_id": active.run_id,
                 "pending_obligations": pending_obligations,
                 "pending_adapter_tools": pending_obligations,
                 "pending_den_tools": 0,
@@ -265,15 +253,16 @@ impl ActiveTurnCancelRegistry {
         })
     }
 
-    fn unregister_if_matches(&self, client_session_id: &str, request_id: Uuid) {
+    fn unregister_if_matches(&self, client_session_id: &str, run_id: &str, request_id: Uuid) {
         let Ok(mut inner) = self.inner.lock() else {
             return;
         };
+        let key = (client_session_id.to_string(), run_id.to_string());
         let should_remove = inner
-            .get(client_session_id)
+            .get(&key)
             .is_some_and(|registration| registration.request_id == request_id);
         if should_remove {
-            inner.remove(client_session_id);
+            inner.remove(&key);
         }
     }
 }

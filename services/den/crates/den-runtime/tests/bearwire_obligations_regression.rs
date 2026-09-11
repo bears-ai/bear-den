@@ -516,20 +516,14 @@ async fn terminal_turn_run_cannot_be_reopened_or_overwritten(pool: sqlx::PgPool)
     turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
         .await
         .expect("create run");
-    let mut event = BearWireEvent::ephemeral(
-        "run.cancelled",
-        serde_json::json!({"run_id": run_id, "reason": "superseded_by_new_run"}),
-    );
-    event.run_id = Some(run_id.clone());
-    let cancelled = turn_runs::finish_run_with_bearwire_event(
+    let cancelled = turn_runs::cancel_run(
         &pool,
         &session_id,
         &run_id,
         bear_id,
         user_id,
-        turn_runs::TurnRunState::Cancelled,
-        Some("superseded_by_new_run"),
-        event,
+        "superseded_by_new_run",
+        serde_json::json!({"run_id": run_id, "reason": "superseded_by_new_run"}),
     )
     .await
     .expect("cancel run");
@@ -540,15 +534,14 @@ async fn terminal_turn_run_cannot_be_reopened_or_overwritten(pool: sqlx::PgPool)
             .await
             .expect("attempt reopen terminal run");
     assert!(reopened.is_none());
-    let completed = turn_runs::finish_run_with_bearwire_event(
+    let completed = turn_runs::complete_run(
         &pool,
         &session_id,
         &run_id,
         bear_id,
         user_id,
-        turn_runs::TurnRunState::Completed,
         Some("stale_completed"),
-        BearWireEvent::ephemeral("run.completed", serde_json::json!({"run_id": run_id})),
+        serde_json::json!({"run_id": run_id}),
     )
     .await
     .expect("attempt overwrite terminal run");
@@ -562,6 +555,43 @@ async fn terminal_turn_run_cannot_be_reopened_or_overwritten(pool: sqlx::PgPool)
     assert_eq!(
         run.terminal_reason.as_deref(),
         Some("superseded_by_new_run")
+    );
+
+    let arguments = serde_json::json!({ "path": "." });
+    let late_wait = turn_waits::persist_bearwire_tool_call_wait_transactionally(
+        &pool,
+        turn_waits::PersistToolCallWaitInput {
+            process_epoch_id: Uuid::new_v4(),
+            session_id: &session_id,
+            run_id: &run_id,
+            bear_id,
+            user_id,
+            request_id: Uuid::new_v4(),
+            tool_call_id: "call-after-terminal",
+            tool_name: "fs_list_directory",
+            title: Some("Late list"),
+            kind: Some("read"),
+            arguments: &arguments,
+            approval_request_id: None,
+            approval_required: false,
+            approval_reason: None,
+            event_run_id: Some(&run_id),
+        },
+    )
+    .await
+    .expect_err("late tool waits must not reopen terminal runs");
+    assert!(matches!(
+        late_wait,
+        den_core::DenError::RunStateConflict {
+            operation: "persist_client_wait",
+            ..
+        }
+    ));
+    assert!(
+        turn_obligations::open_client_obligations_for_run(&pool, &run_id)
+            .await
+            .expect("list obligations after late wait")
+            .is_empty()
     );
 }
 

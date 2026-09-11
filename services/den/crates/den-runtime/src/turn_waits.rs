@@ -115,6 +115,38 @@ pub struct PersistedSurfaceObligation {
     pub obligation: turn_obligations::TurnObligationRow,
 }
 
+async fn lock_nonterminal_run_for_wait(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    session_id: &str,
+    run_id: &str,
+) -> Result<(), DenError> {
+    let state = sqlx::query_scalar!(
+        r#"
+        SELECT state
+        FROM turn_runs
+        WHERE run_id = $1 AND session_id = $2
+        FOR UPDATE
+        "#,
+        run_id,
+        session_id,
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+    let parsed = state
+        .as_deref()
+        .map(turn_runs::TurnRunState::try_from_storage)
+        .transpose()?;
+    if parsed.is_some_and(|state| !state.is_terminal()) {
+        return Ok(());
+    }
+    Err(DenError::RunStateConflict {
+        operation: "persist_client_wait",
+        run_id: run_id.to_string(),
+        expected_state: "nonterminal",
+        actual_state: state,
+    })
+}
+
 async fn ensure_waiting_turn_step(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     run_id: &str,
@@ -174,14 +206,16 @@ pub async fn persist_surface_obligation_transactionally(
     input: PersistSurfaceObligationInput<'_>,
 ) -> Result<PersistedSurfaceObligation, DenError> {
     let mut tx = pool.begin().await?;
+    lock_nonterminal_run_for_wait(&mut tx, input.session_id, input.run_id).await?;
     sqlx::query!(
         r#"
         UPDATE turn_runs
         SET state = $2, terminal_reason = NULL, updated_at = NOW()
-        WHERE run_id = $1
+        WHERE run_id = $1 AND session_id = $3
         "#,
         input.run_id,
         turn_runs::TurnRunState::WaitingForClient.as_str(),
+        input.session_id,
     )
     .execute(&mut *tx)
     .await?;
@@ -254,15 +288,17 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
     });
 
     let mut tx = pool.begin().await?;
+    lock_nonterminal_run_for_wait(&mut tx, input.session_id, input.run_id).await?;
     if !den_owned || effective_approval_required {
         sqlx::query!(
             r#"
             UPDATE turn_runs
             SET state = $2, terminal_reason = NULL, updated_at = NOW()
-            WHERE run_id = $1
+            WHERE run_id = $1 AND session_id = $3
             "#,
             input.run_id,
             run_state.as_str(),
+            input.session_id,
         )
         .execute(&mut *tx)
         .await?;

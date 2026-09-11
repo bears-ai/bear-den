@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE turn_runs\n        SET state = $2,\n            terminal_reason = $3,\n            updated_at = NOW(),\n            completed_at = COALESCE(completed_at, NOW())\n        WHERE run_id = $1\n          AND session_id = $4\n          AND state NOT IN ('completed','failed','cancelled')\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "482894e6bef496cb0d4a2c610ac7830eac16131995713c82dc5988a8a101c13f"
+}

@@ -193,13 +193,8 @@ pub async fn acquire_selected_task_for_run(
         }
         let controller_is_live = state
             .turn_cancellations
-            .active_for_session(client_session_id)
-            .is_some_and(|active| {
-                active
-                    .run_ids
-                    .iter()
-                    .any(|run_id| run_id == origin_run_id.as_str())
-            });
+            .active_for_run(client_session_id, origin_run_id.as_str())
+            .is_some();
         if !controller_is_live {
             return Err(CustomError::ValidationError(
                 "focus origin run has no live controller in this Den process".to_string(),

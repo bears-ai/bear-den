@@ -6,7 +6,7 @@ use den_service::DenState;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
-use crate::methods::run::{persist_run_blocked, persist_run_failed, RunFailureReason};
+use crate::methods::run::{persist_run_failed, RunFailureReason};
 
 const DEFAULT_EXPIRY_BATCH_LIMIT: i64 = 1_000;
 
@@ -175,75 +175,40 @@ pub async fn expire_client_obligations_once(
         };
         // The durable failure alone does not wake an ACP continuation already
         // blocked on this client response.
-        state.turn_cancellations.cancel_session(&run.session_id);
+        state
+            .turn_cancellations
+            .cancel_run(&run.session_id, &run.run_id);
         state.tool_turns.cancel_active_turn(&run.session_id);
-        if matches!(
+        persist_run_failed(
+            pool,
+            &run.session_id,
+            &run.run_id,
+            run.bear_id,
+            run.user_id,
             reason,
-            RunFailureReason::PermissionDecisionExpired
-                | RunFailureReason::ServerRestartInterrupted
-        ) {
-            persist_run_blocked(
-                pool,
-                &run.session_id,
-                &run.run_id,
-                run.bear_id,
-                run.user_id,
-                reason,
-                message,
-                Some(json!({
-                    "affected_obligations": affected_obligations,
-                    "expired_obligations": if interrupted_by_restart { Value::Null } else { json!(affected_obligations) },
-                    "source": if interrupted_by_restart {
-                        "bearwire_client_obligation_restart_reconciliation"
-                    } else {
-                        "bearwire_client_obligation_expiry_loop"
-                    },
-                    "current_process_epoch_id": state.process_epoch_id,
-                    "recovery": if interrupted_by_restart {
-                        json!({
-                            "status": "interrupted",
-                            "retryable": true,
-                            "automatic_retry_allowed": false,
-                            "next_action": "send_message",
-                        })
-                    } else {
-                        recovery.unwrap_or(Value::Null)
-                    },
-                })),
-            )
-            .await;
-        } else {
-            persist_run_failed(
-                pool,
-                &run.session_id,
-                &run.run_id,
-                run.bear_id,
-                run.user_id,
-                reason,
-                message,
-                Some(json!({
-                    "affected_obligations": affected_obligations,
-                    "expired_obligations": if interrupted_by_restart { Value::Null } else { json!(affected_obligations) },
-                    "source": if interrupted_by_restart {
-                        "bearwire_client_obligation_restart_reconciliation"
-                    } else {
-                        "bearwire_client_obligation_expiry_loop"
-                    },
-                    "current_process_epoch_id": state.process_epoch_id,
-                    "recovery": if interrupted_by_restart {
-                        json!({
-                            "status": "interrupted",
-                            "retryable": true,
-                            "automatic_retry_allowed": false,
-                            "next_action": "send_message",
-                        })
-                    } else {
-                        recovery.unwrap_or(Value::Null)
-                    },
-                })),
-            )
-            .await;
-        }
+            message,
+            Some(json!({
+                "affected_obligations": affected_obligations,
+                "expired_obligations": if interrupted_by_restart { Value::Null } else { json!(affected_obligations) },
+                "source": if interrupted_by_restart {
+                    "bearwire_client_obligation_restart_reconciliation"
+                } else {
+                    "bearwire_client_obligation_expiry_loop"
+                },
+                "current_process_epoch_id": state.process_epoch_id,
+                "recovery": if interrupted_by_restart {
+                    json!({
+                        "status": "interrupted",
+                        "retryable": true,
+                        "automatic_retry_allowed": false,
+                        "next_action": "send_message",
+                    })
+                } else {
+                    recovery.unwrap_or(Value::Null)
+                },
+            })),
+        )
+        .await;
     }
 
     Ok(affected_run_count)

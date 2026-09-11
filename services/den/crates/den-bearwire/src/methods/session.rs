@@ -252,10 +252,7 @@ async fn session_state_payload(
                 user_id: Some(session.user_id),
                 conversation_id: conversation_runtime_id.clone(),
                 client_session_id: session.client_session_id.clone(),
-                cached_activity_plan_projection: den_runtime::native_runtime::native_client_session_cached_activity_plan_projection(
-                    &conversation_runtime_id,
-                    &session.client_session_id,
-                ),
+                cached_activity_plan_projection: None,
             },
         )
         .await
@@ -842,8 +839,8 @@ pub(crate) async fn start_session_task_execution(
     {
         let controller_is_live = state
             .turn_cancellations
-            .active_for_session(session_id)
-            .is_some_and(|active| active.run_ids.iter().any(|id| id == &run.run_id));
+            .active_for_run(session_id, &run.run_id)
+            .is_some();
         if !controller_is_live {
             reconcile_orphaned_task_run(state, user_id, bear.id, task_id, session_id, &run.run_id)
                 .await?;
@@ -878,8 +875,8 @@ pub(crate) async fn start_session_task_execution(
             .filter(|run| run.bear_id == bear.id && run.user_id == user_id);
         let controller_is_live = state
             .turn_cancellations
-            .active_for_session(session_id)
-            .is_some_and(|active| active.run_ids.iter().any(|id| id == &run_id));
+            .active_for_run(session_id, &run_id)
+            .is_some();
         let run_is_live = run
             .as_ref()
             .map(|run| run.state_value())
@@ -1050,30 +1047,21 @@ async fn reconcile_orphaned_task_run(
         )));
     }
     let attempt = snapshot.attempt.filter(|attempt| attempt.state.is_live());
-    let mut event = BearWireEvent::ephemeral(
-        "run.recovering",
-        json!({
-            "run_id": run_id,
-            "message": "Focused execution host stopped before reaching a terminal boundary.",
-            "reason": "orphaned_execution_controller",
-            "replacement": "pending",
-            "task_id": task_id,
-            "task_selection_preserved": true,
-        }),
-    );
-    event.bear_id = Some(bear_id.to_string());
-    event.human_id = Some(user_id.to_string());
-    event.session_id = Some(session_id.to_string());
-    event.run_id = Some(run_id.to_string());
-    turn_runs::finish_run_with_bearwire_event(
+    turn_runs::fail_run(
         &state.sqlx_pool,
         session_id,
         run_id,
         bear_id,
         user_id,
-        turn_runs::TurnRunState::Failed,
-        Some("orphaned_execution_controller"),
-        event,
+        "orphaned_execution_controller",
+        json!({
+            "run_id": run_id,
+            "message": "Focused execution host stopped before reaching a terminal boundary.",
+            "reason": "orphaned_execution_controller",
+            "recovery": "replacement_pending",
+            "task_id": task_id,
+            "task_selection_preserved": true,
+        }),
     )
     .await?
     .ok_or_else(|| {
@@ -1081,6 +1069,7 @@ async fn reconcile_orphaned_task_run(
             "execution run {run_id} changed while orphan recovery was in progress; retry focus"
         ))
     })?;
+    den_runtime::native_runtime::remove_native_client_run(session_id, run_id);
     if let Some(attempt) = attempt {
         PgDocketService::from_pool(&state.sqlx_pool)
             .release_execution_attempt(DocketExecutionAttemptRelease {

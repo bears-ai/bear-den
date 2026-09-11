@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE turn_runs\n            SET state = $2, terminal_reason = NULL, updated_at = NOW()\n            WHERE run_id = $1 AND session_id = $3\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bec5a66ea976bb0e07c5aeaf419fdefc9d65d8693b0efeac492296c7fc9cf2c0"
+}

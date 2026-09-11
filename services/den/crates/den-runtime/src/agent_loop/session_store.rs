@@ -428,26 +428,48 @@ impl AgentLoopSessionStore {
         }
     }
 
+    pub fn update_client_sessions(
+        &self,
+        conversation_id: &str,
+        client_session_id: &str,
+        mut update: impl FnMut(&mut AgentLoopSession),
+    ) {
+        let mut sessions = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for session in sessions.values_mut().filter(|session| {
+            session.conversation_id == conversation_id
+                && session.client_session_id == client_session_id
+        }) {
+            update(session);
+        }
+    }
+
+    pub fn remove_client_run(&self, client_session_id: &str, run_id: &str) {
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|_, session| {
+                session.client_session_id != client_session_id
+                    || session.run_id.as_deref() != Some(run_id)
+            });
+    }
+
     pub fn remove(&self, key: &str) {
         self.inner
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(key);
     }
-
-    /// Read and clear the overflow-recovery flag for client turn outcome mapping.
-    pub fn take_overflow_compaction_recovered(&self, key: &str) -> bool {
-        let mut recovered = false;
-        self.update(key, |session| {
-            recovered = session.overflow_compaction_recovered;
-            session.overflow_compaction_recovered = false;
-        });
-        recovered
-    }
 }
 
-pub fn agent_loop_session_key(conversation_id: &str, client_session_id: &str) -> String {
-    format!("{conversation_id}:{client_session_id}")
+pub fn agent_loop_session_key(
+    conversation_id: &str,
+    client_session_id: &str,
+    run_id: &str,
+) -> String {
+    format!("{conversation_id}:{client_session_id}:{run_id}")
 }
 
 #[cfg(test)]

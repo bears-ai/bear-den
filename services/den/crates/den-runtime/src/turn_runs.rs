@@ -18,7 +18,6 @@ pub enum TurnRunState {
     Running,
     WaitingForClient,
     Continuing,
-    Blocked,
     Completed,
     Failed,
     Cancelled,
@@ -31,7 +30,6 @@ impl TurnRunState {
             Self::Running => "running",
             Self::WaitingForClient => "waiting_for_client",
             Self::Continuing => "continuing",
-            Self::Blocked => "blocked",
             Self::Completed => "completed",
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
@@ -44,7 +42,6 @@ impl TurnRunState {
             "running" => Ok(Self::Running),
             "waiting_for_client" => Ok(Self::WaitingForClient),
             "continuing" => Ok(Self::Continuing),
-            "blocked" => Ok(Self::Blocked),
             "completed" => Ok(Self::Completed),
             "failed" => Ok(Self::Failed),
             "cancelled" => Ok(Self::Cancelled),
@@ -55,10 +52,7 @@ impl TurnRunState {
     }
 
     pub fn is_terminal(self) -> bool {
-        matches!(
-            self,
-            Self::Blocked | Self::Completed | Self::Failed | Self::Cancelled
-        )
+        matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
     }
 
     pub fn allows_open_obligation(self) -> bool {
@@ -68,7 +62,7 @@ impl TurnRunState {
     fn terminal_obligation_state(self) -> Option<TurnObligationState> {
         match self {
             Self::Completed => Some(TurnObligationState::Continued),
-            Self::Blocked | Self::Failed => Some(TurnObligationState::Failed),
+            Self::Failed => Some(TurnObligationState::Failed),
             Self::Cancelled => Some(TurnObligationState::Cancelled),
             _ => None,
         }
@@ -686,25 +680,94 @@ pub struct FinishRunResult {
     pub event_sequence: i64,
 }
 
-pub async fn finish_run_with_bearwire_event(
+pub async fn complete_run(
+    pool: &PgPool,
+    session_id: &str,
+    run_id: &str,
+    bear_id: Uuid,
+    user_id: i32,
+    terminal_reason: Option<&str>,
+    data: Value,
+) -> Result<Option<FinishRunResult>, DenError> {
+    finish_run(
+        pool,
+        session_id,
+        run_id,
+        bear_id,
+        user_id,
+        TurnRunState::Completed,
+        "run.completed",
+        terminal_reason,
+        data,
+    )
+    .await
+}
+
+pub async fn fail_run(
+    pool: &PgPool,
+    session_id: &str,
+    run_id: &str,
+    bear_id: Uuid,
+    user_id: i32,
+    terminal_reason: &str,
+    data: Value,
+) -> Result<Option<FinishRunResult>, DenError> {
+    finish_run(
+        pool,
+        session_id,
+        run_id,
+        bear_id,
+        user_id,
+        TurnRunState::Failed,
+        "run.failed",
+        Some(terminal_reason),
+        data,
+    )
+    .await
+}
+
+pub async fn cancel_run(
+    pool: &PgPool,
+    session_id: &str,
+    run_id: &str,
+    bear_id: Uuid,
+    user_id: i32,
+    terminal_reason: &str,
+    data: Value,
+) -> Result<Option<FinishRunResult>, DenError> {
+    finish_run(
+        pool,
+        session_id,
+        run_id,
+        bear_id,
+        user_id,
+        TurnRunState::Cancelled,
+        "run.cancelled",
+        Some(terminal_reason),
+        data,
+    )
+    .await
+}
+
+async fn finish_run(
     pool: &PgPool,
     session_id: &str,
     run_id: &str,
     bear_id: Uuid,
     user_id: i32,
     state: TurnRunState,
+    event_type: &'static str,
     terminal_reason: Option<&str>,
-    mut event: bearwire_protocol::wire::BearWireEvent,
+    data: Value,
 ) -> Result<Option<FinishRunResult>, DenError> {
-    if !state.is_terminal() {
-        return Err(DenError::ValidationError(format!(
-            "finish_run_with_bearwire_event requires terminal state, got {}",
-            state.as_str()
-        )));
-    }
     let obligation_state = state
         .terminal_obligation_state()
-        .expect("terminal state has obligation settlement");
+        .expect("typed terminal method supplies a terminal state");
+    let mut event = bearwire_protocol::wire::BearWireEvent::ephemeral(event_type, data);
+    event.bear_id = Some(bear_id.to_string());
+    event.human_id = Some(user_id.to_string());
+    event.session_id = Some(session_id.to_string());
+    event.run_id = Some(run_id.to_string());
     let settlement_state = obligation_state.as_str();
     let mut tx = pool.begin().await?;
     let claimed = sqlx::query!(
@@ -716,7 +779,7 @@ pub async fn finish_run_with_bearwire_event(
             completed_at = COALESCE(completed_at, NOW())
         WHERE run_id = $1
           AND session_id = $4
-          AND state NOT IN ('blocked','completed','failed','cancelled')
+          AND state NOT IN ('completed','failed','cancelled')
         "#,
         run_id,
         state.as_str(),
@@ -1110,7 +1173,7 @@ pub async fn transition_run(
 ) -> Result<Option<TurnRunRow>, DenError> {
     if state.is_terminal() {
         return Err(DenError::ValidationError(format!(
-            "terminal run state {} must use finish_run_with_bearwire_event",
+            "terminal run state {} must use its typed terminal method",
             state.as_str()
         )));
     }
@@ -1124,7 +1187,7 @@ pub async fn transition_run(
             updated_at = NOW(),
             completed_at = completed_at
         WHERE run_id = $1
-          AND state NOT IN ('blocked','completed','failed','cancelled')
+          AND state NOT IN ('completed','failed','cancelled')
         RETURNING id, run_id, session_id, bear_id, user_id, state,
                   terminal_reason AS "terminal_reason?", created_at, updated_at,
                   completed_at AS "completed_at?"
@@ -1153,7 +1216,6 @@ mod tests {
     fn terminal_run_with_open_obligation_is_invalid() {
         for terminal in [
             TurnRunState::Completed,
-            TurnRunState::Blocked,
             TurnRunState::Failed,
             TurnRunState::Cancelled,
         ] {

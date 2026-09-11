@@ -407,29 +407,17 @@ fn work_execution_orientation_from_ids(task_id: Uuid, job_id: Uuid) -> Objective
     }
 }
 
-/// Returns whether this turn recovered from context overflow via emergency compaction.
-/// Clears the session flag after reading (for client terminal turn_result mapping).
-pub fn take_session_overflow_compaction_recovered(
+pub fn native_client_run_exists(
     conversation_id: &str,
     client_session_id: &str,
+    run_id: &str,
 ) -> bool {
-    let key = agent_loop_session_key(conversation_id, client_session_id);
-    SESSION_STORE.take_overflow_compaction_recovered(&key)
-}
-
-pub fn native_client_session_exists(conversation_id: &str, client_session_id: &str) -> bool {
-    let key = agent_loop_session_key(conversation_id, client_session_id);
+    let key = agent_loop_session_key(conversation_id, client_session_id, run_id);
     SESSION_STORE.get(&key).is_some()
 }
 
-pub fn native_client_session_cached_activity_plan_projection(
-    conversation_id: &str,
-    client_session_id: &str,
-) -> Option<TaskListProjection> {
-    let key = agent_loop_session_key(conversation_id, client_session_id);
-    SESSION_STORE
-        .get(&key)
-        .and_then(|session| session.cached_activity_plan_projection)
+pub fn remove_native_client_run(client_session_id: &str, run_id: &str) {
+    SESSION_STORE.remove_client_run(client_session_id, run_id);
 }
 
 pub fn update_native_client_session_cached_activity_plan_projection(
@@ -437,20 +425,9 @@ pub fn update_native_client_session_cached_activity_plan_projection(
     client_session_id: &str,
     cached_activity_plan_projection: Option<TaskListProjection>,
 ) {
-    let key = agent_loop_session_key(conversation_id, client_session_id);
-    SESSION_STORE.update(&key, |session| {
-        session.cached_activity_plan_projection = cached_activity_plan_projection;
+    SESSION_STORE.update_client_sessions(conversation_id, client_session_id, |session| {
+        session.cached_activity_plan_projection = cached_activity_plan_projection.clone();
     });
-}
-
-pub fn native_client_session_runtime_state(
-    conversation_id: &str,
-    client_session_id: &str,
-) -> Option<serde_json::Value> {
-    let key = agent_loop_session_key(conversation_id, client_session_id);
-    SESSION_STORE
-        .get(&key)
-        .map(|session| session.session_info_runtime_snapshot())
 }
 
 async fn persisted_tool_call_exists(
@@ -538,12 +515,13 @@ pub async fn record_native_client_tool_result(
         name: None,
         tool_calls: None,
     };
-    let session_key = agent_loop_session_key(conversation_id, client_session_id);
+    let run_id = run_id.ok_or_else(|| {
+        DenError::ValidationError("native client tool result requires run_id".to_string())
+    })?;
+    let session_key = agent_loop_session_key(conversation_id, client_session_id, run_id);
     SESSION_STORE.update(&session_key, |session| {
         session.request_id = Some(request_id.to_string());
-        session.run_id = run_id
-            .map(str::to_string)
-            .or_else(|| session.run_id.clone());
+        session.run_id = Some(run_id.to_string());
         session.messages.push(tool_message.clone());
     });
     let Some(session) = SESSION_STORE.get(&session_key) else {
@@ -999,7 +977,11 @@ async fn build_session(
         client_tools,
         human_message,
     )?;
-    let session_key = agent_loop_session_key(conversation_id, client_session_id);
+    let execution_id = run_id
+        .map(str::to_string)
+        .or_else(|| request_id.map(|id| id.to_string()))
+        .unwrap_or_else(|| format!("unbound-{}", Uuid::new_v4().simple()));
+    let session_key = agent_loop_session_key(conversation_id, client_session_id, &execution_id);
     let conversation_model = match conversation_persistence::get_conversation_for_external_id(
         deps.pool,
         bear.id,
@@ -2135,7 +2117,10 @@ pub async fn continue_native_client_turn_event_stream(
 ) -> Result<(RuntimeStreamContinuation, RuntimeEventStream), DenError> {
     let client_session_id = request.client_session_id;
     let conversation_id = request.conversation.id.clone();
-    let session_key = agent_loop_session_key(&conversation_id, client_session_id);
+    let run_id = request.run_id.ok_or_else(|| {
+        DenError::ValidationError("native client continuation requires run_id".to_string())
+    })?;
+    let session_key = agent_loop_session_key(&conversation_id, client_session_id, run_id);
     let existing_session = SESSION_STORE.get(&session_key);
     let prior_session = existing_session
         .clone()
@@ -3113,7 +3098,8 @@ mod tests {
     async fn hard_step_continuation_returns_terminal_event_not_error() {
         let conversation_id = format!("transient-{}", Uuid::new_v4().simple());
         let client_session_id = format!("session-{}", Uuid::new_v4().simple());
-        let session_key = agent_loop_session_key(&conversation_id, &client_session_id);
+        let session_key =
+            agent_loop_session_key(&conversation_id, &client_session_id, "run-max-step");
         let config = Config::test_stub();
         let stores = MemoryStoreManager::new(&config);
         let pool = PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/unused")
@@ -3223,7 +3209,8 @@ mod tests {
     async fn recorded_client_tool_result_remains_visible_in_live_continuation_transcript() {
         let conversation_id = format!("transient-{}", Uuid::new_v4().simple());
         let client_session_id = format!("session-{}", Uuid::new_v4().simple());
-        let session_key = agent_loop_session_key(&conversation_id, &client_session_id);
+        let session_key =
+            agent_loop_session_key(&conversation_id, &client_session_id, "run-visible-tool");
         let tool_call_id = "call-visible-tool";
         SESSION_STORE.insert(AgentLoopSession {
             session_key: session_key.clone(),
@@ -3302,6 +3289,16 @@ mod tests {
         });
         let pool = PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/unused")
             .expect("lazy pool");
+        assert!(native_client_run_exists(
+            &conversation_id,
+            &client_session_id,
+            "run-visible-tool"
+        ));
+        assert!(!native_client_run_exists(
+            &conversation_id,
+            &client_session_id,
+            "run-successor"
+        ));
 
         record_native_client_tool_result(
             &pool,
@@ -3348,7 +3345,8 @@ mod tests {
         assert_eq!(repaired.len(), 3);
         assert_eq!(repaired[1].role, "assistant");
         assert_eq!(repaired[2].role, "tool");
-        SESSION_STORE.remove(&session_key);
+        remove_native_client_run(&client_session_id, "run-visible-tool");
+        assert!(SESSION_STORE.get(&session_key).is_none());
     }
 
     #[sqlx::test(migrations = "../../migrations")]
@@ -3389,7 +3387,11 @@ mod tests {
         let client_session_id = format!("session-{}", Uuid::new_v4().simple());
         let request_id = Uuid::new_v4().to_string();
         let tool_call_id = "call-persisted-visible";
-        let session_key = agent_loop_session_key(&conversation_id, &client_session_id);
+        let session_key = agent_loop_session_key(
+            &conversation_id,
+            &client_session_id,
+            "run-persisted-visible",
+        );
         let context = canonical_persistence_context(
             pool.clone(),
             bear_id,
@@ -3576,7 +3578,8 @@ mod tests {
         )
         .await
         .expect("persist user message");
-        let session_key = agent_loop_session_key(&conversation_id, &client_session_id);
+        let session_key =
+            agent_loop_session_key(&conversation_id, &client_session_id, "run-load-history");
         SESSION_STORE.insert(AgentLoopSession {
             session_key: session_key.clone(),
             bear_id,

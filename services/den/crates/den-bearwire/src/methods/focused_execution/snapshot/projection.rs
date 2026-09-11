@@ -155,8 +155,8 @@ pub async fn load_focused_execution_snapshot(
         .map_or(ControllerDisposition::NotApplicable, |run| {
             if state
                 .turn_cancellations
-                .active_for_session(client_session_id)
-                .is_some_and(|active| active.run_ids.iter().any(|id| id == run.id.as_str()))
+                .active_for_run(client_session_id, run.id.as_str())
+                .is_some()
             {
                 ControllerDisposition::Live
             } else {

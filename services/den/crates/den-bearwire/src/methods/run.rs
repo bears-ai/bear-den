@@ -1180,6 +1180,18 @@ pub(crate) async fn persist_runtime_event_as_bearwire(
         .await
         {
             Ok(()) => return,
+            Err(den_core::DenError::RunStateConflict {
+                operation: "persist_client_wait",
+                ..
+            }) => {
+                tracing::debug!(
+                    session_id = %session_id,
+                    run_id = %run_id,
+                    tool_call_id = %tool_call_id,
+                    "ignored late tool wait for terminal or missing run"
+                );
+                return;
+            }
             Err(err) if den_runtime::turn_waits::descriptor_resolution_failed(&err) => {
                 tracing::warn!(
                     error = %err,
@@ -1355,8 +1367,13 @@ pub(crate) async fn fail_run_lifecycle(
     {
         tracing::warn!(session_id, run_id, error = %error, "failed to persist runtime exception event");
     }
-    let mut event = BearWireEvent::ephemeral(
-        "run.failed",
+    let finished = turn_runs::fail_run(
+        pool,
+        session_id,
+        run_id,
+        bear_id,
+        user_id,
+        reason.as_str(),
         json!({
             "run_id": run_id,
             "message": message,
@@ -1364,20 +1381,6 @@ pub(crate) async fn fail_run_lifecycle(
             "reason": reason.as_str(),
             "context": context,
         }),
-    );
-    event.bear_id = Some(bear_id.to_string());
-    event.human_id = Some(user_id.to_string());
-    event.session_id = Some(session_id.to_string());
-    event.run_id = Some(run_id.to_string());
-    let finished = turn_runs::finish_run_with_bearwire_event(
-        pool,
-        session_id,
-        run_id,
-        bear_id,
-        user_id,
-        turn_runs::TurnRunState::Failed,
-        Some(reason.as_str()),
-        event,
     )
     .await
     .unwrap_or_else(|err| {
@@ -1387,6 +1390,7 @@ pub(crate) async fn fail_run_lifecycle(
     let Some(finished) = finished else {
         return;
     };
+    den_runtime::native_runtime::remove_native_client_run(session_id, run_id);
     tracing::info!(
         session_id,
         run_id,
@@ -1460,101 +1464,6 @@ pub(crate) async fn fail_run_lifecycle(
     }
 }
 
-pub(crate) async fn persist_run_blocked(
-    pool: &sqlx::PgPool,
-    session_id: &str,
-    run_id: &str,
-    bear_id: uuid::Uuid,
-    user_id: i32,
-    reason: RunFailureReason,
-    message: String,
-    context: Option<serde_json::Value>,
-) {
-    let bear_name = bear_display_name(pool, bear_id).await;
-    let projection = run_failure_projection(reason.as_str(), &message, run_id, &bear_name, context);
-    let user_message = projection.user_message.as_deref();
-    let context = projection.diagnostic_context.clone();
-    tracing::info!(session_id, run_id, reason = %reason, "BearWire run blocked");
-    let mut event = BearWireEvent::ephemeral(
-        "run.blocked",
-        json!({
-            "run_id": run_id,
-            "message": message,
-            "user_message": user_message,
-            "reason": reason.as_str(),
-            "context": context,
-        }),
-    );
-    event.bear_id = Some(bear_id.to_string());
-    event.human_id = Some(user_id.to_string());
-    event.session_id = Some(session_id.to_string());
-    event.run_id = Some(run_id.to_string());
-    let finished = turn_runs::finish_run_with_bearwire_event(
-        pool, session_id, run_id, bear_id, user_id, turn_runs::TurnRunState::Blocked,
-        Some(reason.as_str()), event,
-    ).await.unwrap_or_else(|err| {
-        tracing::error!(session_id, run_id, reason = %reason, error = %err, "failed to atomically persist BearWire run block");
-        None
-    });
-    let Some(finished) = finished else {
-        return;
-    };
-    tracing::warn!(
-        session_id,
-        run_id,
-        reason = %reason,
-        outstanding_client_tools_settled = finished.settled_obligations,
-        settled_steps = finished.settled_steps,
-        event_sequence = finished.event_sequence,
-        restart_interrupted = matches!(reason, RunFailureReason::ServerRestartInterrupted),
-        "BearWire run reached blocked terminal state"
-    );
-    record_work_run_outcome_if_bound(
-        pool,
-        session_id,
-        run_id,
-        "blocked",
-        Some(json!({
-            "category": reason.as_str(), "message": message, "forensics": context,
-        })),
-    )
-    .await;
-    if let Ok(Some(session)) =
-        client_sessions::find_for_user_bear_session_id(pool, user_id, bear_id, session_id).await
-    {
-        let conversation_id = session
-            .resolved_conversation_id
-            .clone()
-            .unwrap_or(session.conversation_id);
-        let provenance = ConversationEventProvenance::client_session(session_id.to_string());
-        let content_json = projection.content.clone();
-        let _ = persist_canonical_conversation_record(
-            &canonical_persistence_context(
-                pool.clone(),
-                bear_id,
-                Some(user_id),
-                conversation_id,
-                Some(session_id.to_string()),
-                Some(run_id.to_string()),
-                provenance.scope_id,
-                false,
-            ),
-            &CanonicalConversationRecord::model_visible_hidden_assistant_message(
-                projection.model_summary,
-                content_json.clone(),
-                None,
-            ),
-        )
-        .await;
-        if let Some(marker) = projection.history_marker {
-            persist_visible_runtime_marker(pool, session_id, run_id, bear_id, user_id,
-                "operational_outcome", marker,
-                json!({"reason": reason.as_str(), "kind": content_json["kind"], "retryable": content_json["retryable"], "status": "blocked"}),
-            ).await;
-        }
-    }
-}
-
 pub(crate) async fn persist_run_failed(
     pool: &sqlx::PgPool,
     session_id: &str,
@@ -1574,7 +1483,7 @@ pub(crate) async fn persist_run_failed(
 #[derive(Debug, Clone)]
 pub(crate) struct SettledRunLifecycle {
     run: Option<turn_runs::TurnRunRow>,
-    stream_run_ids: Vec<String>,
+
     cancelled_stream: bool,
     cancelled_tool_turn: bool,
     settled_obligations: u64,
@@ -1582,6 +1491,17 @@ pub(crate) struct SettledRunLifecycle {
 }
 
 impl SettledRunLifecycle {
+    fn empty() -> Self {
+        Self {
+            run: None,
+
+            cancelled_stream: false,
+            cancelled_tool_turn: false,
+            settled_obligations: 0,
+            event_sequence: None,
+        }
+    }
+
     fn settled(&self) -> bool {
         self.run.is_some() || self.cancelled_stream || self.cancelled_tool_turn
     }
@@ -1593,10 +1513,16 @@ pub(crate) async fn settle_active_run_for_session(
     bear_id: uuid::Uuid,
     user_id: i32,
     reason: &str,
+    expected_run_id: Option<&str>,
     superseded_by_run_id: Option<&str>,
     preserve_run_id: Option<&str>,
 ) -> Result<SettledRunLifecycle, CustomError> {
     let active_run = turn_runs::active_run_for_session(&state.sqlx_pool, session_id).await?;
+    if expected_run_id.is_some()
+        && active_run.as_ref().map(|run| run.run_id.as_str()) != expected_run_id
+    {
+        return Ok(SettledRunLifecycle::empty());
+    }
     // Recovery starts a successor while its source stays `continuing` until the
     // successor is accepted. Do not let ordinary start supersession cancel that
     // leased source before the recovery lease can be consumed.
@@ -1604,14 +1530,7 @@ pub(crate) async fn settle_active_run_for_session(
         .as_ref()
         .is_some_and(|run| Some(run.run_id.as_str()) == preserve_run_id)
     {
-        return Ok(SettledRunLifecycle {
-            run: None,
-            stream_run_ids: Vec::new(),
-            cancelled_stream: false,
-            cancelled_tool_turn: false,
-            settled_obligations: 0,
-            event_sequence: None,
-        });
+        return Ok(SettledRunLifecycle::empty());
     }
     // The attached BearWire delivery must observe a terminal event before its
     // cancellation handle closes the stream. Without this projection, a successor
@@ -1629,46 +1548,36 @@ pub(crate) async fn settle_active_run_for_session(
             }),
         );
     }
-    let stream_cancel = state.turn_cancellations.cancel_session(session_id);
-    let active_turn = state.tool_turns.cancel_active_turn(session_id);
-    let stream_run_ids = stream_cancel
+    let stream_cancel = active_run
         .as_ref()
-        .map(|turn| turn.run_ids.clone())
-        .unwrap_or_default();
+        .and_then(|run| state.turn_cancellations.cancel_run(session_id, &run.run_id));
+    let active_turn = state.tool_turns.cancel_active_turn(session_id);
+
     let cancelled_stream = stream_cancel.is_some();
     let cancelled_tool_turn = active_turn.is_some();
     let mut settled_obligations = 0;
     let mut event_sequence = None;
     if let Some(run) = &active_run {
-        let mut event = BearWireEvent::ephemeral(
-            "run.cancelled",
+        if let Some(finished) = turn_runs::cancel_run(
+            &state.sqlx_pool,
+            session_id,
+            &run.run_id,
+            bear_id,
+            user_id,
+            reason,
             json!({
                 "session_id": session_id,
                 "cancelled": true,
-                "run_ids": stream_run_ids.clone(),
                 "run_id": run.run_id,
                 "reason": reason,
                 "superseded_by_run_id": superseded_by_run_id,
                 "cancelled_stream": cancelled_stream,
                 "cancelled_tool_turn": cancelled_tool_turn,
             }),
-        );
-        event.bear_id = Some(bear_id.to_string());
-        event.human_id = Some(user_id.to_string());
-        event.session_id = Some(session_id.to_string());
-        event.run_id = Some(run.run_id.clone());
-        if let Some(finished) = turn_runs::finish_run_with_bearwire_event(
-            &state.sqlx_pool,
-            session_id,
-            &run.run_id,
-            bear_id,
-            user_id,
-            turn_runs::TurnRunState::Cancelled,
-            Some(reason),
-            event,
         )
         .await?
         {
+            den_runtime::native_runtime::remove_native_client_run(session_id, &run.run_id);
             settled_obligations = finished.settled_obligations;
             event_sequence = Some(finished.event_sequence);
             record_work_run_outcome_if_bound(
@@ -1680,33 +1589,6 @@ pub(crate) async fn settle_active_run_for_session(
             )
             .await;
         }
-    } else if cancelled_stream || cancelled_tool_turn {
-        let mut event = BearWireEvent::ephemeral(
-            "run.cancelled",
-            json!({
-                "session_id": session_id,
-                "cancelled": true,
-                "run_ids": stream_run_ids.clone(),
-                "reason": reason,
-                "superseded_by_run_id": superseded_by_run_id,
-                "cancelled_stream": cancelled_stream,
-                "cancelled_tool_turn": cancelled_tool_turn,
-            }),
-        );
-        event.bear_id = Some(bear_id.to_string());
-        event.human_id = Some(user_id.to_string());
-        event.session_id = Some(session_id.to_string());
-        event_sequence = Some(
-            bearwire_events::append_bearwire_event(
-                &state.sqlx_pool,
-                session_id,
-                Some(bear_id),
-                Some(user_id),
-                event,
-            )
-            .await?
-            .sequence_no,
-        );
     }
     // The Docket attempt is the execution authority; the host run above is only
     // terminal evidence. Release the stable session binding even when its host
@@ -1769,7 +1651,6 @@ pub(crate) async fn settle_active_run_for_session(
     }
     Ok(SettledRunLifecycle {
         run: active_run,
-        stream_run_ids,
         cancelled_stream,
         cancelled_tool_turn,
         settled_obligations,
@@ -1923,7 +1804,7 @@ pub(crate) async fn finish_runtime_terminal_event(
         ),
         _ => return,
     };
-    let Some(mut terminal_event) = runtime_stream_event_to_bearwire_events(event.clone())
+    let Some(terminal_event) = runtime_stream_event_to_bearwire_events(event.clone())
         .into_iter()
         .find(|event| {
             matches!(
@@ -1939,10 +1820,7 @@ pub(crate) async fn finish_runtime_terminal_event(
         );
         return;
     };
-    terminal_event.bear_id = Some(bear_id.to_string());
-    terminal_event.human_id = Some(user_id.to_string());
-    terminal_event.session_id = Some(session_id.to_string());
-    terminal_event.run_id = Some(run_id.to_string());
+
     if report_pair_bounded_outcome(
         state,
         user_id,
@@ -1960,19 +1838,53 @@ pub(crate) async fn finish_runtime_terminal_event(
             "unexpected Docket decision for terminal Pair outcome"
         );
     }
-    match turn_runs::finish_run_with_bearwire_event(
-        &state.sqlx_pool,
-        session_id,
-        run_id,
-        bear_id,
-        user_id,
-        terminal_state,
-        Some(&reason),
-        terminal_event,
-    )
-    .await
-    {
+    let finish = match terminal_state {
+        turn_runs::TurnRunState::Completed => {
+            turn_runs::complete_run(
+                &state.sqlx_pool,
+                session_id,
+                run_id,
+                bear_id,
+                user_id,
+                Some(&reason),
+                terminal_event.data,
+            )
+            .await
+        }
+        turn_runs::TurnRunState::Failed => {
+            turn_runs::fail_run(
+                &state.sqlx_pool,
+                session_id,
+                run_id,
+                bear_id,
+                user_id,
+                &reason,
+                terminal_event.data,
+            )
+            .await
+        }
+        turn_runs::TurnRunState::Cancelled => {
+            turn_runs::cancel_run(
+                &state.sqlx_pool,
+                session_id,
+                run_id,
+                bear_id,
+                user_id,
+                &reason,
+                terminal_event.data,
+            )
+            .await
+        }
+        turn_runs::TurnRunState::Accepted
+        | turn_runs::TurnRunState::Running
+        | turn_runs::TurnRunState::WaitingForClient
+        | turn_runs::TurnRunState::Continuing => {
+            unreachable!("runtime terminal event mapped to nonterminal state")
+        }
+    };
+    match finish {
         Ok(Some(_)) => {
+            den_runtime::native_runtime::remove_native_client_run(session_id, run_id);
             record_work_run_outcome_if_bound(&state.sqlx_pool, session_id, run_id, outcome, detail)
                 .await;
         }
@@ -2442,19 +2354,13 @@ async fn run_start_with_recovery_source(
             bear.id,
             user_id,
             "superseded_by_new_run",
+            None,
             Some(run_id.as_str()),
             recovery_source_run_id,
         )
         .await?
     } else {
-        SettledRunLifecycle {
-            run: None,
-            stream_run_ids: Vec::new(),
-            cancelled_stream: false,
-            cancelled_tool_turn: false,
-            settled_obligations: 0,
-            event_sequence: None,
-        }
+        SettledRunLifecycle::empty()
     };
     if superseded.settled() {
         tracing::info!(
@@ -2611,10 +2517,10 @@ async fn run_start_with_recovery_source(
     let request_id = Uuid::new_v4();
     let (cancel_handle, mut cancel_rx) = state.turn_cancellations.register(
         session_id_string.clone(),
+        run_id.to_string(),
         request_id,
         Some(upstream_target.clone()),
     );
-    let _ = cancel_handle.record_run_id(run_id.as_str());
 
     let pool = state.sqlx_pool.clone();
     let livestream_state = state.clone();
@@ -3385,6 +3291,7 @@ pub(crate) async fn run_cancel_result(
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
     let request: RunCancelRequest = parse_params(params)?;
     let session_id = request.session_id;
+    let requested_run_id = request.run_id;
     let Some(session) = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
         user_id,
@@ -3407,6 +3314,7 @@ pub(crate) async fn run_cancel_result(
         bear.id,
         user_id,
         "client_requested",
+        Some(&requested_run_id),
         None,
         None,
     )
@@ -3417,7 +3325,7 @@ pub(crate) async fn run_cancel_result(
         "ok": true,
         "cancelled": cancelled,
         "session_id": session_id,
-        "run_ids": settled.stream_run_ids,
+        "requested_run_id": requested_run_id,
         "run_id": settled.run.as_ref().map(|run| run.run_id.clone()),
         "cancelled_stream": settled.cancelled_stream,
         "cancelled_tool_turn": settled.cancelled_tool_turn,

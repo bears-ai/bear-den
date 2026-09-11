@@ -592,7 +592,6 @@ fn terminal_event_tool_card_reason(current_run_id: &str, event: &Value) -> Optio
     }
     match event.get("type").and_then(Value::as_str) {
         Some("run.completed") => Some("Run completed; result unavailable."),
-        Some("run.blocked") => Some("Run blocked; result unavailable."),
         Some("run.failed") => Some("Run failed; result unavailable."),
         Some("run.cancelled") => Some("Run cancelled; result unavailable."),
         Some("run.interrupted") => Some("Run interrupted; result unavailable."),
@@ -883,6 +882,11 @@ pub(crate) async fn follow_run(
         .and_then(Value::as_str)
         .unwrap_or("<unknown>")
         .to_string();
+    if run_id != "<unknown>"
+        && !crate::bind_prompt_turn_run(shared_state, session_id, turn_token, &run_id).await
+    {
+        return Ok(());
+    }
     let delivery = tokio::time::timeout(
         BEARWIRE_PROMPT_TIMEOUT,
         follow_run_inner(
@@ -1313,7 +1317,11 @@ pub(crate) async fn post_session_compact(config: &Config, session_id: &str) -> R
     .await
 }
 
-pub(crate) async fn post_run_cancel(config: &Config, session_id: &str) -> Result<Value> {
+pub(crate) async fn post_run_cancel(
+    config: &Config,
+    session_id: &str,
+    run_id: &str,
+) -> Result<Value> {
     rpc_call(
         &reqwest::Client::new(),
         config,
@@ -1321,6 +1329,7 @@ pub(crate) async fn post_run_cancel(config: &Config, session_id: &str) -> Result
         json!({
             "bear_slug": config.bear,
             "session_id": session_id,
+            "run_id": run_id,
             "adapter_contract": adapter_contract_context(),
         }),
     )
@@ -1479,7 +1488,6 @@ enum RunTerminalOutcome {
     Completed,
     Failed,
     Cancelled,
-    Blocked,
 }
 
 impl RunTerminalOutcome {
@@ -1488,7 +1496,6 @@ impl RunTerminalOutcome {
             "completed" => Some(Self::Completed),
             "failed" => Some(Self::Failed),
             "cancelled" => Some(Self::Cancelled),
-            "blocked" => Some(Self::Blocked),
             _ => None,
         }
     }
@@ -1498,7 +1505,6 @@ impl RunTerminalOutcome {
             Self::Completed => "run.completed",
             Self::Failed => "run.failed",
             Self::Cancelled => "run.cancelled",
-            Self::Blocked => "run.blocked",
         }
     }
 
@@ -1507,7 +1513,6 @@ impl RunTerminalOutcome {
             Self::Completed => "completed",
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
-            Self::Blocked => "blocked",
         }
     }
 
@@ -1516,7 +1521,6 @@ impl RunTerminalOutcome {
             Self::Completed => "Run completed; result unavailable.",
             Self::Failed => "Run failed; result unavailable.",
             Self::Cancelled => "Run cancelled; result unavailable.",
-            Self::Blocked => "Run blocked; result unavailable.",
         }
     }
 
@@ -1552,13 +1556,7 @@ fn latest_terminal_event_from_run_state(state: &Value) -> Option<&Value> {
     recent_run_events(state).rev().find(|event| {
         matches!(
             event.get("type").and_then(Value::as_str),
-            Some(
-                "run.completed"
-                    | "run.failed"
-                    | "run.cancelled"
-                    | "run.blocked"
-                    | "run.interrupted"
-            )
+            Some("run.completed" | "run.failed" | "run.cancelled" | "run.interrupted")
         )
     })
 }
@@ -2650,41 +2648,7 @@ async fn handle_bearwire_event(
             );
             outcome.saw_done = true;
         }
-        "run.blocked" => {
-            let run_id = event
-                .get("run_id")
-                .and_then(Value::as_str)
-                .unwrap_or("<unknown>");
-            let reason = event
-                .pointer("/data/reason")
-                .and_then(Value::as_str)
-                .unwrap_or("<unknown>");
-            let message = bearwire_run_failed_user_message(event);
-            tracing::info!(
-                target: "bear_armature::lifecycle",
-                session_id,
-                run_id,
-                reason,
-                "BearWire run blocked"
-            );
-            eprintln!(
-                "bear-armature: BearWire run blocked session_id={} reason={} message={}",
-                session_id,
-                reason,
-                truncate_for_log(&message, 500)
-            );
-            if let Some(context) = bearwire_run_failed_stderr_context(event) {
-                eprintln!(
-                    "bear-armature: BearWire run blocked diagnostic session_id={} context={}",
-                    session_id, context
-                );
-            }
-            outcome.saw_done = true;
-            outcome.saw_visible_output = true;
-            diagnostics.saw_visible_output = true;
-            send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, &message)
-                .await?;
-        }
+
         "run.failed" => {
             let run_id = event
                 .get("run_id")
@@ -3174,8 +3138,8 @@ mod tests {
     }
 
     #[test]
-    fn missed_terminal_event_recovery_includes_blocked_and_interrupted() {
-        for event_type in ["run.failed", "run.blocked", "run.interrupted"] {
+    fn missed_terminal_event_recovery_includes_failed_and_interrupted() {
+        for event_type in ["run.failed", "run.interrupted"] {
             let state = json!({
                 "recent_events": [
                     { "event": { "type": "run.started" } },
@@ -3258,6 +3222,7 @@ mod tests {
             crate::ActivePromptTurn {
                 token: turn_token,
                 conversation_id: None,
+                run_id: Some("run-1".to_string()),
                 response: response.clone(),
             },
         );
@@ -3328,7 +3293,6 @@ mod tests {
             ("completed", "run.completed"),
             ("failed", "run.failed"),
             ("cancelled", "run.cancelled"),
-            ("blocked", "run.blocked"),
         ] {
             let event = json!({ "type": event_type, "run_id": "run-1" });
             let state = json!({

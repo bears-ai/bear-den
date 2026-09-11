@@ -147,6 +147,8 @@ pub struct RunStartRequest {
 pub struct RunCancelRequest {
     #[serde(deserialize_with = "deserialize_required_string")]
     pub session_id: String,
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub run_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -511,12 +513,17 @@ mod tests {
 
     #[test]
     fn required_strings_are_trimmed_and_empty_strings_rejected() {
-        let request: RunCancelRequest =
-            serde_json::from_value(serde_json::json!({ "session_id": " s-1 " })).unwrap();
+        let request: RunCancelRequest = serde_json::from_value(serde_json::json!({
+            "session_id": " s-1 ",
+            "run_id": " r-1 "
+        }))
+        .unwrap();
         assert_eq!(request.session_id, "s-1");
+        assert_eq!(request.run_id, "r-1");
 
         let error = serde_json::from_value::<RunCancelRequest>(serde_json::json!({
-            "session_id": "   "
+            "session_id": "s-1",
+            "run_id": "   "
         }))
         .unwrap_err()
         .to_string();

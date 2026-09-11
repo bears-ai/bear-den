@@ -179,6 +179,7 @@ pub struct ClientTurnLifecycleRuntime {
 pub struct ClientTurnLifecycleContext {
     pub bear_id: Uuid,
     pub client_session_id: String,
+    pub run_id: String,
     pub resolved_conversation_id: Option<String>,
 }
 
@@ -228,6 +229,7 @@ impl ClientTurnLifecycleRuntime {
             })?
             .register(
                 turn_scope.channel_id.clone(),
+                context.run_id,
                 request_id,
                 turn_scope.conversation_id.clone(),
             );
@@ -266,10 +268,11 @@ impl RoleRuntime {
     pub fn tool_turn_runtime_snapshot(
         &self,
         client_session_id: &str,
+        run_id: &str,
         tool_turns: &ToolTurnCoordinator,
     ) -> Value {
         if let Some(registry) = self.turn_cancellations.as_ref() {
-            registry.runtime_snapshot_for_session(client_session_id, tool_turns)
+            registry.runtime_snapshot_for_run(client_session_id, run_id, tool_turns)
         } else {
             json!({
                 "state": "idle",

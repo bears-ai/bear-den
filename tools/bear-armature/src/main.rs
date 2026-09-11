@@ -281,6 +281,7 @@ struct CancellationNotice {
 struct ActivePromptTurn {
     token: Uuid,
     conversation_id: Option<String>,
+    run_id: Option<String>,
     response: PromptResponseGuard,
 }
 
@@ -5243,13 +5244,14 @@ async fn terminalize_active_prompt_for_lifecycle(
     session_id: &str,
     origin: CancellationOrigin,
     tool_card_reason: &str,
-) -> Result<()> {
+) -> Result<Option<String>> {
     let active_turn = shared_state
         .active_prompts
         .lock()
         .await
         .get(session_id)
         .cloned();
+    let run_id = active_turn.as_ref().and_then(|turn| turn.run_id.clone());
     let terminalization_result = if let Some(turn) = active_turn.as_ref() {
         terminalize_tool_cards_for_turn(shared_state, session_id, turn.token, tool_card_reason)
             .await
@@ -5300,7 +5302,8 @@ async fn terminalize_active_prompt_for_lifecycle(
     clear_surface_tool_statuses_for_session(shared_state, session_id).await;
 
     terminalization_result?;
-    prompt_response_result
+    prompt_response_result?;
+    Ok(run_id)
 }
 
 async fn handle_session_close(
@@ -5337,7 +5340,7 @@ async fn handle_session_close(
 }
 
 async fn handle_session_cancel(
-    http: &reqwest::Client,
+    _http: &reqwest::Client,
     config: &Config,
     shared_state: &AdapterSharedState,
     params: Value,
@@ -5353,16 +5356,18 @@ async fn handle_session_cancel(
         .await
         .remove(session_id);
 
-    let prompt_result = terminalize_active_prompt_for_lifecycle(
+    let run_id = terminalize_active_prompt_for_lifecycle(
         shared_state,
         session_id,
         CancellationOrigin::SessionCancel,
         "Cancelled by user; result unavailable.",
     )
-    .await;
-    let den_cancel_result = post_session_lifecycle_action(http, config, session_id, "cancel").await;
-    prompt_result?;
-    den_cancel_result
+    .await?;
+    let Some(run_id) = run_id else {
+        return Ok(());
+    };
+    bearwire::post_run_cancel(config, session_id, &run_id).await?;
+    Ok(())
 }
 
 async fn post_session_lifecycle_action(
@@ -5395,7 +5400,6 @@ async fn post_session_lifecycle_action_with_payload(
     }
     let result = match action {
         "close" => bearwire::post_session_close(config, session_id).await,
-        "cancel" => bearwire::post_run_cancel(config, session_id).await,
         other => {
             return Err(anyhow!(
                 "unsupported BearWire session lifecycle action: {other}"
@@ -7598,6 +7602,7 @@ async fn register_prompt_turn_for_session(
             ActivePromptTurn {
                 token: turn_token,
                 conversation_id: conversation_id_for_turn.clone(),
+                run_id: None,
                 response,
             },
         )
@@ -7617,6 +7622,23 @@ async fn register_prompt_turn_for_session(
         }
     }
     previous
+}
+
+pub(crate) async fn bind_prompt_turn_run(
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    turn_token: Uuid,
+    run_id: &str,
+) -> bool {
+    let mut active = shared_state.active_prompts.lock().await;
+    let Some(turn) = active.get_mut(session_id) else {
+        return false;
+    };
+    if turn.token != turn_token {
+        return false;
+    }
+    turn.run_id = Some(run_id.to_string());
+    true
 }
 
 fn normalize_client_capabilities(mut capabilities: Value) -> Value {
@@ -13176,6 +13198,7 @@ mod tests {
                 token: turn_token,
                 response: PromptResponseGuard::new(json!("cancel-prompt-exactly-once")),
                 conversation_id: Some("conv-1".to_string()),
+                run_id: Some("run-cancel".to_string()),
             },
         );
         assert!(
@@ -13343,6 +13366,7 @@ mod tests {
                 token: turn_token,
                 response: PromptResponseGuard::new(json!("close-prompt-exactly-once")),
                 conversation_id: Some("conv-1".to_string()),
+                run_id: Some("run-close".to_string()),
             },
         );
         assert!(
@@ -13461,6 +13485,7 @@ mod tests {
                 token: turn_token,
                 response: PromptResponseGuard::new(json!("test")),
                 conversation_id: Some("conv-1".to_string()),
+                run_id: Some("run-test".to_string()),
             },
         );
         assert!(
@@ -18558,6 +18583,7 @@ mod tests {
                 token: turn_token,
                 response: PromptResponseGuard::new(json!("test")),
                 conversation_id: None,
+                run_id: Some("run-test".to_string()),
             },
         );
         let completed_event = json!({
@@ -18641,6 +18667,7 @@ mod tests {
             ActivePromptTurn {
                 token: current_turn,
                 conversation_id: Some("conv-current".to_string()),
+                run_id: Some("run-current".to_string()),
                 response: PromptResponseGuard::new(json!("test")),
             },
         );

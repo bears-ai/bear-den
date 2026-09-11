@@ -1,141 +1,67 @@
 use super::*;
 
 #[test]
-fn active_turn_cancel_registry_signals_and_unregisters_session_turn() {
+fn active_turn_cancel_registry_isolates_successor_runs_and_stale_handles() {
     let registry = ActiveTurnCancelRegistry::new();
-    let request_id = Uuid::new_v4();
-    let (handle, cancel_rx) =
-        registry.register("client-session-1", request_id, Some("conv-1".to_string()));
-
-    let active = registry
-        .active_for_session("client-session-1")
-        .expect("active registration");
-    assert_eq!(active.request_id, request_id);
-    assert_eq!(active.conversation_id.as_deref(), Some("conv-1"));
-    assert!(active.run_ids.is_empty());
-    assert!(!*cancel_rx.borrow());
-
-    let cancelled = registry
-        .cancel_session("client-session-1")
-        .expect("cancelled registration");
-    assert_eq!(cancelled.request_id, request_id);
-    assert!(cancelled.run_ids.is_empty());
-    assert!(*cancel_rx.borrow());
-
-    drop(handle);
-    assert!(registry.active_for_session("client-session-1").is_none());
-}
-
-#[test]
-fn active_turn_cancel_registry_records_run_ids_for_matching_turn() {
-    let registry = ActiveTurnCancelRegistry::new();
-    let request_id = Uuid::new_v4();
-    let wrong_request_id = Uuid::new_v4();
-    let (_handle, _rx) = registry.register("client-session-1", request_id, None);
-
-    assert!(!registry.record_run_id("client-session-1", request_id, "   "));
-    assert!(!registry.record_run_id("client-session-1", wrong_request_id, "run-wrong"));
-    assert!(!registry.record_run_id("missing-session", request_id, "run-missing"));
-    assert!(registry.record_run_id("client-session-1", request_id, " run-1 "));
-    assert!(!registry.record_run_id("client-session-1", request_id, "run-1"));
-    assert!(registry.record_run_id("client-session-1", request_id, "run-2"));
-
-    let active = registry
-        .active_for_session("client-session-1")
-        .expect("active registration");
-    assert_eq!(
-        active.run_ids,
-        vec!["run-1".to_string(), "run-2".to_string()]
+    let first_request_id = Uuid::new_v4();
+    let second_request_id = Uuid::new_v4();
+    let (first_handle, first_rx) = registry.register(
+        "client-session-1",
+        "run-1",
+        first_request_id,
+        Some("conv-1".to_string()),
+    );
+    let (_second_handle, second_rx) = registry.register(
+        "client-session-1",
+        "run-2",
+        second_request_id,
+        Some("conv-1".to_string()),
     );
 
     let cancelled = registry
-        .cancel_session("client-session-1")
-        .expect("cancelled registration");
-    assert_eq!(
-        cancelled.run_ids,
-        vec!["run-1".to_string(), "run-2".to_string()]
+        .cancel_run("client-session-1", "run-1")
+        .expect("first run registration");
+    assert_eq!(cancelled.run_id, "run-1");
+    assert!(*first_rx.borrow());
+    assert!(
+        !*second_rx.borrow(),
+        "cancelling a predecessor must not cancel its successor"
     );
-}
 
-#[test]
-fn active_turn_cancel_registry_does_not_unregister_newer_turn_from_old_handle() {
-    let registry = ActiveTurnCancelRegistry::new();
-    let old_request_id = Uuid::new_v4();
-    let new_request_id = Uuid::new_v4();
-    let (old_handle, _old_rx) = registry.register("client-session-1", old_request_id, None);
-    let (_new_handle, _new_rx) = registry.register("client-session-1", new_request_id, None);
-
-    drop(old_handle);
+    drop(first_handle);
+    assert!(registry
+        .active_for_run("client-session-1", "run-1")
+        .is_none());
     assert_eq!(
         registry
-            .active_for_session("client-session-1")
-            .expect("newer turn survives")
+            .active_for_run("client-session-1", "run-2")
+            .expect("successor survives predecessor cleanup")
             .request_id,
-        new_request_id
+        second_request_id
     );
 }
 
 #[test]
-fn active_turn_runtime_snapshot_reports_idle_without_active_turn() {
-    let registry = ActiveTurnCancelRegistry::new();
-    let tool_turns = ToolTurnCoordinator::new();
-    let snapshot = registry.runtime_snapshot_for_session("client-session", &tool_turns);
-
-    assert_eq!(snapshot["state"], "idle");
-    assert_eq!(snapshot["active_turn"]["present"], false);
-    assert_eq!(snapshot["active_turn"]["pending_obligations"], 0);
-    assert_eq!(snapshot["active_turn"]["run_ids"], json!([]));
-    assert_eq!(snapshot["source"], "client_active_turn_registry");
-}
-
-#[test]
-fn active_turn_runtime_snapshot_reports_running_without_pending_tools() {
+fn active_turn_runtime_snapshot_is_scoped_to_one_run() {
     let registry = ActiveTurnCancelRegistry::new();
     let tool_turns = ToolTurnCoordinator::new();
     let request_id = Uuid::new_v4();
-    let (_handle, _rx) =
-        registry.register("client-session", request_id, Some("conv-test".to_string()));
-    assert!(registry.record_run_id("client-session", request_id, "run-snapshot"));
-    let snapshot = registry.runtime_snapshot_for_session("client-session", &tool_turns);
+    let (_handle, _rx) = registry.register(
+        "client-session",
+        "run-snapshot",
+        request_id,
+        Some("conv-test".to_string()),
+    );
 
+    let snapshot = registry.runtime_snapshot_for_run("client-session", "run-snapshot", &tool_turns);
     assert_eq!(snapshot["state"], "running");
     assert_eq!(snapshot["active_turn"]["present"], true);
-    assert_eq!(snapshot["active_turn"]["phase"], "Streaming");
+    assert_eq!(snapshot["active_turn"]["run_id"], "run-snapshot");
     assert_eq!(snapshot["active_turn"]["request_id"], json!(request_id));
-    assert_eq!(snapshot["active_turn"]["conversation_id"], "conv-test");
-    assert_eq!(snapshot["active_turn"]["run_ids"], json!(["run-snapshot"]));
-    assert_eq!(snapshot["active_turn"]["pending_obligations"], 0);
-}
 
-#[test]
-fn active_turn_runtime_snapshot_reports_requires_action_with_pending_tool() {
-    let registry = ActiveTurnCancelRegistry::new();
-    let tool_turns = ToolTurnCoordinator::new();
-    let request_id = Uuid::new_v4();
-    let (_handle, _rx) = registry.register("client-session", request_id, None);
-    let (tx, _rx) = tokio::sync::oneshot::channel();
-    tool_turns
-        .register(crate::tool_turns::ToolTurnRegistration {
-            user_id: 1,
-            bear_id: Uuid::new_v4(),
-            bear_slug: "test-bear".to_string(),
-            client_session_id: "client-session".to_string(),
-            request_id,
-            tool_call_id: "call-1".to_string(),
-            tool_name: "fs_read_text_file".to_string(),
-            approval_request_id: Some("approval-1".to_string()),
-            timeout_ms: 30_000,
-            result_tx: tx,
-        })
-        .unwrap();
-    let snapshot = registry.runtime_snapshot_for_session("client-session", &tool_turns);
-
-    assert_eq!(snapshot["state"], "requires_action");
-    assert_eq!(snapshot["active_turn"]["present"], true);
-    assert_eq!(snapshot["active_turn"]["phase"], "WaitingForObligations");
-    assert_eq!(snapshot["active_turn"]["pending_obligations"], 1);
-    assert_eq!(snapshot["active_turn"]["pending_adapter_tools"], 1);
-    assert_eq!(snapshot["active_turn"]["pending_den_tools"], 0);
+    let unrelated = registry.runtime_snapshot_for_run("client-session", "run-other", &tool_turns);
+    assert_eq!(unrelated["state"], "idle");
+    assert_eq!(unrelated["active_turn"]["present"], false);
 }
 
 #[test]

@@ -242,10 +242,9 @@ fn reduce_state(facts: &FocusedExecutionFacts) -> FocusedExecutionState {
         TurnRunState::Running => FocusedExecutionState::Running,
         TurnRunState::WaitingForClient => FocusedExecutionState::WaitingForClient,
         TurnRunState::Continuing => FocusedExecutionState::Continuing,
-        TurnRunState::Blocked
-        | TurnRunState::Completed
-        | TurnRunState::Failed
-        | TurnRunState::Cancelled => unreachable!("terminal run handled above"),
+        TurnRunState::Completed | TurnRunState::Failed | TurnRunState::Cancelled => {
+            unreachable!("terminal run handled above")
+        }
     }
 }
 

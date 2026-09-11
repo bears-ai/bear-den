@@ -629,10 +629,10 @@ pub(crate) fn spawn_continuation_task(
     let request_id = Uuid::new_v4();
     let (cancel_handle, mut cancel_rx) = state.turn_cancellations.register(
         run.session_id.clone(),
+        run.run_id.clone(),
         request_id,
         Some(conversation_id.clone()),
     );
-    let _ = cancel_handle.record_run_id(&run.run_id);
     tokio::spawn(async move {
         let _cancel_handle = cancel_handle;
         let Some(run) = turn_runs::begin_claimed_run_continuation(&pool, &run.run_id)
@@ -1389,9 +1389,10 @@ pub(crate) async fn client_tool_result_result(
     )
     .await;
 
-    if !den_runtime::native_runtime::native_client_session_exists(
+    if !den_runtime::native_runtime::native_client_run_exists(
         &continuation_conversation_id,
         &session_id,
+        &run.run_id,
     ) {
         return Ok(continuation_unavailable_response(
             &run,
@@ -1655,9 +1656,10 @@ pub(crate) async fn client_permission_result_result(
         CustomError::Session("BearWire session disappeared during run continuation".to_string())
     })?;
     let continuation_conversation_id = continuation_conversation_id(&session);
-    if !den_runtime::native_runtime::native_client_session_exists(
+    if !den_runtime::native_runtime::native_client_run_exists(
         &continuation_conversation_id,
         &session_id,
+        &run.run_id,
     ) {
         return Ok(continuation_unavailable_response(
             &run,

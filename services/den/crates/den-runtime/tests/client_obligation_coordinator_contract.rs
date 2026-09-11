@@ -1,4 +1,3 @@
-use bearwire_protocol::wire::BearWireEvent;
 use den_runtime::{
     client_obligation_coordinator::{
         self, PermissionResultCoordinatorOutcome, ToolResultCoordinatorOutcome,
@@ -13,25 +12,48 @@ async fn finish_test_run(
     run: &turn_runs::TurnRunRow,
     state: turn_runs::TurnRunState,
 ) {
-    let event_type = match state {
-        turn_runs::TurnRunState::Completed => "run.completed",
-        turn_runs::TurnRunState::Failed => "run.failed",
-        turn_runs::TurnRunState::Cancelled => "run.cancelled",
+    let result = match state {
+        turn_runs::TurnRunState::Completed => {
+            turn_runs::complete_run(
+                pool,
+                &run.session_id,
+                &run.run_id,
+                run.bear_id,
+                run.user_id,
+                Some("test terminal"),
+                json!({"run_id": run.run_id}),
+            )
+            .await
+        }
+        turn_runs::TurnRunState::Failed => {
+            turn_runs::fail_run(
+                pool,
+                &run.session_id,
+                &run.run_id,
+                run.bear_id,
+                run.user_id,
+                "test terminal",
+                json!({"run_id": run.run_id}),
+            )
+            .await
+        }
+        turn_runs::TurnRunState::Cancelled => {
+            turn_runs::cancel_run(
+                pool,
+                &run.session_id,
+                &run.run_id,
+                run.bear_id,
+                run.user_id,
+                "test terminal",
+                json!({"run_id": run.run_id}),
+            )
+            .await
+        }
         _ => panic!("test terminal helper requires terminal state"),
     };
-    turn_runs::finish_run_with_bearwire_event(
-        pool,
-        &run.session_id,
-        &run.run_id,
-        run.bear_id,
-        run.user_id,
-        state,
-        Some("test terminal"),
-        BearWireEvent::ephemeral(event_type, json!({"run_id": run.run_id})),
-    )
-    .await
-    .expect("finish test run")
-    .expect("test run was active");
+    result
+        .expect("finish test run")
+        .expect("test run was active");
 }
 
 async fn create_user_and_bear(pool: &sqlx::PgPool) -> (i32, Uuid) {

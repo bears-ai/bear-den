@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        UPDATE turn_runs\n        SET state = $2,\n            terminal_reason = $3,\n            updated_at = NOW(),\n            completed_at = completed_at\n        WHERE run_id = $1\n          AND state NOT IN ('blocked','completed','failed','cancelled')\n        RETURNING id, run_id, session_id, bear_id, user_id, state,\n                  terminal_reason AS \"terminal_reason?\", created_at, updated_at,\n                  completed_at AS \"completed_at?\"\n        ",
+  "query": "\n        UPDATE turn_runs\n        SET state = $2,\n            terminal_reason = $3,\n            updated_at = NOW(),\n            completed_at = completed_at\n        WHERE run_id = $1\n          AND state NOT IN ('completed','failed','cancelled')\n        RETURNING id, run_id, session_id, bear_id, user_id, state,\n                  terminal_reason AS \"terminal_reason?\", created_at, updated_at,\n                  completed_at AS \"completed_at?\"\n        ",
   "describe": {
     "columns": [
       {
@@ -74,5 +74,5 @@
       true
     ]
   },
-  "hash": "1565dbbaf2cc28c8b50d7414474fcc9d80bce3c9738d508707be6f65d09455cc"
+  "hash": "37b2966deab0dd19977ba8fbdc7bc4859d45ca2463adb2cde53da3ea44b77186"
 }

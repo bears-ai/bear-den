@@ -21,6 +21,7 @@ mod tests {
                 ClientTurnLifecycleContext {
                     bear_id,
                     client_session_id: "session-1".to_string(),
+                    run_id: "run-1".to_string(),
                     resolved_conversation_id: Some("conv-1".to_string()),
                 },
                 request_id,

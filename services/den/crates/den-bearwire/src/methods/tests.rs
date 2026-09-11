@@ -3857,7 +3857,7 @@ async fn cross_session_tool_call_id_collision_is_isolated_by_run_and_session(poo
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn permission_decision_expiry_blocks_run(pool: sqlx::PgPool) {
+async fn permission_decision_expiry_fails_run_with_retry_metadata(pool: sqlx::PgPool) {
     let state = test_state(pool.clone());
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;
@@ -3910,7 +3910,7 @@ async fn permission_decision_expiry_blocks_run(pool: sqlx::PgPool) {
         .await
         .expect("load run")
         .expect("run exists");
-    assert_eq!(run.state, "blocked");
+    assert_eq!(run.state, "failed");
     assert_eq!(
         run.terminal_reason.as_deref(),
         Some("permission_decision_expired")
@@ -3919,7 +3919,7 @@ async fn permission_decision_expiry_blocks_run(pool: sqlx::PgPool) {
         .await
         .expect("list events");
     assert!(events.iter().any(|row| {
-        row.event_type == "run.blocked"
+        row.event_type == "run.failed"
             && row.event.data["reason"] == "permission_decision_expired"
             && row.event.data["context"]["source"] == "bearwire_client_obligation_expiry_loop"
     }));
@@ -3976,7 +3976,7 @@ async fn prior_process_obligation_is_reported_as_den_restart(pool: sqlx::PgPool)
         .await
         .expect("load run")
         .expect("run exists");
-    assert_eq!(run.state, "blocked");
+    assert_eq!(run.state, "failed");
     assert_eq!(
         run.terminal_reason.as_deref(),
         Some("server_restart_interrupted")
@@ -3986,8 +3986,8 @@ async fn prior_process_obligation_is_reported_as_den_restart(pool: sqlx::PgPool)
         .expect("list events");
     let failed = events
         .iter()
-        .find(|row| row.event_type == "run.blocked")
-        .expect("run.blocked event");
+        .find(|row| row.event_type == "run.failed")
+        .expect("run.failed event");
     assert_eq!(failed.event.data["reason"], "server_restart_interrupted");
     assert_eq!(
         failed.event.data["context"]["source"],
@@ -4212,6 +4212,7 @@ async fn run_cancel_settles_outstanding_obligations(pool: sqlx::PgPool) {
         json!({
             "bear_slug": bear_slug,
             "session_id": session_id,
+            "run_id": run_id,
         }),
     )
     .await;
@@ -4248,6 +4249,32 @@ async fn run_cancel_settles_outstanding_obligations(pool: sqlx::PgPool) {
             .await
             .expect("load focused execution attempt");
     assert_eq!(attempt_state, "released");
+
+    let successor_run_id = format!("run_{}", Uuid::new_v4().simple());
+    turn_runs::create_run(&pool, &successor_run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create successor run");
+    let stale_cancel = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "run.cancel",
+        json!({
+            "bear_slug": bear_slug,
+            "session_id": session_id,
+            "run_id": run_id,
+        }),
+    )
+    .await;
+    assert_eq!(stale_cancel["result"]["cancelled"], false, "{stale_cancel}");
+    assert_eq!(
+        turn_runs::get_run(&pool, &successor_run_id)
+            .await
+            .expect("load successor")
+            .expect("successor exists")
+            .state,
+        "accepted",
+        "stale cancellation must not terminalize the successor"
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -4404,10 +4431,10 @@ async fn model_focus_promotes_the_origin_run_idempotently(pool: sqlx::PgPool) {
     .expect("start interactive Pair run");
     let (controller, _cancel_rx) = state.turn_cancellations.register(
         session_id.clone(),
+        run_id.to_string(),
         Uuid::new_v4(),
         Some("conversation-model-focus".to_string()),
     );
-    assert!(controller.record_run_id(run_id.as_str()));
     let bear = bears_db::get_bear(&pool, bear_id)
         .await
         .expect("load Bear")
@@ -4610,16 +4637,16 @@ async fn current_task_start_recovers_orphaned_controller_without_execution_autho
     let events = bearwire_events::list_bearwire_events_after(&pool, &session_id, None, 50)
         .await
         .expect("list recovery events");
-    let recovering = events
+    let failed = events
         .iter()
         .find(|row| {
-            row.event_type == "run.recovering"
+            row.event_type == "run.failed"
                 && row.event.run_id.as_deref() == Some(first_run_id.as_str())
         })
-        .expect("old host run projects a non-terminal recovery handoff");
-    assert_eq!(recovering.event.data["replacement"], "pending");
-    assert_eq!(recovering.event.data["task_id"], task_id.to_string());
-    assert_eq!(recovering.event.data["task_selection_preserved"], true);
+        .expect("old host run reaches a typed failed terminal boundary");
+    assert_eq!(failed.event.data["recovery"], "replacement_pending");
+    assert_eq!(failed.event.data["task_id"], task_id.to_string());
+    assert_eq!(failed.event.data["task_selection_preserved"], true);
     let recovered_event = events
         .iter()
         .find(|row| {
@@ -4634,7 +4661,8 @@ async fn current_task_start_recovers_orphaned_controller_without_execution_autho
     );
     assert_eq!(recovered_event.event.data["task_selection_preserved"], true);
     assert!(events.iter().all(|row| {
-        row.event_type != "run.failed" || row.event.run_id.as_deref() != Some(first_run_id.as_str())
+        row.event_type != "run.recovering"
+            || row.event.run_id.as_deref() != Some(first_run_id.as_str())
     }));
 }
 
@@ -5930,7 +5958,11 @@ async fn bear_scoped_methods_require_bearer_token() {
     .await;
     assert_method_requires_bearer_token(
         "run.cancel",
-        json!({ "bear_slug": "meta", "session_id": "session-test" }),
+        json!({
+            "bear_slug": "meta",
+            "session_id": "session-test",
+            "run_id": "run-test"
+        }),
     )
     .await;
     assert_method_requires_bearer_token(
