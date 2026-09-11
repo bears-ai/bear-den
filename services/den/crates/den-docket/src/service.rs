@@ -17,10 +17,10 @@ use super::model::{
     DocketEntryCreate, DocketEntryListFilter, DocketEntryPromotion, DocketEntryRow,
     DocketExecutionAttemptAuthorize, DocketExecutionAttemptRelease, DocketExecutionAttemptRow,
     DocketExecutionAttemptStart, DocketExecutionGate, DocketExecutionTaskSettlement,
-    DocketFocusedExecutionAcquire, DocketFocusedExecutionBinding, DocketJobCreate,
+    DocketFocusedAwaitingUserResume, DocketFocusedExecutionAcquire, DocketFocusedExecutionBinding,
+    DocketFocusedSliceOutcomeDecision, DocketFocusedSliceOutcomeReport, DocketJobCreate,
     DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter, DocketJobProjection,
-    DocketJobRow, DocketJobUpdate, DocketPairAwaitingUserResume, DocketPairBoundedOutcomeDecision,
-    DocketPairBoundedOutcomeReport, DocketSessionTaskSettlement, DocketTaskCreate,
+    DocketJobRow, DocketJobUpdate, DocketSessionTaskSettlement, DocketTaskCreate,
     DocketTaskListFilter, DocketTaskProjection, DocketTaskRow, DocketTaskUpdate,
     DocketWorkBoundaryCheck, TaskListCheckoutRequest, TaskListCheckoutSource,
     TaskListHandoffOutcome, TaskListHandoffRequest, TaskListProjection, TaskListSyncOutcome,
@@ -146,18 +146,18 @@ pub trait DocketService: Send + Sync {
         release: DocketExecutionAttemptRelease,
     ) -> Result<DocketExecutionAttemptRow, DenError>;
 
-    /// Records a fenced Pair slice outcome and returns Docket's canonical next action.
-    async fn report_pair_bounded_outcome(
+    /// Records a fenced focused slice outcome and returns Docket's canonical next action.
+    async fn report_focused_slice_outcome(
         &self,
-        report: DocketPairBoundedOutcomeReport,
-    ) -> Result<DocketPairBoundedOutcomeDecision, DenError>;
+        report: DocketFocusedSliceOutcomeReport,
+    ) -> Result<DocketFocusedSliceOutcomeDecision, DenError>;
 
-    /// Records an authenticated response to the exact pending Pair question
-    /// and makes the attempt startable again. Callers must authenticate the
-    /// user/session before invoking this Docket transition.
-    async fn resume_pair_awaiting_user(
+    /// Records an authenticated response to the exact pending focused-session
+    /// question and makes the attempt startable again. Callers must authenticate
+    /// the user/session before invoking this Docket transition.
+    async fn resume_focused_awaiting_user(
         &self,
-        resume: DocketPairAwaitingUserResume,
+        resume: DocketFocusedAwaitingUserResume,
     ) -> Result<DocketExecutionAttemptRow, DenError>;
 
     async fn acknowledge_checkpoint_directive(
@@ -382,18 +382,18 @@ impl DocketService for PgDocketService {
         db::release_execution_attempt(&self.pool, release).await
     }
 
-    async fn report_pair_bounded_outcome(
+    async fn report_focused_slice_outcome(
         &self,
-        report: DocketPairBoundedOutcomeReport,
-    ) -> Result<DocketPairBoundedOutcomeDecision, DenError> {
-        db::report_pair_bounded_outcome(&self.pool, report).await
+        report: DocketFocusedSliceOutcomeReport,
+    ) -> Result<DocketFocusedSliceOutcomeDecision, DenError> {
+        db::report_focused_slice_outcome(&self.pool, report).await
     }
 
-    async fn resume_pair_awaiting_user(
+    async fn resume_focused_awaiting_user(
         &self,
-        resume: DocketPairAwaitingUserResume,
+        resume: DocketFocusedAwaitingUserResume,
     ) -> Result<DocketExecutionAttemptRow, DenError> {
-        db::resume_pair_awaiting_user(&self.pool, resume).await
+        db::resume_focused_awaiting_user(&self.pool, resume).await
     }
 
     async fn acknowledge_checkpoint_directive(

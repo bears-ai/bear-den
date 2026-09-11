@@ -25,7 +25,7 @@ use den_core::{
     },
     DenError,
 };
-use den_docket::{DocketPairBoundedOutcome, DocketService};
+use den_docket::{DocketFocusedSliceOutcome, DocketService};
 use den_http::{errors::CustomError, web_policy};
 use den_protocol::{
     RoleRuntimeBinding, RuntimeApprovalDecision, RuntimeContinuation, RuntimeConversationRef,
@@ -60,7 +60,7 @@ use crate::auth::authenticated_bear;
 use crate::methods::parse_params;
 use crate::methods::run::{
     docket_bounded_slice_continuation, fail_run_lifecycle, persist_run_progress,
-    persist_runtime_event_as_bearwire, report_pair_bounded_outcome, RunFailureReason,
+    persist_runtime_event_as_bearwire, report_focused_slice_outcome, RunFailureReason,
 };
 
 fn deserialize_tool_result_status<'de, D>(deserializer: D) -> Result<ToolResultStatus, D::Error>
@@ -898,13 +898,13 @@ pub(crate) fn spawn_continuation_task(
                                     ContinuationStreamBoundary::BoundedSlice => {
                                         if let Some(continuation) =
                                             docket_bounded_slice_continuation(
-                                                report_pair_bounded_outcome(
+                                                report_focused_slice_outcome(
                                                     &livestream_state,
                                                     run.user_id,
                                                     run.bear_id,
                                                     &run.session_id,
                                                     &run.run_id,
-                                                    DocketPairBoundedOutcome::Progress,
+                                                    DocketFocusedSliceOutcome::Progress,
                                                 )
                                                 .await,
                                             )

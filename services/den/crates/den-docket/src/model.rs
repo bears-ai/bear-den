@@ -493,7 +493,7 @@ pub enum TaskListCheckoutSource {
 #[derive(Debug, Clone)]
 pub struct TaskListCheckoutRequest {
     pub source: TaskListCheckoutSource,
-    /// Pair session that explicitly claims durable tasks from this checkout.
+    /// Client session that explicitly claims durable tasks from this checkout.
     /// None preserves read-only projection behavior for non-Pair callers.
     pub pair_session_id: Option<Uuid>,
 }
@@ -1378,35 +1378,35 @@ pub struct DocketExecutionAttemptRelease {
     pub recovery_reason: String,
 }
 
-/// A bounded outcome reported by the Pair-local loop. Docket owns the
+/// A bounded outcome reported by the focused session loop. Docket owns the
 /// resulting continuation decision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DocketPairBoundedOutcome {
+pub enum DocketFocusedSliceOutcome {
     Progress,
     AwaitingUser,
     Settled,
 }
 
 #[derive(Debug, Clone)]
-pub struct DocketPairBoundedOutcomeReport {
+pub struct DocketFocusedSliceOutcomeReport {
     pub attempt_id: Uuid,
     pub fence_epoch: i64,
-    pub outcome: DocketPairBoundedOutcome,
+    pub outcome: DocketFocusedSliceOutcome,
     /// Required when `outcome` is `AwaitingUser`; records the exact question
     /// that blocks continuation instead of treating reconnect as a resume.
-    pub awaiting_user_question: Option<DocketPairAwaitingUserQuestion>,
+    pub awaiting_user_question: Option<DocketFocusedAwaitingUserQuestion>,
 }
 
 #[derive(Debug, Clone)]
-pub struct DocketPairAwaitingUserQuestion {
+pub struct DocketFocusedAwaitingUserQuestion {
     pub question_key: Uuid,
     pub question_reference: String,
 }
 
-/// A trusted authenticated boundary records this explicit response before Pair
-/// may start the same paused attempt again.
+/// A trusted authenticated boundary records this explicit response before the
+/// focused session may start the same paused attempt again.
 #[derive(Debug, Clone)]
-pub struct DocketPairAwaitingUserResume {
+pub struct DocketFocusedAwaitingUserResume {
     pub attempt_id: Uuid,
     pub fence_epoch: i64,
     pub question_key: Uuid,
@@ -1415,16 +1415,16 @@ pub struct DocketPairAwaitingUserResume {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DocketPairContinuationDecision {
+pub enum DocketFocusedContinuationDecision {
     Continue,
     AwaitUser,
     Stop,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DocketPairBoundedOutcomeDecision {
+pub struct DocketFocusedSliceOutcomeDecision {
     pub attempt: DocketExecutionAttemptRow,
-    pub decision: DocketPairContinuationDecision,
+    pub decision: DocketFocusedContinuationDecision,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -1561,8 +1561,14 @@ impl DocketExecutionReason {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DocketExecutionBinding {
-    PairSession { job_run_id: Uuid },
-    WorkRun { work_run_id: Uuid, job_run_id: Uuid },
+    #[serde(rename = "pair_session")]
+    Session {
+        job_run_id: Uuid,
+    },
+    WorkRun {
+        work_run_id: Uuid,
+        job_run_id: Uuid,
+    },
 }
 
 /// Safe executor action after Docket declines authorization. This is never a
@@ -1861,7 +1867,7 @@ impl DocketExecutionControl {
                     .task
                     .claimed_task_id
                     .expect("working execution control always claims a task"),
-                binding: DocketExecutionBinding::PairSession {
+                binding: DocketExecutionBinding::Session {
                     job_run_id: self.run_id,
                 },
             },
@@ -1900,7 +1906,7 @@ pub enum DocketTaskPlacement {
 pub struct DocketTaskCreate {
     pub bear_id: Uuid,
     pub job_id: Option<Uuid>,
-    /// Required for standalone tasks; stored only in bear_pair_task_attachments.
+    /// Required for standalone tasks; stored in the legacy-named session attachment table.
     pub pair_session_id: Option<Uuid>,
     pub parent_task_id: Option<Uuid>,
     pub sibling_order: i32,
@@ -1924,7 +1930,7 @@ pub struct DocketTaskCreate {
 #[derive(Debug, Clone, Default)]
 pub struct DocketTaskListFilter {
     pub job_id: Option<Uuid>,
-    /// Filter standalone tasks by an active Pair attachment.
+    /// Filter standalone tasks by an active client-session attachment.
     pub pair_session_id: Option<Uuid>,
     pub parent_task_id: Option<Uuid>,
     pub include_descendants: bool,

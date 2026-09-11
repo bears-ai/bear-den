@@ -1260,7 +1260,7 @@ mod session_task_run_tests {
     }
 
     #[test]
-    fn pair_execution_run_requires_session_connected_current_item_in_active_list() {
+    fn focused_execution_run_requires_session_connected_current_item_in_active_list() {
         assert!(session_task_needs_run(
             &list("active", Some("s"), true),
             "s"

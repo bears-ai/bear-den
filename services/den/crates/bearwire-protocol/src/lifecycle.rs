@@ -223,6 +223,7 @@ impl RunLaunchProjection {
     pub fn decode(value: &Value) -> Result<Self, String> {
         let run_id = value
             .get("run_id")
+            .or_else(|| value.pointer("/session_execution/run/id"))
             .or_else(|| value.pointer("/pair_binding/run/id"))
             .and_then(Value::as_str)
             .map(str::trim)
@@ -230,6 +231,8 @@ impl RunLaunchProjection {
             .ok_or_else(|| "run launch projection omitted run_id".to_string())?;
         let state = value
             .get("state")
+            .or_else(|| value.pointer("/session_execution/run/state"))
+            .or_else(|| value.pointer("/session_execution/control/state"))
             .or_else(|| value.pointer("/pair_binding/run/state"))
             .or_else(|| value.pointer("/pair_binding/control/state"))
             .cloned()
@@ -238,6 +241,7 @@ impl RunLaunchProjection {
             .map_err(|error| format!("invalid run launch state: {error}"))?;
         let launch_state = value
             .get("launch_state")
+            .or_else(|| value.pointer("/session_execution/control/launch_state"))
             .or_else(|| value.pointer("/pair_binding/control/launch_state"))
             .cloned()
             .map(serde_json::from_value)
@@ -545,7 +549,7 @@ mod tests {
         assert_eq!(top_level.launch_state, Some(RunLaunchState::Claimed));
 
         let nested = RunLaunchProjection::decode(&serde_json::json!({
-            "pair_binding": {
+            "session_execution": {
                 "run": { "id": "run-nested", "state": "running" },
                 "control": { "launch_state": "started" }
             }

@@ -38,7 +38,7 @@ fn execution_control_gate_allows_the_persisted_task_claim() {
         control.gate(),
         DocketExecutionGate::Allowed {
             task_id,
-            binding: DocketExecutionBinding::PairSession {
+            binding: DocketExecutionBinding::Session {
                 job_run_id: control.run_id,
             },
         }
@@ -57,7 +57,7 @@ fn established_control_requires_persisted_boundary_continuation_and_authority() 
         Some(Uuid::new_v4()),
         Uuid::new_v4(),
         Uuid::new_v4(),
-        reference("pair_session"),
+        reference("client_session"),
         reference("tool_wait"),
         reference("waiting_for_tool"),
     );

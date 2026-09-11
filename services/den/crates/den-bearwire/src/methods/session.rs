@@ -1146,7 +1146,7 @@ mod tests {
     }
 
     #[test]
-    fn pair_current_task_projects_session_focus_only() {
+    fn current_task_projects_session_focus_only() {
         let task_id = Uuid::new_v4();
         let projected = session_current_task_projection(&session_current_task_context(task_id))
             .expect("session-selected task should project");

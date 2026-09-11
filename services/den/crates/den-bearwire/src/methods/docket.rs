@@ -242,7 +242,7 @@ pub async fn docket_jobs_execute_result(
         state,
         user_id,
         bear,
-        pair_binding_session_id(&request),
+        execution_session_id(&request),
         outcome,
     )
     .await
@@ -268,14 +268,14 @@ pub async fn docket_jobs_reconcile_result(
         state,
         user_id,
         bear,
-        pair_binding_session_id(&request),
+        execution_session_id(&request),
         outcome,
     )
     .await
 }
 
 /// Settles Docket-owned work and returns its successor control result. Generic
-/// Pair task settlement deliberately remains outside this job-scoped RPC.
+/// Session-task settlement deliberately remains outside this job-scoped RPC.
 pub async fn docket_jobs_settle_task_result(
     state: &DenState,
     headers: &HeaderMap,
@@ -292,7 +292,7 @@ pub async fn docket_jobs_settle_task_result(
         .transpose()?;
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
     let service = PgDocketService::from_pool(&state.sqlx_pool);
-    let attempt_session_id = pair_attempt_session_id(&request);
+    let attempt_session_id = attempt_session_id(&request);
     let settled_attempt = if let Some(session_id) = attempt_session_id.as_deref() {
         service
             .get_live_session_task_execution_attempt_for_session(bear.id, session_id)
@@ -317,7 +317,7 @@ pub async fn docket_jobs_settle_task_result(
                 actor_role: BearProfile::Pair,
                 actor_user_id: Some(user_id),
                 actor_agent_id: None,
-                // Pair attempts are keyed by the Armature client session; both
+                // Focused attempts are keyed by the Armature client session; both
                 // protocol spellings identify it at this boundary.
                 session_id: attempt_session_id.clone(),
                 source_conversation_id: request.conversation_id,
@@ -355,7 +355,7 @@ pub async fn docket_jobs_settle_task_result(
             settled_task_id = %task_id,
             successor_task_id = ?successor_task_id,
             client_session_id = session_id,
-            "updating Pair session current task after Docket settlement"
+            "updating client session current task after Docket settlement"
         );
         client_sessions::set_current_task(
             &state.sqlx_pool,
@@ -369,7 +369,7 @@ pub async fn docket_jobs_settle_task_result(
 
     // Completing a focused Docket task can select its successor. Keep the
     // existing focused-control lease alive by starting that successor in the
-    // same Pair session, rather than leaving the session selected-but-idle.
+    // same client session, rather than leaving the session selected-but-idle.
     execution_result(state, user_id, bear, attempt_session_id.as_deref(), outcome).await
 }
 
@@ -469,21 +469,21 @@ fn parse_outcome_disposition(value: &str) -> Result<DocketOutcomeDisposition, Cu
     }
 }
 
-fn pair_binding_session_id(request: &DocketJobsExecuteRequest) -> Option<&str> {
+fn execution_session_id(request: &DocketJobsExecuteRequest) -> Option<&str> {
     request
         .source_client_session_id
         .as_deref()
         .or(request.session_id.as_deref())
 }
 
-fn pair_attempt_session_id(request: &DocketJobsSettleTaskRequest) -> Option<String> {
+fn attempt_session_id(request: &DocketJobsSettleTaskRequest) -> Option<String> {
     request
         .source_client_session_id
         .clone()
         .or_else(|| request.session_id.clone())
 }
 
-/// Uses the newest commit produced by this Pair attempt when the model has no
+/// Uses the newest commit produced by this focused attempt when the model has no
 /// artifact API. A caller-provided primary output remains authoritative.
 pub(crate) async fn resolve_candidate_git_commit_output(
     state: &DenState,
@@ -590,12 +590,12 @@ fn execution_request(
         actor_role: BearProfile::Pair,
         actor_user_id: Some(user_id),
         actor_agent_id: None,
-        // The ACP client session is the durable Pair-attempt owner. A caller
+        // The ACP client session is the durable focused-attempt owner. A caller
         // may supply a separate conversational/session envelope, but it must
         // not split Docket focus from the attempt that later settles it.
-        session_id: pair_binding_session_id(request).map(str::to_owned),
+        session_id: execution_session_id(request).map(str::to_owned),
         source_conversation_id: request.conversation_id.clone(),
-        source_client_session_id: pair_binding_session_id(request).map(str::to_owned),
+        source_client_session_id: execution_session_id(request).map(str::to_owned),
     }
 }
 
@@ -606,9 +606,9 @@ async fn execution_result(
     client_session_id: Option<&str>,
     outcome: den_docket::DocketJobExecuteOutcome,
 ) -> Result<Value, CustomError> {
-    let mut pair_binding = json!({
+    let mut session_execution = json!({
         "status": "not_applicable",
-        "reason": "Docket did not select a Pair task.",
+        "reason": "Docket did not select a focused session task.",
     });
     if matches!(
         outcome.control.next_action,
@@ -637,7 +637,7 @@ async fn execution_result(
             let attempt = execution.attempt.as_ref().ok_or_else(|| {
                 CustomError::System("focused Docket execution has no attempt authority".to_string())
             })?;
-            pair_binding = json!({
+            session_execution = json!({
                 "control": {
                     "kind": "docket",
                     "state": run.state,
@@ -658,11 +658,11 @@ async fn execution_result(
                 "focused_execution": execution.to_wire(),
             });
         } else {
-            pair_binding = json!({
+            session_execution = json!({
                 "control": {
                     "kind": "docket",
                     "state": "not_started",
-                    "reason": "no_authenticated_pair_session",
+                    "reason": "no_authenticated_client_session",
                 },
                 "task": {
                     "id": outcome.control.task.selected_task_id,
@@ -672,12 +672,12 @@ async fn execution_result(
             });
         }
     }
-    execution_result_payload(outcome, pair_binding)
+    execution_result_payload(outcome, session_execution)
 }
 
 fn execution_result_payload(
     outcome: den_docket::DocketJobExecuteOutcome,
-    pair_binding: Value,
+    session_execution: Value,
 ) -> Result<Value, CustomError> {
     let run = outcome.job.current_run.as_ref();
     let execution_state = run
@@ -695,7 +695,9 @@ fn execution_result_payload(
         },
         "status": status,
         "gate": gate,
-        "pair_binding": pair_binding,
+        "session_execution": session_execution.clone(),
+        // Read-only compatibility projection for deployed clients.
+        "pair_binding": session_execution,
         "outcome": outcome,
     }))
 }
@@ -775,7 +777,7 @@ mod tests {
     use den_docket::model::DocketExecutionTaskControl;
 
     #[test]
-    fn pair_binding_prefers_the_explicit_client_session_id() {
+    fn execution_session_prefers_the_explicit_client_session_id() {
         let request = DocketJobsExecuteRequest {
             bear_slug: "builder".to_owned(),
             job_id: Uuid::new_v4().to_string(),
@@ -784,7 +786,7 @@ mod tests {
             source_client_session_id: Some("acp-session".to_owned()),
         };
 
-        assert_eq!(pair_binding_session_id(&request), Some("acp-session"));
+        assert_eq!(execution_session_id(&request), Some("acp-session"));
         let execution = execution_request(Uuid::new_v4(), 1, Uuid::new_v4(), &request);
         assert_eq!(execution.session_id.as_deref(), Some("acp-session"));
         assert_eq!(
@@ -794,7 +796,7 @@ mod tests {
     }
 
     #[test]
-    fn pair_binding_falls_back_to_session_id() {
+    fn execution_session_falls_back_to_session_id() {
         let request = DocketJobsExecuteRequest {
             bear_slug: "builder".to_owned(),
             job_id: Uuid::new_v4().to_string(),
@@ -803,11 +805,11 @@ mod tests {
             source_client_session_id: None,
         };
 
-        assert_eq!(pair_binding_session_id(&request), Some("acp-session"));
+        assert_eq!(execution_session_id(&request), Some("acp-session"));
     }
 
     #[test]
-    fn pair_attempt_session_prefers_the_explicit_client_session_id() {
+    fn attempt_session_prefers_the_explicit_client_session_id() {
         let request = DocketJobsSettleTaskRequest {
             bear_slug: "builder".to_owned(),
             job_id: Uuid::new_v4().to_string(),
@@ -821,10 +823,7 @@ mod tests {
             source_client_session_id: Some("acp-session".to_owned()),
         };
 
-        assert_eq!(
-            pair_attempt_session_id(&request).as_deref(),
-            Some("acp-session")
-        );
+        assert_eq!(attempt_session_id(&request).as_deref(), Some("acp-session"));
     }
 
     #[test]

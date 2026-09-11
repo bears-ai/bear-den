@@ -2,9 +2,10 @@ use crate::integration_tests::{seed_user_and_bear, test_pool, two_task_job};
 use crate::{
     DocketExecutionAttemptAuthorize, DocketExecutionAttemptRelease, DocketExecutionAttemptStart,
     DocketExecutionAttemptState, DocketExecutionBindingKind, DocketExecutionHost,
-    DocketExecutionHostKind, DocketFocusedExecutionAcquire, DocketFocusedExecutionBinding,
-    DocketPairAwaitingUserQuestion, DocketPairAwaitingUserResume, DocketPairBoundedOutcome,
-    DocketPairBoundedOutcomeReport, DocketPairContinuationDecision, DocketService, PgDocketService,
+    DocketExecutionHostKind, DocketFocusedAwaitingUserQuestion, DocketFocusedAwaitingUserResume,
+    DocketFocusedContinuationDecision, DocketFocusedExecutionAcquire,
+    DocketFocusedExecutionBinding, DocketFocusedSliceOutcome, DocketFocusedSliceOutcomeReport,
+    DocketService, PgDocketService,
 };
 use uuid::Uuid;
 
@@ -209,7 +210,7 @@ async fn execution_attempt_authorization_and_start_are_idempotent_and_fenced() {
 }
 
 #[tokio::test]
-async fn pair_bounded_outcomes_are_fenced_and_choose_canonical_yields() {
+async fn focused_slice_outcomes_are_fenced_and_choose_canonical_yields() {
     let Some(pool) = test_pool().await else {
         eprintln!("skipping postgres-backed docket integration test; database unavailable");
         return;
@@ -237,57 +238,63 @@ async fn pair_bounded_outcomes_are_fenced_and_choose_canonical_yields() {
         })
         .await
         .expect("start attempt");
-    let progress = DocketPairBoundedOutcomeReport {
+    let progress = DocketFocusedSliceOutcomeReport {
         attempt_id: running.id,
         fence_epoch: running.fence_epoch,
-        outcome: DocketPairBoundedOutcome::Progress,
+        outcome: DocketFocusedSliceOutcome::Progress,
         awaiting_user_question: None,
     };
     let continued = service
-        .report_pair_bounded_outcome(progress.clone())
+        .report_focused_slice_outcome(progress.clone())
         .await
         .expect("progress");
-    assert_eq!(continued.decision, DocketPairContinuationDecision::Continue);
+    assert_eq!(
+        continued.decision,
+        DocketFocusedContinuationDecision::Continue
+    );
     assert_eq!(
         continued.attempt.state,
         DocketExecutionAttemptState::Running
     );
     assert_eq!(
         service
-            .report_pair_bounded_outcome(progress)
+            .report_focused_slice_outcome(progress)
             .await
             .expect("replay")
             .decision,
-        DocketPairContinuationDecision::Continue
+        DocketFocusedContinuationDecision::Continue
     );
     assert!(service
-        .report_pair_bounded_outcome(DocketPairBoundedOutcomeReport {
+        .report_focused_slice_outcome(DocketFocusedSliceOutcomeReport {
             attempt_id: running.id,
             fence_epoch: running.fence_epoch + 1,
-            outcome: DocketPairBoundedOutcome::AwaitingUser,
+            outcome: DocketFocusedSliceOutcome::AwaitingUser,
             awaiting_user_question: None,
         })
         .await
         .is_err());
     let question_key = Uuid::new_v4();
     let awaiting = service
-        .report_pair_bounded_outcome(DocketPairBoundedOutcomeReport {
+        .report_focused_slice_outcome(DocketFocusedSliceOutcomeReport {
             attempt_id: running.id,
             fence_epoch: running.fence_epoch,
-            outcome: DocketPairBoundedOutcome::AwaitingUser,
-            awaiting_user_question: Some(DocketPairAwaitingUserQuestion {
+            outcome: DocketFocusedSliceOutcome::AwaitingUser,
+            awaiting_user_question: Some(DocketFocusedAwaitingUserQuestion {
                 question_key,
                 question_reference: "docket-entry:question".to_string(),
             }),
         })
         .await
         .expect("await user");
-    assert_eq!(awaiting.decision, DocketPairContinuationDecision::AwaitUser);
+    assert_eq!(
+        awaiting.decision,
+        DocketFocusedContinuationDecision::AwaitUser
+    );
     assert_eq!(
         awaiting.attempt.state,
         DocketExecutionAttemptState::AwaitingUser
     );
-    let resume = DocketPairAwaitingUserResume {
+    let resume = DocketFocusedAwaitingUserResume {
         attempt_id: running.id,
         fence_epoch: running.fence_epoch,
         question_key,
@@ -295,13 +302,13 @@ async fn pair_bounded_outcomes_are_fenced_and_choose_canonical_yields() {
         response_reference: "docket-entry:response".to_string(),
     };
     let resumed = service
-        .resume_pair_awaiting_user(resume.clone())
+        .resume_focused_awaiting_user(resume.clone())
         .await
         .expect("authenticated resume");
     assert_eq!(resumed.state, DocketExecutionAttemptState::Authorized);
     assert_eq!(
         service
-            .resume_pair_awaiting_user(resume)
+            .resume_focused_awaiting_user(resume)
             .await
             .expect("idempotent resume")
             .state,

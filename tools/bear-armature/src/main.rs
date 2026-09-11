@@ -6224,8 +6224,9 @@ async fn publish_focus_title_update(
 
 fn confirmed_focus_run_id(result: &Value) -> Result<&str> {
     let binding = result
-        .get("pair_binding")
-        .ok_or_else(|| anyhow!("Docket response omitted Pair execution result"))?;
+        .get("session_execution")
+        .or_else(|| result.get("pair_binding"))
+        .ok_or_else(|| anyhow!("Docket response omitted focused session execution result"))?;
     let control = binding
         .get("control")
         .ok_or_else(|| anyhow!("Docket response omitted canonical attempt state"))?;
@@ -6259,7 +6260,7 @@ fn confirmed_focus_run_id(result: &Value) -> Result<&str> {
         .and_then(|run| run.get("id"))
         .and_then(Value::as_str)
         .filter(|run_id| !run_id.trim().is_empty())
-        .ok_or_else(|| anyhow!("Docket execution result omitted its Pair run id"))
+        .ok_or_else(|| anyhow!("Docket execution result omitted its focused run id"))
 }
 
 async fn focus_job_report(
@@ -13757,9 +13758,9 @@ mod tests {
     }
 
     #[test]
-    fn focus_accepts_claimed_or_started_canonical_execution() {
+    fn focus_prefers_canonical_session_execution_and_accepts_legacy_binding() {
         let claimed = json!({
-            "pair_binding": {
+            "session_execution": {
                 "control": {
                     "kind": "docket",
                     "state": "accepted",

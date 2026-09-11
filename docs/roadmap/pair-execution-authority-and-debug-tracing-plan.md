@@ -1,10 +1,17 @@
 # Plan: Authoritative focused execution control and diagnostic transition tracing
 
-**Status:** In progress; focused-execution lifecycle stabilization through P10 completed 2026-09-11
+**Status:** Focused-execution lifecycle stabilization through P11 completed 2026-09-11; live model-driven validation remains environment-blocked
 
 **Scope:** Focused Docket execution start, authoritative status projection, BearWire diagnostics, and client debug views
 
 `pair` is a trust-profile/capability shorthand, not an execution identity. Execution state and authority are named for sessions, tasks, runs, hosts, and attempts.
+
+### Completed stabilization phase P11
+
+- Docket bounded-loop types and methods now use focused-slice terminology; execution continuation no longer names the Pair trust profile.
+- The internal execution gate variant is `Session`; its serialized `"pair_session"` spelling remains pinned for deployed compatibility.
+- BearWire responses expose canonical `session_execution` while retaining generated read-only `pair_binding`, and Armature prefers the canonical field with legacy fallback.
+- Session-attempt helpers, diagnostics, error text, and focused runtime tests use session/focused terminology. Legacy SQL table names remain unchanged to avoid a no-value migration.
 
 ### Completed stabilization phase P10
 
@@ -124,7 +131,7 @@ Every aggregate transition has a monotonic state version and one correlation/ide
 ### 3. Make start one serialized command
 
 - Route `/focus`, BearWire `session.current_task.start`, and the model-facing `focus_current_task` tool to one application service.
-- Extend or inject the model-tool invocation boundary so it can call that Den-owned service. The current runtime invoker carries the database/config/tool context but not the `DenState`/live controller capability used by `start_pair_current_task`; do not work around this by copying a database-only start sequence into a workflow tool.
+- Extend or inject the model-tool invocation boundary so it can call the Den-owned focused-execution service. Do not work around this by copying a database-only start sequence into a workflow tool.
 - Expose `focus_current_task` only when effective policy grants `ExecuteFocusedTask`. It takes no task ID: it starts the session's already-selected task, returns the authoritative snapshot/correlation ID, and follows the same authorization, idempotency, and typed-failure behavior as `/focus`.
 - Under transaction/CAS and an idempotency key: resolve the selected executable task, create/resume the execution run, acquire a fenced Docket attempt/lease, persist durable controller queue ownership, and append the transition outbox record.
 - Return success only after the postcondition reducer reports `running` or a legitimate `waiting` state.

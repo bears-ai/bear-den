@@ -14,9 +14,9 @@ use bearwire_protocol::{
 };
 use den_docket::{
     DocketExecutionAttemptRelease, DocketExecutionAttemptStart, DocketExecutionBindingKind,
-    DocketExecutionHost, DocketExecutionHostKind, DocketFocusedExecutionAcquire,
-    DocketFocusedExecutionBinding, DocketPairBoundedOutcome, DocketPairBoundedOutcomeReport,
-    DocketPairContinuationDecision, DocketService, PgDocketService,
+    DocketExecutionHost, DocketExecutionHostKind, DocketFocusedContinuationDecision,
+    DocketFocusedExecutionAcquire, DocketFocusedExecutionBinding, DocketFocusedSliceOutcome,
+    DocketFocusedSliceOutcomeReport, DocketService, PgDocketService,
 };
 use den_http::errors::CustomError;
 use den_protocol::{RoleRuntimeBinding, RuntimeContinuation};
@@ -1618,7 +1618,7 @@ pub(crate) async fn settle_active_run_for_session(
 
 /// Work-run hook: when this session was bound by `work.checkout`, record the
 /// terminal turn outcome and move the work run to `reporting` so the dispatch
-/// worker harvests it. A no-op (one indexed lookup) for ordinary Pair sessions.
+/// worker harvests it. A no-op (one indexed lookup) for ordinary interactive sessions.
 async fn record_work_run_outcome_if_bound(
     pool: &sqlx::PgPool,
     session_id: &str,
@@ -1667,20 +1667,20 @@ fn runtime_event_is_terminal(event: &den_protocol::RuntimeStreamEvent) -> bool {
 }
 
 pub(crate) fn docket_bounded_slice_continuation(
-    decision: Option<DocketPairContinuationDecision>,
+    decision: Option<DocketFocusedContinuationDecision>,
 ) -> Option<RuntimeContinuation> {
-    (decision == Some(DocketPairContinuationDecision::Continue))
+    (decision == Some(DocketFocusedContinuationDecision::Continue))
         .then_some(RuntimeContinuation::DocketBoundedSlice)
 }
 
-pub(crate) async fn report_pair_bounded_outcome(
+pub(crate) async fn report_focused_slice_outcome(
     state: &DenState,
     user_id: i32,
     bear_id: uuid::Uuid,
     session_id: &str,
     run_id: &str,
-    outcome: DocketPairBoundedOutcome,
-) -> Option<DocketPairContinuationDecision> {
+    outcome: DocketFocusedSliceOutcome,
+) -> Option<DocketFocusedContinuationDecision> {
     let snapshot = super::focused_execution::load_focused_execution_snapshot(
         state,
         user_id,
@@ -1699,7 +1699,7 @@ pub(crate) async fn report_pair_bounded_outcome(
     }
     let (attempt_id, fence_epoch) = (attempt.id, attempt.fence_epoch);
     match PgDocketService::from_pool(&state.sqlx_pool)
-        .report_pair_bounded_outcome(DocketPairBoundedOutcomeReport {
+        .report_focused_slice_outcome(DocketFocusedSliceOutcomeReport {
             attempt_id,
             fence_epoch,
             outcome,
@@ -1709,7 +1709,7 @@ pub(crate) async fn report_pair_bounded_outcome(
     {
         Ok(decision) => Some(decision.decision),
         Err(error) => {
-            tracing::warn!(%error, %attempt_id, ?outcome, "failed to report Pair bounded outcome to Docket");
+            tracing::warn!(%error, %attempt_id, ?outcome, "failed to report focused slice outcome to Docket");
             None
         }
     }
@@ -1779,21 +1779,21 @@ pub(crate) async fn finish_runtime_terminal_event(
         return;
     };
 
-    if report_pair_bounded_outcome(
+    if report_focused_slice_outcome(
         state,
         user_id,
         bear_id,
         session_id,
         run_id,
-        DocketPairBoundedOutcome::Settled,
+        DocketFocusedSliceOutcome::Settled,
     )
     .await
-    .is_some_and(|decision| decision != DocketPairContinuationDecision::Stop)
+    .is_some_and(|decision| decision != DocketFocusedContinuationDecision::Stop)
     {
         tracing::warn!(
             session_id,
             run_id,
-            "unexpected Docket decision for terminal Pair outcome"
+            "unexpected Docket decision for terminal focused outcome"
         );
     }
     let finish = match terminal_state {
@@ -2061,12 +2061,12 @@ pub(crate) async fn run_recover_result(
     .ok_or_else(|| CustomError::NotFound("client session not found".to_string()))?;
     let task_id = snapshot.selected_task_id.ok_or_else(|| {
         CustomError::ValidationError(
-            "technical-budget recovery requires a selected Pair task".to_string(),
+            "technical-budget recovery requires a selected session task".to_string(),
         )
     })?;
     if session.current_task_id != Some(task_id) {
         return Err(CustomError::ValidationError(
-            "current Pair task changed; refusing recovery".to_string(),
+            "current session task changed; refusing recovery".to_string(),
         ));
     }
     preview_session_current_task_selection(
@@ -2917,13 +2917,13 @@ async fn run_start_with_recovery_source(
                                         RuntimeStreamBoundary::BoundedSlice => {
                                             if let Some(continuation) =
                                                 docket_bounded_slice_continuation(
-                                                    report_pair_bounded_outcome(
+                                                    report_focused_slice_outcome(
                                                         &livestream_state,
                                                         user_id,
                                                         bear_id,
                                                         &session_for_task,
                                                         &run_id_for_task,
-                                                        DocketPairBoundedOutcome::Progress,
+                                                        DocketFocusedSliceOutcome::Progress,
                                                     )
                                                     .await,
                                                 )
@@ -3475,15 +3475,15 @@ mod tests {
     #[test]
     fn docket_bounded_slice_hands_off_only_on_continue() {
         assert_eq!(
-            docket_bounded_slice_continuation(Some(DocketPairContinuationDecision::Continue)),
+            docket_bounded_slice_continuation(Some(DocketFocusedContinuationDecision::Continue)),
             Some(RuntimeContinuation::DocketBoundedSlice)
         );
         assert_eq!(
-            docket_bounded_slice_continuation(Some(DocketPairContinuationDecision::AwaitUser)),
+            docket_bounded_slice_continuation(Some(DocketFocusedContinuationDecision::AwaitUser)),
             None
         );
         assert_eq!(
-            docket_bounded_slice_continuation(Some(DocketPairContinuationDecision::Stop)),
+            docket_bounded_slice_continuation(Some(DocketFocusedContinuationDecision::Stop)),
             None
         );
         assert_eq!(docket_bounded_slice_continuation(None), None);

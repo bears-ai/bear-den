@@ -859,6 +859,11 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
         "claimed"
     );
     assert_eq!(
+        attached["result"]["session_execution"],
+        attached["result"]["pair_binding"],
+        "canonical session execution and legacy compatibility projection must agree"
+    );
+    assert_eq!(
         attached["result"]["pair_binding"]["control"]["attempt_state"],
         "authorized"
     );

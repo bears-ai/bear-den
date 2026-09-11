@@ -43,16 +43,16 @@ use super::model::{
     DocketExecutionAttemptStart, DocketExecutionBinding, DocketExecutionBindingKind,
     DocketExecutionControl, DocketExecutionDisposition, DocketExecutionGate,
     DocketExecutionHostKind, DocketExecutionNextAction, DocketExecutionReason,
-    DocketExecutionTaskControl, DocketExecutionTaskSettlement, DocketFocusedExecutionAcquire,
-    DocketJobCreate, DocketJobCriterionRow, DocketJobExecuteOutcome, DocketJobExecuteRequest,
-    DocketJobListFilter, DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketJobStatus,
-    DocketJobUpdate, DocketPairAwaitingUserResume, DocketPairBoundedOutcome,
-    DocketPairBoundedOutcomeDecision, DocketPairBoundedOutcomeReport,
-    DocketPairContinuationDecision, DocketSessionTaskSettlement, DocketTaskCreate,
-    DocketTaskDefinitionPatch, DocketTaskInput, DocketTaskListFilter, DocketTaskPlacement,
-    DocketTaskProjection, DocketTaskRow, DocketTaskRunStateRow, DocketTaskUpdate,
-    DocketValidationError, DocketWorkBoundaryCheck, TaskListItemStatus, TaskListProjection,
-    TaskListSourceRef, TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState,
+    DocketExecutionTaskControl, DocketExecutionTaskSettlement, DocketFocusedAwaitingUserResume,
+    DocketFocusedContinuationDecision, DocketFocusedExecutionAcquire, DocketFocusedSliceOutcome,
+    DocketFocusedSliceOutcomeDecision, DocketFocusedSliceOutcomeReport, DocketJobCreate,
+    DocketJobCriterionRow, DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter,
+    DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketJobStatus, DocketJobUpdate,
+    DocketSessionTaskSettlement, DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskInput,
+    DocketTaskListFilter, DocketTaskPlacement, DocketTaskProjection, DocketTaskRow,
+    DocketTaskRunStateRow, DocketTaskUpdate, DocketValidationError, DocketWorkBoundaryCheck,
+    TaskListItemStatus, TaskListProjection, TaskListSourceRef, TaskListSyncOutcome,
+    TaskListSyncRequest, TaskListSyncState,
 };
 
 pub(super) async fn create_job(
@@ -1680,24 +1680,27 @@ pub(super) async fn release_execution_attempt(
     row.try_into()
 }
 
-pub(super) async fn report_pair_bounded_outcome(
+pub(super) async fn report_focused_slice_outcome(
     pool: &PgPool,
-    report: DocketPairBoundedOutcomeReport,
-) -> Result<DocketPairBoundedOutcomeDecision, DenError> {
+    report: DocketFocusedSliceOutcomeReport,
+) -> Result<DocketFocusedSliceOutcomeDecision, DenError> {
     let (state, decision) = match report.outcome {
-        DocketPairBoundedOutcome::Progress => ("running", DocketPairContinuationDecision::Continue),
-        DocketPairBoundedOutcome::AwaitingUser => {
-            ("awaiting_user", DocketPairContinuationDecision::AwaitUser)
+        DocketFocusedSliceOutcome::Progress => {
+            ("running", DocketFocusedContinuationDecision::Continue)
         }
-        DocketPairBoundedOutcome::Settled => ("settled", DocketPairContinuationDecision::Stop),
+        DocketFocusedSliceOutcome::AwaitingUser => (
+            "awaiting_user",
+            DocketFocusedContinuationDecision::AwaitUser,
+        ),
+        DocketFocusedSliceOutcome::Settled => ("settled", DocketFocusedContinuationDecision::Stop),
     };
     let question = match (report.outcome, report.awaiting_user_question) {
-        (DocketPairBoundedOutcome::AwaitingUser, Some(question))
+        (DocketFocusedSliceOutcome::AwaitingUser, Some(question))
             if !question.question_reference.trim().is_empty() =>
         {
             Some(question)
         }
-        (DocketPairBoundedOutcome::AwaitingUser, _) => {
+        (DocketFocusedSliceOutcome::AwaitingUser, _) => {
             return Err(DenError::ValidationError(
                 "awaiting-user outcome requires a precise question reference".to_string(),
             ));
@@ -1734,7 +1737,7 @@ pub(super) async fn report_pair_bounded_outcome(
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| {
-        DenError::NotFound("pair execution attempt is not current with this fence".to_string())
+        DenError::NotFound("focused execution attempt is not current with this fence".to_string())
     })?;
     if let Some(question) = question {
         sqlx::query(
@@ -1750,15 +1753,15 @@ pub(super) async fn report_pair_bounded_outcome(
         .await?;
     }
     tx.commit().await?;
-    Ok(DocketPairBoundedOutcomeDecision {
+    Ok(DocketFocusedSliceOutcomeDecision {
         attempt: row.try_into()?,
         decision,
     })
 }
 
-pub(super) async fn resume_pair_awaiting_user(
+pub(super) async fn resume_focused_awaiting_user(
     pool: &PgPool,
-    resume: DocketPairAwaitingUserResume,
+    resume: DocketFocusedAwaitingUserResume,
 ) -> Result<DocketExecutionAttemptRow, DenError> {
     if resume.response_reference.trim().is_empty() {
         return Err(DenError::ValidationError(
@@ -2238,7 +2241,7 @@ pub(super) async fn settle_execution_task(
             job_id = %execution.job_id,
             settled_task_id = %settlement.task_id,
             client_session_id = session_id,
-            "clearing Pair session current task during Docket settlement"
+            "clearing client session current task during Docket settlement"
         );
         sqlx::query!(
             r#"
@@ -2483,7 +2486,7 @@ pub(super) async fn execute_job(
             selected_task_id: Some(next.id),
             completed: false,
             blocked: false,
-            message: "Selected next pending task for pair execution.".to_string(),
+            message: "Selected next pending task for focused execution.".to_string(),
         });
     }
 
@@ -2546,7 +2549,7 @@ pub(super) async fn execute_job(
 }
 
 /// Selects the next executable task for a job using the same depth-first plan
-/// ordering as Pair execution control. This is selection only; callers still
+/// ordering as focused execution control. This is selection only; callers still
 /// own their mode-specific durable binding transaction.
 pub(crate) async fn select_next_execution_task(
     pool: &PgPool,
@@ -2788,7 +2791,7 @@ pub(super) async fn list_tasks(
 }
 
 /// The one Pair eligibility query. It includes legacy session-owned tasks and
-/// durable job tasks explicitly attached to this Pair session.
+/// durable job tasks explicitly attached to this client session.
 pub(super) async fn list_session_tasks(
     pool: &PgPool,
     bear_id: Uuid,
@@ -2891,7 +2894,7 @@ pub(super) async fn attach_task_to_session(
     .await?;
     if attached.rows_affected() == 0 {
         return Err(DenError::ValidationError(
-            "task is not an unclaimed durable task available to this Pair session".to_string(),
+            "task is not an unclaimed durable task available to this client session".to_string(),
         ));
     }
     Ok(())
