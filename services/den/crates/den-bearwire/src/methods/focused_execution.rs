@@ -1,5 +1,5 @@
 pub use bearwire_protocol::lifecycle::RunLaunchState as FocusedExecutionLaunchState;
-use bearwire_protocol::wire::BearWireEvent;
+use bearwire_protocol::lifecycle::{FocusedExecutionTransition, FocusedExecutionTransitionReason};
 use den_core::{BearCapability, CapabilitySet};
 use den_docket::{
     DocketExecutionAttemptStart, DocketExecutionBindingKind, DocketExecutionHost,
@@ -13,7 +13,6 @@ use den_runtime::{
 };
 use den_service::{bears::Bear, client_sessions, DenState};
 
-use serde_json::json;
 use uuid::Uuid;
 
 use super::session::start_session_task_execution;
@@ -248,7 +247,16 @@ pub async fn acquire_selected_task_for_run(
             ));
         }
         if !attempt_was_running {
-            project_execution_transition(state, user_id, bear.id, &execution).await;
+            project_execution_transition(
+                state,
+                user_id,
+                bear.id,
+                &execution,
+                FocusedExecutionTransitionReason::FocusAcquired,
+                origin_run_id.as_str(),
+                Some(tool_call_id.as_str()),
+            )
+            .await;
         }
         Ok(execution)
     })
@@ -385,7 +393,6 @@ async fn start_or_reconcile_locked(
     );
     execution.require_active_authority()?;
 
-    project_execution_transition(state, user_id, bear.id, &execution).await;
     Ok(execution)
 }
 
@@ -394,71 +401,91 @@ pub(crate) async fn project_execution_transition(
     user_id: i32,
     bear_id: Uuid,
     execution: &FocusedExecutionSnapshot,
+    reason: FocusedExecutionTransitionReason,
+    correlation_id: &str,
+    causation_id: Option<&str>,
 ) {
-    let (Some(task), Some(run), Some(attempt), Some(binding), Some(host)) = (
-        execution.task.as_ref(),
-        execution.run.as_ref(),
-        execution.attempt.as_ref(),
-        execution.binding.as_ref(),
-        execution.host.as_ref(),
-    ) else {
-        tracing::error!(
-            session_id = %execution.session_id,
-            state = ?execution.state,
-            "refusing to project incomplete focused execution start"
-        );
-        return;
+    let transition = FocusedExecutionTransition {
+        state_version: 0,
+        from: None,
+        to: execution.state,
+        reason,
+        correlation_id: correlation_id.to_string(),
+        causation_id: causation_id.map(str::to_string),
+        session_id: execution.session_id.to_string(),
+        task_id: execution.task.as_ref().map(|task| task.id.to_string()),
+        run_id: execution.run.as_ref().map(|run| run.id.to_string()),
+        attempt_id: execution
+            .attempt
+            .as_ref()
+            .map(|attempt| attempt.id.to_string()),
+        fence_epoch: execution
+            .attempt
+            .as_ref()
+            .map(|attempt| attempt.fence_epoch),
+        open_obligations: execution
+            .obligations
+            .map(|obligations| obligations.open)
+            .unwrap_or(0),
+        task_selection_preserved: true,
     };
-    let event_type = match execution.controller {
-        ControllerDisposition::Queued | ControllerDisposition::Claimed => {
-            "docket.execution.claimed"
-        }
-        ControllerDisposition::Live => "docket.execution.started",
-        ControllerDisposition::NotApplicable
-        | ControllerDisposition::Missing
-        | ControllerDisposition::Recovering => {
-            tracing::error!(
-                session_id = %execution.session_id,
-                controller = ?execution.controller,
-                "refusing to project focused execution without controller authority"
-            );
-            return;
-        }
-    };
-    let mut event = BearWireEvent::ephemeral(
-        event_type,
-        json!({
-            "attempt_id": attempt.id,
-            "task_id": task.id,
-            "run_id": run.id,
-            "binding": binding,
-            "host": host,
-            "attempt_state": attempt.state,
-            "launch_state": execution.launch_state,
-            "fence_epoch": attempt.fence_epoch,
-            "open_obligations": execution.obligations.map(|obligations| obligations.open).unwrap_or(0),
-            "task_selection_preserved": true,
-        }),
-    );
-    event.bear_id = Some(bear_id.to_string());
-    event.human_id = Some(user_id.to_string());
-    event.session_id = Some(execution.session_id.to_string());
-    event.run_id = Some(run.id.to_string());
-    if let Err(err) = bearwire_events::append_bearwire_event(
+    if let Err(err) = bearwire_events::append_focused_execution_transition(
         &state.sqlx_pool,
-        execution.session_id.as_str(),
-        Some(bear_id),
-        Some(user_id),
-        event,
+        bear_id,
+        user_id,
+        transition,
     )
     .await
     {
         tracing::warn!(
             error = %err,
             session_id = %execution.session_id,
-            run_id = %run.id,
-            attempt_id = %attempt.id,
-            "failed to project focused execution control transition"
+            run_id = ?execution.run_id(),
+            attempt_id = ?execution.attempt_id(),
+            "failed to persist focused execution diagnostic transition"
+        );
+    }
+}
+
+pub(crate) async fn project_execution_authority_ended(
+    state: &DenState,
+    user_id: i32,
+    bear_id: Uuid,
+    session_id: &str,
+    task_id: Uuid,
+    run_id: &str,
+    attempt_id: Uuid,
+    fence_epoch: i64,
+    reason: FocusedExecutionTransitionReason,
+) {
+    if let Err(err) = bearwire_events::append_focused_execution_transition(
+        &state.sqlx_pool,
+        bear_id,
+        user_id,
+        FocusedExecutionTransition {
+            state_version: 0,
+            from: None,
+            to: FocusedExecutionState::Terminal,
+            reason,
+            correlation_id: run_id.to_string(),
+            causation_id: None,
+            session_id: session_id.to_string(),
+            task_id: Some(task_id.to_string()),
+            run_id: Some(run_id.to_string()),
+            attempt_id: Some(attempt_id.to_string()),
+            fence_epoch: Some(fence_epoch),
+            open_obligations: 0,
+            task_selection_preserved: true,
+        },
+    )
+    .await
+    {
+        tracing::warn!(
+            error = %err,
+            session_id,
+            run_id,
+            attempt_id = %attempt_id,
+            "failed to persist focused execution authority end"
         );
     }
 }

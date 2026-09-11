@@ -38,6 +38,7 @@ fn is_optional_runtime_metadata_event(event_type: &str) -> bool {
             | "run.started"
             | "run.recovering"
             | "run.recovered"
+            | "diagnostic.state_transition"
             | "docket.execution.claimed"
             | "docket.execution.started"
             | "docket.execution.ended"
@@ -2426,6 +2427,7 @@ fn event_is_run_scoped(ty: &str) -> bool {
         || matches!(
             ty,
             "client.waiting"
+                | "diagnostic.state_transition"
                 | "permission.requested"
                 | "permission.granted"
                 | "permission.denied"
@@ -2911,12 +2913,15 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn docket_transitions_are_optional_runtime_metadata() {
+    fn execution_diagnostics_and_legacy_transitions_are_optional_metadata() {
         assert!(is_optional_runtime_metadata_event(
             "runtime.objective_orientation"
         ));
         assert!(is_optional_runtime_metadata_event("run.recovering"));
         assert!(is_optional_runtime_metadata_event("run.recovered"));
+        assert!(is_optional_runtime_metadata_event(
+            "diagnostic.state_transition"
+        ));
         assert!(is_optional_runtime_metadata_event(
             "docket.execution.claimed"
         ));

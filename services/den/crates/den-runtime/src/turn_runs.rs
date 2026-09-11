@@ -10,6 +10,11 @@ use den_core::DenError;
 
 use crate::turn_ids::{ClientSessionId, TurnRunId};
 use crate::turn_obligations::TurnObligationState;
+use bearwire_protocol::lifecycle::FocusedExecutionTransitionReason;
+
+mod transitions;
+
+use transitions::{append_focused_run_transition_on, transition_nonterminal_run_on};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -555,6 +560,7 @@ pub async fn complete_run(
         bear_id,
         user_id,
         TurnRunState::Completed,
+        FocusedExecutionTransitionReason::RunCompleted,
         "run.completed",
         terminal_reason,
         data,
@@ -578,6 +584,7 @@ pub async fn fail_run(
         bear_id,
         user_id,
         TurnRunState::Failed,
+        FocusedExecutionTransitionReason::RunFailed,
         "run.failed",
         Some(terminal_reason),
         data,
@@ -594,6 +601,29 @@ pub async fn cancel_run(
     terminal_reason: &str,
     data: Value,
 ) -> Result<Option<FinishRunResult>, DenError> {
+    cancel_run_with_transition_reason(
+        pool,
+        session_id,
+        run_id,
+        bear_id,
+        user_id,
+        terminal_reason,
+        data,
+        FocusedExecutionTransitionReason::RunCancelled,
+    )
+    .await
+}
+
+pub async fn cancel_run_with_transition_reason(
+    pool: &PgPool,
+    session_id: &str,
+    run_id: &str,
+    bear_id: Uuid,
+    user_id: i32,
+    terminal_reason: &str,
+    data: Value,
+    transition_reason: FocusedExecutionTransitionReason,
+) -> Result<Option<FinishRunResult>, DenError> {
     finish_run(
         pool,
         session_id,
@@ -601,6 +631,7 @@ pub async fn cancel_run(
         bear_id,
         user_id,
         TurnRunState::Cancelled,
+        transition_reason,
         "run.cancelled",
         Some(terminal_reason),
         data,
@@ -615,6 +646,7 @@ async fn finish_run(
     bear_id: Uuid,
     user_id: i32,
     state: TurnRunState,
+    transition_reason: FocusedExecutionTransitionReason,
     event_type: &'static str,
     terminal_reason: Option<&str>,
     data: Value,
@@ -629,6 +661,30 @@ async fn finish_run(
     event.run_id = Some(run_id.to_string());
     let settlement_state = obligation_state.as_str();
     let mut tx = pool.begin().await?;
+    let Some(run) = sqlx::query_as!(
+        TurnRunRow,
+        r#"
+        SELECT id, run_id, session_id, bear_id, user_id, state,
+               terminal_reason AS "terminal_reason?", created_at, updated_at,
+               completed_at AS "completed_at?"
+        FROM turn_runs
+        WHERE run_id = $1 AND session_id = $2
+        FOR UPDATE
+        "#,
+        run_id,
+        session_id,
+    )
+    .fetch_optional(&mut *tx)
+    .await?
+    else {
+        tx.rollback().await?;
+        return Ok(None);
+    };
+    let previous_state = run.state_value()?;
+    if previous_state.is_terminal() {
+        tx.rollback().await?;
+        return Ok(None);
+    }
     let claimed = sqlx::query!(
         r#"
         UPDATE turn_runs
@@ -682,6 +738,15 @@ async fn finish_run(
     .execute(&mut *tx)
     .await?
     .rows_affected();
+    append_focused_run_transition_on(
+        &mut tx,
+        &run,
+        previous_state,
+        state,
+        0,
+        Some(transition_reason),
+    )
+    .await?;
     event.data["settled_obligations"] = serde_json::json!(settled_obligations);
     event.data["settled_steps"] = serde_json::json!(settled_steps);
     let terminal_event = crate::bearwire_events::append_bearwire_event_on(
@@ -769,20 +834,13 @@ pub async fn claim_technical_budget_continuation(
     snapshot: &Value,
 ) -> Result<TechnicalBudgetContinuationClaim, DenError> {
     let mut tx = pool.begin().await?;
-    let row = sqlx::query_as!(
-        TurnRunRow,
-        r#"
-        UPDATE turn_runs
-        SET state = 'continuing', terminal_reason = $2, updated_at = NOW()
-        WHERE run_id = $1 AND state = 'running'
-        RETURNING id, run_id, session_id, bear_id, user_id, state,
-                  terminal_reason AS "terminal_reason?", created_at, updated_at,
-                  completed_at AS "completed_at?"
-        "#,
+    let row = transition_nonterminal_run_on(
+        &mut tx,
         run_id,
-        reason,
+        &[TurnRunState::Running],
+        TurnRunState::Continuing,
+        Some(reason),
     )
-    .fetch_optional(&mut *tx)
     .await?;
     if row.is_some() {
         sqlx::query!(
@@ -938,26 +996,18 @@ pub async fn claim_run_continuation(
     terminal_reason: Option<&str>,
 ) -> Result<Option<TurnRunRow>, DenError> {
     let mut tx = pool.begin().await?;
-    let row = sqlx::query_as!(
-        TurnRunRow,
-        r#"
-        UPDATE turn_runs
-        SET state = 'continuing',
-            terminal_reason = $2,
-            updated_at = NOW(),
-            completed_at = completed_at
-        WHERE run_id = $1
-          AND state IN ('accepted', 'running', 'waiting_for_client')
-        RETURNING id, run_id, session_id, bear_id, user_id, state,
-                  terminal_reason AS "terminal_reason?", created_at, updated_at,
-                  completed_at AS "completed_at?"
-        "#,
+    let row = transition_nonterminal_run_on(
+        &mut tx,
         run_id,
+        &[
+            TurnRunState::Accepted,
+            TurnRunState::Running,
+            TurnRunState::WaitingForClient,
+        ],
+        TurnRunState::Continuing,
         terminal_reason,
     )
-    .fetch_optional(&mut *tx)
     .await?;
-
     tx.commit().await?;
     Ok(row)
 }
@@ -973,19 +1023,13 @@ pub async fn begin_claimed_run_continuation(
     run_id: &str,
 ) -> Result<Option<TurnRunRow>, DenError> {
     let mut tx = pool.begin().await?;
-    let row = sqlx::query_as!(
-        TurnRunRow,
-        r#"
-        UPDATE turn_runs
-        SET state = 'running', terminal_reason = NULL, updated_at = NOW()
-        WHERE run_id = $1 AND state = 'continuing'
-        RETURNING id, run_id, session_id, bear_id, user_id, state,
-                  terminal_reason AS "terminal_reason?", created_at, updated_at,
-                  completed_at AS "completed_at?"
-        "#,
+    let row = transition_nonterminal_run_on(
+        &mut tx,
         run_id,
+        &[TurnRunState::Continuing],
+        TurnRunState::Running,
+        None,
     )
-    .fetch_optional(&mut *tx)
     .await?;
     if row.is_some() {
         sqlx::query!(
@@ -1007,20 +1051,16 @@ pub async fn release_claimed_run_continuation(
     pool: &PgPool,
     run_id: &str,
 ) -> Result<Option<TurnRunRow>, DenError> {
-    let row = sqlx::query_as!(
-        TurnRunRow,
-        r#"
-        UPDATE turn_runs
-        SET state = 'running', terminal_reason = NULL, updated_at = NOW()
-        WHERE run_id = $1 AND state = 'continuing'
-        RETURNING id, run_id, session_id, bear_id, user_id, state,
-                  terminal_reason AS "terminal_reason?", created_at, updated_at,
-                  completed_at AS "completed_at?"
-        "#,
+    let mut tx = pool.begin().await?;
+    let row = transition_nonterminal_run_on(
+        &mut tx,
         run_id,
+        &[TurnRunState::Continuing],
+        TurnRunState::Running,
+        None,
     )
-    .fetch_optional(pool)
     .await?;
+    tx.commit().await?;
     Ok(row)
 }
 
@@ -1037,27 +1077,19 @@ pub async fn transition_run(
         )));
     }
     let mut tx = pool.begin().await?;
-    let row = sqlx::query_as!(
-        TurnRunRow,
-        r#"
-        UPDATE turn_runs
-        SET state = $2,
-            terminal_reason = $3,
-            updated_at = NOW(),
-            completed_at = completed_at
-        WHERE run_id = $1
-          AND state NOT IN ('completed','failed','cancelled')
-        RETURNING id, run_id, session_id, bear_id, user_id, state,
-                  terminal_reason AS "terminal_reason?", created_at, updated_at,
-                  completed_at AS "completed_at?"
-        "#,
+    let row = transition_nonterminal_run_on(
+        &mut tx,
         run_id,
-        state.as_str(),
+        &[
+            TurnRunState::Accepted,
+            TurnRunState::Running,
+            TurnRunState::WaitingForClient,
+            TurnRunState::Continuing,
+        ],
+        state,
         terminal_reason,
     )
-    .fetch_optional(&mut *tx)
     .await?;
-
     tx.commit().await?;
     Ok(row)
 }
@@ -1066,8 +1098,9 @@ pub async fn transition_run(
 mod tests {
     use den_core::DenError;
 
-    use super::TurnRunState;
+    use super::{transitions::transition_reason, TurnRunState};
     use crate::turn_ids::{ClientSessionId, TurnRunId};
+    use bearwire_protocol::lifecycle::FocusedExecutionTransitionReason;
 
     #[test]
     fn terminal_run_with_open_obligation_is_invalid() {
@@ -1084,6 +1117,18 @@ mod tests {
         }
 
         assert!(TurnRunState::WaitingForClient.allows_open_obligation());
+        assert_eq!(
+            transition_reason(TurnRunState::Running, TurnRunState::WaitingForClient),
+            FocusedExecutionTransitionReason::ClientWaitOpened
+        );
+        assert_eq!(
+            transition_reason(TurnRunState::WaitingForClient, TurnRunState::Continuing),
+            FocusedExecutionTransitionReason::ClientWaitCleared
+        );
+        assert_eq!(
+            transition_reason(TurnRunState::Continuing, TurnRunState::Completed),
+            FocusedExecutionTransitionReason::RunCompleted
+        );
     }
 
     #[test]

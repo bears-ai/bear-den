@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT COUNT(*) AS \"count!\"\n        FROM turn_obligations\n        WHERE run_id = $1\n          AND state IN ('requested', 'waiting_for_client', 'result_received')\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "a32f674c7d9de1f0956db0547b046c02fe85cd914d8cad140824e0e0fd0481e8"
+}

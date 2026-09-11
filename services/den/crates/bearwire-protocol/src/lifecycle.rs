@@ -122,6 +122,53 @@ impl FocusedExecutionState {
     }
 }
 
+pub const FOCUSED_EXECUTION_TRANSITION_EVENT_TYPE: &str = "diagnostic.state_transition";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FocusedExecutionTransitionReason {
+    AuthorityClaimed,
+    AuthorityStarted,
+    FocusAcquired,
+    ClientWaitOpened,
+    ClientWaitCleared,
+    RunStateChanged,
+    RunCompleted,
+    RunFailed,
+    RunCancelled,
+    TaskSettled,
+    SteeringInterrupted,
+    Reconciled,
+}
+
+/// Append-only diagnostic projection of a canonical focused-execution transition.
+///
+/// `state_version` orders this aggregate's diagnostic history; it is assigned by
+/// Den while holding the session event lock. The referenced task, run, and attempt
+/// remain the authorities for their respective domains.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct FocusedExecutionTransition {
+    pub state_version: u64,
+    #[serde(default)]
+    pub from: Option<FocusedExecutionState>,
+    pub to: FocusedExecutionState,
+    pub reason: FocusedExecutionTransitionReason,
+    pub correlation_id: String,
+    #[serde(default)]
+    pub causation_id: Option<String>,
+    pub session_id: String,
+    #[serde(default)]
+    pub task_id: Option<String>,
+    #[serde(default)]
+    pub run_id: Option<String>,
+    #[serde(default)]
+    pub attempt_id: Option<String>,
+    #[serde(default)]
+    pub fence_epoch: Option<i64>,
+    pub open_obligations: u32,
+    pub task_selection_preserved: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunLaunchProjection {
     pub run_id: String,
@@ -486,6 +533,30 @@ mod tests {
         assert_eq!(
             focused.host.as_ref().map(|host| host.kind),
             Some(ExecutionHostKind::TurnRun)
+        );
+
+        let transition: FocusedExecutionTransition = serde_json::from_value(serde_json::json!({
+            "state_version": 2,
+            "from": { "phase": "starting" },
+            "to": { "phase": "running" },
+            "reason": "authority_started",
+            "correlation_id": "run-1",
+            "causation_id": "call-1",
+            "session_id": "session-1",
+            "task_id": "task-1",
+            "run_id": "run-1",
+            "attempt_id": "attempt-1",
+            "fence_epoch": 3,
+            "open_obligations": 0,
+            "task_selection_preserved": true
+        }))
+        .unwrap();
+        assert_eq!(transition.state_version, 2);
+        assert_eq!(transition.from, Some(FocusedExecutionState::Starting));
+        assert_eq!(transition.to, FocusedExecutionState::Running);
+        assert_eq!(
+            transition.reason,
+            FocusedExecutionTransitionReason::AuthorityStarted
         );
     }
 }

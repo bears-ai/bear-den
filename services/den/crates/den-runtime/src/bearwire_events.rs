@@ -6,7 +6,10 @@ use uuid::Uuid;
 
 use den_core::DenError;
 
-use bearwire_protocol::wire::BearWireEvent;
+use bearwire_protocol::{
+    lifecycle::{FocusedExecutionTransition, FOCUSED_EXECUTION_TRANSITION_EVENT_TYPE},
+    wire::{BearWireEvent, ResourceRef},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct BearWireEventId(Uuid);
@@ -95,6 +98,91 @@ pub async fn append_bearwire_event_on(
         event,
         created_at,
     })
+}
+
+pub async fn append_focused_execution_transition_on(
+    conn: &mut PgConnection,
+    bear_id: Uuid,
+    user_id: i32,
+    mut transition: FocusedExecutionTransition,
+) -> Result<BearWireEventRow, DenError> {
+    sqlx::query!(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        transition.session_id
+    )
+    .execute(&mut *conn)
+    .await?;
+
+    let previous = sqlx::query!(
+        r#"
+        SELECT event_json AS "event_json: serde_json::Value"
+        FROM bearwire_events
+        WHERE session_id = $1 AND event_type = $2
+        ORDER BY sequence_no DESC
+        LIMIT 1
+        "#,
+        transition.session_id,
+        FOCUSED_EXECUTION_TRANSITION_EVENT_TYPE,
+    )
+    .fetch_optional(&mut *conn)
+    .await?
+    .map(|row| {
+        serde_json::from_value::<BearWireEvent>(row.event_json)
+            .and_then(|event| serde_json::from_value::<FocusedExecutionTransition>(event.data))
+    })
+    .transpose()
+    .map_err(|error| {
+        DenError::System(format!(
+            "decode latest focused-execution transition failed: {error}"
+        ))
+    })?;
+
+    transition.state_version = previous
+        .as_ref()
+        .map_or(1, |previous| previous.state_version.saturating_add(1));
+    transition.from = previous.map(|previous| previous.to);
+
+    let session_id = transition.session_id.clone();
+    let run_id = transition.run_id.clone();
+    let task_id = transition.task_id.clone();
+    let attempt_id = transition.attempt_id.clone();
+    let mut event =
+        BearWireEvent::persistent_typed(FOCUSED_EXECUTION_TRANSITION_EVENT_TYPE, transition);
+    event.bear_id = Some(bear_id.to_string());
+    event.human_id = Some(user_id.to_string());
+    event.session_id = Some(session_id.clone());
+    event.run_id.clone_from(&run_id);
+    event.subject = Some(format!("resource/session/{session_id}/focused_execution"));
+    event
+        .resource_refs
+        .push(ResourceRef::new("session", session_id.clone()));
+    if let Some(run_id) = run_id {
+        event.resource_refs.push(ResourceRef::new("run", run_id));
+    }
+    if let Some(task_id) = task_id {
+        event
+            .resource_refs
+            .push(ResourceRef::new("docket_task", task_id));
+    }
+    if let Some(attempt_id) = attempt_id {
+        event
+            .resource_refs
+            .push(ResourceRef::new("docket_execution_attempt", attempt_id));
+    }
+
+    append_bearwire_event_on(conn, &session_id, Some(bear_id), Some(user_id), event).await
+}
+
+pub async fn append_focused_execution_transition(
+    pool: &PgPool,
+    bear_id: Uuid,
+    user_id: i32,
+    transition: FocusedExecutionTransition,
+) -> Result<BearWireEventRow, DenError> {
+    let mut tx = pool.begin().await?;
+    let row = append_focused_execution_transition_on(&mut tx, bear_id, user_id, transition).await?;
+    tx.commit().await?;
+    Ok(row)
 }
 
 pub async fn append_ephemeral_bearwire_event(

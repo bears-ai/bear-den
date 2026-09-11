@@ -615,7 +615,7 @@ async fn focused_pair_loop_continues_across_two_bounded_slices(pool: sqlx::PgPoo
             attempt.task_id, task_id,
             "slice {expected_slices} changed task"
         );
-        assert_eq!(attempt.host_run_id.as_deref(), Some(run_id));
+        assert_eq!(attempt.host_run_id, run_id);
         assert_eq!(
             attempt.fence_epoch, 1,
             "slice {expected_slices} changed fence"
@@ -867,6 +867,52 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
         .as_str()
         .expect("focused run id");
     wait_for_focused_run_started(state.clone(), &token, &bear_slug, &session_id, loop_run_id).await;
+    let transition_events =
+        bearwire_events::list_bearwire_events_after(&pool, &session_id, None, 50)
+            .await
+            .expect("list focused execution transitions")
+            .into_iter()
+            .filter(|event| {
+                event.event_type
+                    == bearwire_protocol::lifecycle::FOCUSED_EXECUTION_TRANSITION_EVENT_TYPE
+            })
+            .collect::<Vec<_>>();
+    let transitions = transition_events
+        .iter()
+        .map(|event| {
+            serde_json::from_value::<bearwire_protocol::lifecycle::FocusedExecutionTransition>(
+                event.event.data.clone(),
+            )
+            .expect("decode focused execution transition")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(transitions.len(), 2);
+    assert_eq!(transitions[0].state_version, 1);
+    assert_eq!(transitions[0].from, None);
+    assert_eq!(
+        transitions[0].reason,
+        bearwire_protocol::lifecycle::FocusedExecutionTransitionReason::AuthorityClaimed
+    );
+    assert_eq!(
+        transitions[0].to,
+        bearwire_protocol::lifecycle::FocusedExecutionState::Starting
+    );
+    assert_eq!(transitions[1].state_version, 2);
+    assert_eq!(
+        transitions[1].from,
+        Some(bearwire_protocol::lifecycle::FocusedExecutionState::Starting)
+    );
+    assert_eq!(
+        transitions[1].reason,
+        bearwire_protocol::lifecycle::FocusedExecutionTransitionReason::AuthorityStarted
+    );
+    assert_eq!(
+        transitions[1].to,
+        bearwire_protocol::lifecycle::FocusedExecutionState::Running
+    );
+    assert!(transition_events.iter().all(|event| {
+        event.event.scope == bearwire_protocol::wire::BearWireEventScope::Persistent
+    }));
     let replay = rpc_value(
         state.clone(),
         &token,
@@ -1120,6 +1166,34 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
     assert_eq!(
         terminal_attempts, 0,
         "completion must release Docket control"
+    );
+    let terminal_transitions =
+        bearwire_events::list_bearwire_events_after(&pool, &session_id, None, 100)
+            .await
+            .expect("list terminal focused execution transitions")
+            .into_iter()
+            .filter(|event| {
+                event.event_type
+                    == bearwire_protocol::lifecycle::FOCUSED_EXECUTION_TRANSITION_EVENT_TYPE
+            })
+            .map(|event| {
+                serde_json::from_value::<bearwire_protocol::lifecycle::FocusedExecutionTransition>(
+                    event.event.data,
+                )
+                .expect("decode terminal focused execution transition")
+            })
+            .collect::<Vec<_>>();
+    assert!(
+        terminal_transitions
+            .iter()
+            .enumerate()
+            .all(|(index, transition)| transition.state_version == (index + 1) as u64),
+        "focused execution transition versions must be contiguous"
+    );
+    assert_eq!(
+        terminal_transitions.last().map(|transition| transition.to),
+        Some(bearwire_protocol::lifecycle::FocusedExecutionState::Terminal),
+        "settlement must leave a durable terminal diagnostic transition"
     );
 
     let chat_run = rpc_value(
@@ -4570,13 +4644,34 @@ async fn model_focus_promotes_the_origin_run_idempotently(pool: sqlx::PgPool) {
     let events = bearwire_events::list_bearwire_events_after(&pool, &session_id, None, 50)
         .await
         .expect("list focus events");
+    let transitions = events
+        .iter()
+        .filter(|event| {
+            event.event_type
+                == bearwire_protocol::lifecycle::FOCUSED_EXECUTION_TRANSITION_EVENT_TYPE
+        })
+        .collect::<Vec<_>>();
     assert_eq!(
-        events
-            .iter()
-            .filter(|event| event.event_type == "docket.execution.started")
-            .count(),
+        transitions.len(),
         1,
-        "focus replay must not duplicate execution-start projection"
+        "focus replay must not duplicate focused-execution transitions"
+    );
+    let transition: bearwire_protocol::lifecycle::FocusedExecutionTransition =
+        serde_json::from_value(transitions[0].event.data.clone())
+            .expect("decode focused-execution transition");
+    assert_eq!(transition.state_version, 1);
+    assert_eq!(transition.from, None);
+    assert_eq!(
+        transition.reason,
+        bearwire_protocol::lifecycle::FocusedExecutionTransitionReason::FocusAcquired
+    );
+    assert_eq!(
+        transition.to,
+        bearwire_protocol::lifecycle::FocusedExecutionState::Running
+    );
+    assert_eq!(
+        transitions[0].event.scope,
+        bearwire_protocol::wire::BearWireEventScope::Persistent
     );
     assert!(events.iter().all(|event| {
         !matches!(
@@ -4730,6 +4825,27 @@ async fn current_task_start_recovers_orphaned_controller_without_execution_autho
     assert_eq!(failed.event.data["recovery"], "replacement_pending");
     assert_eq!(failed.event.data["task_id"], task_id.to_string());
     assert_eq!(failed.event.data["task_selection_preserved"], true);
+    let failed_transition = events
+        .iter()
+        .filter(|row| {
+            row.event_type == bearwire_protocol::lifecycle::FOCUSED_EXECUTION_TRANSITION_EVENT_TYPE
+        })
+        .filter_map(|row| {
+            serde_json::from_value::<bearwire_protocol::lifecycle::FocusedExecutionTransition>(
+                row.event.data.clone(),
+            )
+            .ok()
+        })
+        .find(|transition| {
+            transition.run_id.as_deref() == Some(first_run_id.as_str())
+                && transition.reason
+                    == bearwire_protocol::lifecycle::FocusedExecutionTransitionReason::RunFailed
+        })
+        .expect("orphan recovery records the failed focused-execution transition");
+    assert_eq!(
+        failed_transition.to,
+        bearwire_protocol::lifecycle::FocusedExecutionState::Terminal
+    );
     let recovered_event = events
         .iter()
         .find(|row| {

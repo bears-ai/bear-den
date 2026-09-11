@@ -9,6 +9,7 @@ use den_docket::{
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+use bearwire_protocol::lifecycle::FocusedExecutionTransitionReason;
 use bearwire_protocol::methods::{
     DocketJobDiagnosticsRequest, DocketJobsCancelRunRequest, DocketJobsExecuteRequest,
     DocketJobsListRequest, DocketJobsSettleTaskRequest, DocketSessionTasksSettleRequest,
@@ -292,6 +293,14 @@ pub async fn docket_jobs_settle_task_result(
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
     let service = PgDocketService::from_pool(&state.sqlx_pool);
     let attempt_session_id = pair_attempt_session_id(&request);
+    let settled_attempt = if let Some(session_id) = attempt_session_id.as_deref() {
+        service
+            .get_live_session_task_execution_attempt_for_session(bear.id, session_id)
+            .await?
+            .filter(|attempt| attempt.task_id == task_id)
+    } else {
+        None
+    };
     let result_refs = resolve_candidate_git_commit_output(
         state,
         bear.id,
@@ -321,6 +330,22 @@ pub async fn docket_jobs_settle_task_result(
             result_summary: request.result_summary,
         })
         .await?;
+    if let (Some(session_id), Some(attempt)) =
+        (attempt_session_id.as_deref(), settled_attempt.as_ref())
+    {
+        super::focused_execution::project_execution_authority_ended(
+            state,
+            user_id,
+            bear.id,
+            session_id,
+            attempt.task_id,
+            &attempt.host.run_id,
+            attempt.id,
+            attempt.fence_epoch,
+            FocusedExecutionTransitionReason::TaskSettled,
+        )
+        .await;
+    }
     if let (Some(session_id), Some(successor_task_id)) = (
         attempt_session_id.as_deref(),
         successor_task_selection(&outcome.control),
@@ -379,6 +404,10 @@ pub async fn docket_session_tasks_settle_result(
     )
     .await?;
     let service = PgDocketService::from_pool(&state.sqlx_pool);
+    let settled_attempt = service
+        .get_live_session_task_execution_attempt_for_session(bear.id, &request.session_id)
+        .await?
+        .filter(|attempt| attempt.task_id == task_id);
     let task = service
         .settle_session_task(DocketSessionTaskSettlement {
             bear_id: bear.id,
@@ -393,6 +422,20 @@ pub async fn docket_session_tasks_settle_result(
             actor_agent_id: None,
         })
         .await?;
+    if let Some(attempt) = settled_attempt {
+        super::focused_execution::project_execution_authority_ended(
+            state,
+            user_id,
+            bear.id,
+            &request.session_id,
+            attempt.task_id,
+            &attempt.host.run_id,
+            attempt.id,
+            attempt.fence_epoch,
+            FocusedExecutionTransitionReason::TaskSettled,
+        )
+        .await;
+    }
     Ok(json!({ "task": task }))
 }
 

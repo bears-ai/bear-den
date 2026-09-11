@@ -8,7 +8,7 @@ use sqlx::{types::time::OffsetDateTime, Row};
 use uuid::Uuid;
 
 use bearwire_protocol::{
-    lifecycle::RunRecoveryHandoff,
+    lifecycle::{FocusedExecutionTransitionReason, RunRecoveryHandoff},
     methods::{RunCancelRequest, RunRecoverRequest, RunStartRequest, RunStateRequest},
     wire::BearWireEvent,
 };
@@ -1533,7 +1533,12 @@ pub(crate) async fn settle_active_run_for_session(
     let mut settled_obligations = 0;
     let mut event_sequence = None;
     if let Some(run) = &active_run {
-        if let Some(finished) = turn_runs::cancel_run(
+        let transition_reason = if superseded_by_run_id.is_some() {
+            FocusedExecutionTransitionReason::SteeringInterrupted
+        } else {
+            FocusedExecutionTransitionReason::RunCancelled
+        };
+        if let Some(finished) = turn_runs::cancel_run_with_transition_reason(
             &state.sqlx_pool,
             session_id,
             &run.run_id,
@@ -1549,6 +1554,7 @@ pub(crate) async fn settle_active_run_for_session(
                 "cancelled_stream": cancelled_stream,
                 "cancelled_tool_turn": cancelled_tool_turn,
             }),
+            transition_reason,
         )
         .await?
         {
@@ -1586,42 +1592,19 @@ pub(crate) async fn settle_active_run_for_session(
                 recovery_reason: reason.to_string(),
             })
             .await?;
-        let mut transition = BearWireEvent::ephemeral(
-            "docket.execution.ended",
-            json!({
-                "attempt_id": attempt.id,
-                "task_id": attempt.task_id,
-                "run_id": attempt.host.run_id,
-                "binding": { "kind": "client_session", "id": session_id },
-                "host": { "kind": attempt.host.kind.as_str(), "run_id": attempt.host.run_id },
-                "fence_epoch": attempt.fence_epoch,
-                "reason": reason,
-                "superseded_by_run_id": superseded_by_run_id,
-                "task_selection_preserved": true,
-                "execution_authority": "absent",
-            }),
-        );
-        transition.bear_id = Some(bear_id.to_string());
-        transition.human_id = Some(user_id.to_string());
-        transition.session_id = Some(session_id.to_string());
-        transition.run_id = Some(attempt.host.run_id.clone());
-        if let Err(err) = bearwire_events::append_bearwire_event(
-            &state.sqlx_pool,
-            session_id,
-            Some(bear_id),
-            Some(user_id),
-            transition,
-        )
-        .await
-        {
-            // The released Docket attempt is authoritative. A diagnostic projection
-            // failure must not make successful cancellation look unsuccessful.
-            tracing::warn!(
-                error = %err,
+        if event_sequence.is_none() {
+            super::focused_execution::project_execution_authority_ended(
+                state,
+                user_id,
+                bear_id,
                 session_id,
-                attempt_id = %attempt.id,
-                "failed to project Docket execution end"
-            );
+                attempt.task_id,
+                &attempt.host.run_id,
+                attempt.id,
+                attempt.fence_epoch,
+                FocusedExecutionTransitionReason::Reconciled,
+            )
+            .await;
         }
     }
     Ok(SettledRunLifecycle {
@@ -2576,6 +2559,37 @@ async fn run_start_with_recovery_source(
         request_id,
         Some(upstream_target.clone()),
     );
+    if attempt.is_some() {
+        match super::focused_execution::load_focused_execution_snapshot(
+            state,
+            user_id,
+            bear.id,
+            session_id.as_str(),
+            super::focused_execution::FocusedExecutionLaunchState::Claimed,
+        )
+        .await
+        {
+            Ok(execution) => {
+                let request_id_string = request_id.to_string();
+                super::focused_execution::project_execution_transition(
+                    state,
+                    user_id,
+                    bear.id,
+                    &execution,
+                    FocusedExecutionTransitionReason::AuthorityClaimed,
+                    run_id.as_str(),
+                    Some(&request_id_string),
+                )
+                .await;
+            }
+            Err(error) => tracing::warn!(
+                %error,
+                session_id = %session_id,
+                run_id = %run_id,
+                "failed to project claimed focused execution"
+            ),
+        }
+    }
 
     let pool = state.sqlx_pool.clone();
     let livestream_state = state.clone();
@@ -2801,33 +2815,7 @@ async fn run_start_with_recovery_source(
                     .await;
                     return;
                 }
-                if attempt_for_task.is_some() {
-                    match super::focused_execution::load_focused_execution_snapshot(
-                        &livestream_state,
-                        user_id,
-                        bear_id,
-                        &session_for_task,
-                        super::focused_execution::FocusedExecutionLaunchState::Started,
-                    )
-                    .await
-                    {
-                        Ok(execution) => {
-                            super::focused_execution::project_execution_transition(
-                                &livestream_state,
-                                user_id,
-                                bear_id,
-                                &execution,
-                            )
-                            .await;
-                        }
-                        Err(error) => tracing::warn!(
-                            %error,
-                            session_id = %session_for_task,
-                            run_id = %run_id_for_task,
-                            "failed to project native focused execution start"
-                        ),
-                    }
-                }
+
                 persist_run_progress(
                     &pool,
                     &session_for_task,

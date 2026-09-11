@@ -1,10 +1,18 @@
 # Plan: Authoritative focused execution control and diagnostic transition tracing
 
-**Status:** In progress; focused-execution lifecycle stabilization through P7 completed 2026-09-11
+**Status:** In progress; focused-execution lifecycle stabilization through P8 completed 2026-09-11
 
 **Scope:** Focused Docket execution start, authoritative status projection, BearWire diagnostics, and client debug views
 
 `pair` is a trust-profile/capability shorthand, not an execution identity. Execution state and authority are named for sessions, tasks, runs, hosts, and attempts.
+
+### Completed stabilization phase P8
+
+- One protocol-owned `diagnostic.state_transition` envelope records focused-execution phase changes with typed reasons, correlation/causation IDs, task/run/attempt refs, obligation counts, and session-scoped monotonic state versions.
+- Nonterminal and terminal run mutations append focused transitions in the same SQL transaction when a Docket execution attempt is bound to the run.
+- Task settlement and exceptional attempt-only reconciliation project the corresponding terminal transition before successor control starts.
+- Legacy `docket.execution.*` event production and model-context injection were removed. Diagnostics remain outside model history; Armature treats the new event as optional, run-scoped metadata while tolerating legacy replay events.
+- Existing broad focus, continuation, settlement, recovery, protocol, and adapter tests now assert transition ordering and compatibility; the redundant prose-rendering unit test was retired.
 
 ### Completed stabilization phase P7
 
@@ -26,7 +34,7 @@
 
 - Removed the Pair-specific `docket_pair_launches` mini-scheduler; generic run, attempt/fence, and controller state now own startup.
 - Fresh starts return `accepted` + `authorized` + `claimed`. They transition to `running` and emit `run.started` only after native session construction succeeds.
-- `docket.execution.claimed` and `docket.execution.started` are distinct historical transitions.
+- Controller claim and native start are distinct typed `diagnostic.state_transition` reasons.
 - Startup failure releases authorized execution attempts instead of leaving nominally running authority.
 - Technical restart recovery uses an exclusive lease and launches a normal claimed successor; it never reports a source run as running without a native session/controller.
 - Docket task changes use the same explicit superseding handoff rather than requiring the successor task to already own the predecessor run.
@@ -82,7 +90,7 @@ Every aggregate transition has a monotonic state version and one correlation/ide
 
 ### 1. Reproduce and instrument the failure
 
-- Add a focused integration scenario: selected executable Pair task, `/focus`, no later user turn.
+- Add a focused integration scenario: selected executable session task, `/focus`, no later user turn.
 - Assert that the current implementation can produce or previously produced the contradictory selection/run/activity/controller combination.
 - Trace `session.current_task.start`, Docket attempt acquisition, Pair controller registration, first-slice scheduling, and failure cleanup with one correlation ID.
 - Classify each exit with a typed reason; do not rely on status text.
@@ -103,7 +111,7 @@ Every aggregate transition has a monotonic state version and one correlation/ide
 
 - Route `/focus`, BearWire `session.current_task.start`, and the model-facing `focus_current_task` tool to one application service.
 - Extend or inject the model-tool invocation boundary so it can call that Den-owned service. The current runtime invoker carries the database/config/tool context but not the `DenState`/live controller capability used by `start_pair_current_task`; do not work around this by copying a database-only start sequence into a workflow tool.
-- Expose `focus_current_task` to Pair only. It takes no task ID: it starts the session's already-selected task, returns the authoritative snapshot/correlation ID, and follows the same authorization, idempotency, and typed-failure behavior as `/focus`.
+- Expose `focus_current_task` only when effective policy grants `ExecuteFocusedTask`. It takes no task ID: it starts the session's already-selected task, returns the authoritative snapshot/correlation ID, and follows the same authorization, idempotency, and typed-failure behavior as `/focus`.
 - Under transaction/CAS and an idempotency key: resolve the selected executable task, create/resume the execution run, acquire a fenced Docket attempt/lease, persist durable controller queue ownership, and append the transition outbox record.
 - Return success only after the postcondition reducer reports `running` or a legitimate `waiting` state.
 - On rejection or failure, atomically settle/release partial acquisition and append a typed rejected/failed transition.
@@ -111,15 +119,15 @@ Every aggregate transition has a monotonic state version and one correlation/ide
 
 **Done when:** retries are idempotent, concurrent starts produce one owner, and crash-at-boundary tests cannot leave a successful but ownerless start.
 
-### 4. Add semantic transition tracing
+### 4. Add semantic transition tracing — completed 2026-09-11
 
-- Add the internal typed semantic fact and BearWire projection for `diagnostic.state_transition`.
-- Record only major state changes: start/acquire, pause/resume, steering interruption, obligation wait/clear, reconciliation, terminal settlement, and rejection/failure.
-- Include aggregate/resource identity, from/to, reason code, state version, correlation/causation IDs, bounded refs, timestamp, and redacted summary.
-- Persist through the canonical transcript event stream/outbox. Never fabricate assistant text for diagnostics.
-- Add retention/redaction limits; arguments, credentials, raw prompts, and unbounded tool output are forbidden.
+- `FocusedExecutionTransition` and its reason enum are owned by `bearwire-protocol` and projected as persistent `diagnostic.state_transition` events.
+- Major run phases, client wait/clear, steering interruption, task settlement, reconciliation, and terminal outcomes use one typed transition stream.
+- Session event locking assigns contiguous aggregate versions and ordered `from`/`to` states; the BearWire event envelope supplies durable sequence and timestamp metadata.
+- Run-state and terminal mutations append transitions transactionally. Docket task settlement emits its transition immediately after the leaf transaction and before successor execution begins.
+- Transition payloads contain bounded typed refs and counts only—no prompts, credentials, tool arguments, or output—and are excluded from model runtime context.
 
-**Done when:** replay from a `session.state` snapshot plus later transitions yields the same aggregate state, and projection golden tests cover unknown-client compatibility.
+**Validated by:** the existing broad same-run focus, autonomous focus/settlement, bounded continuation, and orphan-recovery tests, plus shared protocol decoding and Armature optional-event compatibility tests.
 
 ### 5. Build client debug projection
 
@@ -144,7 +152,7 @@ Every aggregate transition has a monotonic state version and one correlation/ide
 
 1. Table-driven reducer test covering every aggregate state and contradictory combinations.
 2. Integration test that `/focus` alone starts and schedules the selected task.
-3. Tool-parity test: Pair receives `focus_current_task`; invoking it and `/focus` reaches the same application service and postcondition, while non-Pair roles do not receive it.
+3. Tool-parity test: a session with `ExecuteFocusedTask` receives `focus_current_task`; invoking it and `/focus` reaches the same application service and postcondition, while policies without the capability do not receive it.
 4. Tool-safety test: `focus_current_task` without a selected executable task returns a typed failure and performs no selection or run mutation.
 5. Crash/failure injection between each acquisition boundary; no accepted start becomes ownerless.
 6. Concurrency test: two starts yield one fenced owner and one idempotent/conflict result.

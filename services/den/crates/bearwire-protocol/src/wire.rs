@@ -68,6 +68,12 @@ impl BearWireEvent {
         )
     }
 
+    pub fn persistent_typed<T: Serialize>(event_type: impl Into<String>, data: T) -> Self {
+        let mut event = Self::ephemeral_typed(event_type, data);
+        event.scope = BearWireEventScope::Persistent;
+        event
+    }
+
     pub fn tool_call_requested(data: ToolCallRequestedWire) -> Self {
         Self::ephemeral_typed("tool_call.requested", data)
     }

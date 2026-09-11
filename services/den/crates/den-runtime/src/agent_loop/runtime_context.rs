@@ -3,8 +3,6 @@ use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::bearwire_events;
-
 use den_service::bears::prompt_fragments::{
     render_turn_fragment, repository_prompt_fragment_registry,
 };
@@ -182,30 +180,6 @@ pub fn render_capability_discovery_guidance() -> Result<String, DenError> {
     render_runtime_fragment("runtime_capability_discovery", json!({}))
 }
 
-fn render_docket_transition_history(
-    event_type: &str,
-    sequence_no: i64,
-    data: &serde_json::Value,
-) -> String {
-    let authority_at_last_transition = match event_type {
-        "docket.execution.claimed" => {
-            "reserved for startup; this is historical and does not prove execution started"
-        }
-        "docket.execution.started" => {
-            "present; this is historical and does not prove authority is still current"
-        }
-        _ => "absent",
-    };
-    system_reminder(format!(
-        "Docket execution transition history (historical event, not a current-state snapshot):\n\
-         event: {event_type}\n\
-         sequence: {sequence_no}\n\
-         data: {data}\n\
-         execution authority at this transition: {authority_at_last_transition}\n\
-         Task selection is separate and may remain after execution control ends."
-    ))
-}
-
 pub async fn assemble_den_owned_runtime_supplement(
     pool: &PgPool,
     bear_id: Uuid,
@@ -215,23 +189,6 @@ pub async fn assemble_den_owned_runtime_supplement(
     objective_orientation: &ObjectiveOrientation,
 ) -> Result<String, DenError> {
     let mut parts = Vec::new();
-    if let Some(transition) = bearwire_events::latest_bearwire_event_of_types(
-        pool,
-        session_id,
-        &[
-            "docket.execution.claimed".to_string(),
-            "docket.execution.started".to_string(),
-            "docket.execution.ended".to_string(),
-        ],
-    )
-    .await?
-    {
-        parts.push(render_docket_transition_history(
-            &transition.event_type,
-            transition.sequence_no,
-            &transition.event.data,
-        ));
-    }
     parts.push(render_objective_orientation_context(
         profile_slug,
         objective_orientation,
@@ -249,31 +206,6 @@ pub async fn assemble_den_owned_runtime_supplement(
 mod tests {
     use super::*;
     use crate::agent_loop::{DocketExecutionOrientation, FreeformPolicy, OrientationTaskRef};
-
-    #[test]
-    fn docket_transition_history_separates_history_from_current_state() {
-        let rendered = render_docket_transition_history(
-            "docket.execution.started",
-            42,
-            &json!({
-                "attempt_id": "attempt-1",
-                "run_id": "run-1",
-                "reason": "focused",
-            }),
-        );
-        assert!(rendered.contains("historical event, not a current-state snapshot"));
-        assert!(rendered.contains("attempt-1"));
-        assert!(rendered.contains("does not prove authority is still current"));
-        assert!(rendered.contains("Task selection is separate"));
-
-        let ended = render_docket_transition_history(
-            "docket.execution.ended",
-            43,
-            &json!({"reason": "turn_budget"}),
-        );
-        assert!(ended.contains("execution authority at this transition: absent"));
-        assert!(ended.contains("turn_budget"));
-    }
 
     #[test]
     fn runtime_context_already_includes_den_owned_blocks_detects_compaction() {
