@@ -8,6 +8,7 @@ use sqlx::{types::time::OffsetDateTime, Row};
 use uuid::Uuid;
 
 use bearwire_protocol::{
+    lifecycle::RunRecoveryHandoff,
     methods::{RunCancelRequest, RunRecoverRequest, RunStartRequest, RunStateRequest},
     wire::BearWireEvent,
 };
@@ -2189,16 +2190,16 @@ pub(crate) async fn run_recover_result(
         },
     )
     .await?;
-    let mut event = BearWireEvent::ephemeral(
+    let mut event = BearWireEvent::ephemeral_typed(
         "run.recovered",
-        json!({
-            "run_id": request.run_id,
-            "replacement_run_id": replacement_run_id,
-            "task_id": task_id,
-            "reason": "technical_budget_recovery",
-            "launch_state": launched["launch_state"],
-            "task_selection_preserved": true,
-        }),
+        RunRecoveryHandoff {
+            run_id: request.run_id.clone(),
+            replacement_run_id: replacement_run_id.clone(),
+            task_id: Some(task_id.to_string()),
+            reason: "technical_budget_recovery".to_string(),
+            launch_state: Some(bearwire_protocol::lifecycle::RunLaunchState::Claimed),
+            task_selection_preserved: true,
+        },
     );
     event.bear_id = Some(bear.id.to_string());
     event.human_id = Some(user_id.to_string());

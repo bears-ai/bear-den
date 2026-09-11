@@ -612,7 +612,7 @@ async fn execution_result(
                     "id": run.id,
                     "state": run.state,
                 },
-                "focused_execution": execution,
+                "focused_execution": execution.to_wire(),
             });
         } else {
             pair_binding = json!({

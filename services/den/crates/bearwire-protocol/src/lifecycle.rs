@@ -63,6 +63,65 @@ pub enum RunLaunchState {
     AlreadyRunning,
 }
 
+impl RunLaunchState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Claimed => "claimed",
+            Self::Started => "started",
+            Self::AlreadyRunning => "already_running",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControllerDisposition {
+    NotApplicable,
+    Queued,
+    Claimed,
+    Live,
+    Missing,
+    Recovering,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FocusedExecutionInvariantViolation {
+    RunWithoutSelection,
+    AttemptWithoutRun,
+    ActiveRunWithoutAttempt,
+    HostMismatch,
+    TerminalRunWithLiveAttemptOrOpenObligations,
+    RunningWithoutController,
+    ControllerWithoutDurableAuthority,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "phase", rename_all = "snake_case")]
+pub enum FocusedExecutionState {
+    Unfocused,
+    Selected,
+    Starting,
+    Running,
+    WaitingForClient,
+    Continuing,
+    Recovering,
+    Terminal,
+    Inconsistent {
+        violation: FocusedExecutionInvariantViolation,
+    },
+}
+
+impl FocusedExecutionState {
+    pub const fn has_active_authority(self) -> bool {
+        matches!(
+            self,
+            Self::Starting | Self::Running | Self::WaitingForClient | Self::Continuing
+        )
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunLaunchProjection {
     pub run_id: String,
@@ -100,6 +159,102 @@ impl RunLaunchProjection {
             launch_state,
         })
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionBindingKind {
+    ClientSession,
+    WorkAssignment,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ExecutionBinding {
+    pub kind: ExecutionBindingKind,
+    pub id: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum ExecutionHostKind {
+    #[serde(rename = "pair")]
+    TurnRun,
+    #[serde(rename = "work")]
+    WorkRun,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ExecutionHost {
+    pub kind: ExecutionHostKind,
+    pub run_id: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionAttemptState {
+    Authorized,
+    Running,
+    Paused,
+    AwaitingUser,
+    Stopping,
+    Settled,
+    Released,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct FocusedExecutionTask {
+    pub id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct FocusedExecutionRun {
+    pub id: String,
+    pub state: RunState,
+    #[serde(default)]
+    pub terminal_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct FocusedExecutionAttempt {
+    pub id: String,
+    pub state: ExecutionAttemptState,
+    pub fence_epoch: i64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct FocusedExecutionObligations {
+    pub open: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct FocusedExecutionProjection {
+    pub session_id: String,
+    pub state: FocusedExecutionState,
+    #[serde(default)]
+    pub task: Option<FocusedExecutionTask>,
+    #[serde(default)]
+    pub binding: Option<ExecutionBinding>,
+    #[serde(default)]
+    pub run: Option<FocusedExecutionRun>,
+    #[serde(default)]
+    pub attempt: Option<FocusedExecutionAttempt>,
+    #[serde(default)]
+    pub host: Option<ExecutionHost>,
+    pub controller: ControllerDisposition,
+    #[serde(default)]
+    pub obligations: Option<FocusedExecutionObligations>,
+    pub launch_state: RunLaunchState,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RunRecoveryHandoff {
+    pub run_id: String,
+    pub replacement_run_id: String,
+    #[serde(default)]
+    pub task_id: Option<String>,
+    pub reason: String,
+    #[serde(default)]
+    pub launch_state: Option<RunLaunchState>,
+    pub task_selection_preserved: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -309,5 +464,28 @@ mod tests {
         assert_eq!(nested.run_id, "run-nested");
         assert_eq!(nested.state, Some(RunState::Running));
         assert_eq!(nested.launch_state, Some(RunLaunchState::Started));
+
+        let focused: FocusedExecutionProjection = serde_json::from_value(serde_json::json!({
+            "session_id": "session-1",
+            "state": { "phase": "starting" },
+            "task": { "id": "task-1" },
+            "binding": { "kind": "client_session", "id": "session-1" },
+            "run": { "id": "run-1", "state": "accepted" },
+            "attempt": { "id": "attempt-1", "state": "authorized", "fence_epoch": 3 },
+            "host": { "kind": "pair", "run_id": "run-1" },
+            "controller": "claimed",
+            "obligations": { "open": 0 },
+            "launch_state": "claimed"
+        }))
+        .unwrap();
+        assert_eq!(focused.controller, ControllerDisposition::Claimed);
+        assert_eq!(
+            focused.attempt.as_ref().map(|attempt| attempt.state),
+            Some(ExecutionAttemptState::Authorized)
+        );
+        assert_eq!(
+            focused.host.as_ref().map(|host| host.kind),
+            Some(ExecutionHostKind::TurnRun)
+        );
     }
 }

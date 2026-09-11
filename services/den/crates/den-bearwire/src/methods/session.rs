@@ -10,6 +10,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use bearwire_protocol::{
+    lifecycle::RunRecoveryHandoff,
     methods::{
         RunStartRequest, SessionCurrentTaskClearRequest, SessionCurrentTaskSelectionRequest,
         SessionCurrentTaskStartRequest, SessionIdRequest, SessionModelSetRequest,
@@ -288,7 +289,8 @@ async fn session_state_payload(
                 &session.client_session_id,
                 super::focused_execution::FocusedExecutionLaunchState::AlreadyRunning,
             )
-            .await?,
+            .await?
+            .to_wire(),
         )
     } else {
         None
@@ -810,7 +812,7 @@ pub(crate) async fn session_current_task_start_result(
         "execution_attempt_state": attempt.state,
         "launch_state": execution.launch_state,
         "fence_epoch": attempt.fence_epoch,
-        "focused_execution": execution,
+        "focused_execution": execution.to_wire(),
     }))
 }
 
@@ -1000,15 +1002,16 @@ pub(crate) async fn start_session_task_execution(
     };
 
     if let Some(recovered_run_id) = recovered_run_id {
-        let mut handoff = BearWireEvent::ephemeral(
+        let mut handoff = BearWireEvent::ephemeral_typed(
             "run.recovered",
-            json!({
-                "run_id": recovered_run_id,
-                "replacement_run_id": run_id,
-                "task_id": task_id,
-                "reason": "orphaned_execution_controller",
-                "task_selection_preserved": true,
-            }),
+            RunRecoveryHandoff {
+                run_id: recovered_run_id.clone(),
+                replacement_run_id: run_id.clone(),
+                task_id: Some(task_id.to_string()),
+                reason: "orphaned_execution_controller".to_string(),
+                launch_state: Some(launch_state),
+                task_selection_preserved: true,
+            },
         );
         handoff.bear_id = Some(bear.id.to_string());
         handoff.human_id = Some(user_id.to_string());

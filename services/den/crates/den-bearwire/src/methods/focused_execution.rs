@@ -1,3 +1,4 @@
+pub use bearwire_protocol::lifecycle::RunLaunchState as FocusedExecutionLaunchState;
 use bearwire_protocol::wire::BearWireEvent;
 use den_core::{BearCapability, CapabilitySet};
 use den_docket::{
@@ -11,7 +12,7 @@ use den_runtime::{
     turn_ids::{ToolCallId, TurnRunId},
 };
 use den_service::{bears::Bear, client_sessions, DenState};
-use serde::Serialize;
+
 use serde_json::json;
 use uuid::Uuid;
 
@@ -25,30 +26,6 @@ pub use snapshot::{
     FocusedExecutionObligations, FocusedExecutionRun, FocusedExecutionSnapshot,
     FocusedExecutionState, FocusedExecutionTask,
 };
-
-/// Authoritative result of asking Den to start or reconcile Docket-owned focused session execution.
-///
-/// Entry points such as `/focus` must consume this result rather than rebuilding loop-control
-/// state from stance- or client-specific response fields.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FocusedExecutionLaunchState {
-    Queued,
-    Claimed,
-    Started,
-    AlreadyRunning,
-}
-
-impl FocusedExecutionLaunchState {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Queued => "queued",
-            Self::Claimed => "claimed",
-            Self::Started => "started",
-            Self::AlreadyRunning => "already_running",
-        }
-    }
-}
 
 /// Start or reconcile the selected Docket task against a session execution owner.
 ///

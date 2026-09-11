@@ -6,12 +6,14 @@
 
 `pair` is a trust-profile/capability shorthand, not an execution identity. Execution state and authority are named for sessions, tasks, runs, hosts, and attempts.
 
-### P5/P6 protocol and PromptDriver refactor — in progress
+### Completed stabilization phases P5/P6
 
 - Shared lifecycle DTOs now decode run state, terminal outcomes, launch responses, obligation envelopes, and wrapped/direct event compatibility in `bearwire-protocol`.
 - Armature reconciliation consumes the shared terminal model rather than maintaining a duplicate run-state enum and raw decoder.
-- One `PromptDriver` now owns the parsed run, response guard, cancellation receiver, delivery deadline, reconciliation path, and access to tool-card/obligation state for each followed prompt.
-- Remaining work is to move focused-execution/handoff payloads into the protocol crate and fold more of `follow_run_inner` into the driver.
+- One `PromptDriver` owns the parsed run, response guard, cancellation receiver, polling loop, delivery deadline, reconciliation, tool-card cleanup, and obligation servicing for each followed prompt.
+- Focused phases, controller disposition, invariant violations, launch state, typed obligations, recovery handoffs, and the full binding/run/attempt/fence snapshot envelope are protocol-owned.
+- Run-state RPC responses are decoded once into typed lifecycle plus a raw extension payload used only for extensible tool arguments and diagnostics.
+- The duplicate Armature terminal decoder, repeated launch parsing, free polling/deadline state machines, and obsolete unleased tool-future waiter were removed.
 
 ### Completed stabilization phase P4
 

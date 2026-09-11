@@ -1,3 +1,16 @@
+pub use bearwire_protocol::lifecycle::{
+    ControllerDisposition, FocusedExecutionInvariantViolation, FocusedExecutionState,
+};
+use bearwire_protocol::lifecycle::{
+    ExecutionAttemptState as WireExecutionAttemptState, ExecutionBinding as WireExecutionBinding,
+    ExecutionBindingKind as WireExecutionBindingKind, ExecutionHost as WireExecutionHost,
+    ExecutionHostKind as WireExecutionHostKind,
+    FocusedExecutionAttempt as WireFocusedExecutionAttempt,
+    FocusedExecutionObligations as WireFocusedExecutionObligations,
+    FocusedExecutionProjection as WireFocusedExecutionProjection,
+    FocusedExecutionRun as WireFocusedExecutionRun,
+    FocusedExecutionTask as WireFocusedExecutionTask, RunState as WireRunState,
+};
 use den_docket::{
     DocketExecutionAttemptState, DocketExecutionBindingKind, DocketExecutionHost,
     DocketExecutionHostKind, DocketFocusedExecutionBinding,
@@ -15,54 +28,6 @@ use super::FocusedExecutionLaunchState;
 mod projection;
 
 pub use projection::load_focused_execution_snapshot;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ControllerDisposition {
-    NotApplicable,
-    Queued,
-    Claimed,
-    Live,
-    Missing,
-    Recovering,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FocusedExecutionInvariantViolation {
-    RunWithoutSelection,
-    AttemptWithoutRun,
-    ActiveRunWithoutAttempt,
-    HostMismatch,
-    TerminalRunWithLiveAttemptOrOpenObligations,
-    RunningWithoutController,
-    ControllerWithoutDurableAuthority,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(tag = "phase", rename_all = "snake_case")]
-pub enum FocusedExecutionState {
-    Unfocused,
-    Selected,
-    Starting,
-    Running,
-    WaitingForClient,
-    Continuing,
-    Recovering,
-    Terminal,
-    Inconsistent {
-        violation: FocusedExecutionInvariantViolation,
-    },
-}
-
-impl FocusedExecutionState {
-    pub fn has_active_authority(self) -> bool {
-        matches!(
-            self,
-            Self::Starting | Self::Running | Self::WaitingForClient | Self::Continuing
-        )
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FocusedExecutionTask {
@@ -107,6 +72,78 @@ pub struct FocusedExecutionSnapshot {
 }
 
 impl FocusedExecutionSnapshot {
+    pub fn to_wire(&self) -> WireFocusedExecutionProjection {
+        WireFocusedExecutionProjection {
+            session_id: self.session_id.to_string(),
+            state: self.state,
+            task: self.task.as_ref().map(|task| WireFocusedExecutionTask {
+                id: task.id.to_string(),
+            }),
+            binding: self.binding.as_ref().map(|binding| WireExecutionBinding {
+                kind: match binding.kind {
+                    DocketExecutionBindingKind::ClientSession => {
+                        WireExecutionBindingKind::ClientSession
+                    }
+                    DocketExecutionBindingKind::WorkAssignment => {
+                        WireExecutionBindingKind::WorkAssignment
+                    }
+                },
+                id: binding.id.clone(),
+            }),
+            run: self.run.as_ref().map(|run| WireFocusedExecutionRun {
+                id: run.id.to_string(),
+                state: match run.state {
+                    TurnRunState::Accepted => WireRunState::Accepted,
+                    TurnRunState::Running => WireRunState::Running,
+                    TurnRunState::WaitingForClient => WireRunState::WaitingForClient,
+                    TurnRunState::Continuing => WireRunState::Continuing,
+                    TurnRunState::Completed => WireRunState::Completed,
+                    TurnRunState::Failed => WireRunState::Failed,
+                    TurnRunState::Cancelled => WireRunState::Cancelled,
+                },
+                terminal_reason: run.terminal_reason.clone(),
+            }),
+            attempt: self
+                .attempt
+                .as_ref()
+                .map(|attempt| WireFocusedExecutionAttempt {
+                    id: attempt.id.to_string(),
+                    state: match attempt.state {
+                        DocketExecutionAttemptState::Authorized => {
+                            WireExecutionAttemptState::Authorized
+                        }
+                        DocketExecutionAttemptState::Running => WireExecutionAttemptState::Running,
+                        DocketExecutionAttemptState::Paused => WireExecutionAttemptState::Paused,
+                        DocketExecutionAttemptState::AwaitingUser => {
+                            WireExecutionAttemptState::AwaitingUser
+                        }
+                        DocketExecutionAttemptState::Stopping => {
+                            WireExecutionAttemptState::Stopping
+                        }
+                        DocketExecutionAttemptState::Settled => WireExecutionAttemptState::Settled,
+                        DocketExecutionAttemptState::Released => {
+                            WireExecutionAttemptState::Released
+                        }
+                    },
+                    fence_epoch: attempt.fence_epoch,
+                }),
+            host: self.host.as_ref().map(|host| WireExecutionHost {
+                kind: match host.kind {
+                    DocketExecutionHostKind::TurnRun => WireExecutionHostKind::TurnRun,
+                    DocketExecutionHostKind::WorkRun => WireExecutionHostKind::WorkRun,
+                },
+                run_id: host.run_id.clone(),
+            }),
+            controller: self.controller,
+            obligations: self
+                .obligations
+                .map(|obligations| WireFocusedExecutionObligations {
+                    open: obligations.open,
+                }),
+            launch_state: self.launch_state,
+        }
+    }
+
     pub fn task_id(&self) -> Option<Uuid> {
         self.task.as_ref().map(|task| task.id)
     }

@@ -692,23 +692,26 @@ async fn report_missing_terminal_event(
     send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, &message).await
 }
 
+struct DecodedRunStateResponse {
+    raw: Value,
+    lifecycle: RunStateProjection,
+}
+
 async fn reconcile_run_state_projection(
     config: &Config,
     adapter_state: &mut AdapterState,
     shared_state: &AdapterSharedState,
     session_id: &str,
     run_id: &str,
-    state: &Value,
+    state: &DecodedRunStateResponse,
     diagnostics: &mut SseStreamDiagnostics,
     turn_token: Uuid,
     deadline_expired: bool,
 ) -> Result<Option<SseFrameOutcome>> {
-    let projection: RunStateProjection = serde_json::from_value(state.clone())
-        .context("BearWire run.state returned an invalid lifecycle projection")?;
-    let event = match reconciliation_decision(&projection, deadline_expired) {
+    let event = match reconciliation_decision(&state.lifecycle, deadline_expired) {
         ReconciliationDecision::DeliverTerminalEvent(event) => Some(event),
         ReconciliationDecision::TerminalEventMissing(outcome) => {
-            let summary = canonical_run_state_summary(state);
+            let summary = canonical_run_state_summary(&state.raw);
             settle_terminal_delivery_tools(
                 shared_state,
                 session_id,
@@ -736,7 +739,7 @@ async fn reconcile_run_state_projection(
             return Ok(Some(projected));
         }
         ReconciliationDecision::DeadlineExceeded => {
-            let summary = canonical_run_state_summary(state);
+            let summary = canonical_run_state_summary(&state.raw);
             tracing::error!(
                 target: "bear_armature::lifecycle",
                 session_id,
@@ -749,9 +752,10 @@ async fn reconcile_run_state_projection(
                 BEARWIRE_PROMPT_TIMEOUT.as_secs()
             ));
         }
-        ReconciliationDecision::Continue => {
-            projection.latest_terminal_event().map(RunStateEvent::event)
-        }
+        ReconciliationDecision::Continue => state
+            .lifecycle
+            .latest_terminal_event()
+            .map(RunStateEvent::event),
     };
 
     match event {
@@ -785,83 +789,6 @@ fn observe_frame_outcome(
     *saw_error |= outcome.saw_error;
 }
 
-async fn reconcile_after_delivery_deadline(
-    http: &reqwest::Client,
-    config: &Config,
-    adapter_state: &mut AdapterState,
-    shared_state: &AdapterSharedState,
-    response: crate::PromptResponseGuard,
-    session_id: &str,
-    run_id: &str,
-    turn_token: Uuid,
-) -> Result<()> {
-    let reconciliation_result = if run_id == "<unknown>" {
-        Err(anyhow!(
-            "BearWire delivery deadline expired before run.start supplied a run_id"
-        ))
-    } else {
-        let mut diagnostics = SseStreamDiagnostics::default();
-        match tokio::time::timeout(BEARWIRE_DEADLINE_RECONCILIATION_TIMEOUT, async {
-            let state = fetch_run_state(http, config, session_id, run_id)
-                .await
-                .context(
-                    "BearWire delivery deadline expired and run.state reconciliation failed",
-                )?;
-            reconcile_run_state_projection(
-                config,
-                adapter_state,
-                shared_state,
-                session_id,
-                run_id,
-                &state,
-                &mut diagnostics,
-                turn_token,
-                true,
-            )
-            .await
-        })
-        .await
-        {
-            Ok(result) => result,
-            Err(_) => Err(anyhow!(
-                "BearWire delivery deadline reconciliation exceeded {}s",
-                BEARWIRE_DEADLINE_RECONCILIATION_TIMEOUT.as_secs()
-            )),
-        }
-    };
-
-    let terminalization_result = crate::terminalize_tool_cards_for_turn(
-        shared_state,
-        session_id,
-        turn_token,
-        "Delivery deadline exceeded; result unavailable.",
-    )
-    .await;
-    let _ = shared_state.cancellation_tx.send(tools_cancellation_notice(
-        session_id,
-        turn_token,
-        crate::CancellationOrigin::DeliveryDeadline,
-    ));
-    shared_state
-        .tool_tasks
-        .cancel_turn(session_id, turn_token)
-        .await;
-
-    terminalization_result?;
-    let outcome = reconciliation_result?
-        .expect("expired deadline reconciliation must produce a terminal outcome");
-    if !outcome.saw_done {
-        return Err(anyhow!(
-            "BearWire deadline reconciliation did not terminate projection. run_id={run_id}"
-        ));
-    }
-    if let Some(response_id) = response.claim() {
-        crate::write_prompt_end_turn_response(response_id).await
-    } else {
-        Ok(())
-    }
-}
-
 struct PromptDriver<'a> {
     http: &'a reqwest::Client,
     config: &'a Config,
@@ -871,7 +798,7 @@ struct PromptDriver<'a> {
     session_id: &'a str,
     run: RunLaunchProjection,
     turn_token: Uuid,
-    cancellation_rx: tokio::sync::broadcast::Receiver<crate::CancellationNotice>,
+    cancellation_rx: Option<tokio::sync::broadcast::Receiver<crate::CancellationNotice>>,
 }
 
 impl<'a> PromptDriver<'a> {
@@ -895,55 +822,100 @@ impl<'a> PromptDriver<'a> {
             session_id,
             run,
             turn_token,
-            cancellation_rx: shared_state.cancellation_tx.subscribe(),
+            cancellation_rx: Some(shared_state.cancellation_tx.subscribe()),
         }
     }
 
-    async fn drive(self, run_result: Value) -> Result<()> {
-        let Self {
-            http,
-            config,
-            adapter_state,
-            shared_state,
-            response,
-            session_id,
-            run,
-            turn_token,
-            mut cancellation_rx,
-        } = self;
-        let delivery = tokio::time::timeout(
-            BEARWIRE_PROMPT_TIMEOUT,
-            follow_run_inner(
-                http,
-                config,
-                adapter_state,
-                shared_state,
-                response.clone(),
-                session_id,
-                &run.run_id,
-                run_result,
-                turn_token,
-            ),
-        );
+    async fn drive(mut self, run_result: Value) -> Result<()> {
+        let mut cancellation_rx = self
+            .cancellation_rx
+            .take()
+            .expect("PromptDriver owns one cancellation receiver");
+        let session_id = self.session_id.to_string();
+        let turn_token = self.turn_token;
+        let delivery = tokio::time::timeout(BEARWIRE_PROMPT_TIMEOUT, self.follow_inner(run_result));
         tokio::select! {
             _ = wait_for_matching_prompt_cancellation(
                 &mut cancellation_rx,
-                session_id,
+                &session_id,
                 turn_token,
             ) => Ok(()),
             result = delivery => match result {
                 Ok(result) => result,
-                Err(_) => reconcile_after_delivery_deadline(
-                    http,
-                    config,
-                    adapter_state,
-                    shared_state,
-                    response,
-                    session_id,
-                    &run.run_id,
-                    turn_token,
-                ).await,
+                Err(_) => self.reconcile_after_delivery_deadline().await,
             },
+        }
+    }
+
+    async fn reconcile_after_delivery_deadline(&mut self) -> Result<()> {
+        let mut diagnostics = SseStreamDiagnostics::default();
+        let reconciliation_result =
+            match tokio::time::timeout(BEARWIRE_DEADLINE_RECONCILIATION_TIMEOUT, async {
+                let state = fetch_run_state(
+                    self.http,
+                    self.config,
+                    self.session_id,
+                    &self.run.run_id,
+                )
+                .await
+                .context(
+                    "BearWire delivery deadline expired and run.state reconciliation failed",
+                )?;
+                reconcile_run_state_projection(
+                    self.config,
+                    self.adapter_state,
+                    self.shared_state,
+                    self.session_id,
+                    &self.run.run_id,
+                    &state,
+                    &mut diagnostics,
+                    self.turn_token,
+                    true,
+                )
+                .await
+            })
+            .await
+            {
+                Ok(result) => result,
+                Err(_) => Err(anyhow!(
+                    "BearWire delivery deadline reconciliation exceeded {}s",
+                    BEARWIRE_DEADLINE_RECONCILIATION_TIMEOUT.as_secs()
+                )),
+            };
+
+        let terminalization_result = crate::terminalize_tool_cards_for_turn(
+            self.shared_state,
+            self.session_id,
+            self.turn_token,
+            "Delivery deadline exceeded; result unavailable.",
+        )
+        .await;
+        let _ = self
+            .shared_state
+            .cancellation_tx
+            .send(tools_cancellation_notice(
+                self.session_id,
+                self.turn_token,
+                crate::CancellationOrigin::DeliveryDeadline,
+            ));
+        self.shared_state
+            .tool_tasks
+            .cancel_turn(self.session_id, self.turn_token)
+            .await;
+
+        terminalization_result?;
+        let outcome = reconciliation_result?
+            .expect("expired deadline reconciliation must produce a terminal outcome");
+        if !outcome.saw_done {
+            return Err(anyhow!(
+                "BearWire deadline reconciliation did not terminate projection. run_id={}",
+                self.run.run_id
+            ));
+        }
+        if let Some(response_id) = self.response.claim() {
+            crate::write_prompt_end_turn_response(response_id).await
+        } else {
+            Ok(())
         }
     }
 }
@@ -985,216 +957,215 @@ pub(crate) async fn follow_run(
     .await
 }
 
-async fn follow_run_inner(
-    http: &reqwest::Client,
-    config: &Config,
-    adapter_state: &mut AdapterState,
-    shared_state: &AdapterSharedState,
-    response: crate::PromptResponseGuard,
-    session_id: &str,
-    run_id: &str,
-    run_result: Value,
-    turn_token: Uuid,
-) -> Result<()> {
-    let mut after = run_result
-        .get("event_sequence")
-        .and_then(Value::as_i64)
-        .map(|sequence| sequence.saturating_sub(1));
-    if crate::bear_debug_verbose() {
-        eprintln!(
-            "bear-armature: BearWire run.start accepted session_id={} run_id={} after={:?}",
-            session_id, run_id, after
-        );
-    }
+impl<'a> PromptDriver<'a> {
+    async fn follow_inner(&mut self, run_result: Value) -> Result<()> {
+        let http = self.http;
+        let config = self.config;
+        let adapter_state = &mut *self.adapter_state;
+        let shared_state = self.shared_state;
+        let response = self.response.clone();
+        let session_id = self.session_id;
+        let run_id = self.run.run_id.as_str();
+        let turn_token = self.turn_token;
+        let mut after = run_result
+            .get("event_sequence")
+            .and_then(Value::as_i64)
+            .map(|sequence| sequence.saturating_sub(1));
+        if crate::bear_debug_verbose() {
+            eprintln!(
+                "bear-armature: BearWire run.start accepted session_id={} run_id={} after={:?}",
+                session_id, run_id, after
+            );
+        }
 
-    let mut diagnostics = SseStreamDiagnostics::default();
-    let mut saw_done = false;
-    let mut saw_visible_output = false;
-    let mut saw_tool_activity = false;
-    let mut saw_error = false;
-    let started = Instant::now();
-    let mut last_poll_log = Instant::now();
-    let mut last_obligation_sync: Option<Instant> = None;
-    let mut last_run_state_diagnostic_log = Instant::now();
-    let mut last_run_state_summary: Option<String> = None;
-    let mut logged_initial_wait = false;
-    let mut consecutive_fetch_errors = 0usize;
-    let mut first_fetch_error_at: Option<Instant> = None;
+        let mut diagnostics = SseStreamDiagnostics::default();
+        let mut saw_done = false;
+        let mut saw_visible_output = false;
+        let mut saw_tool_activity = false;
+        let mut saw_error = false;
+        let started = Instant::now();
+        let mut last_poll_log = Instant::now();
+        let mut last_obligation_sync: Option<Instant> = None;
+        let mut last_run_state_diagnostic_log = Instant::now();
+        let mut last_run_state_summary: Option<String> = None;
+        let mut logged_initial_wait = false;
+        let mut consecutive_fetch_errors = 0usize;
+        let mut first_fetch_error_at: Option<Instant> = None;
 
-    'poll: loop {
-        // Own this session's ACP projection lane before fetching the page. A
-        // detached local tool can keep executing, but cannot emit an ACP update
-        // ahead of lifecycle frames that are already in flight.
-        let page_projection = shared_state
-            .projection_dispatcher
-            .begin_live_page(session_id, turn_token)
-            .await;
-        let replay = match fetch_events(http, config, session_id, after).await {
-            Ok(replay) => {
-                consecutive_fetch_errors = 0;
-                first_fetch_error_at = None;
-                replay
-            }
-            Err(err) => {
-                consecutive_fetch_errors += 1;
-                diagnostics.fetch_errors += 1;
-                let failure_started = *first_fetch_error_at.get_or_insert_with(Instant::now);
-                tracing::warn!(
-                    target: "bear_armature::lifecycle",
-                    session_id,
-                    run_id,
-                    after = ?after,
-                    consecutive_fetch_errors,
-                    error = %err,
-                    "BearWire event fetch failed; reconciling canonical run state"
-                );
-
-                let mut state_reachable = false;
-                if run_id != "<unknown>" {
-                    match fetch_run_state(http, config, session_id, run_id).await {
-                        Ok(state) => {
-                            state_reachable = true;
-                            let reconciled = reconcile_run_state_projection(
-                                config,
-                                adapter_state,
-                                shared_state,
-                                session_id,
-                                run_id,
-                                &state,
-                                &mut diagnostics,
-                                turn_token,
-                                false,
-                            )
-                            .await?;
-                            if let Some(outcome) = reconciled {
-                                observe_frame_outcome(
-                                    &outcome,
-                                    &mut saw_done,
-                                    &mut saw_visible_output,
-                                    &mut saw_tool_activity,
-                                    &mut saw_error,
-                                );
-                                if saw_done {
-                                    break 'poll;
-                                }
-                            }
-                            service_run_state_tool_obligations(
-                                config,
-                                shared_state,
-                                session_id,
-                                run_id,
-                                &state,
-                                turn_token,
-                            )
-                            .await?;
-                        }
-                        Err(state_err) => {
-                            tracing::debug!(
-                                target: "bear_armature::lifecycle",
-                                session_id,
-                                run_id,
-                                error = %state_err,
-                                "BearWire run.state reconciliation failed after event fetch error"
-                            );
-                        }
-                    }
+        'poll: loop {
+            // Own this session's ACP projection lane before fetching the page. A
+            // detached local tool can keep executing, but cannot emit an ACP update
+            // ahead of lifecycle frames that are already in flight.
+            let page_projection = shared_state
+                .projection_dispatcher
+                .begin_live_page(session_id, turn_token)
+                .await;
+            let replay = match fetch_events(http, config, session_id, after).await {
+                Ok(replay) => {
+                    consecutive_fetch_errors = 0;
+                    first_fetch_error_at = None;
+                    replay
                 }
-
-                let command_active = shared_state
-                    .tool_tasks
-                    .has_active_execution(session_id)
-                    .await;
-                if !command_active
-                    && !state_reachable
-                    && failure_started.elapsed() >= BEARWIRE_EVENT_FETCH_FAILURE_GRACE
-                {
-                    tracing::error!(
+                Err(err) => {
+                    consecutive_fetch_errors += 1;
+                    diagnostics.fetch_errors += 1;
+                    let failure_started = *first_fetch_error_at.get_or_insert_with(Instant::now);
+                    tracing::warn!(
                         target: "bear_armature::lifecycle",
                         session_id,
                         run_id,
                         after = ?after,
                         consecutive_fetch_errors,
-                        outage_duration_ms = failure_started.elapsed().as_millis(),
-                        event_fetch_error = %err,
-                        "Den API is unavailable; event delivery and run-state reconciliation could not recover"
+                        error = %err,
+                        "BearWire event fetch failed; reconciling canonical run state"
                     );
-                    return Err(err).context(
+
+                    let mut state_reachable = false;
+                    if run_id != "<unknown>" {
+                        match fetch_run_state(http, config, session_id, run_id).await {
+                            Ok(state) => {
+                                state_reachable = true;
+                                let reconciled = reconcile_run_state_projection(
+                                    config,
+                                    adapter_state,
+                                    shared_state,
+                                    session_id,
+                                    run_id,
+                                    &state,
+                                    &mut diagnostics,
+                                    turn_token,
+                                    false,
+                                )
+                                .await?;
+                                if let Some(outcome) = reconciled {
+                                    observe_frame_outcome(
+                                        &outcome,
+                                        &mut saw_done,
+                                        &mut saw_visible_output,
+                                        &mut saw_tool_activity,
+                                        &mut saw_error,
+                                    );
+                                    if saw_done {
+                                        break 'poll;
+                                    }
+                                }
+                                service_run_state_tool_obligations(
+                                    config,
+                                    shared_state,
+                                    session_id,
+                                    run_id,
+                                    &state.raw,
+                                    turn_token,
+                                )
+                                .await?;
+                            }
+                            Err(state_err) => {
+                                tracing::debug!(
+                                    target: "bear_armature::lifecycle",
+                                    session_id,
+                                    run_id,
+                                    error = %state_err,
+                                    "BearWire run.state reconciliation failed after event fetch error"
+                                );
+                            }
+                        }
+                    }
+
+                    let command_active = shared_state
+                        .tool_tasks
+                        .has_active_execution(session_id)
+                        .await;
+                    if !command_active
+                        && !state_reachable
+                        && failure_started.elapsed() >= BEARWIRE_EVENT_FETCH_FAILURE_GRACE
+                    {
+                        tracing::error!(
+                            target: "bear_armature::lifecycle",
+                            session_id,
+                            run_id,
+                            after = ?after,
+                            consecutive_fetch_errors,
+                            outage_duration_ms = failure_started.elapsed().as_millis(),
+                            event_fetch_error = %err,
+                            "Den API is unavailable; event delivery and run-state reconciliation could not recover"
+                        );
+                        return Err(err).context(
                         "Den API connectivity failure: BearWire event delivery and run.state reconciliation both failed during the recovery grace period",
                     );
-                }
-                drop(page_projection);
-                sleep(event_fetch_retry_delay(consecutive_fetch_errors)).await;
-                continue;
-            }
-        };
-        let replay_count = replay.frames.len();
-        let next_after = replay.next_after;
-        for frame in replay.frames {
-            let sequence = frame.sequence;
-            page_projection.observe_frame(sequence);
-            let Some(event) = frame.event else {
-                continue;
-            };
-            let event_result = handle_bearwire_event_with_terminal_cleanup(
-                config,
-                adapter_state,
-                shared_state,
-                session_id,
-                run_id,
-                &event,
-                sequence,
-                &mut diagnostics,
-                turn_token,
-            )
-            .await;
-            let outcome = match event_result {
-                Ok(outcome) => outcome,
-                Err(err) if event.get("type").and_then(Value::as_str) == Some("run.failed") => {
-                    return Err(err);
-                }
-                Err(err) => {
-                    diagnostics.observe_event_error(&event, &err);
-                    tracing::warn!(
-                        target: "bear_armature::lifecycle",
-                        session_id,
-                        run_id,
-                        event_type = event.get("type").and_then(|value| value.as_str()).unwrap_or("<missing>"),
-                        error = %err,
-                        sample = %truncate_for_log(&event.to_string(), 360),
-                        "BearWire event handling failed; skipping non-terminal event"
-                    );
+                    }
+                    drop(page_projection);
+                    sleep(event_fetch_retry_delay(consecutive_fetch_errors)).await;
                     continue;
                 }
             };
-            saw_done |= outcome.saw_done;
-            saw_visible_output |= outcome.saw_visible_output;
-            saw_tool_activity |= outcome.saw_tool_activity;
-            saw_error |= outcome.saw_error;
-            if saw_done {
-                break;
+            let replay_count = replay.frames.len();
+            let next_after = replay.next_after;
+            for frame in replay.frames {
+                let sequence = frame.sequence;
+                page_projection.observe_frame(sequence);
+                let Some(event) = frame.event else {
+                    continue;
+                };
+                let event_result = handle_bearwire_event_with_terminal_cleanup(
+                    config,
+                    adapter_state,
+                    shared_state,
+                    session_id,
+                    run_id,
+                    &event,
+                    sequence,
+                    &mut diagnostics,
+                    turn_token,
+                )
+                .await;
+                let outcome = match event_result {
+                    Ok(outcome) => outcome,
+                    Err(err) if event.get("type").and_then(Value::as_str) == Some("run.failed") => {
+                        return Err(err);
+                    }
+                    Err(err) => {
+                        diagnostics.observe_event_error(&event, &err);
+                        tracing::warn!(
+                            target: "bear_armature::lifecycle",
+                            session_id,
+                            run_id,
+                            event_type = event.get("type").and_then(|value| value.as_str()).unwrap_or("<missing>"),
+                            error = %err,
+                            sample = %truncate_for_log(&event.to_string(), 360),
+                            "BearWire event handling failed; skipping non-terminal event"
+                        );
+                        continue;
+                    }
+                };
+                saw_done |= outcome.saw_done;
+                saw_visible_output |= outcome.saw_visible_output;
+                saw_tool_activity |= outcome.saw_tool_activity;
+                saw_error |= outcome.saw_error;
+                if saw_done {
+                    break;
+                }
             }
-        }
-        after = next_after;
-        if saw_done {
-            if crate::bear_debug_verbose() {
-                eprintln!(
+            after = next_after;
+            if saw_done {
+                if crate::bear_debug_verbose() {
+                    eprintln!(
                     "bear-armature: BearWire run terminal event received session_id={} run_id={} diagnostics={}",
                     session_id,
                     run_id,
                     diagnostics.summary()
                 );
+                }
+                break;
             }
-            break;
-        }
-        if !logged_initial_wait
-            && started.elapsed() >= Duration::from_secs(5)
-            && !saw_visible_output
-            && !saw_tool_activity
-            && !saw_error
-        {
-            logged_initial_wait = true;
-            if crate::bear_debug_verbose() {
-                eprintln!(
+            if !logged_initial_wait
+                && started.elapsed() >= Duration::from_secs(5)
+                && !saw_visible_output
+                && !saw_tool_activity
+                && !saw_error
+            {
+                logged_initial_wait = true;
+                if crate::bear_debug_verbose() {
+                    eprintln!(
                     "bear-armature: BearWire still waiting for first visible/tool event session_id={} run_id={} after={:?} elapsed_ms={} diagnostics={}",
                     session_id,
                     run_id,
@@ -1202,10 +1173,10 @@ async fn follow_run_inner(
                     started.elapsed().as_millis(),
                     diagnostics.summary()
                 );
+                }
             }
-        }
-        if crate::bear_debug_verbose() && last_poll_log.elapsed() >= Duration::from_secs(5) {
-            eprintln!(
+            if crate::bear_debug_verbose() && last_poll_log.elapsed() >= Duration::from_secs(5) {
+                eprintln!(
                 "bear-armature: BearWire polling session_id={} run_id={} after={:?} replay_frames={} elapsed_ms={} diagnostics={}",
                 session_id,
                 run_id,
@@ -1214,141 +1185,147 @@ async fn follow_run_inner(
                 started.elapsed().as_millis(),
                 diagnostics.summary()
             );
-            last_poll_log = Instant::now();
-        }
-        let should_sync_obligations = run_id != "<unknown>"
-            && last_obligation_sync
-                .map(|last_sync| last_sync.elapsed() >= BEARWIRE_OBLIGATION_SYNC_INTERVAL)
-                .unwrap_or(true);
-        if should_sync_obligations {
-            last_obligation_sync = Some(Instant::now());
-            match fetch_run_state(http, config, session_id, run_id).await {
-                Ok(state) => {
-                    let reconciled = reconcile_run_state_projection(
-                        config,
-                        adapter_state,
-                        shared_state,
-                        session_id,
-                        run_id,
-                        &state,
-                        &mut diagnostics,
-                        turn_token,
-                        false,
-                    )
-                    .await?;
-                    if let Some(outcome) = reconciled {
-                        observe_frame_outcome(
-                            &outcome,
-                            &mut saw_done,
-                            &mut saw_visible_output,
-                            &mut saw_tool_activity,
-                            &mut saw_error,
-                        );
-                        if saw_done {
-                            break 'poll;
-                        }
-                    }
-                    if let Some(summary) = run_state_obligation_summary(&state) {
-                        let should_log_summary = last_run_state_summary.as_deref()
-                            != Some(summary.as_str())
-                            || last_run_state_diagnostic_log.elapsed()
-                                >= BEARWIRE_RUN_STATE_DIAGNOSTIC_INTERVAL;
-                        if should_log_summary {
-                            last_run_state_diagnostic_log = Instant::now();
-                            tracing::trace!(
-                                target: "bear_armature::lifecycle",
-                                session_id,
-                                run_id,
-                                summary = %summary,
-                                "BearWire run.state reports active client obligations"
+                last_poll_log = Instant::now();
+            }
+            let should_sync_obligations = run_id != "<unknown>"
+                && last_obligation_sync
+                    .map(|last_sync| last_sync.elapsed() >= BEARWIRE_OBLIGATION_SYNC_INTERVAL)
+                    .unwrap_or(true);
+            if should_sync_obligations {
+                last_obligation_sync = Some(Instant::now());
+                match fetch_run_state(http, config, session_id, run_id).await {
+                    Ok(state) => {
+                        let reconciled = reconcile_run_state_projection(
+                            config,
+                            adapter_state,
+                            shared_state,
+                            session_id,
+                            run_id,
+                            &state,
+                            &mut diagnostics,
+                            turn_token,
+                            false,
+                        )
+                        .await?;
+                        if let Some(outcome) = reconciled {
+                            observe_frame_outcome(
+                                &outcome,
+                                &mut saw_done,
+                                &mut saw_visible_output,
+                                &mut saw_tool_activity,
+                                &mut saw_error,
                             );
-                            if crate::bear_debug_verbose() {
-                                eprintln!(
+                            if saw_done {
+                                break 'poll;
+                            }
+                        }
+                        if let Some(summary) = run_state_obligation_summary(&state.raw) {
+                            let should_log_summary = last_run_state_summary.as_deref()
+                                != Some(summary.as_str())
+                                || last_run_state_diagnostic_log.elapsed()
+                                    >= BEARWIRE_RUN_STATE_DIAGNOSTIC_INTERVAL;
+                            if should_log_summary {
+                                last_run_state_diagnostic_log = Instant::now();
+                                tracing::trace!(
+                                    target: "bear_armature::lifecycle",
+                                    session_id,
+                                    run_id,
+                                    summary = %summary,
+                                    "BearWire run.state reports active client obligations"
+                                );
+                                if crate::bear_debug_verbose() {
+                                    eprintln!(
                                     "bear-armature: BearWire run.state obligations session_id={} run_id={} {}",
                                     session_id, run_id, summary
                                 );
+                                }
+                                last_run_state_summary = Some(summary);
                             }
-                            last_run_state_summary = Some(summary);
+                        } else {
+                            last_run_state_summary = None;
                         }
-                    } else {
-                        last_run_state_summary = None;
+                        service_run_state_tool_obligations(
+                            config,
+                            shared_state,
+                            session_id,
+                            run_id,
+                            &state.raw,
+                            turn_token,
+                        )
+                        .await?;
                     }
-                    service_run_state_tool_obligations(
-                        config,
-                        shared_state,
-                        session_id,
-                        run_id,
-                        &state,
-                        turn_token,
-                    )
-                    .await?;
+                    Err(err) => {
+                        tracing::debug!(
+                            target: "bear_armature::lifecycle",
+                            session_id,
+                            run_id,
+                            error = %err,
+                            "BearWire run.state obligation sync failed"
+                        );
+                    }
                 }
-                Err(err) => {
+            }
+            drop(page_projection);
+            sleep(BEARWIRE_POLL_INTERVAL).await;
+        }
+
+        if !saw_done {
+            return Err(anyhow!(
+            "BearWire follow_run exited without a terminal delivery decision. run_id={run_id}. Diagnostics: {}",
+            diagnostics.summary()
+        ));
+        }
+
+        if saw_done && !saw_visible_output {
+            match classify_completed_turn_without_text(saw_error, saw_tool_activity) {
+                CompletedTurnWithoutText::Expected => {
                     tracing::debug!(
                         target: "bear_armature::lifecycle",
                         session_id,
                         run_id,
-                        error = %err,
-                        "BearWire run.state obligation sync failed"
+                        diagnostics = %diagnostics.summary(),
+                        "BearWire run completed without visible assistant output after tool activity"
                     );
                 }
-            }
-        }
-        drop(page_projection);
-        sleep(BEARWIRE_POLL_INTERVAL).await;
-    }
-
-    if !saw_done {
-        return Err(anyhow!(
-            "BearWire follow_run exited without a terminal delivery decision. run_id={run_id}. Diagnostics: {}",
-            diagnostics.summary()
-        ));
-    }
-
-    if saw_done && !saw_visible_output {
-        match classify_completed_turn_without_text(saw_error, saw_tool_activity) {
-            CompletedTurnWithoutText::Expected => {
-                tracing::debug!(
-                    target: "bear_armature::lifecycle",
-                    session_id,
-                    run_id,
-                    diagnostics = %diagnostics.summary(),
-                    "BearWire run completed without visible assistant output after tool activity"
-                );
-            }
-            CompletedTurnWithoutText::Anomalous => {
-                let reason = if saw_error {
-                    "tool calls failed"
-                } else {
-                    "no tool activity or assistant output was observed"
-                };
-                let message = format!(
+                CompletedTurnWithoutText::Anomalous => {
+                    let reason = if saw_error {
+                        "tool calls failed"
+                    } else {
+                        "no tool activity or assistant output was observed"
+                    };
+                    let message = format!(
                     "**Armature**: Den completed this turn without an assistant response (run `{run_id}`); {reason}. Check the diagnostics above or send a follow-up message."
                 );
-                tracing::warn!(
-                    target: "bear_armature::lifecycle",
-                    session_id,
-                    run_id,
-                    diagnostics = %diagnostics.summary(),
-                    "BearWire run completed without visible assistant output"
-                );
-                eprintln!(
+                    tracing::warn!(
+                        target: "bear_armature::lifecycle",
+                        session_id,
+                        run_id,
+                        diagnostics = %diagnostics.summary(),
+                        "BearWire run completed without visible assistant output"
+                    );
+                    eprintln!(
                     "bear-armature: BearWire run completed without visible assistant output session_id={} run_id={} reason={} diagnostics={}",
                     session_id,
                     run_id,
                     reason,
                     diagnostics.summary()
                 );
-                send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, &message)
+                    send_agent_message_chunk_for_turn(
+                        shared_state,
+                        session_id,
+                        turn_token,
+                        &message,
+                    )
                     .await?;
+                }
             }
         }
-    }
 
-    if let Some(response_id) = response.claim() {
-        crate::write_prompt_end_turn_response(response_id).await
-    } else {
-        Ok(())
+        if let Some(response_id) = response.claim() {
+            crate::write_prompt_end_turn_response(response_id).await
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -1531,8 +1508,8 @@ async fn fetch_run_state(
     config: &Config,
     session_id: &str,
     run_id: &str,
-) -> Result<Value> {
-    rpc_call(
+) -> Result<DecodedRunStateResponse> {
+    let raw = rpc_call(
         http,
         config,
         "run.state",
@@ -1543,7 +1520,10 @@ async fn fetch_run_state(
             "limit": 20,
         }),
     )
-    .await
+    .await?;
+    let lifecycle = serde_json::from_value(raw.clone())
+        .context("BearWire run.state returned an invalid lifecycle projection")?;
+    Ok(DecodedRunStateResponse { raw, lifecycle })
 }
 
 fn terminal_tool_card_reason(outcome: RunTerminalOutcome) -> &'static str {
