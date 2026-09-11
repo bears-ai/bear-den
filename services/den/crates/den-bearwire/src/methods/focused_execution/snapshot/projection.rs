@@ -52,7 +52,8 @@ pub async fn load_focused_execution_snapshot(
             WHERE bear_id = session.bear_id
               AND binding_kind = 'client_session'
               AND binding_id = session.client_session_id
-              AND (session.current_task_id IS NULL OR task_id = session.current_task_id)
+              AND session.current_task_id IS NOT NULL
+              AND task_id = session.current_task_id
             ORDER BY
                 CASE WHEN state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')
                      THEN 0 ELSE 1 END,
@@ -151,25 +152,31 @@ pub async fn load_focused_execution_snapshot(
             ))
         }
     };
-    let controller = run
+    let controller = if attempt
         .as_ref()
-        .map_or(ControllerDisposition::NotApplicable, |run| {
-            let registered = state
-                .turn_cancellations
-                .active_for_run(client_session_id, run.id.as_str())
-                .is_some();
-            let native_session = den_runtime::native_runtime::native_client_run_exists(
-                &row.runtime_conversation_id,
-                client_session_id,
-                run.id.as_str(),
-            );
-            match (run.state, registered, native_session) {
-                (TurnRunState::Accepted, false, false) => ControllerDisposition::Queued,
-                (_, true, false) => ControllerDisposition::Claimed,
-                (_, true, true) => ControllerDisposition::Live,
-                _ => ControllerDisposition::Missing,
-            }
-        });
+        .is_some_and(|attempt| attempt.state.is_live())
+    {
+        run.as_ref()
+            .map_or(ControllerDisposition::NotApplicable, |run| {
+                let registered = state
+                    .turn_cancellations
+                    .active_for_run(client_session_id, run.id.as_str())
+                    .is_some();
+                let native_session = den_runtime::native_runtime::native_client_run_exists(
+                    &row.runtime_conversation_id,
+                    client_session_id,
+                    run.id.as_str(),
+                );
+                match (run.state, registered, native_session) {
+                    (TurnRunState::Accepted, false, false) => ControllerDisposition::Queued,
+                    (_, true, false) => ControllerDisposition::Claimed,
+                    (_, true, true) => ControllerDisposition::Live,
+                    _ => ControllerDisposition::Missing,
+                }
+            })
+    } else {
+        ControllerDisposition::NotApplicable
+    };
     let open_obligations = u32::try_from(row.open_obligations).map_err(|_| {
         CustomError::System("focused execution obligation count overflowed u32".to_string())
     })?;

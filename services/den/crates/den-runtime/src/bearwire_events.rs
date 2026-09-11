@@ -7,7 +7,10 @@ use uuid::Uuid;
 use den_core::DenError;
 
 use bearwire_protocol::{
-    lifecycle::{FocusedExecutionTransition, FOCUSED_EXECUTION_TRANSITION_EVENT_TYPE},
+    lifecycle::{
+        FocusedExecutionTransition, FocusedExecutionTransitionRecord,
+        FOCUSED_EXECUTION_TRANSITION_EVENT_TYPE,
+    },
     wire::{BearWireEvent, ResourceRef},
 };
 
@@ -183,6 +186,59 @@ pub async fn append_focused_execution_transition(
     let row = append_focused_execution_transition_on(&mut tx, bear_id, user_id, transition).await?;
     tx.commit().await?;
     Ok(row)
+}
+
+pub async fn list_focused_execution_transition_records(
+    pool: &PgPool,
+    session_id: &str,
+    limit: i64,
+) -> Result<(Vec<FocusedExecutionTransitionRecord>, bool), DenError> {
+    let limit = limit.clamp(1, 100);
+    let rows = sqlx::query!(
+        r#"
+        SELECT event_json AS "event_json: serde_json::Value"
+        FROM bearwire_events
+        WHERE session_id = $1 AND event_type = $2
+        ORDER BY sequence_no DESC
+        LIMIT $3
+        "#,
+        session_id,
+        FOCUSED_EXECUTION_TRANSITION_EVENT_TYPE,
+        limit + 1,
+    )
+    .fetch_all(pool)
+    .await?;
+    let history_truncated = rows.len() > limit as usize;
+    let mut records = rows
+        .into_iter()
+        .take(limit as usize)
+        .map(|row| {
+            let event: BearWireEvent = serde_json::from_value(row.event_json).map_err(|error| {
+                DenError::System(format!(
+                    "decode focused-execution diagnostic event failed: {error}"
+                ))
+            })?;
+            let sequence = event.sequence.ok_or_else(|| {
+                DenError::System("focused-execution diagnostic event omitted sequence".to_string())
+            })?;
+            let time = event.time.ok_or_else(|| {
+                DenError::System("focused-execution diagnostic event omitted time".to_string())
+            })?;
+            let transition: FocusedExecutionTransition = serde_json::from_value(event.data)
+                .map_err(|error| {
+                    DenError::System(format!(
+                        "decode focused-execution diagnostic transition failed: {error}"
+                    ))
+                })?;
+            Ok(FocusedExecutionTransitionRecord {
+                sequence,
+                time,
+                transition,
+            })
+        })
+        .collect::<Result<Vec<_>, DenError>>()?;
+    records.reverse();
+    Ok((records, history_truncated))
 }
 
 pub async fn append_ephemeral_bearwire_event(

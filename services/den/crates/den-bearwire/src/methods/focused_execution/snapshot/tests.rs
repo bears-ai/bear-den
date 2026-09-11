@@ -59,6 +59,13 @@ fn reducer_covers_every_lifecycle_phase_and_invariant() {
     let mut terminal = active_facts(TurnRunState::Completed);
     terminal.attempt.as_mut().unwrap().state = DocketExecutionAttemptState::Settled;
     terminal.controller = ControllerDisposition::Missing;
+    let mut ended_authority_with_live_host = active_facts(TurnRunState::Running);
+    ended_authority_with_live_host
+        .attempt
+        .as_mut()
+        .unwrap()
+        .state = DocketExecutionAttemptState::Settled;
+    ended_authority_with_live_host.controller = ControllerDisposition::NotApplicable;
 
     let phase_cases = [
         (
@@ -95,6 +102,11 @@ fn reducer_covers_every_lifecycle_phase_and_invariant() {
         ),
         ("recovering", recovering, FocusedExecutionState::Recovering),
         ("terminal", terminal, FocusedExecutionState::Terminal),
+        (
+            "ended authority with live host run",
+            ended_authority_with_live_host,
+            FocusedExecutionState::Terminal,
+        ),
     ];
     for (name, facts, expected) in phase_cases {
         assert_eq!(reduced(facts), expected, "phase case {name}");

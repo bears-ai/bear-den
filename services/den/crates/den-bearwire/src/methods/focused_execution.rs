@@ -1,5 +1,8 @@
 pub use bearwire_protocol::lifecycle::RunLaunchState as FocusedExecutionLaunchState;
-use bearwire_protocol::lifecycle::{FocusedExecutionTransition, FocusedExecutionTransitionReason};
+use bearwire_protocol::lifecycle::{
+    FocusedExecutionDiagnostics, FocusedExecutionTransition, FocusedExecutionTransitionReason,
+    RunRecoveryHandoff,
+};
 use den_core::{BearCapability, CapabilitySet};
 use den_docket::{
     DocketExecutionAttemptStart, DocketExecutionBindingKind, DocketExecutionHost,
@@ -13,18 +16,70 @@ use den_runtime::{
 };
 use den_service::{bears::Bear, client_sessions, DenState};
 
+use bearwire_protocol::wire::BearWireEvent;
+use std::collections::BTreeMap;
 use uuid::Uuid;
 
 use super::session::start_session_task_execution;
 
+mod reconciliation;
 mod snapshot;
 
+pub(crate) use reconciliation::{reconcile_before_start, StartReconciliation};
 pub(crate) use snapshot::load_focused_execution_snapshot;
 pub use snapshot::{
     ControllerDisposition, FocusedExecutionAttempt, FocusedExecutionInvariantViolation,
     FocusedExecutionObligations, FocusedExecutionRun, FocusedExecutionSnapshot,
     FocusedExecutionState, FocusedExecutionTask,
 };
+
+pub async fn focused_execution_diagnostics(
+    state: &DenState,
+    user_id: i32,
+    bear_id: Uuid,
+    client_session_id: &str,
+    limit: i64,
+) -> Result<FocusedExecutionDiagnostics, CustomError> {
+    let snapshot = load_focused_execution_snapshot(
+        state,
+        user_id,
+        bear_id,
+        client_session_id,
+        FocusedExecutionLaunchState::AlreadyRunning,
+    )
+    .await?
+    .to_wire();
+    let (transitions, history_truncated) =
+        bearwire_events::list_focused_execution_transition_records(
+            &state.sqlx_pool,
+            client_session_id,
+            limit,
+        )
+        .await?;
+    let version_gap = transitions.windows(2).any(|pair| {
+        pair[1].transition.state_version != pair[0].transition.state_version.saturating_add(1)
+    });
+    let snapshot_matches_latest_transition = match snapshot.state {
+        FocusedExecutionState::Unfocused | FocusedExecutionState::Selected => true,
+        _ => transitions
+            .last()
+            .is_some_and(|record| record.transition.to == snapshot.state),
+    };
+    let mut reason_counts = BTreeMap::new();
+    for record in &transitions {
+        *reason_counts
+            .entry(record.transition.reason.as_str().to_string())
+            .or_insert(0) += 1;
+    }
+    Ok(FocusedExecutionDiagnostics {
+        snapshot,
+        transitions,
+        history_truncated,
+        version_gap,
+        snapshot_matches_latest_transition,
+        reason_counts,
+    })
+}
 
 /// Start or reconcile the selected Docket task against a session execution owner.
 ///
@@ -445,6 +500,42 @@ pub(crate) async fn project_execution_transition(
             "failed to persist focused execution diagnostic transition"
         );
     }
+}
+
+pub(crate) async fn project_recovery_handoff(
+    state: &DenState,
+    user_id: i32,
+    bear_id: Uuid,
+    session_id: &str,
+    source_run_id: &str,
+    replacement_run_id: &str,
+    task_id: Uuid,
+    launch_state: FocusedExecutionLaunchState,
+) -> Result<(), CustomError> {
+    let mut event = BearWireEvent::ephemeral_typed(
+        "run.recovered",
+        RunRecoveryHandoff {
+            run_id: source_run_id.to_string(),
+            replacement_run_id: replacement_run_id.to_string(),
+            task_id: Some(task_id.to_string()),
+            reason: "orphaned_execution_controller".to_string(),
+            launch_state: Some(launch_state),
+            task_selection_preserved: true,
+        },
+    );
+    event.bear_id = Some(bear_id.to_string());
+    event.human_id = Some(user_id.to_string());
+    event.session_id = Some(session_id.to_string());
+    event.run_id = Some(source_run_id.to_string());
+    bearwire_events::append_bearwire_event(
+        &state.sqlx_pool,
+        session_id,
+        Some(bear_id),
+        Some(user_id),
+        event,
+    )
+    .await?;
+    Ok(())
 }
 
 pub(crate) async fn project_execution_authority_ended(

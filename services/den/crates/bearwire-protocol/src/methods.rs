@@ -214,6 +214,18 @@ pub struct SessionStateRequest {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionExecutionDiagnosticsRequest {
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub bear_slug: String,
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub session_id: String,
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_optional_i64_from_value")]
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct DocketJobsListRequest {
     #[serde(deserialize_with = "deserialize_required_string")]
     pub bear_slug: String,
@@ -581,6 +593,17 @@ mod tests {
         assert_eq!(diagnostics.message_id.as_deref(), Some("message-1"));
         assert_eq!(diagnostics.task_id.as_deref(), Some("task-1"));
         assert_eq!(diagnostics.limit, 10);
+
+        let execution_diagnostics: SessionExecutionDiagnosticsRequest =
+            serde_json::from_value(serde_json::json!({
+                "bear_slug": " bear-1 ",
+                "session_id": " session-1 ",
+                "limit": "12"
+            }))
+            .unwrap();
+        assert_eq!(execution_diagnostics.bear_slug, "bear-1");
+        assert_eq!(execution_diagnostics.session_id, "session-1");
+        assert_eq!(execution_diagnostics.limit, Some(12));
 
         assert!(
             serde_json::from_value::<ConversationDiagnosticsRequest>(serde_json::json!({

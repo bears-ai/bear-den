@@ -259,7 +259,10 @@ fn reduce_state(facts: &FocusedExecutionFacts) -> FocusedExecutionState {
             inconsistent(
                 FocusedExecutionInvariantViolation::TerminalRunWithLiveAttemptOrOpenObligations,
             )
-        } else if facts.controller != ControllerDisposition::Missing {
+        } else if !matches!(
+            facts.controller,
+            ControllerDisposition::Missing | ControllerDisposition::NotApplicable
+        ) {
             inconsistent(FocusedExecutionInvariantViolation::ControllerWithoutDurableAuthority)
         } else {
             FocusedExecutionState::Terminal
@@ -267,7 +270,7 @@ fn reduce_state(facts: &FocusedExecutionFacts) -> FocusedExecutionState {
     }
 
     if !attempt_is_live {
-        return inconsistent(FocusedExecutionInvariantViolation::ActiveRunWithoutAttempt);
+        return FocusedExecutionState::Terminal;
     }
     if run.state == TurnRunState::Accepted
         && matches!(

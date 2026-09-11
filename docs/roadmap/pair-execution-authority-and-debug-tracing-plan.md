@@ -1,10 +1,17 @@
 # Plan: Authoritative focused execution control and diagnostic transition tracing
 
-**Status:** In progress; focused-execution lifecycle stabilization through P8 completed 2026-09-11
+**Status:** In progress; focused-execution lifecycle stabilization through P9 completed 2026-09-11
 
 **Scope:** Focused Docket execution start, authoritative status projection, BearWire diagnostics, and client debug views
 
 `pair` is a trust-profile/capability shorthand, not an execution identity. Execution state and authority are named for sessions, tasks, runs, hosts, and attempts.
+
+### Completed stabilization phase P9
+
+- Orphan detection, stale session/foreign authority cleanup, typed reconciliation reasons, source-run failure, and recovery handoff projection now live under the focused-execution application service instead of the session transport module.
+- Historical settled/released attempts are excluded when no task is selected. A selected task whose focused authority ended while its ordinary host run remains live now projects `Terminal`, not a false active-run invariant violation.
+- The authenticated read-only `session.execution.diagnostics` RPC returns the canonical snapshot plus bounded typed transition history, truncation/gap indicators, snapshot consistency, and reason counts.
+- Existing start/reuse, settlement, stale authority, orphan recovery, and reducer tests cover the consolidated behavior; no standalone reconciliation test matrix was added.
 
 ### Completed stabilization phase P8
 
@@ -139,12 +146,21 @@ Every aggregate transition has a monotonic state version and one correlation/ide
 
 **Done when:** two clients attached to the same session can choose different visibility while receiving/replaying the same authorized semantic history.
 
-### 6. Reconcile and operate
+### 6. Reconcile and operate — completed 2026-09-11
 
-- Make reconciliation call the same aggregate and transition service, with an explicit `reconciled` reason and before/after refs.
-- Add counters for invariant violations and start failures by reason code, linked to correlation IDs.
-- Provide an operator/read-only diagnostic query using the authoritative snapshot and transition history.
-- Document recovery for stale leases and orphaned pre-migration runs; do not silently label them active.
+- Start-time reconciliation uses the focused aggregate service and typed reasons for orphaned controllers, stale session authority, and stale foreign authority.
+- Recovery fails the exact orphan source run, preserves task selection, releases only stale attempts whose host is terminal/missing, and records the replacement handoff.
+- `session.execution.diagnostics` exposes the authoritative snapshot, bounded transition history, reason counts, version gaps, truncation, and snapshot/transition agreement without exposing transcript or tool payloads.
+- Current invariant state remains part of the typed snapshot; persisted transition reason counts provide bounded operator counters linked to event correlation IDs.
+
+**Validated by:** the existing broad start/reuse, task-settlement, stale-session, stale-foreign, and orphan-controller recovery tests.
+
+#### Recovery runbook
+
+1. Query `session.execution.diagnostics` for the authenticated Bear/session.
+2. If the snapshot reports missing controller/authority or the latest transition disagrees with an active snapshot, retry the normal focus command; do not edit run/attempt rows directly.
+3. The command fails the exact orphan host run, preserves the selected task, releases stale authority, and launches a claimed successor. A live foreign owner is rejected rather than stolen.
+4. If `version_gap` or `history_truncated` is set, treat the canonical snapshot as current and use event sequence/correlation IDs for the bounded historical investigation.
 
 **Done when:** the known split state is detected, explainable from replay, and repaired without clearing task assignment or inventing execution.
 

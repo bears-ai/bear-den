@@ -1195,6 +1195,17 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
         Some(bearwire_protocol::lifecycle::FocusedExecutionState::Terminal),
         "settlement must leave a durable terminal diagnostic transition"
     );
+    let settled_diagnostics = rpc_value(
+        state.clone(),
+        &token,
+        "session.execution.diagnostics",
+        json!({ "bear_slug": bear_slug, "session_id": session_id }),
+    )
+    .await;
+    assert_eq!(
+        settled_diagnostics["result"]["diagnostics"]["snapshot"]["state"]["phase"], "unfocused",
+        "cleared task selection must not join historical execution authority"
+    );
 
     let chat_run = rpc_value(
         test_state(pool.clone()),
@@ -4839,7 +4850,7 @@ async fn current_task_start_recovers_orphaned_controller_without_execution_autho
         .find(|transition| {
             transition.run_id.as_deref() == Some(first_run_id.as_str())
                 && transition.reason
-                    == bearwire_protocol::lifecycle::FocusedExecutionTransitionReason::RunFailed
+                    == bearwire_protocol::lifecycle::FocusedExecutionTransitionReason::OrphanedControllerReconciled
         })
         .expect("orphan recovery records the failed focused-execution transition");
     assert_eq!(
@@ -5124,7 +5135,7 @@ async fn current_task_start_requires_selection_and_reuses_active_run(pool: sqlx:
         "active focused run must retain its attempt capability"
     );
     let session_state = rpc_value(
-        state,
+        state.clone(),
         &token,
         "session.state",
         json!({ "bear_slug": bear_slug, "session_id": session_id }),
@@ -5140,6 +5151,27 @@ async fn current_task_start_requires_selection_and_reuses_active_run(pool: sqlx:
             .get("active_docket_execution")
             .is_none(),
         "session.state must not retain an independently writable execution projection"
+    );
+    let execution_diagnostics = rpc_value(
+        state,
+        &token,
+        "session.execution.diagnostics",
+        json!({ "bear_slug": bear_slug, "session_id": session_id, "limit": 16 }),
+    )
+    .await;
+    let diagnostics = &execution_diagnostics["result"]["diagnostics"];
+    assert_eq!(
+        diagnostics["snapshot"], second["result"]["focused_execution"],
+        "operator diagnostics must use the canonical focused snapshot"
+    );
+    assert_eq!(diagnostics["version_gap"], false);
+    assert_eq!(diagnostics["snapshot_matches_latest_transition"], true);
+    assert_eq!(diagnostics["reason_counts"]["authority_claimed"], 1);
+    assert_eq!(diagnostics["reason_counts"]["authority_started"], 1);
+    assert_eq!(
+        diagnostics["transitions"].as_array().map(Vec::len),
+        Some(2),
+        "one claimed and one started transition should explain the active focus"
     );
 
     let docket_jobs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bear_jobs WHERE bear_id = $1")
@@ -6065,6 +6097,7 @@ async fn planned_v1_methods_are_recognized() {
         "session.resume",
         "session.close",
         "session.state",
+        "session.execution.diagnostics",
         "run.start",
         "run.state",
         "run.timeline",

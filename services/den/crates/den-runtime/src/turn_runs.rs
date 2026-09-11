@@ -577,6 +577,29 @@ pub async fn fail_run(
     terminal_reason: &str,
     data: Value,
 ) -> Result<Option<FinishRunResult>, DenError> {
+    fail_run_with_transition_reason(
+        pool,
+        session_id,
+        run_id,
+        bear_id,
+        user_id,
+        terminal_reason,
+        data,
+        FocusedExecutionTransitionReason::RunFailed,
+    )
+    .await
+}
+
+pub async fn fail_run_with_transition_reason(
+    pool: &PgPool,
+    session_id: &str,
+    run_id: &str,
+    bear_id: Uuid,
+    user_id: i32,
+    terminal_reason: &str,
+    data: Value,
+    transition_reason: FocusedExecutionTransitionReason,
+) -> Result<Option<FinishRunResult>, DenError> {
     finish_run(
         pool,
         session_id,
@@ -584,7 +607,7 @@ pub async fn fail_run(
         bear_id,
         user_id,
         TurnRunState::Failed,
-        FocusedExecutionTransitionReason::RunFailed,
+        transition_reason,
         "run.failed",
         Some(terminal_reason),
         data,

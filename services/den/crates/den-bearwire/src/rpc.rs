@@ -63,6 +63,16 @@ pub(crate) async fn rpc(
             }
             method_response(request.id, result, "BearWire session.state failed")
         }
+        "session.execution.diagnostics" => method_response(
+            request.id,
+            methods::session::session_execution_diagnostics_result(
+                &state,
+                &headers,
+                &request.params,
+            )
+            .await,
+            "BearWire session.execution.diagnostics failed",
+        ),
         "session.current_task.selection_request" => method_response(
             request.id,
             methods::session::session_current_task_selection_request_result(

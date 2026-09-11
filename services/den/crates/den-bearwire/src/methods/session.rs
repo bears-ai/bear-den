@@ -1,20 +1,14 @@
 use axum::http::HeaderMap;
 use den_core::DenError;
-use den_docket::{
-    DocketExecutionAttemptRelease, DocketExecutionBindingKind, DocketExecutionHostKind,
-    DocketService, PgDocketService,
-};
+
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
-use uuid::Uuid;
-
 use bearwire_protocol::{
-    lifecycle::RunRecoveryHandoff,
     methods::{
         RunStartRequest, SessionCurrentTaskClearRequest, SessionCurrentTaskSelectionRequest,
-        SessionCurrentTaskStartRequest, SessionIdRequest, SessionModelSetRequest,
-        SessionOpenRequest, SessionStateRequest,
+        SessionCurrentTaskStartRequest, SessionExecutionDiagnosticsRequest, SessionIdRequest,
+        SessionModelSetRequest, SessionOpenRequest, SessionStateRequest,
     },
     wire::BearWireEvent,
 };
@@ -29,7 +23,6 @@ use den_runtime::{
     pair_reflection::create_pair_reflection_proposals_from_latest_summary,
     runtime::compaction::{prepare_turn_compaction, TurnCompactionState, TurnCompactionTrigger},
     runtime::task_context::{resolve_runtime_task_context, RuntimeTaskResolveRequest},
-    turn_runs,
 };
 use den_service::{
     bears::{db as bears_db, BearProfile},
@@ -694,6 +687,37 @@ pub(crate) async fn session_state_result(
     }))
 }
 
+pub(crate) async fn session_execution_diagnostics_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let request: SessionExecutionDiagnosticsRequest = parse_params(params)?;
+    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let session = client_sessions::find_for_user_bear_session_id(
+        &state.sqlx_pool,
+        user_id,
+        bear.id,
+        &request.session_id,
+    )
+    .await?
+    .ok_or_else(|| CustomError::NotFound("client session not found".to_string()))?;
+    let diagnostics = super::focused_execution::focused_execution_diagnostics(
+        state,
+        user_id,
+        bear.id,
+        &session.client_session_id,
+        request.limit.unwrap_or(32).clamp(1, 100),
+    )
+    .await?;
+    Ok(json!({
+        "kind": "focused_execution_diagnostics",
+        "bear_slug": bear.slug,
+        "session_id": session.client_session_id,
+        "diagnostics": diagnostics,
+    }))
+}
+
 pub(crate) async fn session_current_task_selection_request_result(
     state: &DenState,
     headers: &HeaderMap,
@@ -838,108 +862,18 @@ pub(crate) async fn start_session_task_execution(
             "no current session task is selected for this session".to_string(),
         )
     })?;
-    let mut recovered_run_id = None;
-    if let Some(run) = den_runtime::turn_runs::active_run_for_session(&state.sqlx_pool, session_id)
-        .await?
-        .filter(|run| run.bear_id == bear.id && run.user_id == user_id)
+    let recovered_run_id = match super::focused_execution::reconcile_before_start(
+        state, user_id, bear.id, task_id, session_id,
+    )
+    .await?
     {
-        let controller_is_live = state
-            .turn_cancellations
-            .active_for_run(session_id, &run.run_id)
-            .is_some();
-        if !controller_is_live {
-            reconcile_orphaned_task_run(state, user_id, bear.id, task_id, session_id, &run.run_id)
-                .await?;
-            recovered_run_id = Some(run.run_id);
-        } else if PgDocketService::from_pool(&state.sqlx_pool)
-            .get_live_session_task_execution_attempt(bear.id, task_id, session_id, &run.run_id)
-            .await?
-            .is_some()
-        {
-            return Ok(super::focused_execution::FocusedExecutionLaunchState::AlreadyRunning);
+        super::focused_execution::StartReconciliation::AlreadyRunning => {
+            return Ok(super::focused_execution::FocusedExecutionLaunchState::AlreadyRunning)
         }
-        // A live controller for a different selected task remains authoritative
-        // until the normal superseding start atomically cancels its run and
-        // releases its attempt. Do not fabricate ownership for the new task.
-    }
-
-    if let Some(attempt) = PgDocketService::from_pool(&state.sqlx_pool)
-        .get_live_session_task_execution_attempt_for_session(bear.id, session_id)
-        .await?
-    {
-        if attempt.binding.kind != DocketExecutionBindingKind::ClientSession
-            || attempt.host.kind != DocketExecutionHostKind::TurnRun
-        {
-            return Err(CustomError::ValidationError(
-                "live session execution authority has an incompatible binding or host".to_string(),
-            ));
+        super::focused_execution::StartReconciliation::Launch { recovered_run_id } => {
+            recovered_run_id
         }
-        let run_id = attempt.host.run_id.clone();
-        let run = den_runtime::turn_runs::get_run(&state.sqlx_pool, &run_id)
-            .await?
-            .filter(|run| run.bear_id == bear.id && run.user_id == user_id);
-        let controller_is_live = state
-            .turn_cancellations
-            .active_for_run(session_id, &run_id)
-            .is_some();
-        let run_is_live = run
-            .as_ref()
-            .map(|run| run.state_value())
-            .transpose()?
-            .is_some_and(|state| !state.is_terminal());
-        if controller_is_live && run_is_live {
-            if attempt.task_id == task_id {
-                return Ok(super::focused_execution::FocusedExecutionLaunchState::AlreadyRunning);
-            }
-        } else {
-            PgDocketService::from_pool(&state.sqlx_pool)
-                .release_execution_attempt(DocketExecutionAttemptRelease {
-                    attempt_id: attempt.id,
-                    fence_epoch: attempt.fence_epoch,
-                    recovery_key: Uuid::new_v4(),
-                    recovery_reason: "stale_focused_execution_attempt_terminal_or_missing_run"
-                        .to_string(),
-                })
-                .await?;
-        }
-    }
-
-    if let Some(attempt) = PgDocketService::from_pool(&state.sqlx_pool)
-        .get_live_session_task_execution_attempt_for_task(bear.id, task_id)
-        .await?
-        .filter(|attempt| {
-            attempt.binding.kind != DocketExecutionBindingKind::ClientSession
-                || attempt.binding.id != session_id
-        })
-    {
-        // ponytail: a foreign attempt is released only after its durable host run
-        // is terminal or absent. Live foreign controllers remain authoritative.
-        if attempt.host.kind != DocketExecutionHostKind::TurnRun {
-            return Err(CustomError::ValidationError(
-                "session task execution authority has an incompatible host".to_string(),
-            ));
-        }
-        let run_id = &attempt.host.run_id;
-        let foreign_run_is_live = den_runtime::turn_runs::get_run(&state.sqlx_pool, run_id)
-            .await?
-            .map(|run| run.state_value())
-            .transpose()?
-            .is_some_and(|state| !state.is_terminal());
-        if foreign_run_is_live {
-            return Err(CustomError::ValidationError(
-                "focused task is already controlled by another live client session".to_string(),
-            ));
-        }
-        PgDocketService::from_pool(&state.sqlx_pool)
-            .release_execution_attempt(DocketExecutionAttemptRelease {
-                attempt_id: attempt.id,
-                fence_epoch: attempt.fence_epoch,
-                recovery_key: Uuid::new_v4(),
-                recovery_reason: "stale_foreign_focused_execution_attempt_terminal_or_missing_run"
-                    .to_string(),
-            })
-            .await?;
-    }
+    };
 
     let title = preview_session_current_task_selection(
         &state.sqlx_pool,
@@ -1002,107 +936,19 @@ pub(crate) async fn start_session_task_execution(
     };
 
     if let Some(recovered_run_id) = recovered_run_id {
-        let mut handoff = BearWireEvent::ephemeral_typed(
-            "run.recovered",
-            RunRecoveryHandoff {
-                run_id: recovered_run_id.clone(),
-                replacement_run_id: run_id.clone(),
-                task_id: Some(task_id.to_string()),
-                reason: "orphaned_execution_controller".to_string(),
-                launch_state: Some(launch_state),
-                task_selection_preserved: true,
-            },
-        );
-        handoff.bear_id = Some(bear.id.to_string());
-        handoff.human_id = Some(user_id.to_string());
-        handoff.session_id = Some(task_session_id.clone());
-        handoff.run_id = Some(recovered_run_id);
-        den_runtime::bearwire_events::append_bearwire_event(
-            &state.sqlx_pool,
+        super::focused_execution::project_recovery_handoff(
+            state,
+            user_id,
+            bear.id,
             &task_session_id,
-            Some(bear.id),
-            Some(user_id),
-            handoff,
+            &recovered_run_id,
+            &run_id,
+            task_id,
+            launch_state,
         )
         .await?;
     }
     Ok(launch_state)
-}
-
-async fn reconcile_orphaned_task_run(
-    state: &DenState,
-    user_id: i32,
-    bear_id: uuid::Uuid,
-    task_id: uuid::Uuid,
-    session_id: &str,
-    run_id: &str,
-) -> Result<(), CustomError> {
-    let snapshot = super::focused_execution::load_focused_execution_snapshot(
-        state,
-        user_id,
-        bear_id,
-        session_id,
-        super::focused_execution::FocusedExecutionLaunchState::AlreadyRunning,
-    )
-    .await?;
-    if snapshot.task_id() != Some(task_id)
-        || snapshot
-            .run_id()
-            .map(den_runtime::turn_ids::TurnRunId::as_str)
-            != Some(run_id)
-    {
-        return Err(CustomError::ValidationError(
-            "orphan recovery no longer matches the selected task and host run".to_string(),
-        ));
-    }
-    if !matches!(
-        snapshot.state,
-        super::focused_execution::FocusedExecutionState::Inconsistent {
-            violation:
-                super::focused_execution::FocusedExecutionInvariantViolation::RunningWithoutController
-                    | super::focused_execution::FocusedExecutionInvariantViolation::ActiveRunWithoutAttempt,
-        }
-    ) {
-        return Err(CustomError::ValidationError(format!(
-            "focused execution is not recoverable as an orphan: {:?}",
-            snapshot.state
-        )));
-    }
-    let attempt = snapshot.attempt.filter(|attempt| attempt.state.is_live());
-    turn_runs::fail_run(
-        &state.sqlx_pool,
-        session_id,
-        run_id,
-        bear_id,
-        user_id,
-        "orphaned_execution_controller",
-        json!({
-            "run_id": run_id,
-            "message": "Focused execution host stopped before reaching a terminal boundary.",
-            "reason": "orphaned_execution_controller",
-            "recovery": "replacement_pending",
-            "task_id": task_id,
-            "task_selection_preserved": true,
-        }),
-    )
-    .await?
-    .ok_or_else(|| {
-        CustomError::ValidationError(format!(
-            "execution run {run_id} changed while orphan recovery was in progress; retry focus"
-        ))
-    })?;
-    den_runtime::native_runtime::remove_native_client_run(session_id, run_id);
-    if let Some(attempt) = attempt {
-        PgDocketService::from_pool(&state.sqlx_pool)
-            .release_execution_attempt(DocketExecutionAttemptRelease {
-                attempt_id: attempt.id,
-                fence_epoch: attempt.fence_epoch,
-                recovery_key: Uuid::new_v4(),
-                recovery_reason: "orphaned_execution_controller".to_string(),
-            })
-            .await?;
-    }
-    Ok(())
 }
 
 pub(crate) async fn session_current_task_clear_result(

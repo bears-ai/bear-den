@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT event_json AS \"event_json: serde_json::Value\"\n        FROM bearwire_events\n        WHERE session_id = $1 AND event_type = $2\n        ORDER BY sequence_no DESC\n        LIMIT $3\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "event_json: serde_json::Value",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "5e7ffbc23d8be2feb2d73e1334f7d21c8157309f10c4b85c773ba2766353bfee"
+}

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -139,6 +140,31 @@ pub enum FocusedExecutionTransitionReason {
     TaskSettled,
     SteeringInterrupted,
     Reconciled,
+    OrphanedControllerReconciled,
+    StaleSessionAuthorityReleased,
+    StaleForeignAuthorityReleased,
+}
+
+impl FocusedExecutionTransitionReason {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AuthorityClaimed => "authority_claimed",
+            Self::AuthorityStarted => "authority_started",
+            Self::FocusAcquired => "focus_acquired",
+            Self::ClientWaitOpened => "client_wait_opened",
+            Self::ClientWaitCleared => "client_wait_cleared",
+            Self::RunStateChanged => "run_state_changed",
+            Self::RunCompleted => "run_completed",
+            Self::RunFailed => "run_failed",
+            Self::RunCancelled => "run_cancelled",
+            Self::TaskSettled => "task_settled",
+            Self::SteeringInterrupted => "steering_interrupted",
+            Self::Reconciled => "reconciled",
+            Self::OrphanedControllerReconciled => "orphaned_controller_reconciled",
+            Self::StaleSessionAuthorityReleased => "stale_session_authority_released",
+            Self::StaleForeignAuthorityReleased => "stale_foreign_authority_released",
+        }
+    }
 }
 
 /// Append-only diagnostic projection of a canonical focused-execution transition.
@@ -167,6 +193,23 @@ pub struct FocusedExecutionTransition {
     pub fence_epoch: Option<i64>,
     pub open_obligations: u32,
     pub task_selection_preserved: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct FocusedExecutionTransitionRecord {
+    pub sequence: u64,
+    pub time: String,
+    pub transition: FocusedExecutionTransition,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct FocusedExecutionDiagnostics {
+    pub snapshot: FocusedExecutionProjection,
+    pub transitions: Vec<FocusedExecutionTransitionRecord>,
+    pub history_truncated: bool,
+    pub version_gap: bool,
+    pub snapshot_matches_latest_transition: bool,
+    pub reason_counts: BTreeMap<String, u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
