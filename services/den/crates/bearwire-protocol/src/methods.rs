@@ -144,6 +144,26 @@ pub struct RunStartRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct RunStateRequest {
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub bear_slug: String,
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub run_id: String,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RunRecoverRequest {
+    #[serde(rename = "bear_slug", deserialize_with = "deserialize_required_string")]
+    pub _bear_slug: String,
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub run_id: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct RunCancelRequest {
     #[serde(deserialize_with = "deserialize_required_string")]
     pub session_id: String,

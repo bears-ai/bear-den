@@ -8,7 +8,7 @@ use sqlx::{types::time::OffsetDateTime, Row};
 use uuid::Uuid;
 
 use bearwire_protocol::{
-    methods::{RunCancelRequest, RunStartRequest},
+    methods::{RunCancelRequest, RunRecoverRequest, RunStartRequest, RunStateRequest},
     wire::BearWireEvent,
 };
 use den_docket::{
@@ -90,23 +90,6 @@ fn technical_budget_recovery_start_payload(
         client_context: client_context.cloned(),
         requested_mode: requested_mode.map(str::to_string),
     })
-}
-
-#[derive(Debug, Deserialize)]
-struct RunStateRequest {
-    bear_slug: String,
-    run_id: String,
-    #[serde(default)]
-    session_id: Option<String>,
-    #[serde(default)]
-    limit: Option<i64>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RunRecoverRequest {
-    #[serde(rename = "bear_slug")]
-    _bear_slug: String,
-    run_id: String,
 }
 
 #[derive(Debug, Deserialize)]

@@ -6,6 +6,13 @@
 
 `pair` is a trust-profile/capability shorthand, not an execution identity. Execution state and authority are named for sessions, tasks, runs, hosts, and attempts.
 
+### P5/P6 protocol and PromptDriver refactor — in progress
+
+- Shared lifecycle DTOs now decode run state, terminal outcomes, launch responses, obligation envelopes, and wrapped/direct event compatibility in `bearwire-protocol`.
+- Armature reconciliation consumes the shared terminal model rather than maintaining a duplicate run-state enum and raw decoder.
+- One `PromptDriver` now owns the parsed run, response guard, cancellation receiver, delivery deadline, reconciliation path, and access to tool-card/obligation state for each followed prompt.
+- Remaining work is to move focused-execution/handoff payloads into the protocol crate and fold more of `follow_run_inner` into the driver.
+
 ### Completed stabilization phase P4
 
 - Removed the Pair-specific `docket_pair_launches` mini-scheduler; generic run, attempt/fence, and controller state now own startup.

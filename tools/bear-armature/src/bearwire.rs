@@ -1,4 +1,7 @@
 use anyhow::{anyhow, Context, Result};
+use bearwire_protocol::lifecycle::{
+    RunLaunchProjection, RunStateEvent, RunStateProjection, RunTerminalOutcome,
+};
 
 use reqwest::header::{HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::Deserialize;
@@ -700,7 +703,9 @@ async fn reconcile_run_state_projection(
     turn_token: Uuid,
     deadline_expired: bool,
 ) -> Result<Option<SseFrameOutcome>> {
-    let event = match reconciliation_decision(state, deadline_expired) {
+    let projection: RunStateProjection = serde_json::from_value(state.clone())
+        .context("BearWire run.state returned an invalid lifecycle projection")?;
+    let event = match reconciliation_decision(&projection, deadline_expired) {
         ReconciliationDecision::DeliverTerminalEvent(event) => Some(event),
         ReconciliationDecision::TerminalEventMissing(outcome) => {
             let summary = canonical_run_state_summary(state);
@@ -708,7 +713,7 @@ async fn reconcile_run_state_projection(
                 shared_state,
                 session_id,
                 turn_token,
-                outcome.tool_card_reason(),
+                terminal_tool_card_reason(outcome),
             )
             .await?;
             report_missing_terminal_event(
@@ -744,10 +749,9 @@ async fn reconcile_run_state_projection(
                 BEARWIRE_PROMPT_TIMEOUT.as_secs()
             ));
         }
-        ReconciliationDecision::Continue => match decode_run_state(state) {
-            DecodedRunState::Nonterminal => latest_terminal_event_from_run_state(state),
-            DecodedRunState::Terminal(_) => None,
-        },
+        ReconciliationDecision::Continue => {
+            projection.latest_terminal_event().map(RunStateEvent::event)
+        }
     };
 
     match event {
@@ -858,6 +862,92 @@ async fn reconcile_after_delivery_deadline(
     }
 }
 
+struct PromptDriver<'a> {
+    http: &'a reqwest::Client,
+    config: &'a Config,
+    adapter_state: &'a mut AdapterState,
+    shared_state: &'a AdapterSharedState,
+    response: crate::PromptResponseGuard,
+    session_id: &'a str,
+    run: RunLaunchProjection,
+    turn_token: Uuid,
+    cancellation_rx: tokio::sync::broadcast::Receiver<crate::CancellationNotice>,
+}
+
+impl<'a> PromptDriver<'a> {
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        http: &'a reqwest::Client,
+        config: &'a Config,
+        adapter_state: &'a mut AdapterState,
+        shared_state: &'a AdapterSharedState,
+        response: crate::PromptResponseGuard,
+        session_id: &'a str,
+        run: RunLaunchProjection,
+        turn_token: Uuid,
+    ) -> Self {
+        Self {
+            http,
+            config,
+            adapter_state,
+            shared_state,
+            response,
+            session_id,
+            run,
+            turn_token,
+            cancellation_rx: shared_state.cancellation_tx.subscribe(),
+        }
+    }
+
+    async fn drive(self, run_result: Value) -> Result<()> {
+        let Self {
+            http,
+            config,
+            adapter_state,
+            shared_state,
+            response,
+            session_id,
+            run,
+            turn_token,
+            mut cancellation_rx,
+        } = self;
+        let delivery = tokio::time::timeout(
+            BEARWIRE_PROMPT_TIMEOUT,
+            follow_run_inner(
+                http,
+                config,
+                adapter_state,
+                shared_state,
+                response.clone(),
+                session_id,
+                &run.run_id,
+                run_result,
+                turn_token,
+            ),
+        );
+        tokio::select! {
+            _ = wait_for_matching_prompt_cancellation(
+                &mut cancellation_rx,
+                session_id,
+                turn_token,
+            ) => Ok(()),
+            result = delivery => match result {
+                Ok(result) => result,
+                Err(_) => reconcile_after_delivery_deadline(
+                    http,
+                    config,
+                    adapter_state,
+                    shared_state,
+                    response,
+                    session_id,
+                    &run.run_id,
+                    turn_token,
+                ).await,
+            },
+        }
+    }
+}
+
 /// Project an already-started Den run into the current ACP prompt until Den
 /// reaches a canonical prompt boundary. `/focus` uses this after the deep Den
 /// command has selected and launched Docket-owned execution.
@@ -871,52 +961,28 @@ pub(crate) async fn follow_run(
     run_result: Value,
     turn_token: Uuid,
 ) -> Result<()> {
-    let mut cancellation_rx = shared_state.cancellation_tx.subscribe();
     if !crate::is_current_prompt_turn(shared_state, session_id, turn_token, "follow_run_start")
         .await
     {
         return Ok(());
     }
-    let run_id = run_result
-        .get("run_id")
-        .or_else(|| run_result.pointer("/pair_binding/run/id"))
-        .and_then(Value::as_str)
-        .unwrap_or("<unknown>")
-        .to_string();
-    if run_id != "<unknown>"
-        && !crate::bind_prompt_turn_run(shared_state, session_id, turn_token, &run_id).await
-    {
+    let run = RunLaunchProjection::decode(&run_result)
+        .map_err(|error| anyhow!("invalid BearWire run launch response: {error}"))?;
+    if !crate::bind_prompt_turn_run(shared_state, session_id, turn_token, &run.run_id).await {
         return Ok(());
     }
-    let delivery = tokio::time::timeout(
-        BEARWIRE_PROMPT_TIMEOUT,
-        follow_run_inner(
-            http,
-            config,
-            adapter_state,
-            shared_state,
-            response.clone(),
-            session_id,
-            run_result,
-            turn_token,
-        ),
-    );
-    tokio::select! {
-        _ = wait_for_matching_prompt_cancellation(&mut cancellation_rx, session_id, turn_token) => Ok(()),
-        result = delivery => match result {
-            Ok(result) => result,
-            Err(_) => reconcile_after_delivery_deadline(
-                http,
-                config,
-                adapter_state,
-                shared_state,
-                response,
-                session_id,
-                &run_id,
-                turn_token,
-            ).await,
-        },
-    }
+    PromptDriver::new(
+        http,
+        config,
+        adapter_state,
+        shared_state,
+        response,
+        session_id,
+        run,
+        turn_token,
+    )
+    .drive(run_result)
+    .await
 }
 
 async fn follow_run_inner(
@@ -926,14 +992,10 @@ async fn follow_run_inner(
     shared_state: &AdapterSharedState,
     response: crate::PromptResponseGuard,
     session_id: &str,
+    run_id: &str,
     run_result: Value,
     turn_token: Uuid,
 ) -> Result<()> {
-    let run_id = run_result
-        .get("run_id")
-        .or_else(|| run_result.pointer("/pair_binding/run/id"))
-        .and_then(Value::as_str)
-        .unwrap_or("<unknown>");
     let mut after = run_result
         .get("event_sequence")
         .and_then(Value::as_i64)
@@ -1484,56 +1546,12 @@ async fn fetch_run_state(
     .await
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum RunTerminalOutcome {
-    Completed,
-    Failed,
-    Cancelled,
-}
-
-impl RunTerminalOutcome {
-    fn from_persisted_state(state: &str) -> Option<Self> {
-        match state {
-            "completed" => Some(Self::Completed),
-            "failed" => Some(Self::Failed),
-            "cancelled" => Some(Self::Cancelled),
-            _ => None,
-        }
+fn terminal_tool_card_reason(outcome: RunTerminalOutcome) -> &'static str {
+    match outcome {
+        RunTerminalOutcome::Completed => "Run completed; result unavailable.",
+        RunTerminalOutcome::Failed => "Run failed; result unavailable.",
+        RunTerminalOutcome::Cancelled => "Run cancelled; result unavailable.",
     }
-
-    fn event_type(self) -> &'static str {
-        match self {
-            Self::Completed => "run.completed",
-            Self::Failed => "run.failed",
-            Self::Cancelled => "run.cancelled",
-        }
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Completed => "completed",
-            Self::Failed => "failed",
-            Self::Cancelled => "cancelled",
-        }
-    }
-
-    fn tool_card_reason(self) -> &'static str {
-        match self {
-            Self::Completed => "Run completed; result unavailable.",
-            Self::Failed => "Run failed; result unavailable.",
-            Self::Cancelled => "Run cancelled; result unavailable.",
-        }
-    }
-
-    fn is_error(self) -> bool {
-        self == Self::Failed
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DecodedRunState {
-    Nonterminal,
-    Terminal(RunTerminalOutcome),
 }
 
 #[derive(Debug, PartialEq)]
@@ -1544,47 +1562,15 @@ enum ReconciliationDecision<'a> {
     DeadlineExceeded,
 }
 
-fn recent_run_events(state: &Value) -> impl DoubleEndedIterator<Item = &Value> {
-    state
-        .get("recent_events")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|entry| entry.get("event").or(Some(entry)))
-}
-
-fn latest_terminal_event_from_run_state(state: &Value) -> Option<&Value> {
-    recent_run_events(state).rev().find(|event| {
-        matches!(
-            event.get("type").and_then(Value::as_str),
-            Some("run.completed" | "run.failed" | "run.cancelled" | "run.interrupted")
-        )
-    })
-}
-
-fn decode_run_state(state: &Value) -> DecodedRunState {
-    state
-        .pointer("/run/state")
-        .and_then(Value::as_str)
-        .and_then(RunTerminalOutcome::from_persisted_state)
-        .map(DecodedRunState::Terminal)
-        .unwrap_or(DecodedRunState::Nonterminal)
-}
-
-fn reconciliation_decision(state: &Value, deadline_expired: bool) -> ReconciliationDecision<'_> {
-    let has_open_obligations = state
-        .get("open_obligations")
-        .and_then(Value::as_array)
-        .is_some_and(|obligations| !obligations.is_empty());
-
-    if let DecodedRunState::Terminal(outcome) = decode_run_state(state) {
-        if !has_open_obligations {
-            let matching_event = recent_run_events(state).rev().find(|event| {
-                event.get("type").and_then(Value::as_str) == Some(outcome.event_type())
-            });
-            return matching_event.map_or(
+fn reconciliation_decision(
+    state: &RunStateProjection,
+    deadline_expired: bool,
+) -> ReconciliationDecision<'_> {
+    if let Some(outcome) = state.terminal_outcome() {
+        if state.open_obligations.is_empty() {
+            return state.matching_terminal_event().map_or(
                 ReconciliationDecision::TerminalEventMissing(outcome),
-                ReconciliationDecision::DeliverTerminalEvent,
+                |event| ReconciliationDecision::DeliverTerminalEvent(event.event()),
             );
         }
     }
@@ -3141,24 +3127,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn missed_terminal_event_recovery_includes_failed_and_interrupted() {
-        for event_type in ["run.failed", "run.interrupted"] {
-            let state = json!({
-                "recent_events": [
-                    { "event": { "type": "run.started" } },
-                    { "event": { "type": event_type, "run_id": "run-1" } }
-                ]
-            });
-            assert_eq!(
-                latest_terminal_event_from_run_state(&state)
-                    .and_then(|event| event.get("type"))
-                    .and_then(Value::as_str),
-                Some(event_type)
-            );
-        }
-    }
-
     #[tokio::test]
     async fn follow_run_cancellation_ignores_tools_only_and_stale_turns() {
         let (tx, mut rx) = tokio::sync::broadcast::channel(4);
@@ -3299,11 +3267,16 @@ mod tests {
             ("cancelled", "run.cancelled"),
         ] {
             let event = json!({ "type": event_type, "run_id": "run-1" });
-            let state = json!({
-                "run": { "state": state_name },
+            let state: RunStateProjection = serde_json::from_value(json!({
+                "run": {
+                    "run_id": "run-1",
+                    "session_id": "session-1",
+                    "state": state_name
+                },
                 "open_obligations": [],
                 "recent_events": [{ "event": event.clone() }]
-            });
+            }))
+            .unwrap();
             assert!(matches!(
                 reconciliation_decision(&state, false),
                 ReconciliationDecision::DeliverTerminalEvent(event)
@@ -3321,11 +3294,16 @@ mod tests {
 
     #[test]
     fn reconciliation_flags_missing_terminal_event_instead_of_spinning() {
-        let state = json!({
-            "run": { "state": "completed" },
+        let state: RunStateProjection = serde_json::from_value(json!({
+            "run": {
+                "run_id": "run-1",
+                "session_id": "session-1",
+                "state": "completed"
+            },
             "open_obligations": [],
             "recent_events": [{ "event": { "type": "run.started" } }]
-        });
+        }))
+        .unwrap();
         assert_eq!(
             reconciliation_decision(&state, false),
             ReconciliationDecision::TerminalEventMissing(RunTerminalOutcome::Completed)
@@ -3335,14 +3313,15 @@ mod tests {
     #[test]
     fn deadline_reconciliation_rejects_paused_active_and_obligated_terminal_states() {
         for state in [
-            json!({ "run": { "state": "paused" }, "open_obligations": [] }),
-            json!({ "run": { "state": "running" }, "open_obligations": [] }),
+            json!({ "run": { "run_id": "run-1", "session_id": "session-1", "state": "accepted" }, "open_obligations": [] }),
+            json!({ "run": { "run_id": "run-1", "session_id": "session-1", "state": "running" }, "open_obligations": [] }),
             json!({
-                "run": { "state": "completed" },
+                "run": { "run_id": "run-1", "session_id": "session-1", "state": "completed" },
                 "open_obligations": [{ "id": "obl-1" }],
                 "recent_events": [{ "event": { "type": "run.completed" } }]
             }),
         ] {
+            let state: RunStateProjection = serde_json::from_value(state).unwrap();
             assert_eq!(
                 reconciliation_decision(&state, false),
                 ReconciliationDecision::Continue

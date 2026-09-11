@@ -1,0 +1,313 @@
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::Value;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunState {
+    Accepted,
+    Running,
+    WaitingForClient,
+    Continuing,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+impl RunState {
+    pub fn terminal_outcome(self) -> Option<RunTerminalOutcome> {
+        match self {
+            Self::Completed => Some(RunTerminalOutcome::Completed),
+            Self::Failed => Some(RunTerminalOutcome::Failed),
+            Self::Cancelled => Some(RunTerminalOutcome::Cancelled),
+            Self::Accepted | Self::Running | Self::WaitingForClient | Self::Continuing => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunTerminalOutcome {
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+impl RunTerminalOutcome {
+    pub const fn event_type(self) -> &'static str {
+        match self {
+            Self::Completed => "run.completed",
+            Self::Failed => "run.failed",
+            Self::Cancelled => "run.cancelled",
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    pub const fn is_error(self) -> bool {
+        matches!(self, Self::Failed)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunLaunchState {
+    Queued,
+    Claimed,
+    Started,
+    AlreadyRunning,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunLaunchProjection {
+    pub run_id: String,
+    pub state: Option<RunState>,
+    pub launch_state: Option<RunLaunchState>,
+}
+
+impl RunLaunchProjection {
+    pub fn decode(value: &Value) -> Result<Self, String> {
+        let run_id = value
+            .get("run_id")
+            .or_else(|| value.pointer("/pair_binding/run/id"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|run_id| !run_id.is_empty())
+            .ok_or_else(|| "run launch projection omitted run_id".to_string())?;
+        let state = value
+            .get("state")
+            .or_else(|| value.pointer("/pair_binding/run/state"))
+            .or_else(|| value.pointer("/pair_binding/control/state"))
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|error| format!("invalid run launch state: {error}"))?;
+        let launch_state = value
+            .get("launch_state")
+            .or_else(|| value.pointer("/pair_binding/control/launch_state"))
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|error| format!("invalid execution launch state: {error}"))?;
+        Ok(Self {
+            run_id: run_id.to_string(),
+            state,
+            launch_state,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RunSnapshot {
+    pub run_id: String,
+    pub session_id: String,
+    pub state: RunState,
+    #[serde(default)]
+    pub terminal_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RunStateEvent {
+    event: Value,
+}
+
+impl RunStateEvent {
+    pub fn event(&self) -> &Value {
+        &self.event
+    }
+
+    pub fn event_type(&self) -> Option<&str> {
+        self.event.get("type").and_then(Value::as_str)
+    }
+}
+
+impl<'de> Deserialize<'de> for RunStateEvent {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        let event = value
+            .get("event")
+            .filter(|event| event.is_object())
+            .cloned()
+            .unwrap_or(value);
+        if !event.is_object() {
+            return Err(serde::de::Error::custom(
+                "run state event must be an event object or { event } envelope",
+            ));
+        }
+        Ok(Self { event })
+    }
+}
+
+impl Serialize for RunStateEvent {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.event.serialize(serializer)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ObligationKind {
+    ToolResult,
+    PermissionDecision,
+    HumanInput,
+    ResourceBinding,
+    HandoffDecision,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExpectedResponderAction {
+    ToolResult,
+    PermissionDecision,
+    HumanInput,
+    ResourceBinding,
+    HandoffDecision,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ObligationState {
+    Requested,
+    WaitingForClient,
+    ResultReceived,
+    Continued,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RunObligation {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub run_id: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub kind: Option<ObligationKind>,
+    #[serde(default)]
+    pub expected_responder_action: Option<ExpectedResponderAction>,
+    #[serde(default)]
+    pub state: Option<ObligationState>,
+    #[serde(default)]
+    pub tool_call_id: Option<String>,
+    #[serde(default)]
+    pub permission_id: Option<String>,
+    #[serde(default)]
+    pub turn_step_id: Option<String>,
+    #[serde(default)]
+    pub request_payload: Value,
+    #[serde(default)]
+    pub result_payload: Value,
+    #[serde(flatten)]
+    pub extensions: std::collections::BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RunStateProjection {
+    pub run: RunSnapshot,
+    #[serde(default)]
+    pub blocking_reason: Option<String>,
+    #[serde(default)]
+    pub open_obligations: Vec<RunObligation>,
+    #[serde(default)]
+    pub obligations: Vec<RunObligation>,
+    #[serde(default)]
+    pub recent_events: Vec<RunStateEvent>,
+}
+
+impl RunStateProjection {
+    pub fn terminal_outcome(&self) -> Option<RunTerminalOutcome> {
+        self.run.state.terminal_outcome()
+    }
+
+    pub fn matching_terminal_event(&self) -> Option<&RunStateEvent> {
+        let event_type = self.terminal_outcome()?.event_type();
+        self.recent_events
+            .iter()
+            .rev()
+            .find(|event| event.event_type() == Some(event_type))
+    }
+
+    pub fn latest_terminal_event(&self) -> Option<&RunStateEvent> {
+        self.recent_events.iter().rev().find(|event| {
+            matches!(
+                event.event_type(),
+                Some("run.completed" | "run.failed" | "run.cancelled" | "run.interrupted")
+            )
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_state_projection_normalizes_event_envelopes_and_terminal_outcomes() {
+        let projection: RunStateProjection = serde_json::from_value(serde_json::json!({
+            "run": {
+                "run_id": "run-1",
+                "session_id": "session-1",
+                "state": "failed",
+                "terminal_reason": "stream_error",
+                "extra_server_field": true
+            },
+            "open_obligations": [],
+            "recent_events": [
+                { "event": { "type": "run.started", "run_id": "run-1" } },
+                { "type": "run.failed", "run_id": "run-1", "data": { "reason": "stream_error" } }
+            ],
+            "extra_projection_field": true
+        }))
+        .unwrap();
+
+        assert_eq!(projection.run.state, RunState::Failed);
+        assert_eq!(
+            projection.terminal_outcome(),
+            Some(RunTerminalOutcome::Failed)
+        );
+        assert_eq!(
+            projection
+                .matching_terminal_event()
+                .and_then(RunStateEvent::event_type),
+            Some("run.failed")
+        );
+        assert_eq!(
+            projection.recent_events[0].event_type(),
+            Some("run.started")
+        );
+
+        let top_level = RunLaunchProjection::decode(&serde_json::json!({
+            "run_id": "run-top",
+            "state": "accepted",
+            "launch_state": "claimed"
+        }))
+        .unwrap();
+        assert_eq!(top_level.run_id, "run-top");
+        assert_eq!(top_level.state, Some(RunState::Accepted));
+        assert_eq!(top_level.launch_state, Some(RunLaunchState::Claimed));
+
+        let nested = RunLaunchProjection::decode(&serde_json::json!({
+            "pair_binding": {
+                "run": { "id": "run-nested", "state": "running" },
+                "control": { "launch_state": "started" }
+            }
+        }))
+        .unwrap();
+        assert_eq!(nested.run_id, "run-nested");
+        assert_eq!(nested.state, Some(RunState::Running));
+        assert_eq!(nested.launch_state, Some(RunLaunchState::Started));
+    }
+}
