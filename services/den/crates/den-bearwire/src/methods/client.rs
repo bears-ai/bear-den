@@ -899,7 +899,9 @@ pub(crate) fn spawn_continuation_task(
                                         if let Some(continuation) =
                                             docket_bounded_slice_continuation(
                                                 report_pair_bounded_outcome(
-                                                    &pool,
+                                                    &livestream_state,
+                                                    run.user_id,
+                                                    run.bear_id,
                                                     &run.session_id,
                                                     &run.run_id,
                                                     DocketPairBoundedOutcome::Progress,

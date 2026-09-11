@@ -4453,10 +4453,10 @@ async fn model_focus_promotes_the_origin_run_idempotently(pool: sqlx::PgPool) {
     )
     .await
     .expect("replay focus");
-    assert_eq!(&first.run_id, &run_id);
-    assert_eq!(replay.run_id, first.run_id);
-    assert_eq!(replay.attempt_id, first.attempt_id);
-    assert_eq!(replay.fence_epoch, first.fence_epoch);
+    assert_eq!(first.run_id(), Some(&run_id));
+    assert_eq!(replay.run_id(), first.run_id());
+    assert_eq!(replay.attempt_id(), first.attempt_id());
+    assert_eq!(replay.fence_epoch(), first.fence_epoch());
     assert_eq!(
         replay.launch_state,
         crate::methods::focused_execution::FocusedExecutionLaunchState::AlreadyRunning
@@ -4850,8 +4850,18 @@ async fn current_task_start_requires_selection_and_reuses_active_run(pool: sqlx:
         .expect("Pair start returns canonical execution attempt id");
     assert!(
         first["result"]["fence_epoch"].as_i64().is_some(),
-        "Pair start returns canonical attempt fence: {first}"
+        "focused start returns canonical attempt fence: {first}"
     );
+    let first_snapshot = &first["result"]["focused_execution"];
+    assert_eq!(first_snapshot["state"]["phase"], "running", "{first}");
+    assert_eq!(first_snapshot["controller"], "live", "{first}");
+    assert_eq!(first_snapshot["task"]["id"], task_id.to_string());
+    assert_eq!(first_snapshot["run"]["id"], first["result"]["run_id"]);
+    assert_eq!(
+        first_snapshot["attempt"]["id"],
+        first["result"]["execution_attempt_id"]
+    );
+    assert_eq!(first_snapshot["obligations"]["open"], 0);
 
     let attempt: (String, String, String, String) = sqlx::query_as(
         "SELECT id::TEXT, binding_kind, binding_id, host_run_id
@@ -4866,7 +4876,7 @@ async fn current_task_start_requires_selection_and_reuses_active_run(pool: sqlx:
     assert_eq!(attempt.3, first["result"]["run_id"].as_str().unwrap());
 
     let second = rpc_value(
-        state,
+        state.clone(),
         &token,
         "session.current_task.start",
         json!({ "bear_slug": bear_slug, "session_id": session_id }),
@@ -4885,7 +4895,25 @@ async fn current_task_start_requires_selection_and_reuses_active_run(pool: sqlx:
     assert_eq!(second["result"]["run_id"], first["result"]["run_id"]);
     assert_eq!(
         second["result"]["execution_attempt_id"], first["result"]["execution_attempt_id"],
-        "active Pair run must retain its attempt capability"
+        "active focused run must retain its attempt capability"
+    );
+    let session_state = rpc_value(
+        state,
+        &token,
+        "session.state",
+        json!({ "bear_slug": bear_slug, "session_id": session_id }),
+    )
+    .await;
+    assert_eq!(
+        session_state["result"]["session"]["diagnostics"]["focused_execution"],
+        second["result"]["focused_execution"],
+        "focus/start and session.state must share one canonical projection"
+    );
+    assert!(
+        session_state["result"]["session"]["diagnostics"]
+            .get("active_docket_execution")
+            .is_none(),
+        "session.state must not retain an independently writable execution projection"
     );
 
     let docket_jobs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bear_jobs WHERE bear_id = $1")

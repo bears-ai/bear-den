@@ -588,14 +588,20 @@ async fn execution_result(
                 &policy.capabilities,
             )
             .await?;
+            let run = execution.run.as_ref().ok_or_else(|| {
+                CustomError::System("focused Docket execution has no run authority".to_string())
+            })?;
+            let attempt = execution.attempt.as_ref().ok_or_else(|| {
+                CustomError::System("focused Docket execution has no attempt authority".to_string())
+            })?;
             pair_binding = json!({
                 "control": {
                     "kind": "docket",
-                    "state": "running",
-                    "attempt_id": execution.attempt_id,
-                    "attempt_state": execution.attempt_state,
+                    "state": run.state,
+                    "attempt_id": attempt.id,
+                    "attempt_state": attempt.state,
                     "launch_state": execution.launch_state,
-                    "fence_epoch": execution.fence_epoch,
+                    "fence_epoch": attempt.fence_epoch,
                 },
                 "task": {
                     "id": task_id,
@@ -603,9 +609,10 @@ async fn execution_result(
                 },
                 "session_id": client_session_id,
                 "run": {
-                    "id": execution.run_id,
-                    "state": execution.run_state,
+                    "id": run.id,
+                    "state": run.state,
                 },
+                "focused_execution": execution,
             });
         } else {
             pair_binding = json!({

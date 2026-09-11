@@ -1220,7 +1220,7 @@ pub(crate) async fn persist_runtime_event_as_bearwire(
 
     let terminal_event = runtime_event_is_terminal(&runtime_event);
     let active_obligation = update_run_state_for_runtime_event(
-        pool,
+        state,
         session_id,
         run_id,
         bear_id,
@@ -1835,31 +1835,31 @@ pub(crate) fn docket_bounded_slice_continuation(
 }
 
 pub(crate) async fn report_pair_bounded_outcome(
-    pool: &sqlx::PgPool,
+    state: &DenState,
+    user_id: i32,
+    bear_id: uuid::Uuid,
     session_id: &str,
     run_id: &str,
     outcome: DocketPairBoundedOutcome,
 ) -> Option<DocketPairContinuationDecision> {
-    let row = sqlx::query!(
-        r#"
-        SELECT id, fence_epoch
-        FROM docket_execution_attempts
-        WHERE binding_kind = 'client_session'
-          AND binding_id = $1
-          AND host_kind = 'pair'
-          AND host_run_id = $2
-          AND state = 'running'
-        "#,
+    let snapshot = super::focused_execution::load_focused_execution_snapshot(
+        state,
+        user_id,
+        bear_id,
         session_id,
-        run_id,
+        super::focused_execution::FocusedExecutionLaunchState::AlreadyRunning,
     )
-    .fetch_optional(pool)
-    .await;
-    let Ok(Some(row)) = row else {
+    .await
+    .ok()?;
+    if snapshot.run_id().map(TurnRunId::as_str) != Some(run_id) {
         return None;
-    };
-    let (attempt_id, fence_epoch) = (row.id, row.fence_epoch);
-    match PgDocketService::from_pool(pool)
+    }
+    let attempt = snapshot.attempt.as_ref()?;
+    if attempt.state != den_docket::DocketExecutionAttemptState::Running {
+        return None;
+    }
+    let (attempt_id, fence_epoch) = (attempt.id, attempt.fence_epoch);
+    match PgDocketService::from_pool(&state.sqlx_pool)
         .report_pair_bounded_outcome(DocketPairBoundedOutcomeReport {
             attempt_id,
             fence_epoch,
@@ -1877,7 +1877,7 @@ pub(crate) async fn report_pair_bounded_outcome(
 }
 
 pub(crate) async fn finish_runtime_terminal_event(
-    pool: &sqlx::PgPool,
+    state: &DenState,
     session_id: &str,
     run_id: &str,
     bear_id: uuid::Uuid,
@@ -1885,7 +1885,7 @@ pub(crate) async fn finish_runtime_terminal_event(
     event: &den_protocol::RuntimeStreamEvent,
 ) {
     use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
-    let (state, reason, outcome, detail) = match event {
+    let (terminal_state, reason, outcome, detail) = match event {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { .. }) => (
             turn_runs::TurnRunState::Completed,
             "completed".to_string(),
@@ -1943,9 +1943,16 @@ pub(crate) async fn finish_runtime_terminal_event(
     terminal_event.human_id = Some(user_id.to_string());
     terminal_event.session_id = Some(session_id.to_string());
     terminal_event.run_id = Some(run_id.to_string());
-    if report_pair_bounded_outcome(pool, session_id, run_id, DocketPairBoundedOutcome::Settled)
-        .await
-        .is_some_and(|decision| decision != DocketPairContinuationDecision::Stop)
+    if report_pair_bounded_outcome(
+        state,
+        user_id,
+        bear_id,
+        session_id,
+        run_id,
+        DocketPairBoundedOutcome::Settled,
+    )
+    .await
+    .is_some_and(|decision| decision != DocketPairContinuationDecision::Stop)
     {
         tracing::warn!(
             session_id,
@@ -1954,19 +1961,20 @@ pub(crate) async fn finish_runtime_terminal_event(
         );
     }
     match turn_runs::finish_run_with_bearwire_event(
-        pool,
+        &state.sqlx_pool,
         session_id,
         run_id,
         bear_id,
         user_id,
-        state,
+        terminal_state,
         Some(&reason),
         terminal_event,
     )
     .await
     {
         Ok(Some(_)) => {
-            record_work_run_outcome_if_bound(pool, session_id, run_id, outcome, detail).await;
+            record_work_run_outcome_if_bound(&state.sqlx_pool, session_id, run_id, outcome, detail)
+                .await;
         }
         Ok(None) => {}
         Err(err) => {
@@ -1976,7 +1984,7 @@ pub(crate) async fn finish_runtime_terminal_event(
 }
 
 async fn update_run_state_for_runtime_event(
-    pool: &sqlx::PgPool,
+    state: &DenState,
     session_id: &str,
     run_id: &str,
     bear_id: uuid::Uuid,
@@ -1986,8 +1994,9 @@ async fn update_run_state_for_runtime_event(
     started_at: Option<Instant>,
 ) -> Option<turn_obligations::TurnObligationRow> {
     use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
+    let pool = &state.sqlx_pool;
     if runtime_event_is_terminal(event) {
-        finish_runtime_terminal_event(pool, session_id, run_id, bear_id, user_id, event).await;
+        finish_runtime_terminal_event(state, session_id, run_id, bear_id, user_id, event).await;
         return None;
     }
     match event {
@@ -2884,7 +2893,9 @@ async fn run_start_with_recovery_source(
                                             if let Some(continuation) =
                                                 docket_bounded_slice_continuation(
                                                     report_pair_bounded_outcome(
-                                                        &pool,
+                                                        &livestream_state,
+                                                        user_id,
+                                                        bear_id,
                                                         &session_for_task,
                                                         &run_id_for_task,
                                                         DocketPairBoundedOutcome::Progress,

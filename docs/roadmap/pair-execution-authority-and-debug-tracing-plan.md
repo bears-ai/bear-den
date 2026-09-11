@@ -1,7 +1,10 @@
-# Plan: Authoritative Pair execution control and diagnostic transition tracing
+# Plan: Authoritative focused execution control and diagnostic transition tracing
 
-**Status:** Approved direction; proposed implementation plan  
-**Scope:** Pair/Docket execution start, authoritative status projection, BearWire diagnostics, and client debug views
+**Status:** In progress; authoritative focused-execution aggregate completed 2026-09-11
+
+**Scope:** Focused Docket execution start, authoritative status projection, BearWire diagnostics, and client debug views
+
+`pair` is a trust-profile/capability shorthand, not an execution identity. Execution state and authority are named for sessions, tasks, runs, hosts, and attempts.
 
 ## Problem
 
@@ -13,7 +16,7 @@ The failure is architectural, not merely a missing retry. Selection, run lifecyc
 
 - `/focus` and a model-facing `focus_current_task` tool invoke one Den-owned start command. Success means control was acquired and the first slice is durably queued or running; callers do not orchestrate intermediate writes.
 - Task selection remains assignment only. The model may self-focus only when an executable current task is already selected (or after an explicitly authorized selection); focus never silently selects, creates, replaces, or settles a task.
-- One authoritative Pair-execution aggregate reduces persisted selection, execution run, fenced attempt/lease, controller/scheduler ownership, and obligations into a versioned derived state.
+- One authoritative focused-execution aggregate reduces persisted selection, execution run, fenced attempt/lease, controller/scheduler ownership, and obligations into a typed derived state.
 - Existing records remain normalized inputs where useful; do not add a duplicate mutable `pair_execution_state` table merely for convenience.
 - Major aggregate transitions produce persistent BearWire `diagnostic.state_transition` events in the canonical session replay stream.
 - Diagnostic events are control-plane transcript artifacts, not assistant/user/model messages. They are normally excluded from model history.
@@ -23,7 +26,7 @@ The failure is architectural, not merely a missing retry. Selection, run lifecyc
 ## Target invariants
 
 ```text
-PairExecution=running
+FocusedExecution=running
   => executable persisted current task
   && active persisted execution run
   && current fenced Docket attempt
@@ -52,14 +55,15 @@ Every aggregate transition has a monotonic state version and one correlation/ide
 
 **Done when:** the regression fails before the repair and identifies the exact boundary where acquisition can stop.
 
-### 2. Introduce the authoritative aggregate
+### 2. Introduce the authoritative aggregate — completed 2026-09-11
 
-- Add a pure reducer/query projection for `PairExecutionSnapshot` with state, reason code, state version, selection/task/run/attempt/fence refs, controller disposition, and open obligation summary.
-- Make session status, Docket-facing Pair status, ACP/BearWire `session.state`, and web diagnostics consume this projection instead of independently deriving `active` or `running`.
-- Treat impossible combinations as typed invariant violations surfaced in diagnostics.
-- Keep the reducer free of repair side effects.
+- `FocusedExecutionSnapshot` is produced by one SQLx projection and one side-effect-free reducer.
+- It covers `Unfocused`, `Selected`, `Starting`, `Running`, `WaitingForClient`, `Continuing`, `Recovering`, `Terminal`, and typed `Inconsistent` states.
+- Selection/task, binding, run, attempt/fence, host, controller disposition, and obligation summary are projected once.
+- Focus/start results, Docket-facing status, BearWire `session.state`, and Armature diagnostics consume the same snapshot instead of independently deriving `active` or `running`.
+- The old `SessionTaskStartResult`, `FocusedExecutionSnapshot::is_live`, native-session activity inference, and `active_docket_execution` projection were removed.
 
-**Done when:** identical persisted inputs produce one snapshot across every caller, with table-driven tests for valid and impossible combinations.
+**Validated by:** one table-driven reducer test covering every phase and invariant, plus the existing broad SQLx focus/start test asserting identical snapshots across start replay and `session.state`.
 
 ### 3. Make start one serialized command
 

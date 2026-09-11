@@ -1,22 +1,30 @@
 use bearwire_protocol::wire::BearWireEvent;
 use den_core::{BearCapability, CapabilitySet};
 use den_docket::{
-    DocketExecutionAttemptStart, DocketExecutionAttemptState, DocketExecutionBindingKind,
-    DocketExecutionHost, DocketExecutionHostKind, DocketFocusedExecutionAcquire,
-    DocketFocusedExecutionBinding, DocketService, PgDocketService,
+    DocketExecutionAttemptStart, DocketExecutionBindingKind, DocketExecutionHost,
+    DocketExecutionHostKind, DocketFocusedExecutionAcquire, DocketFocusedExecutionBinding,
+    DocketService, PgDocketService,
 };
 use den_http::errors::CustomError;
 use den_runtime::{
     bearwire_events,
-    turn_ids::{ClientSessionId, ToolCallId, TurnRunId},
-    turn_runs::TurnRunState,
+    turn_ids::{ToolCallId, TurnRunId},
 };
 use den_service::{bears::Bear, client_sessions, DenState};
 use serde::Serialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use super::session::{start_session_task_execution, SessionTaskStartResult};
+use super::session::start_session_task_execution;
+
+mod snapshot;
+
+pub(crate) use snapshot::load_focused_execution_snapshot;
+pub use snapshot::{
+    ControllerDisposition, FocusedExecutionAttempt, FocusedExecutionInvariantViolation,
+    FocusedExecutionObligations, FocusedExecutionRun, FocusedExecutionSnapshot,
+    FocusedExecutionState, FocusedExecutionTask,
+};
 
 /// Authoritative result of asking Den to start or reconcile Docket-owned focused session execution.
 ///
@@ -35,37 +43,6 @@ impl FocusedExecutionLaunchState {
             Self::Started => "started",
             Self::AlreadyRunning => "already_running",
         }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ControllerDisposition {
-    Live,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct FocusedExecutionSnapshot {
-    pub session_id: ClientSessionId,
-    pub task_id: Uuid,
-    pub run_id: TurnRunId,
-    pub run_state: TurnRunState,
-    pub attempt_id: Uuid,
-    pub attempt_state: DocketExecutionAttemptState,
-    pub launch_state: FocusedExecutionLaunchState,
-    pub controller: ControllerDisposition,
-    pub open_obligations: u32,
-    pub fence_epoch: i64,
-}
-
-impl FocusedExecutionSnapshot {
-    pub fn is_live(&self) -> bool {
-        self.attempt_state == DocketExecutionAttemptState::Running
-            && matches!(
-                self.run_state,
-                TurnRunState::Running | TurnRunState::WaitingForClient | TurnRunState::Continuing
-            )
-            && self.controller == ControllerDisposition::Live
     }
 }
 
@@ -129,11 +106,11 @@ pub async fn start_selected_session_task_execution(
             bear_id = %bear_id,
             user_id,
             client_session_id,
-            task_id = %execution.task_id,
-            run_id = %execution.run_id,
-            attempt_id = %execution.attempt_id,
+            task_id = ?execution.task_id(),
+            run_id = ?execution.run_id(),
+            attempt_id = ?execution.attempt_id(),
             launch_state = execution.launch_state.as_str(),
-            fence_epoch = execution.fence_epoch,
+            fence_epoch = ?execution.fence_epoch(),
             "session task focus established execution control"
         ),
         Err(error) => tracing::warn!(
@@ -253,7 +230,7 @@ pub async fn acquire_selected_task_for_run(
         }
         let acquisition_key = Uuid::new_v5(
             &Uuid::NAMESPACE_URL,
-            format!("den:pair-focus:{origin_run_id}:{tool_call_id}").as_bytes(),
+            format!("den:focused-execution:{origin_run_id}:{tool_call_id}").as_bytes(),
         );
         let attempt = docket
             .acquire_focused_execution(DocketFocusedExecutionAcquire {
@@ -277,27 +254,21 @@ pub async fn acquire_selected_task_for_run(
                 fence_epoch: attempt.fence_epoch,
             })
             .await?;
-        let open_obligations = den_runtime::turn_obligations::open_client_obligations_for_run(
-            &state.sqlx_pool,
-            origin_run_id.as_str(),
+        let execution = load_focused_execution_snapshot(
+            state,
+            user_id,
+            bear.id,
+            client_session_id,
+            FocusedExecutionLaunchState::AlreadyRunning,
         )
-        .await?
-        .len() as u32;
-        let execution = FocusedExecutionSnapshot {
-            session_id: ClientSessionId::new(client_session_id.to_string())?,
-            task_id,
-            run_id: origin_run_id.clone(),
-            run_state,
-            attempt_id: attempt.id,
-            attempt_state: attempt.state,
-            launch_state: FocusedExecutionLaunchState::AlreadyRunning,
-            controller: ControllerDisposition::Live,
-            open_obligations,
-            fence_epoch: attempt.fence_epoch,
-        };
-        if !execution.is_live() {
+        .await?;
+        execution.require_active_authority()?;
+        if execution.task_id() != Some(task_id)
+            || execution.run_id() != Some(origin_run_id)
+            || execution.attempt_id() != Some(attempt.id)
+        {
             return Err(CustomError::System(
-                "same-run task focus did not establish live execution authority".to_string(),
+                "same-run task focus projection did not preserve acquired authority".to_string(),
             ));
         }
         if !attempt_was_running {
@@ -314,8 +285,8 @@ pub async fn acquire_selected_task_for_run(
             client_session_id,
             origin_run_id = %origin_run_id,
             tool_call_id = %tool_call_id,
-            attempt_id = %execution.attempt_id,
-            fence_epoch = execution.fence_epoch,
+            attempt_id = ?execution.attempt_id(),
+            fence_epoch = ?execution.fence_epoch(),
             "active turn run now owns focused execution"
         ),
         Err(error) => tracing::warn!(
@@ -342,7 +313,7 @@ where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = Result<T, CustomError>>,
 {
-    let lock_key = format!("docket-pair-execution:{bear_id}:{client_session_id}");
+    let lock_key = format!("focused-execution:{bear_id}:{client_session_id}");
     let mut lock_transaction = state.sqlx_pool.begin().await?;
     sqlx::query!(
         r#"SELECT pg_advisory_xact_lock(hashtextextended($1, 0)) AS "locked!""#,
@@ -370,9 +341,15 @@ async fn start_or_reconcile_locked(
     client_session_id: &str,
     task_id: Uuid,
 ) -> Result<FocusedExecutionSnapshot, CustomError> {
-    if let Some(existing) =
-        live_session_task_execution(state, bear.id, client_session_id, task_id).await?
-    {
+    let existing = load_focused_execution_snapshot(
+        state,
+        user_id,
+        bear.id,
+        client_session_id,
+        FocusedExecutionLaunchState::AlreadyRunning,
+    )
+    .await?;
+    if existing.task_id() == Some(task_id) && existing.state.has_active_authority() {
         return Ok(existing);
     }
     let session = client_sessions::find_for_user_bear_session_id(
@@ -402,31 +379,25 @@ async fn start_or_reconcile_locked(
         "persisted session task attachment for focus"
     );
 
-    let started =
+    let launch_state =
         start_session_task_execution(state, user_id, bear.clone(), client_session_id).await?;
-    let execution = reduce_start_result(state, client_session_id, task_id, started).await?;
+    let execution =
+        load_focused_execution_snapshot(state, user_id, bear.id, client_session_id, launch_state)
+            .await?;
     tracing::info!(
         event = "session_task_focus_start_resolved",
         bear_id = %bear.id,
         user_id,
         client_session_id,
-        task_id = %execution.task_id,
-        run_id = %execution.run_id,
-        attempt_id = %execution.attempt_id,
-        attempt_state = execution.attempt_state.as_str(),
-        run_state = execution.run_state.as_str(),
+        task_id = ?execution.task_id(),
+        run_id = ?execution.run_id(),
+        attempt_id = ?execution.attempt_id(),
+        state = ?execution.state,
         launch_state = execution.launch_state.as_str(),
-        fence_epoch = execution.fence_epoch,
+        fence_epoch = ?execution.fence_epoch(),
         "resolved session task execution start"
     );
-    if !execution.is_live() {
-        return Err(CustomError::System(format!(
-            "focused session execution is not live (attempt_state={}, run_state={}, launch_state={})",
-            execution.attempt_state.as_str(),
-            execution.run_state.as_str(),
-            execution.launch_state.as_str()
-        )));
-    }
+    execution.require_active_authority()?;
 
     project_execution_started(state, user_id, bear.id, &execution).await;
     Ok(execution)
@@ -438,25 +409,39 @@ async fn project_execution_started(
     bear_id: Uuid,
     execution: &FocusedExecutionSnapshot,
 ) {
+    let (Some(task), Some(run), Some(attempt), Some(binding), Some(host)) = (
+        execution.task.as_ref(),
+        execution.run.as_ref(),
+        execution.attempt.as_ref(),
+        execution.binding.as_ref(),
+        execution.host.as_ref(),
+    ) else {
+        tracing::error!(
+            session_id = %execution.session_id,
+            state = ?execution.state,
+            "refusing to project incomplete focused execution start"
+        );
+        return;
+    };
     let mut event = BearWireEvent::ephemeral(
         "docket.execution.started",
         json!({
-            "attempt_id": execution.attempt_id,
-            "task_id": execution.task_id,
-            "run_id": execution.run_id,
-            "binding": { "kind": "client_session", "id": execution.session_id },
-            "host": { "kind": "pair", "run_id": execution.run_id },
-            "attempt_state": execution.attempt_state,
+            "attempt_id": attempt.id,
+            "task_id": task.id,
+            "run_id": run.id,
+            "binding": binding,
+            "host": host,
+            "attempt_state": attempt.state,
             "launch_state": execution.launch_state,
-            "fence_epoch": execution.fence_epoch,
-            "open_obligations": execution.open_obligations,
+            "fence_epoch": attempt.fence_epoch,
+            "open_obligations": execution.obligations.map(|obligations| obligations.open).unwrap_or(0),
             "task_selection_preserved": true,
         }),
     );
     event.bear_id = Some(bear_id.to_string());
     event.human_id = Some(user_id.to_string());
     event.session_id = Some(execution.session_id.to_string());
-    event.run_id = Some(execution.run_id.to_string());
+    event.run_id = Some(run.id.to_string());
     if let Err(err) = bearwire_events::append_bearwire_event(
         &state.sqlx_pool,
         execution.session_id.as_str(),
@@ -469,8 +454,8 @@ async fn project_execution_started(
         tracing::warn!(
             error = %err,
             session_id = %execution.session_id,
-            run_id = %execution.run_id,
-            attempt_id = %execution.attempt_id,
+            run_id = %run.id,
+            attempt_id = %attempt.id,
             "failed to project focused session execution start"
         );
     }
@@ -541,129 +526,4 @@ async fn activate_session_task(
     tx.commit().await?;
     tracing::debug!(%bear_id, %session_id, %task_id, "activated session task for focused execution");
     Ok(())
-}
-
-async fn live_session_task_execution(
-    state: &DenState,
-    bear_id: Uuid,
-    client_session_id: &str,
-    task_id: Uuid,
-) -> Result<Option<FocusedExecutionSnapshot>, CustomError> {
-    let Some(run) =
-        den_runtime::turn_runs::active_run_for_session(&state.sqlx_pool, client_session_id)
-            .await?
-            .filter(|run| run.bear_id == bear_id)
-    else {
-        return Ok(None);
-    };
-    let Some(attempt) = den_docket::PgDocketService::from_pool(&state.sqlx_pool)
-        .get_live_session_task_execution_attempt(bear_id, task_id, client_session_id, &run.run_id)
-        .await?
-    else {
-        return Ok(None);
-    };
-    let controller_is_live = state
-        .turn_cancellations
-        .active_for_session(client_session_id)
-        .is_some_and(|active| active.run_ids.iter().any(|id| id == &run.run_id));
-    if !controller_is_live {
-        return Ok(None);
-    }
-    let run_state = TurnRunState::try_from_storage(&run.state)?;
-    if !matches!(
-        run_state,
-        TurnRunState::Running | TurnRunState::WaitingForClient | TurnRunState::Continuing
-    ) {
-        return Ok(None);
-    }
-    let open_obligations = den_runtime::turn_obligations::open_client_obligations_for_run(
-        &state.sqlx_pool,
-        &run.run_id,
-    )
-    .await?
-    .len() as u32;
-    let run_id = TurnRunId::new(run.run_id)?;
-    Ok(Some(FocusedExecutionSnapshot {
-        session_id: ClientSessionId::new(client_session_id.to_owned())?,
-        task_id,
-        run_id,
-        run_state,
-        attempt_id: attempt.id,
-        attempt_state: attempt.state,
-        launch_state: FocusedExecutionLaunchState::AlreadyRunning,
-        controller: ControllerDisposition::Live,
-        open_obligations,
-        fence_epoch: attempt.fence_epoch,
-    }))
-}
-
-async fn reduce_start_result(
-    state: &DenState,
-    session_id: &str,
-    task_id: Uuid,
-    result: SessionTaskStartResult,
-) -> Result<FocusedExecutionSnapshot, CustomError> {
-    if result.task_id != task_id || result.session_id != session_id {
-        return Err(CustomError::System(
-            "session task start returned mismatched task or session authority".to_string(),
-        ));
-    }
-
-    let launch_state = match result.launch_state.as_str() {
-        "started" => FocusedExecutionLaunchState::Started,
-        "already_running" => FocusedExecutionLaunchState::AlreadyRunning,
-        other => {
-            return Err(CustomError::System(format!(
-                "unsupported focused execution launch state: {other}"
-            )))
-        }
-    };
-    let run_id = TurnRunId::new(result.run_id)?;
-    let open_obligations = den_runtime::turn_obligations::open_client_obligations_for_run(
-        &state.sqlx_pool,
-        run_id.as_str(),
-    )
-    .await?
-    .len() as u32;
-    Ok(FocusedExecutionSnapshot {
-        session_id: ClientSessionId::new(result.session_id)?,
-        task_id: result.task_id,
-        run_id,
-        run_state: TurnRunState::try_from_storage(&result.state)?,
-        attempt_id: result.execution_attempt_id,
-        attempt_state: DocketExecutionAttemptState::try_from_storage(
-            &result.execution_attempt_state,
-        )?,
-        launch_state,
-        controller: ControllerDisposition::Live,
-        open_obligations,
-        fence_epoch: result.fence_epoch,
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn live_execution_requires_correlated_running_states() {
-        let execution = FocusedExecutionSnapshot {
-            session_id: ClientSessionId::new("session").unwrap(),
-            task_id: Uuid::nil(),
-            run_id: TurnRunId::new("run").unwrap(),
-            run_state: TurnRunState::Running,
-            attempt_id: Uuid::nil(),
-            attempt_state: DocketExecutionAttemptState::Running,
-            launch_state: FocusedExecutionLaunchState::Started,
-            controller: ControllerDisposition::Live,
-            open_obligations: 0,
-            fence_epoch: 1,
-        };
-        assert!(execution.is_live());
-        assert!(!FocusedExecutionSnapshot {
-            run_state: TurnRunState::Failed,
-            ..execution
-        }
-        .is_live());
-    }
 }

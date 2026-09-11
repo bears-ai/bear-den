@@ -6710,53 +6710,28 @@ fn status_scalar(value: &Value, path: &str) -> Option<String> {
 }
 
 fn render_den_runtime_status(runtime_state_response: &Value) -> Vec<String> {
-    let Some(session) = runtime_state_response.pointer("/session") else {
-        return vec!["- Run: unavailable (no BearWire session state)".to_string()];
+    let Some(execution) = runtime_state_response.pointer("/session/diagnostics/focused_execution")
+    else {
+        return vec!["- Focused execution: unavailable".to_string()];
     };
-    let live = status_scalar(session, "/diagnostics/runtime_session_live")
-        .unwrap_or_else(|| "unknown".to_string());
-    let Some(runtime) = session.pointer("/diagnostics/runtime_state") else {
-        return vec![format!("- Run: live={live} runtime_state=<none>")];
-    };
-    let run_id = status_scalar(runtime, "/run/run_id").unwrap_or_else(|| "<none>".to_string());
-    let stance = status_scalar(runtime, "/run/stance").unwrap_or_else(|| "unknown".to_string());
-    let governance =
-        status_scalar(runtime, "/run/governance").unwrap_or_else(|| "unknown".to_string());
-    let orientation = status_scalar(runtime, "/run/objective_orientation_kind")
-        .unwrap_or_else(|| "unknown".to_string());
-    let focused_job =
-        status_scalar(runtime, "/run/focused_job_id").unwrap_or_else(|| "<none>".to_string());
-    let loop_level = status_scalar(runtime, "/agent_loop_control/level")
-        .unwrap_or_else(|| "unknown".to_string());
-    let active_execution = session.pointer("/diagnostics/active_docket_execution");
-    let execution_job = active_execution.and_then(|execution| status_scalar(execution, "/job_id"));
-    let execution_task =
-        active_execution.and_then(|execution| status_scalar(execution, "/task_id"));
-    let task_active = status_scalar(runtime, "/task_focus/active")
-        .or_else(|| execution_job.as_ref().map(|_| "true".to_string()))
-        .unwrap_or_else(|| "unknown".to_string());
-    let next_task = status_scalar(runtime, "/task_focus/next_incomplete_task_title")
-        .or_else(|| {
-            execution_task
-                .as_ref()
-                .map(|task_id| format!("task {task_id}"))
-        })
-        .unwrap_or_else(|| "<none>".to_string());
-    let docket_job = status_scalar(runtime, "/docket/active_job_id")
-        .or(execution_job)
-        .unwrap_or_else(|| "<none>".to_string());
-    let docket_task = status_scalar(runtime, "/docket/active_task_id")
-        .or(execution_task)
-        .unwrap_or_else(|| "<none>".to_string());
-    let docket_source = status_scalar(runtime, "/docket/source")
-        .or_else(|| active_execution.map(|_| "docket_execution_session".to_string()))
-        .unwrap_or_else(|| "unknown".to_string());
+    let phase = status_scalar(execution, "/state/phase").unwrap_or_else(|| "unknown".to_string());
+    let run_id = status_scalar(execution, "/run/id").unwrap_or_else(|| "<none>".to_string());
+    let run_state = status_scalar(execution, "/run/state").unwrap_or_else(|| "<none>".to_string());
+    let controller =
+        status_scalar(execution, "/controller").unwrap_or_else(|| "unknown".to_string());
+    let open_obligations =
+        status_scalar(execution, "/obligations/open").unwrap_or_else(|| "0".to_string());
+    let task_id = status_scalar(execution, "/task/id").unwrap_or_else(|| "<none>".to_string());
+    let attempt_id =
+        status_scalar(execution, "/attempt/id").unwrap_or_else(|| "<none>".to_string());
+    let fence =
+        status_scalar(execution, "/attempt/fence_epoch").unwrap_or_else(|| "<none>".to_string());
     vec![
         format!(
-            "- Run: live={live} id={run_id} stance={stance} governance={governance} orientation={orientation} focused_job={focused_job} loop={loop_level}"
+            "- Focused execution: phase={phase} run={run_id} run_state={run_state} controller={controller} open_obligations={open_obligations}"
         ),
-        format!("- Focus: active={task_active} next={next_task}"),
-        format!("- Docket: job={docket_job} task={docket_task} source={docket_source}"),
+        format!("- Focus: task={task_id}"),
+        format!("- Authority: attempt={attempt_id} fence={fence}"),
     ]
 }
 
@@ -12664,29 +12639,17 @@ mod tests {
     }
 
     #[test]
-    fn render_den_runtime_status_includes_orientation_and_governance() {
+    fn render_den_runtime_status_uses_canonical_focused_execution_snapshot() {
         let runtime_state = json!({
             "session": {
                 "diagnostics": {
-                    "runtime_session_live": true,
-                    "runtime_state": {
-                        "run": {
-                            "run_id": "run-123",
-                            "stance": "pair",
-                            "governance": "interactive",
-                            "objective_orientation_kind": "focused",
-                            "focused_job_id": "job-123"
-                        },
-                        "agent_loop_control": { "level": "careful" },
-                        "task_focus": {
-                            "active": true,
-                            "next_incomplete_task_title": "Ship status command"
-                        },
-                        "docket": {
-                            "active_job_id": "job-123",
-                            "active_task_id": "task-456",
-                            "source": "objective_orientation"
-                        }
+                    "focused_execution": {
+                        "state": { "phase": "waiting_for_client" },
+                        "task": { "id": "task-456" },
+                        "run": { "id": "run-123", "state": "waiting_for_client" },
+                        "attempt": { "id": "attempt-789", "fence_epoch": 4 },
+                        "controller": "live",
+                        "obligations": { "open": 2 }
                     }
                 }
             }
@@ -12694,16 +12657,13 @@ mod tests {
 
         let lines = render_den_runtime_status(&runtime_state);
         assert_eq!(lines.len(), 3);
-        assert!(lines[0].contains("live=true"));
-        assert!(lines[0].contains("governance=interactive"));
-        assert!(lines[0].contains("orientation=focused"));
-        assert!(lines[0].contains("focused_job=job-123"));
-        assert!(lines[0].contains("loop=careful"));
-        assert!(lines[1].contains("active=true"));
-        assert!(lines[1].contains("next=Ship status command"));
-        assert!(lines[2].contains("job=job-123"));
-        assert!(lines[2].contains("task=task-456"));
-        assert!(lines[2].contains("source=objective_orientation"));
+        assert!(lines[0].contains("phase=waiting_for_client"));
+        assert!(lines[0].contains("run=run-123"));
+        assert!(lines[0].contains("controller=live"));
+        assert!(lines[0].contains("open_obligations=2"));
+        assert!(lines[1].contains("task=task-456"));
+        assert!(lines[2].contains("attempt=attempt-789"));
+        assert!(lines[2].contains("fence=4"));
     }
 
     #[test]

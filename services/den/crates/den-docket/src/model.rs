@@ -1291,6 +1291,13 @@ impl DocketExecutionAttemptState {
         }
     }
 
+    pub fn is_live(self) -> bool {
+        matches!(
+            self,
+            Self::Authorized | Self::Running | Self::Paused | Self::AwaitingUser | Self::Stopping
+        )
+    }
+
     pub fn try_from_storage(value: &str) -> Result<Self, DenError> {
         match value {
             "authorized" => Ok(Self::Authorized),
