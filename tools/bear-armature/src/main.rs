@@ -6213,14 +6213,23 @@ fn confirmed_focus_run_id(result: &Value) -> Result<&str> {
     let control = binding
         .get("control")
         .ok_or_else(|| anyhow!("Docket response omitted canonical attempt state"))?;
-    let launch_state = control.get("launch_state").and_then(Value::as_str);
-    if control.get("kind").and_then(Value::as_str) != Some("docket")
-        || control.get("state").and_then(Value::as_str) != Some("running")
-        || control.get("attempt_state").and_then(Value::as_str) != Some("running")
-        || !matches!(launch_state, Some("started" | "already_running"))
-    {
+    let lifecycle = (
+        control.get("state").and_then(Value::as_str),
+        control.get("attempt_state").and_then(Value::as_str),
+        control.get("launch_state").and_then(Value::as_str),
+    );
+    let valid_lifecycle = matches!(
+        lifecycle,
+        (Some("accepted"), Some("authorized"), Some("claimed"))
+            | (
+                Some("running"),
+                Some("running"),
+                Some("started" | "already_running")
+            )
+    );
+    if control.get("kind").and_then(Value::as_str) != Some("docket") || !valid_lifecycle {
         return Err(anyhow!(
-            "Docket did not start a running canonical attempt and native Pair run: {}",
+            "Docket did not claim or start a canonical focused execution: {}",
             compact_json_for_status(binding)
         ));
     }
@@ -13819,7 +13828,21 @@ mod tests {
     }
 
     #[test]
-    fn focus_requires_running_canonical_attempt_and_started_native_run() {
+    fn focus_accepts_claimed_or_started_canonical_execution() {
+        let claimed = json!({
+            "pair_binding": {
+                "control": {
+                    "kind": "docket",
+                    "state": "accepted",
+                    "attempt_id": "11111111-1111-1111-1111-111111111111",
+                    "attempt_state": "authorized",
+                    "launch_state": "claimed"
+                },
+                "run": { "id": "run_claimed" }
+            }
+        });
+        assert_eq!(confirmed_focus_run_id(&claimed).unwrap(), "run_claimed");
+
         let started = json!({
             "pair_binding": {
                 "control": {

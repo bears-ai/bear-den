@@ -35,9 +35,8 @@ use den_protocol::{
     RuntimeSemanticEvent, RuntimeStreamEvent,
 };
 #[cfg(feature = "test-fixtures")]
-use den_runtime::native_runtime::{
-    scripted_runtime_invocation_count, set_next_scripted_runtime_streams, ScriptedRuntimeStream,
-};
+use den_runtime::native_runtime::scripted_runtime_invocation_count;
+use den_runtime::native_runtime::{set_next_scripted_runtime_streams, ScriptedRuntimeStream};
 use den_runtime::{
     bearwire_events,
     native_runtime::NativeRuntimeConversationBackend,
@@ -675,9 +674,6 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
     let token = create_token_for_bear(&pool, user_id, bear_id).await;
     let mut config = den_core::config::Config::test_stub();
     config.den_secret_encryption_key = "bearwire-test-encryption-key".to_string();
-    // Focus performs an internal preparation request before the task-oriented
-    // runtime turn. Keep the mock available for both requests so this test
-    // verifies the latter rather than mistaking preparation EOF for a started loop.
     config.llm_api_url = start_mock_openai_sse_server_asserting_requests(vec![
         MockLlmRequestAssertion::requiring(Vec::new()),
         MockLlmRequestAssertion::requiring(Vec::new()),
@@ -689,6 +685,15 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
     let state = test_state_with_config(pool.clone(), config);
     let session_id = format!("session-{}", Uuid::new_v4().simple());
     upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    set_next_scripted_runtime_streams(
+        &session_id,
+        vec![
+            ScriptedRuntimeStream::Pending,
+            ScriptedRuntimeStream::Pending,
+            ScriptedRuntimeStream::Pending,
+            ScriptedRuntimeStream::Pending,
+        ],
+    );
     let surface_id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO work_surfaces (id, name, kind, created_by_user_id, created_at, updated_at)\n         VALUES ($1, $2, 'git_workspace', $3, now(), now())",
@@ -847,9 +852,21 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
     );
     assert_eq!(
         attached["result"]["pair_binding"]["control"]["state"],
-        "running"
+        "accepted"
+    );
+    assert_eq!(
+        attached["result"]["pair_binding"]["control"]["launch_state"],
+        "claimed"
+    );
+    assert_eq!(
+        attached["result"]["pair_binding"]["control"]["attempt_state"],
+        "authorized"
     );
     assert_eq!(attached["result"]["pair_binding"]["task"]["selected"], true);
+    let loop_run_id = attached["result"]["pair_binding"]["run"]["id"]
+        .as_str()
+        .expect("focused run id");
+    wait_for_focused_run_started(state.clone(), &token, &bear_slug, &session_id, loop_run_id).await;
     let replay = rpc_value(
         state.clone(),
         &token,
@@ -871,13 +888,7 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
         replay["result"]["pair_binding"]["control"]["launch_state"], "already_running",
         "repeating /focus must return its reconciled state: {replay}"
     );
-    assert!(attached["result"]["pair_binding"]["run"]["id"]
-        .as_str()
-        .is_some_and(|run_id| !run_id.is_empty()));
-    let loop_run_id = attached["result"]["pair_binding"]["run"]["id"]
-        .as_str()
-        .expect("Pair loop run id");
-    wait_for_focused_run_started(state.clone(), &token, &bear_slug, &session_id, loop_run_id).await;
+
     // The task is deliberately not settled yet. Focus must leave the exact
     // Pair host run and its canonical Docket attempt live; this catches the
     // historical failure where focus returned successfully but its loop ended
@@ -966,7 +977,7 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
     // Children settle before their parent. This also proves a task added to
     // the live Docket run can be settled with only the required parameters.
     let settled_child = rpc_value(
-        test_state(pool.clone()),
+        state.clone(),
         &token,
         "docket.jobs.settle_task",
         json!({
@@ -981,7 +992,7 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
     assert!(settled_child.get("error").is_none(), "{settled_child}");
 
     let settled = rpc_value(
-        test_state(pool.clone()),
+        state.clone(),
         &token,
         "docket.jobs.settle_task",
         json!({
@@ -1014,20 +1025,35 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
         "settlement must advance session focus before final-answer gating"
     );
     assert_eq!(
-        settled["result"]["pair_binding"]["control"]["state"], "running",
-        "settlement must continue focused control with the successor task: {settled}"
+        settled["result"]["pair_binding"]["control"]["state"], "accepted",
+        "settlement must claim focused control before successor startup: {settled}"
+    );
+    assert_eq!(
+        settled["result"]["pair_binding"]["control"]["launch_state"],
+        "claimed"
     );
     assert_eq!(
         settled["result"]["pair_binding"]["task"]["id"], successor_id,
         "successor execution must be bound to the task selected by settlement"
     );
+    let settled_run_id = settled["result"]["pair_binding"]["run"]["id"]
+        .as_str()
+        .expect("settlement successor run id");
+    wait_for_focused_run_started(
+        state.clone(),
+        &token,
+        &bear_slug,
+        &session_id,
+        settled_run_id,
+    )
+    .await;
 
     // A task-compatible user turn must remain in the focused Docket loop even
     // though it starts a successor Pair host run. The run-start path used to
     // drop the live execution attempt because only the explicit focus path
-    // supplied `pair_task_id`.
+    // supplied an explicit focused task id.
     let continued = rpc_value(
-        test_state(pool.clone()),
+        state.clone(),
         &token,
         "run.start",
         json!({
@@ -1058,7 +1084,7 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
     // Optional settlement fields deliberately stay absent: the public default
     // must be sufficient to finish ordinary Docket work.
     let settled_successor = rpc_value(
-        test_state(pool.clone()),
+        state.clone(),
         &token,
         "docket.jobs.settle_task",
         json!({
@@ -1288,7 +1314,7 @@ async fn blocked_focused_task_ends_docket_control_and_returns_to_chat(pool: sqlx
     assert_eq!(attempts_before_focus, 0);
 
     let attached = rpc_value(
-        state,
+        state.clone(),
         &token,
         "docket.jobs.execute",
         json!({ "bear_slug": bear_slug, "job_id": job.job.id, "session_id": session_id }),
@@ -1304,7 +1330,11 @@ async fn blocked_focused_task_ends_docket_control_and_returns_to_chat(pool: sqlx
     );
     assert_eq!(
         attached["result"]["pair_binding"]["control"]["state"],
-        "running"
+        "accepted"
+    );
+    assert_eq!(
+        attached["result"]["pair_binding"]["control"]["launch_state"],
+        "claimed"
     );
     assert_eq!(attached["result"]["pair_binding"]["task"]["selected"], true);
     assert!(attached["result"]["pair_binding"]["run"]["id"]
@@ -1313,6 +1343,7 @@ async fn blocked_focused_task_ends_docket_control_and_returns_to_chat(pool: sqlx
     let loop_run_id = attached["result"]["pair_binding"]["run"]["id"]
         .as_str()
         .expect("Pair loop run id");
+    wait_for_focused_run_started(state.clone(), &token, &bear_slug, &session_id, loop_run_id).await;
     let live_attempts: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM docket_execution_attempts WHERE host_run_id = $1 AND state = 'running'",
     )
@@ -1665,31 +1696,46 @@ async fn replay_events_text(
 /// running when setup ended before the Pair loop had actually started.
 async fn wait_for_focused_run_started(
     state: DenState,
-    token: &str,
-    bear_slug: &str,
+    _token: &str,
+    _bear_slug: &str,
     session_id: &str,
     run_id: &str,
 ) {
-    let mut last_replay = String::new();
+    let mut last_state = None;
     for _ in 0..50 {
-        last_replay = replay_events_text(state.clone(), token, bear_slug, session_id).await;
-        let started =
-            last_replay.contains("\"type\":\"run.started\"") && last_replay.contains(run_id);
-        let terminal = last_replay.contains("\"type\":\"run.completed\"")
-            || last_replay.contains("\"type\":\"run.failed\"")
-            || last_replay.contains("\"type\":\"run.cancelled\"");
+        let (started, terminal): (bool, bool) = sqlx::query_as(
+            r#"
+            SELECT EXISTS (
+                SELECT 1 FROM bearwire_events
+                WHERE session_id = $1 AND event_type = 'run.started'
+                  AND event_json->>'run_id' = $2
+            ), EXISTS (
+                SELECT 1 FROM bearwire_events
+                WHERE session_id = $1
+                  AND event_type IN ('run.completed', 'run.failed', 'run.cancelled')
+                  AND event_json->>'run_id' = $2
+            )
+            "#,
+        )
+        .bind(session_id)
+        .bind(run_id)
+        .fetch_one(&state.sqlx_pool)
+        .await
+        .expect("inspect focused run lifecycle");
+        last_state = turn_runs::get_run(&state.sqlx_pool, run_id)
+            .await
+            .expect("load focused run")
+            .map(|run| run.state);
         assert!(
             !terminal || started,
-            "focused Pair run terminated before a client-visible start: {last_replay}"
+            "focused run {run_id} reached terminal state before run.started; state={last_state:?}"
         );
         if started {
             return;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    panic!(
-        "focused Pair run did not emit a client-visible run.started event within one second: {last_replay}"
-    );
+    panic!("focused run {run_id} did not emit run.started within one second; state={last_state:?}");
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -4402,7 +4448,13 @@ async fn model_focus_promotes_the_origin_run_idempotently(pool: sqlx::PgPool) {
         "Promote the current turn run",
     )
     .await;
-    let state = test_state(pool.clone());
+    let mut config = den_core::config::Config::test_stub();
+    config.den_secret_encryption_key = "bearwire-test-secret-key".to_string();
+    config.llm_api_url = start_mock_openai_sse_server();
+    config.default_llm_model = "openai/bearwire-test-model".to_string();
+    seed_test_bifrost_virtual_key(&pool, bear_id, &config).await;
+    let state = test_state_with_config(pool.clone(), config);
+    set_next_scripted_runtime_streams(&session_id, vec![ScriptedRuntimeStream::Pending]);
     let policy = den_core::EffectivePolicy::compile(
         den_core::TrustProfile::Pair,
         den_core::Governance::Interactive,
@@ -4417,24 +4469,34 @@ async fn model_focus_promotes_the_origin_run_idempotently(pool: sqlx::PgPool) {
     .await;
     assert_eq!(selected["result"]["current_task_id"], task_id.to_string());
 
-    let run_id = TurnRunId::new(format!("run_{}", Uuid::new_v4().simple())).unwrap();
-    turn_runs::create_run(&pool, run_id.as_str(), &session_id, bear_id, user_id)
-        .await
-        .expect("create interactive Pair run");
-    turn_runs::transition_run(
-        &pool,
-        run_id.as_str(),
-        turn_runs::TurnRunState::Running,
-        None,
+    let started = rpc_value(
+        state.clone(),
+        &token,
+        "run.start",
+        json!({
+            "bear_slug": bear_slug,
+            "session_id": session_id,
+            "prompt": "Begin interactive work",
+            "client": "bearwire-test",
+            "supersede_active_run": true,
+        }),
     )
-    .await
-    .expect("start interactive Pair run");
-    let (controller, _cancel_rx) = state.turn_cancellations.register(
-        session_id.clone(),
-        run_id.to_string(),
-        Uuid::new_v4(),
-        Some("conversation-model-focus".to_string()),
-    );
+    .await;
+    let run_id = TurnRunId::new(
+        started["result"]["run_id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("run.start failed: {started}"))
+            .to_string(),
+    )
+    .unwrap();
+    wait_for_focused_run_started(
+        state.clone(),
+        &token,
+        &bear_slug,
+        &session_id,
+        run_id.as_str(),
+    )
+    .await;
     let bear = bears_db::get_bear(&pool, bear_id)
         .await
         .expect("load Bear")
@@ -4523,7 +4585,20 @@ async fn model_focus_promotes_the_origin_run_idempotently(pool: sqlx::PgPool) {
         )
     }));
 
-    drop(controller);
+    state
+        .turn_cancellations
+        .cancel_run(&session_id, run_id.as_str())
+        .expect("cancel live origin controller");
+    for _ in 0..50 {
+        if state
+            .turn_cancellations
+            .active_for_run(&session_id, run_id.as_str())
+            .is_none()
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     let error = crate::methods::focused_execution::acquire_selected_task_for_run(
         &state,
         user_id,
@@ -4574,8 +4649,16 @@ async fn current_task_start_recovers_orphaned_controller_without_execution_autho
         json!({ "bear_slug": bear_slug, "session_id": session_id }),
     )
     .await;
-    assert_eq!(first["result"]["started"], true, "{first}");
+    assert_eq!(first["result"]["claimed"], true, "{first}");
     let first_run_id = first["result"]["run_id"].as_str().unwrap().to_string();
+    wait_for_focused_run_started(
+        test_state_with_config(pool.clone(), config.clone()),
+        &token,
+        &bear_slug,
+        &session_id,
+        &first_run_id,
+    )
+    .await;
     let first_attempt_id = first["result"]["execution_attempt_id"]
         .as_str()
         .unwrap()
@@ -4603,7 +4686,7 @@ async fn current_task_start_recovers_orphaned_controller_without_execution_autho
         json!({ "bear_slug": bear_slug, "session_id": session_id }),
     )
     .await;
-    assert_eq!(recovered["result"]["started"], true, "{recovered}");
+    assert_eq!(recovered["result"]["claimed"], true, "{recovered}");
     assert_ne!(recovered["result"]["run_id"], first_run_id);
     assert_ne!(
         recovered["result"]["execution_attempt_id"],
@@ -4718,7 +4801,7 @@ async fn current_task_start_releases_orphaned_foreign_task_authority(pool: sqlx:
         json!({ "bear_slug": bear_slug, "session_id": session_id }),
     )
     .await;
-    assert_eq!(started["result"]["started"], true, "{started}");
+    assert_eq!(started["result"]["claimed"], true, "{started}");
     assert_ne!(
         started["result"]["execution_attempt_id"],
         foreign_attempt.id.to_string()
@@ -4794,7 +4877,7 @@ async fn current_task_start_releases_stale_session_authority_for_previous_task(p
         json!({ "bear_slug": bear_slug, "session_id": session_id }),
     )
     .await;
-    assert_eq!(started["result"]["started"], true, "{started}");
+    assert_eq!(started["result"]["claimed"], true, "{started}");
     assert_eq!(started["result"]["task_id"], selected_task_id.to_string());
     assert_ne!(
         started["result"]["execution_attempt_id"],
@@ -4819,12 +4902,7 @@ async fn current_task_start_requires_selection_and_reuses_active_run(pool: sqlx:
 
     let mut config = den_core::config::Config::test_stub();
     config.den_secret_encryption_key = "bearwire-test-secret-key".to_string();
-    config.llm_api_url = start_mock_openai_sse_server_asserting_body(vec![
-        "fs_edit_file".to_string(),
-        "create_task".to_string(),
-        "update_task".to_string(),
-        "select_current_task".to_string(),
-    ]);
+    config.llm_api_url = start_mock_openai_sse_server_asserting_body(Vec::new());
     config.default_llm_model = "openai/bearwire-test-model".to_string();
     seed_test_bifrost_virtual_key(&pool, bear_id, &config).await;
     let state = test_state_with_config(pool.clone(), config);
@@ -4863,15 +4941,16 @@ async fn current_task_start_requires_selection_and_reuses_active_run(pool: sqlx:
         json!({ "bear_slug": bear_slug, "session_id": session_id }),
     )
     .await;
-    assert_eq!(first["result"]["started"], true, "{first}");
+    assert_eq!(first["result"]["started"], false, "{first}");
+    assert_eq!(first["result"]["claimed"], true, "{first}");
     assert_eq!(first["result"]["reused"], false, "{first}");
     assert_eq!(
-        first["result"]["execution_attempt_state"], "running",
-        "new starts must return canonical attempt state: {first}"
+        first["result"]["execution_attempt_state"], "authorized",
+        "claimed starts must not advertise running authority: {first}"
     );
     assert_eq!(
-        first["result"]["launch_state"], "started",
-        "new starts must report native launch: {first}"
+        first["result"]["launch_state"], "claimed",
+        "new starts report controller claim before native startup: {first}"
     );
     let execution_attempt_id = first["result"]["execution_attempt_id"]
         .as_str()
@@ -4881,8 +4960,8 @@ async fn current_task_start_requires_selection_and_reuses_active_run(pool: sqlx:
         "focused start returns canonical attempt fence: {first}"
     );
     let first_snapshot = &first["result"]["focused_execution"];
-    assert_eq!(first_snapshot["state"]["phase"], "running", "{first}");
-    assert_eq!(first_snapshot["controller"], "live", "{first}");
+    assert_eq!(first_snapshot["state"]["phase"], "starting", "{first}");
+    assert_eq!(first_snapshot["controller"], "claimed", "{first}");
     assert_eq!(first_snapshot["task"]["id"], task_id.to_string());
     assert_eq!(first_snapshot["run"]["id"], first["result"]["run_id"]);
     assert_eq!(
@@ -4890,6 +4969,9 @@ async fn current_task_start_requires_selection_and_reuses_active_run(pool: sqlx:
         first["result"]["execution_attempt_id"]
     );
     assert_eq!(first_snapshot["obligations"]["open"], 0);
+    let first_run_id = first["result"]["run_id"].as_str().expect("claimed run id");
+    wait_for_focused_run_started(state.clone(), &token, &bear_slug, &session_id, first_run_id)
+        .await;
 
     let attempt: (String, String, String, String) = sqlx::query_as(
         "SELECT id::TEXT, binding_kind, binding_id, host_run_id
@@ -5269,7 +5351,7 @@ async fn work_checkout_preserves_selected_pair_current_task(pool: sqlx::PgPool) 
     let token = create_token_for_bear(&pool, user_id, bear_id).await;
     let pair_session_id = format!("pair-{}", Uuid::new_v4().simple());
     upsert_test_session(&pool, user_id, bear_id, &bear_slug, &pair_session_id).await;
-    let pair_task_id =
+    let selected_pair_task_id =
         create_session_task(&pool, user_id, bear_id, &pair_session_id, "Pair task").await;
     let state = test_state(pool.clone());
     let selected = rpc_value(
@@ -5279,13 +5361,13 @@ async fn work_checkout_preserves_selected_pair_current_task(pool: sqlx::PgPool) 
         json!({
             "bear_slug": bear_slug,
             "session_id": pair_session_id,
-            "task_id": pair_task_id,
+            "task_id": selected_pair_task_id,
         }),
     )
     .await;
     assert_eq!(
         selected["result"]["current_task_id"],
-        pair_task_id.to_string()
+        selected_pair_task_id.to_string()
     );
 
     let work_run_id = create_checkoutable_work_run(&pool, user_id, bear_id).await;
@@ -5302,7 +5384,7 @@ async fn work_checkout_preserves_selected_pair_current_task(pool: sqlx::PgPool) 
             .expect("Pair session exists");
     assert_eq!(
         pair_session.current_task_id,
-        Some(pair_task_id),
+        Some(selected_pair_task_id),
         "Work checkout must not replace the selected Pair task"
     );
 }
@@ -5364,8 +5446,9 @@ async fn current_task_start_recovers_an_abandoned_continuation(pool: sqlx::PgPoo
     .await;
     assert_eq!(response["result"]["recovered"], true, "{response}");
     assert_eq!(response["result"]["recovered_run_id"], run_id, "{response}");
-    assert_eq!(response["result"]["run_id"], run_id, "{response}");
-    assert_eq!(response["result"]["state"], "running", "{response}");
+    assert_ne!(response["result"]["run_id"], run_id, "{response}");
+    assert_eq!(response["result"]["state"], "accepted", "{response}");
+    assert_eq!(response["result"]["launch_state"], "claimed", "{response}");
     assert_eq!(
         client_sessions::find_for_user_bear_session_id(&pool, user_id, bear_id, &session_id)
             .await
@@ -5380,7 +5463,9 @@ async fn current_task_start_recovers_an_abandoned_continuation(pool: sqlx::PgPoo
     assert!(ledger.iter().any(|entry| {
         entry.decision_kind == "budget_slice_recovery"
             && entry.related_docket_task_id == Some(task_id)
-            && entry.decision["same_run"] == true
+            && entry.decision["same_run"] == false
+            && entry.decision["replacement_run_id"] == response["result"]["run_id"]
+            && entry.decision["launch_state"] == "claimed"
     }));
 }
 
@@ -5450,7 +5535,7 @@ async fn run_recover_refuses_when_selected_pair_task_changed(pool: sqlx::PgPool)
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn run_recovery_preserves_selected_task_and_source_run(pool: sqlx::PgPool) {
+async fn run_recovery_launches_claimed_successor_and_preserves_selected_task(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;
     let token = create_token_for_bear(&pool, user_id, bear_id).await;
@@ -5503,21 +5588,27 @@ async fn run_recovery_preserves_selected_task_and_source_run(pool: sqlx::PgPool)
     ));
 
     let response = rpc_value(
-        state,
+        state.clone(),
         &token,
         "run.recover",
         json!({ "bear_slug": bear_slug, "run_id": run_id }),
     )
     .await;
     assert_eq!(response["result"]["ok"], true, "{response}");
-    assert_eq!(response["result"]["run_id"], run_id, "{response}");
-    assert_eq!(response["result"]["state"], "running", "{response}");
+    assert_eq!(response["result"]["recovered_run_id"], run_id, "{response}");
+    assert_ne!(response["result"]["run_id"], run_id, "{response}");
+    assert_eq!(response["result"]["state"], "accepted", "{response}");
+    assert_eq!(response["result"]["launch_state"], "claimed", "{response}");
+    let replacement_run_id = response["result"]["run_id"]
+        .as_str()
+        .expect("replacement run id");
+    wait_for_focused_run_started(state, &token, &bear_slug, &session_id, replacement_run_id).await;
 
     let source = turn_runs::get_run(&pool, &run_id)
         .await
         .expect("load source run")
         .expect("source run remains durable");
-    assert_eq!(source.state, "running");
+    assert_eq!(source.state, "cancelled");
     assert!(
         turn_runs::technical_budget_recovery_snapshot(&pool, &run_id)
             .await

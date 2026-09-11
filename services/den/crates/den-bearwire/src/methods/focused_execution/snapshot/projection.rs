@@ -26,6 +26,7 @@ pub async fn load_focused_execution_snapshot(
     let row = sqlx::query!(
         r#"
         SELECT session.current_task_id AS "task_id?",
+               COALESCE(session.resolved_conversation_id, session.conversation_id) AS "runtime_conversation_id!",
                run.run_id AS "run_id?",
                run.state AS "run_state?",
                run.terminal_reason AS "terminal_reason?",
@@ -153,14 +154,20 @@ pub async fn load_focused_execution_snapshot(
     let controller = run
         .as_ref()
         .map_or(ControllerDisposition::NotApplicable, |run| {
-            if state
+            let registered = state
                 .turn_cancellations
                 .active_for_run(client_session_id, run.id.as_str())
-                .is_some()
-            {
-                ControllerDisposition::Live
-            } else {
-                ControllerDisposition::Missing
+                .is_some();
+            let native_session = den_runtime::native_runtime::native_client_run_exists(
+                &row.runtime_conversation_id,
+                client_session_id,
+                run.id.as_str(),
+            );
+            match (run.state, registered, native_session) {
+                (TurnRunState::Accepted, false, false) => ControllerDisposition::Queued,
+                (_, true, false) => ControllerDisposition::Claimed,
+                (_, true, true) => ControllerDisposition::Live,
+                _ => ControllerDisposition::Missing,
             }
         });
     let open_obligations = u32::try_from(row.open_obligations).map_err(|_| {

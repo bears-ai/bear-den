@@ -20,6 +20,8 @@ pub use projection::load_focused_execution_snapshot;
 #[serde(rename_all = "snake_case")]
 pub enum ControllerDisposition {
     NotApplicable,
+    Queued,
+    Claimed,
     Live,
     Missing,
     Recovering,
@@ -229,6 +231,16 @@ fn reduce_state(facts: &FocusedExecutionFacts) -> FocusedExecutionState {
 
     if !attempt_is_live {
         return inconsistent(FocusedExecutionInvariantViolation::ActiveRunWithoutAttempt);
+    }
+    if run.state == TurnRunState::Accepted
+        && matches!(
+            facts.controller,
+            ControllerDisposition::Queued
+                | ControllerDisposition::Claimed
+                | ControllerDisposition::Live
+        )
+    {
+        return FocusedExecutionState::Starting;
     }
     if facts.controller == ControllerDisposition::Recovering {
         return FocusedExecutionState::Recovering;

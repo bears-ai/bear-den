@@ -794,6 +794,10 @@ pub(crate) async fn session_current_task_start_result(
     })?;
     Ok(json!({
         "ok": true,
+        "queued": execution.launch_state
+            == super::focused_execution::FocusedExecutionLaunchState::Queued,
+        "claimed": execution.launch_state
+            == super::focused_execution::FocusedExecutionLaunchState::Claimed,
         "started": execution.launch_state
             == super::focused_execution::FocusedExecutionLaunchState::Started,
         "reused": execution.launch_state
@@ -845,17 +849,16 @@ pub(crate) async fn start_session_task_execution(
             reconcile_orphaned_task_run(state, user_id, bear.id, task_id, session_id, &run.run_id)
                 .await?;
             recovered_run_id = Some(run.run_id);
-        } else {
-            existing_session_execution_attempt(
-                &state.sqlx_pool,
-                bear.id,
-                task_id,
-                session_id,
-                &run.run_id,
-            )
-            .await?;
+        } else if PgDocketService::from_pool(&state.sqlx_pool)
+            .get_live_session_task_execution_attempt(bear.id, task_id, session_id, &run.run_id)
+            .await?
+            .is_some()
+        {
             return Ok(super::focused_execution::FocusedExecutionLaunchState::AlreadyRunning);
         }
+        // A live controller for a different selected task remains authoritative
+        // until the normal superseding start atomically cancels its run and
+        // releases its attempt. Do not fabricate ownership for the new task.
     }
 
     if let Some(attempt) = PgDocketService::from_pool(&state.sqlx_pool)
@@ -883,17 +886,20 @@ pub(crate) async fn start_session_task_execution(
             .transpose()?
             .is_some_and(|state| !state.is_terminal());
         if controller_is_live && run_is_live {
-            return Ok(super::focused_execution::FocusedExecutionLaunchState::AlreadyRunning);
+            if attempt.task_id == task_id {
+                return Ok(super::focused_execution::FocusedExecutionLaunchState::AlreadyRunning);
+            }
+        } else {
+            PgDocketService::from_pool(&state.sqlx_pool)
+                .release_execution_attempt(DocketExecutionAttemptRelease {
+                    attempt_id: attempt.id,
+                    fence_epoch: attempt.fence_epoch,
+                    recovery_key: Uuid::new_v4(),
+                    recovery_reason: "stale_focused_execution_attempt_terminal_or_missing_run"
+                        .to_string(),
+                })
+                .await?;
         }
-        PgDocketService::from_pool(&state.sqlx_pool)
-            .release_execution_attempt(DocketExecutionAttemptRelease {
-                attempt_id: attempt.id,
-                fence_epoch: attempt.fence_epoch,
-                recovery_key: Uuid::new_v4(),
-                recovery_reason: "stale_focused_execution_attempt_terminal_or_missing_run"
-                    .to_string(),
-            })
-            .await?;
     }
 
     if let Some(attempt) = PgDocketService::from_pool(&state.sqlx_pool)
@@ -971,13 +977,27 @@ pub(crate) async fn start_session_task_execution(
         .map_err(|err| CustomError::ValidationError(format!("invalid task start params: {err}")))?;
     let task_session_id = request.session_id.clone();
     let result =
-        super::run::run_start_for_pair_task(state, request, user_id, bear.clone(), task_id).await?;
+        super::run::run_start_for_focused_task(state, request, user_id, bear.clone(), task_id)
+            .await?;
     let run_id = result["run_id"]
         .as_str()
         .ok_or_else(|| {
             CustomError::ValidationError("run.start returned a non-string run_id".to_string())
         })?
         .to_string();
+    let launch_state = match result["launch_state"].as_str() {
+        Some("queued") => super::focused_execution::FocusedExecutionLaunchState::Queued,
+        Some("claimed") => super::focused_execution::FocusedExecutionLaunchState::Claimed,
+        Some("started") => super::focused_execution::FocusedExecutionLaunchState::Started,
+        Some("already_running") => {
+            super::focused_execution::FocusedExecutionLaunchState::AlreadyRunning
+        }
+        _ => {
+            return Err(CustomError::System(
+                "run.start returned an invalid launch_state".to_string(),
+            ))
+        }
+    };
 
     if let Some(recovered_run_id) = recovered_run_id {
         let mut handoff = BearWireEvent::ephemeral(
@@ -985,7 +1005,6 @@ pub(crate) async fn start_session_task_execution(
             json!({
                 "run_id": recovered_run_id,
                 "replacement_run_id": run_id,
-
                 "task_id": task_id,
                 "reason": "orphaned_execution_controller",
                 "task_selection_preserved": true,
@@ -1004,7 +1023,7 @@ pub(crate) async fn start_session_task_execution(
         )
         .await?;
     }
-    Ok(super::focused_execution::FocusedExecutionLaunchState::Started)
+    Ok(launch_state)
 }
 
 async fn reconcile_orphaned_task_run(
@@ -1081,23 +1100,6 @@ async fn reconcile_orphaned_task_run(
             .await?;
     }
     Ok(())
-}
-
-async fn existing_session_execution_attempt(
-    pool: &PgPool,
-    bear_id: uuid::Uuid,
-    task_id: uuid::Uuid,
-    session_id: &str,
-    run_id: &str,
-) -> Result<den_docket::DocketExecutionAttemptRow, CustomError> {
-    PgDocketService::from_pool(pool)
-        .get_live_session_task_execution_attempt(bear_id, task_id, session_id, run_id)
-        .await?
-        .ok_or_else(|| {
-            CustomError::ValidationError(
-                "active turn run has no matching live execution authority".to_string(),
-            )
-        })
 }
 
 pub(crate) async fn session_current_task_clear_result(

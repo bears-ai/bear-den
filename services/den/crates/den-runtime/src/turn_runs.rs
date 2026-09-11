@@ -189,147 +189,6 @@ pub async fn create_or_attach_active_run_with_ids(
     Ok(CreateOrAttachRun::Created(row))
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct DocketPairLaunchRow {
-    pub run_id: String,
-    pub attempt_id: Uuid,
-    pub fence_epoch: i64,
-    pub state: String,
-    pub claim_id: Option<Uuid>,
-    pub claim_expires_at: Option<OffsetDateTime>,
-    pub started_at: Option<OffsetDateTime>,
-    pub terminal_reason: Option<String>,
-}
-
-pub async fn queue_docket_pair_launch(
-    pool: &PgPool,
-    run_id: &str,
-    attempt_id: Uuid,
-    fence_epoch: i64,
-) -> Result<DocketPairLaunchRow, DenError> {
-    let row = sqlx::query_as!(
-        DocketPairLaunchRow,
-        r#"
-        INSERT INTO docket_pair_launches (run_id, attempt_id, fence_epoch, state)
-        VALUES ($1, $2, $3, 'queued')
-        ON CONFLICT (run_id) DO UPDATE
-        SET updated_at = now()
-        WHERE docket_pair_launches.attempt_id = EXCLUDED.attempt_id
-          AND docket_pair_launches.fence_epoch = EXCLUDED.fence_epoch
-        RETURNING run_id, attempt_id, fence_epoch, state,
-                  claim_id AS "claim_id?", claim_expires_at AS "claim_expires_at?",
-                  started_at AS "started_at?", terminal_reason AS "terminal_reason?"
-        "#,
-        run_id,
-        attempt_id,
-        fence_epoch,
-    )
-    .fetch_one(pool)
-    .await?;
-    Ok(row)
-}
-
-pub async fn claim_docket_pair_launch(
-    pool: &PgPool,
-    run_id: &str,
-    attempt_id: Uuid,
-    fence_epoch: i64,
-    claim_id: Uuid,
-) -> Result<Option<DocketPairLaunchRow>, DenError> {
-    let row = sqlx::query_as!(
-        DocketPairLaunchRow,
-        r#"
-        UPDATE docket_pair_launches
-        SET state = 'claimed', claim_id = $4,
-            claim_expires_at = now() + interval '2 minutes', updated_at = now()
-        WHERE run_id = $1 AND attempt_id = $2 AND fence_epoch = $3
-          AND (state = 'queued' OR (state = 'claimed' AND claim_expires_at <= now()))
-        RETURNING run_id, attempt_id, fence_epoch, state,
-                  claim_id AS "claim_id?", claim_expires_at AS "claim_expires_at?",
-                  started_at AS "started_at?", terminal_reason AS "terminal_reason?"
-        "#,
-        run_id,
-        attempt_id,
-        fence_epoch,
-        claim_id,
-    )
-    .fetch_optional(pool)
-    .await?;
-    Ok(row)
-}
-
-pub async fn mark_docket_pair_launch_started(
-    pool: &PgPool,
-    run_id: &str,
-    claim_id: Uuid,
-) -> Result<bool, DenError> {
-    let result = sqlx::query!(
-        r#"
-        UPDATE docket_pair_launches
-        SET state = 'started', started_at = now(), claim_id = NULL,
-            claim_expires_at = NULL, updated_at = now()
-        WHERE run_id = $1 AND state = 'claimed' AND claim_id = $2
-        "#,
-        run_id,
-        claim_id,
-    )
-    .execute(pool)
-    .await?;
-    Ok(result.rows_affected() == 1)
-}
-
-pub async fn get_docket_pair_launch(
-    pool: &PgPool,
-    run_id: &str,
-) -> Result<Option<DocketPairLaunchRow>, DenError> {
-    let row = sqlx::query_as!(
-        DocketPairLaunchRow,
-        r#"
-        SELECT run_id, attempt_id, fence_epoch, state,
-               claim_id AS "claim_id?", claim_expires_at AS "claim_expires_at?",
-               started_at AS "started_at?", terminal_reason AS "terminal_reason?"
-        FROM docket_pair_launches
-        WHERE run_id = $1
-        "#,
-        run_id,
-    )
-    .fetch_optional(pool)
-    .await?;
-    Ok(row)
-}
-
-/// Terminalizes a launch only while the caller still owns its claim.
-/// A slow controller must not overwrite a newer claim after its lease expires.
-pub async fn fail_claimed_docket_pair_launch(
-    pool: &PgPool,
-    run_id: &str,
-    claim_id: Uuid,
-    reason: &str,
-) -> Result<bool, DenError> {
-    let result = sqlx::query!(
-        r#"
-        UPDATE docket_pair_launches
-        SET state = 'failed', terminal_reason = $3, claim_id = NULL,
-            claim_expires_at = NULL, updated_at = now()
-        WHERE run_id = $1 AND state = 'claimed' AND claim_id = $2
-        "#,
-        run_id,
-        claim_id,
-        reason,
-    )
-    .execute(pool)
-    .await?;
-    Ok(result.rows_affected() == 1)
-}
-
-pub fn docket_pair_launch_is_recoverable(row: &DocketPairLaunchRow, now: OffsetDateTime) -> bool {
-    row.state == "queued"
-        || (row.state == "claimed"
-            && row
-                .claim_expires_at
-                .is_some_and(|claim_expires_at| claim_expires_at <= now))
-}
-
 pub async fn get_run(pool: &PgPool, run_id: &str) -> Result<Option<TurnRunRow>, DenError> {
     let row = sqlx::query_as!(
         TurnRunRow,
@@ -1207,10 +1066,8 @@ pub async fn transition_run(
 mod tests {
     use den_core::DenError;
 
-    use super::{docket_pair_launch_is_recoverable, DocketPairLaunchRow, TurnRunState};
+    use super::TurnRunState;
     use crate::turn_ids::{ClientSessionId, TurnRunId};
-    use time::{Duration, OffsetDateTime};
-    use uuid::Uuid;
 
     #[test]
     fn terminal_run_with_open_obligation_is_invalid() {
@@ -1244,34 +1101,5 @@ mod tests {
         let session_id = ClientSessionId::new("session_xyz").expect("valid session id");
         assert_eq!(run_id.as_str(), "run_abc");
         assert_eq!(session_id.as_str(), "session_xyz");
-    }
-
-    #[test]
-    fn only_queued_or_expired_claimed_launches_are_recoverable() {
-        let now = OffsetDateTime::now_utc();
-        let mut launch = DocketPairLaunchRow {
-            run_id: "run_abc".to_string(),
-            attempt_id: Uuid::new_v4(),
-            fence_epoch: 1,
-            state: "queued".to_string(),
-            claim_id: None,
-            claim_expires_at: None,
-            started_at: None,
-            terminal_reason: None,
-        };
-        assert!(docket_pair_launch_is_recoverable(&launch, now));
-
-        launch.state = "claimed".to_string();
-        launch.claim_id = Some(Uuid::new_v4());
-        launch.claim_expires_at = Some(now + Duration::minutes(1));
-        assert!(!docket_pair_launch_is_recoverable(&launch, now));
-        launch.claim_expires_at = Some(now - Duration::seconds(1));
-        assert!(docket_pair_launch_is_recoverable(&launch, now));
-
-        launch.state = "started".to_string();
-        launch.started_at = Some(now);
-        launch.claim_id = None;
-        launch.claim_expires_at = None;
-        assert!(!docket_pair_launch_is_recoverable(&launch, now));
     }
 }

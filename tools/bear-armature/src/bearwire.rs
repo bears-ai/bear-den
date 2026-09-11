@@ -35,6 +35,7 @@ fn is_optional_runtime_metadata_event(event_type: &str) -> bool {
             | "run.started"
             | "run.recovering"
             | "run.recovered"
+            | "docket.execution.claimed"
             | "docket.execution.started"
             | "docket.execution.ended"
             | "runtime.objective_orientation"
@@ -2950,6 +2951,9 @@ mod tests {
         ));
         assert!(is_optional_runtime_metadata_event("run.recovering"));
         assert!(is_optional_runtime_metadata_event("run.recovered"));
+        assert!(is_optional_runtime_metadata_event(
+            "docket.execution.claimed"
+        ));
         assert!(is_optional_runtime_metadata_event(
             "docket.execution.started"
         ));

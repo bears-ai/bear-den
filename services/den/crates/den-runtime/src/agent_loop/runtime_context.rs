@@ -187,10 +187,14 @@ fn render_docket_transition_history(
     sequence_no: i64,
     data: &serde_json::Value,
 ) -> String {
-    let authority_at_last_transition = if event_type == "docket.execution.started" {
-        "present; this is historical and does not prove authority is still current"
-    } else {
-        "absent"
+    let authority_at_last_transition = match event_type {
+        "docket.execution.claimed" => {
+            "reserved for startup; this is historical and does not prove execution started"
+        }
+        "docket.execution.started" => {
+            "present; this is historical and does not prove authority is still current"
+        }
+        _ => "absent",
     };
     system_reminder(format!(
         "Docket execution transition history (historical event, not a current-state snapshot):\n\
@@ -215,6 +219,7 @@ pub async fn assemble_den_owned_runtime_supplement(
         pool,
         session_id,
         &[
+            "docket.execution.claimed".to_string(),
             "docket.execution.started".to_string(),
             "docket.execution.ended".to_string(),
         ],

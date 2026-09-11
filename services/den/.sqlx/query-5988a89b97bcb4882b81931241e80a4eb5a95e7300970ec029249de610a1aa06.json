@@ -1,0 +1,102 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT session.current_task_id AS \"task_id?\",\n               COALESCE(session.resolved_conversation_id, session.conversation_id) AS \"runtime_conversation_id!\",\n               run.run_id AS \"run_id?\",\n               run.state AS \"run_state?\",\n               run.terminal_reason AS \"terminal_reason?\",\n               attempt.id AS \"attempt_id?\",\n               attempt.task_id AS \"attempt_task_id?\",\n               attempt.binding_kind AS \"binding_kind?\",\n               attempt.binding_id AS \"binding_id?\",\n               attempt.host_kind AS \"host_kind?\",\n               attempt.host_run_id AS \"host_run_id?\",\n               attempt.fence_epoch AS \"fence_epoch?\",\n               attempt.state AS \"attempt_state?\",\n               COALESCE((\n                   SELECT COUNT(*)\n                   FROM turn_obligations obligation\n                   WHERE obligation.run_id = run.run_id\n                     AND obligation.state IN ('pending', 'running')\n               ), 0) AS \"open_obligations!\"\n        FROM client_sessions session\n        LEFT JOIN LATERAL (\n            SELECT id, task_id, binding_kind, binding_id, host_kind, host_run_id,\n                   fence_epoch, state, created_at\n            FROM docket_execution_attempts\n            WHERE bear_id = session.bear_id\n              AND binding_kind = 'client_session'\n              AND binding_id = session.client_session_id\n              AND (session.current_task_id IS NULL OR task_id = session.current_task_id)\n            ORDER BY\n                CASE WHEN state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')\n                     THEN 0 ELSE 1 END,\n                created_at DESC\n            LIMIT 1\n        ) attempt ON TRUE\n        LEFT JOIN LATERAL (\n            SELECT run_id, state, terminal_reason, created_at\n            FROM turn_runs\n            WHERE session_id = session.client_session_id\n              AND bear_id = session.bear_id\n              AND user_id = session.user_id\n              AND (\n                  (attempt.host_run_id IS NOT NULL AND run_id = attempt.host_run_id)\n                  OR (\n                      attempt.host_run_id IS NULL\n                      AND session.current_task_id IS NOT NULL\n                      AND state IN ('accepted', 'running', 'waiting_for_client', 'continuing')\n                  )\n              )\n            ORDER BY\n                CASE WHEN run_id = attempt.host_run_id THEN 0\n                     WHEN state IN ('accepted', 'running', 'waiting_for_client', 'continuing') THEN 1\n                     ELSE 2 END,\n                created_at DESC\n            LIMIT 1\n        ) run ON TRUE\n        WHERE session.user_id = $1\n          AND session.bear_id = $2\n          AND session.client_session_id = $3\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "task_id?",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "runtime_conversation_id!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "run_id?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "run_state?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "terminal_reason?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "attempt_id?",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 6,
+        "name": "attempt_task_id?",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 7,
+        "name": "binding_kind?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "binding_id?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "host_kind?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "host_run_id?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "fence_epoch?",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 12,
+        "name": "attempt_state?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
+        "name": "open_obligations!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      true,
+      null,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "5988a89b97bcb4882b81931241e80a4eb5a95e7300970ec029249de610a1aa06"
+}

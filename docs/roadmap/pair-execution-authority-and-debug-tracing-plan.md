@@ -1,10 +1,19 @@
 # Plan: Authoritative focused execution control and diagnostic transition tracing
 
-**Status:** In progress; focused-execution aggregate and terminal lifecycle stabilization completed 2026-09-11
+**Status:** In progress; focused-execution lifecycle stabilization through P4 completed 2026-09-11
 
 **Scope:** Focused Docket execution start, authoritative status projection, BearWire diagnostics, and client debug views
 
 `pair` is a trust-profile/capability shorthand, not an execution identity. Execution state and authority are named for sessions, tasks, runs, hosts, and attempts.
+
+### Completed stabilization phase P4
+
+- Removed the Pair-specific `docket_pair_launches` mini-scheduler; generic run, attempt/fence, and controller state now own startup.
+- Fresh starts return `accepted` + `authorized` + `claimed`. They transition to `running` and emit `run.started` only after native session construction succeeds.
+- `docket.execution.claimed` and `docket.execution.started` are distinct historical transitions.
+- Startup failure releases authorized execution attempts instead of leaving nominally running authority.
+- Technical restart recovery uses an exclusive lease and launches a normal claimed successor; it never reports a source run as running without a native session/controller.
+- Docket task changes use the same explicit superseding handoff rather than requiring the successor task to already own the predecessor run.
 
 ### Completed stabilization phase P3
 

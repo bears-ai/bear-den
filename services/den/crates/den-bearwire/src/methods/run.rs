@@ -12,10 +12,10 @@ use bearwire_protocol::{
     wire::BearWireEvent,
 };
 use den_docket::{
-    DocketExecutionAttemptStart, DocketExecutionBindingKind, DocketExecutionHost,
-    DocketExecutionHostKind, DocketFocusedExecutionAcquire, DocketFocusedExecutionBinding,
-    DocketPairBoundedOutcome, DocketPairBoundedOutcomeReport, DocketPairContinuationDecision,
-    DocketService, PgDocketService,
+    DocketExecutionAttemptRelease, DocketExecutionAttemptStart, DocketExecutionBindingKind,
+    DocketExecutionHost, DocketExecutionHostKind, DocketFocusedExecutionAcquire,
+    DocketFocusedExecutionBinding, DocketPairBoundedOutcome, DocketPairBoundedOutcomeReport,
+    DocketPairContinuationDecision, DocketService, PgDocketService,
 };
 use den_http::errors::CustomError;
 use den_protocol::{RoleRuntimeBinding, RuntimeContinuation};
@@ -1515,7 +1515,6 @@ pub(crate) async fn settle_active_run_for_session(
     reason: &str,
     expected_run_id: Option<&str>,
     superseded_by_run_id: Option<&str>,
-    preserve_run_id: Option<&str>,
 ) -> Result<SettledRunLifecycle, CustomError> {
     let active_run = turn_runs::active_run_for_session(&state.sqlx_pool, session_id).await?;
     if expected_run_id.is_some()
@@ -1523,15 +1522,7 @@ pub(crate) async fn settle_active_run_for_session(
     {
         return Ok(SettledRunLifecycle::empty());
     }
-    // Recovery starts a successor while its source stays `continuing` until the
-    // successor is accepted. Do not let ordinary start supersession cancel that
-    // leased source before the recovery lease can be consumed.
-    if active_run
-        .as_ref()
-        .is_some_and(|run| Some(run.run_id.as_str()) == preserve_run_id)
-    {
-        return Ok(SettledRunLifecycle::empty());
-    }
+
     // The attached BearWire delivery must observe a terminal event before its
     // cancellation handle closes the stream. Without this projection, a successor
     // can leave the predecessor client waiting for a terminal outcome that only
@@ -2089,7 +2080,7 @@ pub(crate) async fn run_recover_result(
             "recoverable technical-budget run not found".to_string(),
         ));
     }
-    let _payload: TechnicalBudgetRecoveryStartPayload =
+    let payload: TechnicalBudgetRecoveryStartPayload =
         serde_json::from_value(snapshot.start_request).map_err(|_| {
             CustomError::ValidationError("recovery start payload is invalid".to_string())
         })?;
@@ -2119,17 +2110,77 @@ pub(crate) async fn run_recover_result(
         task_id,
     )
     .await?;
-    // The original run remains the single active run for its session. A process
-    // loss has no live stream to resume, so consume the continuation claim and
-    // let the normal run lifecycle drive its next step; never create a second
-    // active run during recovery.
-    let recovered = turn_runs::begin_claimed_run_continuation(&state.sqlx_pool, &request.run_id)
-        .await?
-        .ok_or_else(|| {
-            CustomError::ValidationError(
-                "continuation recovery was claimed concurrently".to_string(),
-            )
-        })?;
+    let recovery_lease_id = Uuid::new_v4();
+    let leased = turn_runs::lease_technical_budget_recovery(
+        &state.sqlx_pool,
+        &request.run_id,
+        recovery_lease_id,
+    )
+    .await?
+    .ok_or_else(|| {
+        CustomError::NotFound(
+            "recoverable technical-budget run is missing or already leased".to_string(),
+        )
+    })?;
+    let start_request = RunStartRequest {
+        session_id: snapshot.session_id.clone(),
+        prompt: payload.prompt,
+        prompt_context: payload.prompt_context,
+        client: Some(payload.client),
+        conversation_id: Some(payload.conversation_id),
+        cwd: payload.cwd,
+        requested_mode: payload.requested_mode,
+        supersede_active_run: true,
+        client_context: payload.client_context,
+    };
+    let launch = run_start_with_recovery_source(
+        state,
+        start_request,
+        user_id,
+        bear.clone(),
+        Some(&request.run_id),
+        Some(task_id),
+    )
+    .await;
+    let mut launched = match launch {
+        Ok(launched) => launched,
+        Err(error) => {
+            let source_is_recoverable = turn_runs::get_run(&state.sqlx_pool, &request.run_id)
+                .await?
+                .is_some_and(|run| run.state == "continuing");
+            if source_is_recoverable {
+                turn_runs::release_technical_budget_recovery(
+                    &state.sqlx_pool,
+                    &request.run_id,
+                    recovery_lease_id,
+                )
+                .await?;
+            } else {
+                turn_runs::complete_technical_budget_recovery(
+                    &state.sqlx_pool,
+                    &request.run_id,
+                    recovery_lease_id,
+                )
+                .await?;
+            }
+            return Err(error);
+        }
+    };
+    if !turn_runs::complete_technical_budget_recovery(
+        &state.sqlx_pool,
+        &request.run_id,
+        recovery_lease_id,
+    )
+    .await?
+    {
+        return Err(CustomError::ValidationError(
+            "technical-budget recovery lease changed before launch completed".to_string(),
+        ));
+    }
+    let replacement_run_id = launched["run_id"]
+        .as_str()
+        .ok_or_else(|| CustomError::System("recovery launch omitted run_id".to_string()))?
+        .to_string();
     den_runtime::agent_loop::record_loop_control_decision(
         &state.sqlx_pool,
         den_runtime::agent_loop::LoopControlLedgerInput {
@@ -2139,7 +2190,7 @@ pub(crate) async fn run_recover_result(
             decision_id: format!("budget-slice-recovery:{}", request.run_id),
             decision_kind: den_runtime::agent_loop::LoopControlDecisionKind::BudgetSliceRecovery,
             control_level: "standard".to_string(),
-            reason: Some(row.reason),
+            reason: Some(leased.reason),
             orientation_kind: None,
             checkpoint_id: None,
             related_task_list_id: None,
@@ -2147,16 +2198,67 @@ pub(crate) async fn run_recover_result(
             related_docket_job_id: None,
             related_docket_task_id: Some(task_id),
             evidence_refs: Vec::new(),
-            decision: json!({ "same_run": true }),
+            decision: json!({
+                "same_run": false,
+                "replacement_run_id": replacement_run_id,
+                "launch_state": launched["launch_state"],
+            }),
         },
     )
     .await?;
-    Ok(json!({
-        "ok": true,
-        "recovered_run_id": request.run_id,
-        "run_id": recovered.run_id,
-        "state": recovered.state,
-    }))
+    let mut event = BearWireEvent::ephemeral(
+        "run.recovered",
+        json!({
+            "run_id": request.run_id,
+            "replacement_run_id": replacement_run_id,
+            "task_id": task_id,
+            "reason": "technical_budget_recovery",
+            "launch_state": launched["launch_state"],
+            "task_selection_preserved": true,
+        }),
+    );
+    event.bear_id = Some(bear.id.to_string());
+    event.human_id = Some(user_id.to_string());
+    event.session_id = Some(snapshot.session_id);
+    event.run_id = Some(request.run_id.clone());
+    bearwire_events::append_bearwire_event(
+        &state.sqlx_pool,
+        &session.client_session_id,
+        Some(bear.id),
+        Some(user_id),
+        event,
+    )
+    .await?;
+    launched["recovered"] = json!(true);
+    launched["recovered_run_id"] = json!(request.run_id);
+    Ok(launched)
+}
+
+async fn release_startup_attempt(
+    pool: &sqlx::PgPool,
+    attempt: Option<&den_docket::DocketExecutionAttemptRow>,
+    reason: &str,
+) {
+    let Some(attempt) = attempt else {
+        return;
+    };
+    if let Err(error) = PgDocketService::from_pool(pool)
+        .release_execution_attempt(DocketExecutionAttemptRelease {
+            attempt_id: attempt.id,
+            fence_epoch: attempt.fence_epoch,
+            recovery_key: Uuid::new_v4(),
+            recovery_reason: reason.to_string(),
+        })
+        .await
+    {
+        tracing::warn!(
+            %error,
+            attempt_id = %attempt.id,
+            fence_epoch = attempt.fence_epoch,
+            reason,
+            "failed to release focused authority after startup ended"
+        );
+    }
 }
 
 pub(crate) async fn run_start_result(
@@ -2169,7 +2271,7 @@ pub(crate) async fn run_start_result(
     run_start_with_recovery_source(state, request, user_id, bear, None, None).await
 }
 
-pub(crate) async fn run_start_for_pair_task(
+pub(crate) async fn run_start_for_focused_task(
     state: &DenState,
     request: RunStartRequest,
     user_id: i32,
@@ -2185,7 +2287,7 @@ async fn run_start_with_recovery_source(
     user_id: i32,
     bear: den_service::bears::Bear,
     recovery_source_run_id: Option<&str>,
-    pair_task_id: Option<Uuid>,
+    focused_task_id: Option<Uuid>,
 ) -> Result<Value, CustomError> {
     let session_id = request.session_id;
     let prompt = request.prompt;
@@ -2334,7 +2436,7 @@ async fn run_start_with_recovery_source(
 
     let run_id = TurnRunId::new(format!("run_{}", Uuid::new_v4().simple()))?;
     let session_run_id = run_id.to_string();
-    let inherited_pair_task_id = if pair_task_id.is_none() {
+    let inherited_focused_task_id = if focused_task_id.is_none() {
         PgDocketService::from_pool(&state.sqlx_pool)
             .get_live_session_task_execution_attempt_for_session(bear.id, &session_id)
             .await?
@@ -2342,7 +2444,7 @@ async fn run_start_with_recovery_source(
     } else {
         None
     };
-    let pair_task_id = pair_task_id.or(inherited_pair_task_id);
+    let focused_task_id = focused_task_id.or(inherited_focused_task_id);
     let session_id = ClientSessionId::new(session_id.clone())?;
     let session_id_string = session_id.to_string();
     // `run.start` only replaces an active turn when the caller explicitly
@@ -2356,7 +2458,6 @@ async fn run_start_with_recovery_source(
             "superseded_by_new_run",
             None,
             Some(run_id.as_str()),
-            recovery_source_run_id,
         )
         .await?
     } else {
@@ -2419,65 +2520,35 @@ async fn run_start_with_recovery_source(
         }
     };
     let setup = async {
-        let attempt = if let Some(task_id) = pair_task_id {
-            let service = PgDocketService::from_pool(&state.sqlx_pool);
-            let attempt = service
-                .acquire_focused_execution(DocketFocusedExecutionAcquire {
-                    bear_id: bear.id,
-                    task_id,
-                    binding: DocketFocusedExecutionBinding {
-                        kind: DocketExecutionBindingKind::ClientSession,
-                        id: session_id.to_string(),
-                    },
-                    host: DocketExecutionHost {
-                        kind: DocketExecutionHostKind::TurnRun,
-                        run_id: session_run_id.clone(),
-                    },
-                    acquisition_key: Uuid::new_v5(&Uuid::NAMESPACE_URL, session_run_id.as_bytes()),
-                })
-                .await?;
+        let attempt = if let Some(task_id) = focused_task_id {
             Some(
-                service
-                    .start_execution_attempt(DocketExecutionAttemptStart {
-                        attempt_id: attempt.id,
-                        fence_epoch: attempt.fence_epoch,
+                PgDocketService::from_pool(&state.sqlx_pool)
+                    .acquire_focused_execution(DocketFocusedExecutionAcquire {
+                        bear_id: bear.id,
+                        task_id,
+                        binding: DocketFocusedExecutionBinding {
+                            kind: DocketExecutionBindingKind::ClientSession,
+                            id: session_id.to_string(),
+                        },
+                        host: DocketExecutionHost {
+                            kind: DocketExecutionHostKind::TurnRun,
+                            run_id: session_run_id.clone(),
+                        },
+                        acquisition_key: Uuid::new_v5(
+                            &Uuid::NAMESPACE_URL,
+                            session_run_id.as_bytes(),
+                        ),
                     })
                     .await?,
             )
         } else {
             None
         };
-        let launch_claim_id = if let Some(attempt) = attempt.as_ref() {
-            turn_runs::queue_docket_pair_launch(
-                &state.sqlx_pool,
-                &session_run_id,
-                attempt.id,
-                attempt.fence_epoch,
-            )
-            .await?;
-            let claim_id = Uuid::new_v4();
-            turn_runs::claim_docket_pair_launch(
-                &state.sqlx_pool,
-                &session_run_id,
-                attempt.id,
-                attempt.fence_epoch,
-                claim_id,
-            )
-            .await?
-            .ok_or_else(|| {
-                CustomError::ValidationError(
-                    "Docket Pair launch is already claimed by another controller".to_string(),
-                )
-            })?;
-            Some(claim_id)
-        } else {
-            None
-        };
-        Ok::<_, CustomError>((attempt, launch_claim_id))
+        Ok::<_, CustomError>(attempt)
     }
     .await;
-    let (attempt, launch_claim_id) = match setup {
-        Ok(setup) => setup,
+    let attempt = match setup {
+        Ok(attempt) => attempt,
         Err(error) => {
             fail_run_lifecycle(
                 &state.sqlx_pool,
@@ -2487,7 +2558,7 @@ async fn run_start_with_recovery_source(
                 user_id,
                 RunFailureReason::StartFailed,
                 format!("focused execution startup failed: {error}"),
-                Some(json!({"task_id": pair_task_id, "phase": "docket_execution_setup"})),
+                Some(json!({"task_id": focused_task_id, "phase": "docket_execution_setup"})),
             )
             .await;
             return Err(error);
@@ -2535,12 +2606,9 @@ async fn run_start_with_recovery_source(
     let read_only_runtime_context_for_task = read_only_runtime_context.clone();
     let run_id_for_task = session_run_id.clone();
     let client_tools_for_task = client_tools.clone();
-    let launch_claim_id_for_task = launch_claim_id;
+    let attempt_for_task = attempt.clone();
     let api_style_for_task = resolved_model.api_style;
     let supports_reasoning_effort_for_task = resolved_model.supports_reasoning_effort;
-    // /focus is allowed to block until this durable startup boundary completes.
-    // Persist the exact run as running before its asynchronous stream continuation
-    // is spawned, so focus observes a runnable run rather than an accepted row.
     let run_started_at = Instant::now();
     persist_run_progress(
         &state.sqlx_pool,
@@ -2549,73 +2617,15 @@ async fn run_start_with_recovery_source(
         bear.id,
         user_id,
         run_started_at,
-        "run_background_started",
-        "Starting Pair stance run…",
+        "controller_claimed",
+        "Execution controller claimed; preparing native context…",
         json!({ "request_id": request_id }),
-    )
-    .await;
-    turn_runs::transition_run(
-        &state.sqlx_pool,
-        &session_run_id,
-        turn_runs::TurnRunState::Running,
-        None,
-    )
-    .await?;
-    let mut started = BearWireEvent::ephemeral(
-        "run.started",
-        json!({
-            "run_id": session_run_id,
-            "session_id": session_id_string,
-        }),
-    );
-    started.bear_id = Some(bear.id.to_string());
-    started.human_id = Some(user_id.to_string());
-    started.session_id = Some(session_id_string.clone());
-    started.run_id = Some(session_run_id.clone());
-    let _ = bearwire_events::append_bearwire_event(
-        &state.sqlx_pool,
-        &session_id_string,
-        Some(bear.id),
-        Some(user_id),
-        started,
     )
     .await;
 
     let run_for_task = run.clone();
     tokio::spawn(async move {
         let _cancel_handle = cancel_handle;
-        if let Some(claim_id) = launch_claim_id_for_task {
-            match turn_runs::mark_docket_pair_launch_started(&pool, &run_id_for_task, claim_id)
-                .await
-            {
-                Ok(true) => {}
-                Ok(false) => {
-                    // The lease may have expired and been claimed by another Den
-                    // controller. This stale controller must not terminalize the
-                    // shared run or overwrite the newer owner's outcome.
-                    tracing::warn!(
-                        session_id = %session_for_task,
-                        run_id = %run_id_for_task,
-                        claim_id = %claim_id,
-                        "Docket Pair launch claim was lost before native controller startup"
-                    );
-                    return;
-                }
-                Err(error) => {
-                    // No model work has started. Leave the claimed launch intact so
-                    // it becomes recoverable when its lease expires; marking the run
-                    // failed here would destroy that durable recovery path.
-                    tracing::error!(
-                        error = %error,
-                        session_id = %session_for_task,
-                        run_id = %run_id_for_task,
-                        claim_id = %claim_id,
-                        "failed to persist Docket Pair launch startup"
-                    );
-                    return;
-                }
-            }
-        }
         // A focused Docket task is autonomous work. Do not acknowledge `/focus`
         // merely because Tokio accepted a spawn: wait until the continuation has
         // reached native stream startup, which proves it consumed the task turn.
@@ -2697,6 +2707,143 @@ async fn run_start_with_recovery_source(
 
         match stream_result {
             Ok(mut stream) => {
+                if let Some(attempt) = attempt_for_task.as_ref() {
+                    if let Err(error) = PgDocketService::from_pool(&pool)
+                        .start_execution_attempt(DocketExecutionAttemptStart {
+                            attempt_id: attempt.id,
+                            fence_epoch: attempt.fence_epoch,
+                        })
+                        .await
+                    {
+                        persist_run_failed(
+                            &pool,
+                            &session_for_task,
+                            &run_id_for_task,
+                            bear_id,
+                            user_id,
+                            RunFailureReason::StartFailed,
+                            format!("focused execution authority failed to start: {error}"),
+                            None,
+                        )
+                        .await;
+                        release_startup_attempt(
+                            &pool,
+                            attempt_for_task.as_ref(),
+                            "focused_authority_start_failed",
+                        )
+                        .await;
+                        return;
+                    }
+                }
+                match turn_runs::transition_run(
+                    &pool,
+                    &run_id_for_task,
+                    turn_runs::TurnRunState::Running,
+                    None,
+                )
+                .await
+                {
+                    Ok(Some(_)) => {}
+                    Ok(None) => {
+                        den_runtime::native_runtime::remove_native_client_run(
+                            &session_for_task,
+                            &run_id_for_task,
+                        );
+                        release_startup_attempt(
+                            &pool,
+                            attempt_for_task.as_ref(),
+                            "run_terminal_before_native_start",
+                        )
+                        .await;
+                        return;
+                    }
+                    Err(error) => {
+                        persist_run_failed(
+                            &pool,
+                            &session_for_task,
+                            &run_id_for_task,
+                            bear_id,
+                            user_id,
+                            RunFailureReason::StartFailed,
+                            format!("failed to transition native execution to running: {error}"),
+                            None,
+                        )
+                        .await;
+                        release_startup_attempt(
+                            &pool,
+                            attempt_for_task.as_ref(),
+                            "run_start_transition_failed",
+                        )
+                        .await;
+                        return;
+                    }
+                }
+                let mut started = BearWireEvent::ephemeral(
+                    "run.started",
+                    json!({
+                        "run_id": run_id_for_task,
+                        "session_id": session_for_task,
+                    }),
+                );
+                started.bear_id = Some(bear_id.to_string());
+                started.human_id = Some(user_id.to_string());
+                started.session_id = Some(session_for_task.clone());
+                started.run_id = Some(run_id_for_task.clone());
+                if let Err(error) = bearwire_events::append_bearwire_event(
+                    &pool,
+                    &session_for_task,
+                    Some(bear_id),
+                    Some(user_id),
+                    started,
+                )
+                .await
+                {
+                    persist_run_failed(
+                        &pool,
+                        &session_for_task,
+                        &run_id_for_task,
+                        bear_id,
+                        user_id,
+                        RunFailureReason::StartFailed,
+                        format!("failed to persist native run start: {error}"),
+                        None,
+                    )
+                    .await;
+                    release_startup_attempt(
+                        &pool,
+                        attempt_for_task.as_ref(),
+                        "run_started_event_failed",
+                    )
+                    .await;
+                    return;
+                }
+                if attempt_for_task.is_some() {
+                    match super::focused_execution::load_focused_execution_snapshot(
+                        &livestream_state,
+                        user_id,
+                        bear_id,
+                        &session_for_task,
+                        super::focused_execution::FocusedExecutionLaunchState::Started,
+                    )
+                    .await
+                    {
+                        Ok(execution) => {
+                            super::focused_execution::project_execution_transition(
+                                &livestream_state,
+                                user_id,
+                                bear_id,
+                                &execution,
+                            )
+                            .await;
+                        }
+                        Err(error) => tracing::warn!(
+                            %error,
+                            session_id = %session_for_task,
+                            run_id = %run_id_for_task,
+                            "failed to project native focused execution start"
+                        ),
+                    }
+                }
                 persist_run_progress(
                     &pool,
                     &session_for_task,
@@ -3023,6 +3170,12 @@ async fn run_start_with_recovery_source(
                     None,
                 )
                 .await;
+                release_startup_attempt(
+                    &pool,
+                    attempt_for_task.as_ref(),
+                    "native_session_start_failed",
+                )
+                .await;
             }
         }
     });
@@ -3033,10 +3186,10 @@ async fn run_start_with_recovery_source(
         "run_id": run_id,
         "session_id": session_id,
         "event_sequence": accepted.sequence_no,
-        "state": "running",
-        "launch_state": "started",
+        "state": "accepted",
+        "launch_state": "claimed",
         "execution_attempt_id": attempt.as_ref().map(|attempt| attempt.id),
-        "execution_attempt_state": attempt.as_ref().map(|_| "running"),
+        "execution_attempt_state": attempt.as_ref().map(|attempt| attempt.state),
         "fence_epoch": attempt.as_ref().map(|attempt| attempt.fence_epoch),
     }))
 }
@@ -3315,7 +3468,6 @@ pub(crate) async fn run_cancel_result(
         user_id,
         "client_requested",
         Some(&requested_run_id),
-        None,
         None,
     )
     .await?;

@@ -33,6 +33,8 @@ pub use snapshot::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FocusedExecutionLaunchState {
+    Queued,
+    Claimed,
     Started,
     AlreadyRunning,
 }
@@ -40,6 +42,8 @@ pub enum FocusedExecutionLaunchState {
 impl FocusedExecutionLaunchState {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Queued => "queued",
+            Self::Claimed => "claimed",
             Self::Started => "started",
             Self::AlreadyRunning => "already_running",
         }
@@ -267,7 +271,7 @@ pub async fn acquire_selected_task_for_run(
             ));
         }
         if !attempt_was_running {
-            project_execution_started(state, user_id, bear.id, &execution).await;
+            project_execution_transition(state, user_id, bear.id, &execution).await;
         }
         Ok(execution)
     })
@@ -336,7 +340,7 @@ async fn start_or_reconcile_locked(
     client_session_id: &str,
     task_id: Uuid,
 ) -> Result<FocusedExecutionSnapshot, CustomError> {
-    let existing = load_focused_execution_snapshot(
+    let mut existing = load_focused_execution_snapshot(
         state,
         user_id,
         bear.id,
@@ -345,7 +349,17 @@ async fn start_or_reconcile_locked(
     )
     .await?;
     if existing.task_id() == Some(task_id) && existing.state.has_active_authority() {
-        return Ok(existing);
+        match existing.controller {
+            ControllerDisposition::Claimed => {
+                existing.launch_state = FocusedExecutionLaunchState::Claimed;
+                return Ok(existing);
+            }
+            ControllerDisposition::Live => return Ok(existing),
+            ControllerDisposition::NotApplicable
+            | ControllerDisposition::Queued
+            | ControllerDisposition::Missing
+            | ControllerDisposition::Recovering => {}
+        }
     }
     let session = client_sessions::find_for_user_bear_session_id(
         &state.sqlx_pool,
@@ -394,11 +408,11 @@ async fn start_or_reconcile_locked(
     );
     execution.require_active_authority()?;
 
-    project_execution_started(state, user_id, bear.id, &execution).await;
+    project_execution_transition(state, user_id, bear.id, &execution).await;
     Ok(execution)
 }
 
-async fn project_execution_started(
+pub(crate) async fn project_execution_transition(
     state: &DenState,
     user_id: i32,
     bear_id: Uuid,
@@ -418,8 +432,24 @@ async fn project_execution_started(
         );
         return;
     };
+    let event_type = match execution.controller {
+        ControllerDisposition::Queued | ControllerDisposition::Claimed => {
+            "docket.execution.claimed"
+        }
+        ControllerDisposition::Live => "docket.execution.started",
+        ControllerDisposition::NotApplicable
+        | ControllerDisposition::Missing
+        | ControllerDisposition::Recovering => {
+            tracing::error!(
+                session_id = %execution.session_id,
+                controller = ?execution.controller,
+                "refusing to project focused execution without controller authority"
+            );
+            return;
+        }
+    };
     let mut event = BearWireEvent::ephemeral(
-        "docket.execution.started",
+        event_type,
         json!({
             "attempt_id": attempt.id,
             "task_id": task.id,
@@ -451,7 +481,7 @@ async fn project_execution_started(
             session_id = %execution.session_id,
             run_id = %run.id,
             attempt_id = %attempt.id,
-            "failed to project focused session execution start"
+            "failed to project focused execution control transition"
         );
     }
 }

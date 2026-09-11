@@ -49,6 +49,10 @@ fn reducer_covers_every_lifecycle_phase_and_invariant() {
     let mut selected = unfocused.clone();
     selected.task_id = Some(Uuid::from_u128(1));
 
+    let mut queued = active_facts(TurnRunState::Accepted);
+    queued.controller = ControllerDisposition::Queued;
+    let mut claimed = active_facts(TurnRunState::Accepted);
+    claimed.controller = ControllerDisposition::Claimed;
     let mut recovering = active_facts(TurnRunState::Running);
     recovering.controller = ControllerDisposition::Recovering;
 
@@ -67,8 +71,10 @@ fn reducer_covers_every_lifecycle_phase_and_invariant() {
             selected.clone(),
             FocusedExecutionState::Selected,
         ),
+        ("queued", queued, FocusedExecutionState::Starting),
+        ("claimed", claimed, FocusedExecutionState::Starting),
         (
-            "starting",
+            "native started",
             active_facts(TurnRunState::Accepted),
             FocusedExecutionState::Starting,
         ),
