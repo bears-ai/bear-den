@@ -1,5 +1,6 @@
 mod approvals;
 mod bearwire;
+mod execution_diagnostics;
 mod headless;
 mod json_rpc;
 mod paths;
@@ -251,6 +252,7 @@ struct AdapterSharedState {
     cancellation_tx: broadcast::Sender<CancellationNotice>,
     active_prompts: Arc<TokioMutex<HashMap<String, ActivePromptTurn>>>,
     projection_dispatcher: AcpProjectionDispatcher,
+    execution_diagnostics: execution_diagnostics::ExecutionDiagnosticStore,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -414,6 +416,10 @@ fn set_bear_debug_mode(mode: BearDebugMode) {
     if let Ok(mut guard) = bear_debug_lock().write() {
         *guard = mode;
     }
+}
+
+pub(crate) fn bear_debug_enabled() -> bool {
+    bear_debug_mode().shows_thoughts()
 }
 
 pub(crate) fn bear_debug_verbose() -> bool {
@@ -1797,6 +1803,7 @@ async fn run() -> Result<()> {
         cancellation_tx,
         active_prompts: Arc::new(TokioMutex::new(HashMap::new())),
         projection_dispatcher: AcpProjectionDispatcher::default(),
+        execution_diagnostics: execution_diagnostics::ExecutionDiagnosticStore::default(),
     };
     tokio::spawn(read_stdin_messages(
         inbound_tx,
@@ -5327,6 +5334,10 @@ async fn handle_session_close(
         .lock()
         .await
         .remove(session_id);
+    shared_state
+        .execution_diagnostics
+        .remove_session(session_id)
+        .await;
     let prompt_result = terminalize_active_prompt_for_lifecycle(
         shared_state,
         session_id,
@@ -5489,7 +5500,12 @@ async fn handle_local_slash_prompt(
     send_user_message_chunk(session_id, &display_prompt).await?;
     let mut launched = None;
     let report = if command == LocalSlashCommand::Debug {
-        debug_report(debug_argument_from_prompt(&prompt))
+        debug_report(
+            shared_state,
+            session_id,
+            debug_argument_from_prompt(&prompt),
+        )
+        .await
     } else if command == LocalSlashCommand::Focus {
         focus_report(
             http,
@@ -5854,7 +5870,7 @@ const LOCAL_SLASH_COMMANDS: &[LocalSlashCommandDescriptor] = &[
     LocalSlashCommandDescriptor {
         name: "debug",
         aliases: &["debug-ui"],
-        description: "Show or set BEARS debug thought visibility: /debug off|on|verbose.",
+        description: "Show or set local thought and execution-transition visibility: /debug off|on|verbose.",
         command: LocalSlashCommand::Debug,
         den_required: false,
     },
@@ -5941,7 +5957,7 @@ async fn handle_local_slash_command(
         }
         LocalSlashCommand::Focus => "Den ACP /focus usage: /focus [job_id]".to_string(),
         LocalSlashCommand::Version => version_report(http, config).await,
-        LocalSlashCommand::Debug => debug_report(None),
+        LocalSlashCommand::Debug => debug_report(shared_state, session_id, None).await,
     }
 }
 
@@ -6851,7 +6867,11 @@ fn debug_argument_from_prompt(prompt: &str) -> Option<&str> {
     prompt.split_whitespace().nth(1)
 }
 
-fn debug_report(arg: Option<&str>) -> String {
+async fn debug_report(
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    arg: Option<&str>,
+) -> String {
     let previous = bear_debug_mode();
     let mut message = String::new();
     if let Some(arg) = arg.map(str::trim).filter(|value| !value.is_empty()) {
@@ -6872,8 +6892,12 @@ fn debug_report(arg: Option<&str>) -> String {
         }
     }
     let current = bear_debug_mode();
+    let execution_diagnostics = shared_state
+        .execution_diagnostics
+        .bundle_json(session_id)
+        .await;
     format!(
-        "{message}BEARS debug\n\n- BEAR_DEBUG env default: {}\n- current mode: {}\n- thought messages: {}\n- verbose adapter logs: {}\n\nUse `/debug off`, `/debug on`, or `/debug verbose`.",
+        "{message}BEARS debug\n\n- BEAR_DEBUG env default: {}\n- current mode: {}\n- thought messages: {}\n- execution transitions: {}\n- verbose adapter logs: {}\n\nFocused execution diagnostic bundle:\n```json\n{}\n```\n\nUse `/debug off`, `/debug on`, or `/debug verbose`.",
         env::var("BEAR_DEBUG").unwrap_or_else(|_| "<unset>".to_string()),
         current.as_str(),
         if current.shows_thoughts() {
@@ -6881,11 +6905,17 @@ fn debug_report(arg: Option<&str>) -> String {
         } else {
             "hidden"
         },
+        if current.shows_thoughts() {
+            "shown as ACP thoughts"
+        } else {
+            "tracked locally, hidden"
+        },
         if current.is_verbose() {
             "enabled"
         } else {
             "disabled"
         },
+        execution_diagnostics,
     )
 }
 
@@ -12574,6 +12604,7 @@ mod tests {
             cancellation_tx,
             active_prompts: Arc::new(TokioMutex::new(HashMap::new())),
             projection_dispatcher: AcpProjectionDispatcher::default(),
+            execution_diagnostics: execution_diagnostics::ExecutionDiagnosticStore::default(),
         }
     }
 
@@ -13638,6 +13669,48 @@ mod tests {
             parse_local_slash_command("/status"),
             Some(LocalSlashCommand::Status)
         );
+    }
+
+    #[tokio::test]
+    async fn debug_mode_exposes_a_local_copyable_execution_bundle() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let previous = bear_debug_mode();
+        let shared_state = test_shared_state();
+        shared_state
+            .execution_diagnostics
+            .observe_event(
+                "session-1",
+                &json!({
+                    "type": "diagnostic.state_transition",
+                    "sequence": 12,
+                    "time": "2026-09-11T00:00:00Z",
+                    "data": {
+                        "state_version": 1,
+                        "to": {"phase": "running"},
+                        "reason": "focus_acquired",
+                        "correlation_id": "run-1",
+                        "session_id": "session-1",
+                        "task_id": "task-1",
+                        "run_id": "run-1",
+                        "attempt_id": "attempt-1",
+                        "fence_epoch": 1,
+                        "open_obligations": 0,
+                        "task_selection_preserved": true
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+
+        let off = debug_report(&shared_state, "session-1", Some("off")).await;
+        assert!(!bear_debug_enabled());
+        assert!(off.contains("tracked locally, hidden"));
+        let on = debug_report(&shared_state, "session-1", Some("on")).await;
+        assert!(bear_debug_enabled());
+        assert!(on.contains("shown as ACP thoughts"));
+        assert!(on.contains("attempt-1"));
+        assert!(on.contains("\"state_version\": 1"));
+        set_bear_debug_mode(previous);
     }
 
     #[test]

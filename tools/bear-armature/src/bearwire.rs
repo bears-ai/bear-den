@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use bearwire_protocol::lifecycle::{
-    RunLaunchProjection, RunStateEvent, RunStateProjection, RunTerminalOutcome,
+    FocusedExecutionDiagnostics, RunLaunchProjection, RunStateEvent, RunStateProjection,
+    RunTerminalOutcome, FOCUSED_EXECUTION_TRANSITION_EVENT_TYPE,
 };
 
 use reqwest::header::{HeaderValue, AUTHORIZATION, CONTENT_TYPE};
@@ -1146,6 +1147,23 @@ impl<'a> PromptDriver<'a> {
                     break;
                 }
             }
+            if shared_state
+                .execution_diagnostics
+                .claim_refresh(session_id)
+                .await
+            {
+                if let Err(error) =
+                    refresh_execution_diagnostics(http, config, shared_state, session_id).await
+                {
+                    tracing::warn!(
+                        target: "bear_armature::lifecycle",
+                        session_id,
+                        run_id,
+                        error = %error,
+                        "failed to refresh focused-execution diagnostics after a version gap"
+                    );
+                }
+            }
             after = next_after;
             if saw_done {
                 if crate::bear_debug_verbose() {
@@ -2026,6 +2044,37 @@ pub(crate) async fn try_handle_prompt(
     }
 }
 
+async fn refresh_execution_diagnostics(
+    http: &reqwest::Client,
+    config: &Config,
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+) -> Result<()> {
+    let result = rpc_call(
+        http,
+        config,
+        "session.execution.diagnostics",
+        json!({
+            "bear_slug": config.bear,
+            "session_id": session_id,
+            "limit": 64,
+        }),
+    )
+    .await?;
+    let diagnostics: FocusedExecutionDiagnostics = serde_json::from_value(
+        result
+            .get("diagnostics")
+            .cloned()
+            .ok_or_else(|| anyhow!("session.execution.diagnostics omitted diagnostics"))?,
+    )
+    .context("decode session.execution.diagnostics result")?;
+    shared_state
+        .execution_diagnostics
+        .replace_authoritative(session_id, diagnostics)
+        .await;
+    Ok(())
+}
+
 pub(crate) async fn rpc_call(
     http: &reqwest::Client,
     config: &Config,
@@ -2475,6 +2524,32 @@ async fn handle_bearwire_event(
     diagnostics.observe_event(event);
 
     match ty {
+        FOCUSED_EXECUTION_TRANSITION_EVENT_TYPE => {
+            if let Some(observed) = shared_state
+                .execution_diagnostics
+                .observe_event(session_id, event)
+                .await?
+            {
+                tracing::debug!(
+                    target: "bear_armature::lifecycle",
+                    session_id,
+                    run_id = observed.record.transition.run_id.as_deref().unwrap_or("<none>"),
+                    state_version = observed.record.transition.state_version,
+                    reason = observed.record.transition.reason.as_str(),
+                    gap_detected = observed.gap_detected,
+                    "observed focused-execution diagnostic transition"
+                );
+                if crate::bear_debug_enabled() {
+                    send_agent_thought_chunk_for_turn(
+                        shared_state,
+                        session_id,
+                        turn_token,
+                        &observed.display_line(),
+                    )
+                    .await?;
+                }
+            }
+        }
         "message.delta" => {
             let text = bearwire_message_delta_text(event);
             if bearwire_message_delta_is_reasoning(event) {
@@ -3171,6 +3246,8 @@ mod tests {
                 std::collections::HashMap::new(),
             )),
             projection_dispatcher: crate::AcpProjectionDispatcher::default(),
+            execution_diagnostics: crate::execution_diagnostics::ExecutionDiagnosticStore::default(
+            ),
         };
         let turn_token = Uuid::new_v4();
         let response = crate::PromptResponseGuard::new(json!("prompt-1"));

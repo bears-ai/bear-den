@@ -1,10 +1,17 @@
 # Plan: Authoritative focused execution control and diagnostic transition tracing
 
-**Status:** In progress; focused-execution lifecycle stabilization through P9 completed 2026-09-11
+**Status:** In progress; focused-execution lifecycle stabilization through P10 completed 2026-09-11
 
 **Scope:** Focused Docket execution start, authoritative status projection, BearWire diagnostics, and client debug views
 
 `pair` is a trust-profile/capability shorthand, not an execution identity. Execution state and authority are named for sessions, tasks, runs, hosts, and attempts.
+
+### Completed stabilization phase P10
+
+- Armature owns one bounded local focused-transition tracker per client session; tracking never affects Den state, obligations, prompt liveness, or terminal delivery.
+- Existing `/debug off|on|verbose` controls visibility locally: off tracks silently, while on/verbose render concise transitions as ACP thought updates and return a copyable bounded JSON bundle.
+- Transition replay is idempotent, local history is capped and cleared on session close, and version gaps trigger a rate-limited refresh from `session.execution.diagnostics` rather than client-side guessing.
+- Unknown/legacy clients continue ignoring optional diagnostics. Existing command/event tests plus one broad tracker test cover visibility, gaps, refresh replacement, and bundle rendering.
 
 ### Completed stabilization phase P9
 
@@ -136,15 +143,15 @@ Every aggregate transition has a monotonic state version and one correlation/ide
 
 **Validated by:** the existing broad same-run focus, autonomous focus/settlement, bounded continuation, and orphan-recovery tests, plus shared protocol decoding and Armature optional-event compatibility tests.
 
-### 5. Build client debug projection
+### 5. Build client debug projection — completed 2026-09-11
 
-- Add a client-local debug toggle that renders diagnostic events inline or in a timeline panel without sending a Den mutation.
-- Keep normal transcript rendering unchanged; diagnostics are visually distinct from role messages.
-- Show correlation IDs, reason codes, versions, and linked task/run/attempt resources; allow copying a bounded diagnostic bundle.
-- On event/version gaps, request a fresh authoritative snapshot rather than guessing.
-- Clients without debug support silently ignore the optional event.
+- Armature observes typed transitions into a bounded process-local/session-local tracker regardless of visibility mode.
+- `/debug off|on|verbose` changes only that Armature process: off is silent; on/verbose render transitions as ACP thoughts and expose a copyable JSON diagnostic bundle.
+- Rendered transitions include version, from/to phase, typed reason, correlation ID, and task/run/attempt refs without entering the ordinary assistant transcript.
+- Duplicate/old transition versions are ignored. Gaps are marked and trigger a rate-limited authoritative `session.execution.diagnostics` refresh.
+- Session close deletes the local timeline, and clients without this support continue ignoring the optional event.
 
-**Done when:** two clients attached to the same session can choose different visibility while receiving/replaying the same authorized semantic history.
+**Validated by:** the broad local tracker replacement test, debug toggle/bundle test, and existing optional-event compatibility test.
 
 ### 6. Reconcile and operate — completed 2026-09-11
 
