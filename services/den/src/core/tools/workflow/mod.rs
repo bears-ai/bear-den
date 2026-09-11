@@ -1235,7 +1235,7 @@ fn task_list_item_counts(task_list: &TaskListProjection) -> Value {
     })
 }
 
-async fn session_anchored_task_list_projection(
+pub(crate) async fn session_anchored_task_list_projection(
     pool: &PgPool,
     context: &DenToolInvocationContext,
     role: BearProfile,
@@ -1951,7 +1951,7 @@ fn should_default_session_task_tree(
     capabilities.contains(den_core::BearCapability::OwnSessionTasks) && job_id.is_none()
 }
 
-async fn resolve_task_session_anchor_id(
+pub(crate) async fn resolve_task_session_anchor_id(
     pool: &PgPool,
     context: &DenToolInvocationContext,
     job_id: Option<Uuid>,

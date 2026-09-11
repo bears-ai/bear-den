@@ -1,3 +1,4 @@
+use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
@@ -31,6 +32,14 @@ use den_service::conversation::persistence as conversation_persistence;
 // `core::tools::session::DenToolInvocationContext` paths and the ~17 in-`den`
 // construction sites keep resolving unchanged.
 pub use den_core::tools::context::DenToolInvocationContext;
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TaskListHandoffArguments {
+    #[serde(default)]
+    item_ids: Vec<String>,
+    requested_outcome: String,
+}
 
 pub async fn invoke_den_tool(
     pool: &PgPool,
@@ -127,12 +136,49 @@ pub async fn invoke_den_tool(
     }
 
     if tool_name == DEN_TASK_LISTS_REQUEST_HANDOFF {
-        let request: TaskListHandoffRequest = serde_json::from_value(arguments)
+        let args: TaskListHandoffArguments = serde_json::from_value(arguments)
             .map_err(|error| CustomError::ValidationError(error.to_string()))?;
         let ctx = DenToolContext::new(pool, config, stores);
         den_core::tools::dispatch::authorize_den_tool(&ctx, tool_name, &context)
             .await
             .map_err(CustomError::from)?;
+        let role = context.profile.unwrap_or(BearProfile::Pair);
+        let session_anchor_id = workflow::resolve_task_session_anchor_id(pool, &context, None)
+            .await?
+            .ok_or_else(|| {
+                CustomError::ValidationError(
+                    "request_task_list_handoff needs the current client session".to_string(),
+                )
+            })?;
+        let task_list = workflow::session_anchored_task_list_projection(
+            pool,
+            &context,
+            role,
+            session_anchor_id,
+        )
+        .await?
+        .ok_or_else(|| {
+            CustomError::ValidationError(
+                "request_task_list_handoff found no current task list for this session".to_string(),
+            )
+        })?;
+        if let Some(item_id) = args.item_ids.iter().find(|item_id| {
+            !task_list
+                .items
+                .iter()
+                .any(|item| item.id.as_str() == item_id.as_str())
+        }) {
+            return Err(CustomError::ValidationError(format!(
+                "request_task_list_handoff item_id {item_id} is not in the current task list"
+            )));
+        }
+        let request = TaskListHandoffRequest {
+            title: task_list.title.clone(),
+            summary: task_list.summary.clone(),
+            task_list,
+            item_ids: args.item_ids,
+            requested_outcome: args.requested_outcome,
+        };
         return serde_json::to_value(
             PgDocketService::from_pool(pool)
                 .request_task_list_handoff(request)
@@ -477,6 +523,28 @@ impl den_core::tools::conversation::ConversationTitleOps for DenConversationTitl
             .await?;
         }
         Ok(synced_acp_sessions)
+    }
+}
+
+#[cfg(test)]
+mod task_list_handoff_arguments_tests {
+    use super::*;
+
+    #[test]
+    fn handoff_accepts_only_intent_and_optional_item_ids() {
+        let args: TaskListHandoffArguments = serde_json::from_value(serde_json::json!({
+            "requested_outcome": "review the current task list"
+        }))
+        .expect("minimal handoff request");
+        assert!(args.item_ids.is_empty());
+
+        let error = serde_json::from_value::<TaskListHandoffArguments>(serde_json::json!({
+            "requested_outcome": "review",
+            "visibility": "bear_visible"
+        }))
+        .expect_err("server-owned lifecycle fields must not be accepted")
+        .to_string();
+        assert!(error.contains("unknown field `visibility`"));
     }
 }
 
