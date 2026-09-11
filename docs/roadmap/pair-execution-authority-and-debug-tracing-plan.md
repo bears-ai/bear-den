@@ -1,10 +1,17 @@
 # Plan: Authoritative focused execution control and diagnostic transition tracing
 
-**Status:** In progress; focused-execution lifecycle stabilization through P4 completed 2026-09-11
+**Status:** In progress; focused-execution lifecycle stabilization through P7 completed 2026-09-11
 
 **Scope:** Focused Docket execution start, authoritative status projection, BearWire diagnostics, and client debug views
 
 `pair` is a trust-profile/capability shorthand, not an execution identity. Execution state and authority are named for sessions, tasks, runs, hosts, and attempts.
+
+### Completed stabilization phase P7
+
+- Execution authorization and routing now derive from `EffectivePolicy` capabilities rather than treating `pair` as an execution identity.
+- Explicit capabilities cover job creation, work dispatch, work-surface management, session-task ownership, focused execution, conversation replay, and work-surface use.
+- Governance removes mutation capabilities outside interactive operation, while armature availability independently controls local-tool access.
+- Direct `pair` checks remain only at trust-profile, prompt, memory-path, review, UI-label, and provenance boundaries where the profile itself is semantically relevant.
 
 ### Completed stabilization phases P5/P6
 

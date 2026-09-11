@@ -12,8 +12,11 @@ pub enum BearCapability {
     SelectSessionTask,
     ExecuteFocusedTask,
     ExecuteJob,
+    CreateJob,
+    DispatchWork,
     UseArmatureTools,
     UseWorkSurfaces,
+    ManageWorkSurfaces,
     ProposeProfileMemory,
     CurateMemory,
 }
@@ -66,20 +69,24 @@ impl EffectivePolicy {
         armature: ArmatureAvailability,
     ) -> Self {
         use BearCapability::{
-            Converse, CurateMemory, ExecuteFocusedTask, ExecuteJob, OwnSessionTasks,
-            ProposeProfileMemory, SelectSessionTask, UseArmatureTools, UseWorkSurfaces,
+            Converse, CreateJob, CurateMemory, DispatchWork, ExecuteFocusedTask, ExecuteJob,
+            ManageWorkSurfaces, OwnSessionTasks, ProposeProfileMemory, SelectSessionTask,
+            UseArmatureTools, UseWorkSurfaces,
         };
 
         let base = match trust_profile {
-            TrustProfile::Chat => [Converse].as_slice(),
+            TrustProfile::Chat => [Converse, CreateJob, DispatchWork].as_slice(),
             TrustProfile::Pair => [
                 Converse,
                 OwnSessionTasks,
                 SelectSessionTask,
                 ExecuteFocusedTask,
                 ExecuteJob,
+                CreateJob,
+                DispatchWork,
                 UseArmatureTools,
                 UseWorkSurfaces,
+                ManageWorkSurfaces,
                 ProposeProfileMemory,
             ]
             .as_slice(),
@@ -99,12 +106,20 @@ impl EffectivePolicy {
         if armature == ArmatureAvailability::Absent || governance != Governance::Interactive {
             capabilities.remove(UseArmatureTools);
         }
+        if governance != Governance::Interactive {
+            capabilities.remove(CreateJob);
+            capabilities.remove(DispatchWork);
+            capabilities.remove(ManageWorkSurfaces);
+        }
         if matches!(governance, Governance::Observational | Governance::Frozen) {
             for capability in [
                 OwnSessionTasks,
                 SelectSessionTask,
                 ExecuteFocusedTask,
                 ExecuteJob,
+                CreateJob,
+                DispatchWork,
+                ManageWorkSurfaces,
                 ProposeProfileMemory,
                 CurateMemory,
             ] {

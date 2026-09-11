@@ -3,11 +3,18 @@ use super::*;
 #[test]
 fn effective_capabilities_are_profile_defaults_filtered_by_runtime_context() {
     use BearCapability::{
-        Converse, CurateMemory, ExecuteFocusedTask, OwnSessionTasks, ProposeProfileMemory,
-        UseArmatureTools,
+        Converse, CreateJob, CurateMemory, DispatchWork, ExecuteFocusedTask, ManageWorkSurfaces,
+        OwnSessionTasks, ProposeProfileMemory, UseArmatureTools,
     };
 
     let cases = [
+        (
+            TrustProfile::Chat,
+            Governance::Interactive,
+            ArmatureAvailability::Absent,
+            &[Converse, CreateJob, DispatchWork][..],
+            &[OwnSessionTasks, ExecuteFocusedTask][..],
+        ),
         (
             TrustProfile::Pair,
             Governance::Interactive,
@@ -17,6 +24,7 @@ fn effective_capabilities_are_profile_defaults_filtered_by_runtime_context() {
                 OwnSessionTasks,
                 ExecuteFocusedTask,
                 UseArmatureTools,
+                ManageWorkSurfaces,
             ][..],
             &[][..],
         ),
@@ -25,7 +33,7 @@ fn effective_capabilities_are_profile_defaults_filtered_by_runtime_context() {
             Governance::AutonomousContinuation,
             ArmatureAvailability::Absent,
             &[Converse, OwnSessionTasks, ExecuteFocusedTask][..],
-            &[UseArmatureTools][..],
+            &[UseArmatureTools, ManageWorkSurfaces][..],
         ),
         (
             TrustProfile::Pair,
@@ -36,6 +44,9 @@ fn effective_capabilities_are_profile_defaults_filtered_by_runtime_context() {
                 OwnSessionTasks,
                 ExecuteFocusedTask,
                 UseArmatureTools,
+                CreateJob,
+                DispatchWork,
+                ManageWorkSurfaces,
                 ProposeProfileMemory,
             ][..],
         ),
@@ -44,7 +55,7 @@ fn effective_capabilities_are_profile_defaults_filtered_by_runtime_context() {
             Governance::Interactive,
             ArmatureAvailability::Connected,
             &[ExecuteFocusedTask, UseArmatureTools][..],
-            &[Converse, OwnSessionTasks][..],
+            &[Converse, OwnSessionTasks, ManageWorkSurfaces][..],
         ),
         (
             TrustProfile::Curate,

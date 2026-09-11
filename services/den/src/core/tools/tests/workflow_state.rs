@@ -271,7 +271,7 @@ async fn memory_write_entry_returns_warning_payload_for_ambiguous_plan_like_memo
 }
 
 #[tokio::test]
-async fn confirm_work_surface_requires_pair_before_database_access() {
+async fn confirm_work_surface_requires_capability_before_database_access() {
     let pool = sqlx::PgPool::connect_lazy("postgres://unused:unused@localhost/unused").unwrap();
     let mut context = pair_context();
     context.profile = Some(BearProfile::Chat);
@@ -286,7 +286,7 @@ async fn confirm_work_surface_requires_pair_before_database_access() {
     .unwrap_err()
     .to_string();
 
-    assert!(err.contains("only to Pair"), "got: {err}");
+    assert!(err.contains("UseWorkSurfaces"), "got: {err}");
 }
 
 #[tokio::test]

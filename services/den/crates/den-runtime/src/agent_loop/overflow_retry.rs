@@ -110,7 +110,14 @@ async fn rebuild_messages_after_overflow_compaction(
     let messages = repair_tool_call_message_chain(messages);
     let messages = if cutoff.is_some() {
         messages
-    } else if matches!(profile, BearProfile::Pair | BearProfile::Chat) {
+    } else if den_core::EffectivePolicy::compile(
+        profile,
+        den_core::Governance::Interactive,
+        den_core::ArmatureAvailability::Absent,
+    )
+    .capabilities
+    .contains(den_core::BearCapability::Converse)
+    {
         crate::agent_loop::context::prune_messages_for_native_conversation(messages)
     } else {
         messages

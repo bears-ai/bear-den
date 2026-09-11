@@ -1362,12 +1362,9 @@ pub(crate) async fn confirm_work_surface(
     role: BearProfile,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    if role != BearProfile::Pair {
-        return Err(DenError::Authorization(
-            "confirm_work_surface is available only to Pair".to_string(),
-        )
-        .into());
-    }
+    effective_tool_policy(role, context)
+        .capabilities
+        .require(den_core::BearCapability::UseWorkSurfaces)?;
     let args: ConfirmWorkSurfaceArguments = serde_json::from_value(arguments)?;
     let client_session_id = context.client_session_id.as_deref().ok_or_else(|| {
         DenError::ValidationError(
@@ -1422,14 +1419,14 @@ pub(crate) async fn create_job(
     role: BearProfile,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    if !matches!(role, BearProfile::Chat | BearProfile::Pair) {
-        return Err(
+    effective_tool_policy(role, context)
+        .capabilities
+        .require(den_core::BearCapability::CreateJob)
+        .map_err(|_| {
             DenError::from(DocketValidationError::InvalidJobCreatorRole {
                 role: role.as_str().to_string(),
             })
-            .into(),
-        );
-    }
+        })?;
     let args: DocketJobCreateArguments = serde_json::from_value(arguments)?;
     let (work_surface_id, surface_auto_bound) = if args.work_surface_assignments.is_empty() {
         resolve_surface_id_for_create(pool, stores, context, role, args.work_surface_id).await?
@@ -1737,12 +1734,9 @@ pub(crate) async fn cancel_job_run(
     role: BearProfile,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    if !matches!(role, BearProfile::Chat | BearProfile::Pair) {
-        return Err(CustomError::ValidationError(format!(
-            "cancel_job_run is available to chat and pair stances, not {}",
-            role.as_str()
-        )));
-    }
+    effective_tool_policy(role, context)
+        .capabilities
+        .require(den_core::BearCapability::DispatchWork)?;
     let args: DocketJobLifecycleArguments = serde_json::from_value(arguments)?;
     let job = PgDocketService::from_pool(pool)
         .cancel_job_run(context.bear_id, args.job_id)
@@ -1950,8 +1944,11 @@ pub(crate) async fn evaluate_criterion(
     }))
 }
 
-fn should_default_pair_session_task_tree(role: BearProfile, job_id: Option<Uuid>) -> bool {
-    role == BearProfile::Pair && job_id.is_none()
+fn should_default_session_task_tree(
+    capabilities: &den_core::CapabilitySet,
+    job_id: Option<Uuid>,
+) -> bool {
+    capabilities.contains(den_core::BearCapability::OwnSessionTasks) && job_id.is_none()
 }
 
 async fn resolve_task_session_anchor_id(
@@ -1995,17 +1992,19 @@ pub(crate) async fn create_task(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketTaskCreateArguments = serde_json::from_value(arguments)?;
-    let defaulted_to_pair_task_tree = should_default_pair_session_task_tree(role, args.job_id);
+    let capabilities = effective_tool_policy(role, context).capabilities;
+    let defaulted_to_pair_task_tree = should_default_session_task_tree(&capabilities, args.job_id);
     let job_id = args.job_id;
     // ponytail: jobless tasks belong only to the authenticated current session;
     // delegated work must first become a Job-owned task.
     let pair_session_id = resolve_task_session_anchor_id(pool, context, job_id).await?;
     enforce_oriented_task_create_policy(pool, context, &args).await?;
-    let pair_session_attachment_id = if role == BearProfile::Pair && job_id.is_some() {
-        resolve_task_session_anchor_id(pool, context, None).await?
-    } else {
-        None
-    };
+    let pair_session_attachment_id =
+        if capabilities.contains(den_core::BearCapability::OwnSessionTasks) && job_id.is_some() {
+            resolve_task_session_anchor_id(pool, context, None).await?
+        } else {
+            None
+        };
     let service = PgDocketService::from_pool(pool);
     let task = service
         .create_task(DocketTaskCreate {
@@ -2167,9 +2166,14 @@ pub(crate) async fn list_tasks(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketTaskListArguments = serde_json::from_value(arguments)?;
-    let defaulted_to_pair_task_tree = should_default_pair_session_task_tree(role, args.job_id);
+    let capabilities = effective_tool_policy(role, context).capabilities;
+    let defaulted_to_pair_task_tree = should_default_session_task_tree(&capabilities, args.job_id);
     let job_id = args.job_id;
-    let pair_session_id = resolve_task_session_anchor_id(pool, context, args.job_id).await?;
+    let pair_session_id = if capabilities.contains(den_core::BearCapability::OwnSessionTasks) {
+        resolve_task_session_anchor_id(pool, context, args.job_id).await?
+    } else {
+        None
+    };
     let tasks = PgDocketService::from_pool(pool)
         .list_tasks(
             context.bear_id,
@@ -2672,7 +2676,10 @@ pub(crate) async fn checkout_task_list(
             },
             Some(job_id),
         )
-    } else if role == BearProfile::Pair {
+    } else if effective_tool_policy(role, context)
+        .capabilities
+        .contains(den_core::BearCapability::OwnSessionTasks)
+    {
         let session_anchor_id = resolve_task_session_anchor_id(pool, context, None)
             .await?
             .ok_or_else(|| {
@@ -2700,7 +2707,11 @@ pub(crate) async fn checkout_task_list(
         )
         .into());
     };
-    let pair_session_id = if role == BearProfile::Pair && checkout_job_id.is_some() {
+    let pair_session_id = if effective_tool_policy(role, context)
+        .capabilities
+        .contains(den_core::BearCapability::OwnSessionTasks)
+        && checkout_job_id.is_some()
+    {
         resolve_task_session_anchor_id(pool, context, None).await?
     } else {
         None
@@ -2917,21 +2928,18 @@ mod test {
     }
 
     #[test]
-    fn pair_defaults_when_task_tree_scope_is_jobless() {
+    fn session_task_owner_defaults_only_jobless_tasks_to_its_session_tree() {
         let explicit_job_id = Uuid::new_v4();
+        let session_owner =
+            den_core::CapabilitySet::from_capabilities([den_core::BearCapability::OwnSessionTasks]);
+        let non_owner = den_core::CapabilitySet::default();
 
-        assert!(should_default_pair_session_task_tree(
-            BearProfile::Pair,
-            None
-        ));
-        assert!(!should_default_pair_session_task_tree(
-            BearProfile::Pair,
+        assert!(should_default_session_task_tree(&session_owner, None));
+        assert!(!should_default_session_task_tree(
+            &session_owner,
             Some(explicit_job_id)
         ));
-        assert!(!should_default_pair_session_task_tree(
-            BearProfile::Chat,
-            None
-        ));
+        assert!(!should_default_session_task_tree(&non_owner, None));
     }
 
     #[test]
@@ -3048,12 +3056,9 @@ pub(crate) async fn dispatch_work(
     role: BearProfile,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    if !matches!(role, BearProfile::Chat | BearProfile::Pair) {
-        return Err(CustomError::ValidationError(format!(
-            "dispatch_work is available to chat and pair stances, not {}",
-            role.as_str()
-        )));
-    }
+    effective_tool_policy(role, context)
+        .capabilities
+        .require(den_core::BearCapability::DispatchWork)?;
     let args: WorkDispatchArguments = serde_json::from_value(arguments)?;
     PgDocketService::from_pool(pool)
         .get_job(context.bear_id, args.job_id)
@@ -3272,12 +3277,9 @@ pub(crate) async fn cancel_work_run(
     role: BearProfile,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    if !matches!(role, BearProfile::Chat | BearProfile::Pair) {
-        return Err(CustomError::ValidationError(format!(
-            "cancel_work_run is available to chat and pair stances, not {}",
-            role.as_str()
-        )));
-    }
+    effective_tool_policy(role, context)
+        .capabilities
+        .require(den_core::BearCapability::DispatchWork)?;
     let args: WorkRunCancelArguments = serde_json::from_value(arguments)?;
     let requested = den_docket::work_runs::request_work_run_cancel_with_provenance(
         pool,
@@ -3317,12 +3319,9 @@ pub(crate) async fn resolve_stalled_work_run(
     role: BearProfile,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    if !matches!(role, BearProfile::Chat | BearProfile::Pair) {
-        return Err(CustomError::ValidationError(format!(
-            "resolve_stalled_work_run is available to chat and pair stances, not {}",
-            role.as_str()
-        )));
-    }
+    effective_tool_policy(role, context)
+        .capabilities
+        .require(den_core::BearCapability::DispatchWork)?;
     let args: WorkRunResolveStalledArguments = serde_json::from_value(arguments)?;
     let resolved = den_docket::work_runs::resolve_stalled_work_run(
         pool,

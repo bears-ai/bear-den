@@ -2926,15 +2926,23 @@ pub fn validate_task_list_items(
     Ok(())
 }
 
-pub fn role_can_update_task_list(role: BearProfile) -> bool {
-    matches!(
+fn profile_capabilities(role: BearProfile) -> den_core::CapabilitySet {
+    den_core::EffectivePolicy::compile(
         role,
-        BearProfile::Chat | BearProfile::Pair | BearProfile::Work
+        den_core::Governance::Interactive,
+        den_core::ArmatureAvailability::Absent,
     )
+    .capabilities
+}
+
+pub fn role_can_update_task_list(role: BearProfile) -> bool {
+    let capabilities = profile_capabilities(role);
+    capabilities.contains(den_core::BearCapability::Converse)
+        || capabilities.contains(den_core::BearCapability::ExecuteFocusedTask)
 }
 
 pub fn role_can_request_task_list_handoff(role: BearProfile) -> bool {
-    matches!(role, BearProfile::Chat | BearProfile::Pair)
+    profile_capabilities(role).contains(den_core::BearCapability::Converse)
 }
 
 pub fn role_can_read_task_list(

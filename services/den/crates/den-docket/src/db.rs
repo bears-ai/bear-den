@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use den_core::{BearProfile, DenError};
+use den_core::DenError;
 
 struct ActiveTaskIdRow {
     executing_task_id: Uuid,
@@ -2912,9 +2912,17 @@ pub(super) async fn append_entry(
             "terminal outcomes are created by task settlement".to_string(),
         ));
     }
-    if create.kind == DocketEntryKind::Question && create.actor_role != BearProfile::Pair {
+    if create.kind == DocketEntryKind::Question
+        && !den_core::EffectivePolicy::compile(
+            create.actor_role,
+            den_core::Governance::Interactive,
+            den_core::ArmatureAvailability::Absent,
+        )
+        .capabilities
+        .contains(den_core::BearCapability::OwnSessionTasks)
+    {
         return Err(DenError::ValidationError(
-            "Docket questions may only be recorded by pair".to_string(),
+            "Docket questions require session-task ownership capability".to_string(),
         ));
     }
 

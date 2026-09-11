@@ -272,19 +272,19 @@ async fn record_objective_orientation_event(
 }
 
 fn objective_orientation_input(
-    profile: BearProfile,
+    owns_session_tasks: bool,
     cached_activity_plan_projection: Option<&TaskListProjection>,
-    explicit_pair_current_task_id: Option<Uuid>,
+    explicit_session_current_task_id: Option<Uuid>,
     work_enabled: bool,
 ) -> ObjectiveOrientationResolutionInput {
     ObjectiveOrientationResolutionInput {
         docket_job_id: None,
         docket_execution_mutable: true,
-        active_task_ref: if matches!(profile, BearProfile::Pair) {
+        active_task_ref: if owns_session_tasks {
             // A session task tree is prompt context, not continuation authority.
-            // Only the persisted explicit selection may orient a Pair loop.
+            // Only the persisted explicit selection may orient a session-task loop.
             cached_activity_plan_projection.and_then(|plan| {
-                explicit_pair_current_task_id.and_then(|current_task_id| {
+                explicit_session_current_task_id.and_then(|current_task_id| {
                     plan.items
                         .iter()
                         .find(|item| item.id == current_task_id.to_string())
@@ -509,27 +509,38 @@ pub async fn assemble_native_turn_for_bear(
     let docket = PgDocketService::from_pool(ctx.pool);
     let cached_activity_plan_projection =
         load_cached_activity_plan_projection(&ctx, &docket).await?;
-    let explicit_pair_current_task_id = if ctx.profile == BearProfile::Pair {
-        match (ctx.user_id, ctx.session_id) {
-            (Some(user_id), Some(client_session_id)) => {
-                client_sessions::find_for_user_bear_session_id(
-                    ctx.pool,
-                    user_id,
-                    ctx.bear_id,
-                    client_session_id,
-                )
-                .await?
-                .and_then(|session| session.current_task_id)
-            }
-            _ => None,
-        }
-    } else {
-        None
-    };
-    let objective_orientation = super::resolve_objective_orientation(objective_orientation_input(
+    let capabilities = den_core::EffectivePolicy::compile(
         ctx.profile,
+        den_core::Governance::Interactive,
+        if ctx.session_id.is_some() {
+            den_core::ArmatureAvailability::Connected
+        } else {
+            den_core::ArmatureAvailability::Absent
+        },
+    )
+    .capabilities;
+    let explicit_session_current_task_id =
+        if capabilities.contains(den_core::BearCapability::OwnSessionTasks) {
+            match (ctx.user_id, ctx.session_id) {
+                (Some(user_id), Some(client_session_id)) => {
+                    client_sessions::find_for_user_bear_session_id(
+                        ctx.pool,
+                        user_id,
+                        ctx.bear_id,
+                        client_session_id,
+                    )
+                    .await?
+                    .and_then(|session| session.current_task_id)
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+    let objective_orientation = super::resolve_objective_orientation(objective_orientation_input(
+        capabilities.contains(den_core::BearCapability::OwnSessionTasks),
         cached_activity_plan_projection.as_ref(),
-        explicit_pair_current_task_id,
+        explicit_session_current_task_id,
         bear.work_enabled,
     ));
     record_objective_orientation_event(&ctx, &objective_orientation).await?;
@@ -650,7 +661,7 @@ pub async fn assemble_native_turn_for_bear(
     let messages = repair_tool_call_message_chain(messages);
     let messages = if ctx.native_runtime && compaction_active && transcript_cutoff.is_some() {
         messages
-    } else if ctx.native_runtime && matches!(ctx.profile, BearProfile::Pair | BearProfile::Chat) {
+    } else if ctx.native_runtime && capabilities.contains(den_core::BearCapability::Converse) {
         let pruned = prune_messages_for_native_conversation_with_diagnostics(messages);
         budget_components.transcript_fallback_pruned_chars =
             pruned.diagnostics.pruned_character_count;
@@ -748,7 +759,7 @@ mod tests {
         // A visible pending session task is context only until Pair explicitly
         // selects it as the current task.
         let orientation = crate::agent_loop::resolve_objective_orientation(
-            objective_orientation_input(BearProfile::Pair, Some(&plan), None, true),
+            objective_orientation_input(true, Some(&plan), None, true),
         );
         assert_eq!(
             orientation,
@@ -758,7 +769,7 @@ mod tests {
         );
 
         let orientation = crate::agent_loop::resolve_objective_orientation(
-            objective_orientation_input(BearProfile::Pair, Some(&plan), Some(task_id), true),
+            objective_orientation_input(true, Some(&plan), Some(task_id), true),
         );
         assert!(matches!(orientation, ObjectiveOrientation::Oriented { .. }));
         let runtime_task = crate::runtime::task_context::RuntimeTaskContext {

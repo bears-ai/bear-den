@@ -1064,9 +1064,18 @@ async fn build_session(
     } else {
         None
     };
+    let effective_policy = den_core::EffectivePolicy::compile(
+        profile.profile,
+        den_core::Governance::Interactive,
+        if client_tools.is_some() {
+            den_core::ArmatureAvailability::Connected
+        } else {
+            den_core::ArmatureAvailability::Absent
+        },
+    );
     let run_id = ensure_session_task_run(
         deps.pool,
-        profile.profile,
+        &effective_policy.capabilities,
         &cached_activity_plan_projection,
         client_session_id,
         bear_id,
@@ -1150,14 +1159,14 @@ async fn build_session(
 
 async fn ensure_session_task_run(
     pool: &PgPool,
-    profile: BearProfile,
+    capabilities: &den_core::CapabilitySet,
     task_list: &Option<TaskListProjection>,
     client_session_id: &str,
     bear_id: Uuid,
     user_id: Option<i32>,
     supplied_run_id: Option<&str>,
 ) -> Result<Option<String>, DenError> {
-    if profile != BearProfile::Pair {
+    if !capabilities.contains(den_core::BearCapability::OwnSessionTasks) {
         return Ok(supplied_run_id.map(str::to_string));
     }
 

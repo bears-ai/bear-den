@@ -553,8 +553,18 @@ fn autonomous_task_json(item: &TaskListUpdateItem) -> Value {
     })
 }
 
+fn can_execute_focused_tasks(profile: BearProfile) -> bool {
+    den_core::EffectivePolicy::compile(
+        profile,
+        den_core::Governance::Interactive,
+        den_core::ArmatureAvailability::Absent,
+    )
+    .capabilities
+    .contains(den_core::BearCapability::ExecuteFocusedTask)
+}
+
 fn is_autonomous_implementation_plan(profile: BearProfile, plan: &TaskListLocalProjection) -> bool {
-    matches!(profile, BearProfile::Pair | BearProfile::Work)
+    can_execute_focused_tasks(profile)
         && matches!(plan.owner_profile.as_str(), "pair" | "work")
         && matches!(
             plan.status.as_str(),
@@ -563,7 +573,7 @@ fn is_autonomous_implementation_plan(profile: BearProfile, plan: &TaskListLocalP
 }
 
 fn is_autonomous_task_list(profile: BearProfile, task_list: &TaskListProjection) -> bool {
-    matches!(profile, BearProfile::Pair | BearProfile::Work)
+    can_execute_focused_tasks(profile)
         && matches!(task_list.owner_profile.as_str(), "pair" | "work")
         && matches!(
             task_list.status.as_str(),

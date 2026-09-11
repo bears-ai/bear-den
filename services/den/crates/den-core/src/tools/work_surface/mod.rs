@@ -16,6 +16,16 @@ use serde_json::{json, Value};
 use crate::tools::context::DenToolInvocationContext;
 use crate::tools::support::{clean_optional, validate_bounded_text};
 
+fn profile_uses_work_surfaces(role: BearProfile) -> bool {
+    crate::EffectivePolicy::compile(
+        role,
+        crate::Governance::Interactive,
+        crate::ArmatureAvailability::Absent,
+    )
+    .capabilities
+    .contains(crate::BearCapability::UseWorkSurfaces)
+}
+
 pub fn infer_work_surface_hint(context: &DenToolInvocationContext, role: BearProfile) -> Value {
     let mut candidates = Vec::new();
     if let Some(runtime_target) = context.runtime_target.as_deref().and_then(clean_optional) {
@@ -47,7 +57,7 @@ pub fn infer_work_surface_hint(context: &DenToolInvocationContext, role: BearPro
             "confidence": "medium"
         }));
     }
-    let active_work_surface_roles = matches!(role, BearProfile::Pair | BearProfile::Work);
+    let active_work_surface_roles = profile_uses_work_surfaces(role);
     let has_candidates = !candidates.is_empty();
     json!({
         "workplace": {
@@ -454,12 +464,17 @@ pub async fn create_work_surface_scaffold(
     role: BearProfile,
     arguments: Value,
 ) -> Result<Value, DenError> {
-    if role != BearProfile::Pair {
-        return Err(DenError::Authorization(
-            "den.memory.create_work_surface_scaffold is currently available only to the pair role"
-                .to_string(),
-        ));
-    }
+    crate::EffectivePolicy::compile(
+        role,
+        crate::Governance::Interactive,
+        if context.client_session_id.is_some() {
+            crate::ArmatureAvailability::Connected
+        } else {
+            crate::ArmatureAvailability::Absent
+        },
+    )
+    .capabilities
+    .require(crate::BearCapability::ManageWorkSurfaces)?;
     let args: MemoryCreateWorkSurfaceScaffoldArguments = serde_json::from_value(arguments)?;
     let work_surface_slug = normalize_work_surface_slug(&args.work_surface_slug)?;
     let work_surface_name =
@@ -547,7 +562,7 @@ pub fn build_work_surface_orientation_payload(
         .filter(|path| !sorted_files.contains(path))
         .cloned()
         .collect::<Vec<_>>();
-    let active_work_surface_roles = matches!(role, BearProfile::Pair | BearProfile::Work);
+    let active_work_surface_roles = profile_uses_work_surfaces(role);
     let status = if slug.is_none() {
         "unresolved"
     } else if existing_canonical.is_empty() && existing_profile_local.is_empty() {

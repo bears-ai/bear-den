@@ -42,8 +42,11 @@ fn den_tool_to_llm_definition(descriptor: &DenToolDescriptor, compact: bool) -> 
     }
 }
 
-pub fn den_tools_for_profile(role: BearProfile) -> Vec<LlmToolDefinition> {
-    let descriptors = if role == BearProfile::Pair {
+fn den_tools_for_profile(
+    role: BearProfile,
+    capabilities: &den_core::CapabilitySet,
+) -> Vec<LlmToolDefinition> {
+    let descriptors = if capabilities.contains(den_core::BearCapability::OwnSessionTasks) {
         builtin_den_tool_descriptors_for_pair_acp_surface()
     } else {
         builtin_den_tool_descriptors_for_profile(role)
@@ -225,6 +228,15 @@ pub fn merge_den_and_client_tools(
     client_tools: Option<&Value>,
     pair_turn_prompt: Option<&str>,
 ) -> Result<Vec<LlmToolDefinition>, DenError> {
+    let effective_policy = den_core::EffectivePolicy::compile(
+        role,
+        den_core::Governance::Interactive,
+        if client_tools.is_some() {
+            den_core::ArmatureAvailability::Connected
+        } else {
+            den_core::ArmatureAvailability::Absent
+        },
+    );
     let mut merged = if role == BearProfile::Chat
         && !chat_turn_needs_full_tool_surface(pair_turn_prompt)
     {
@@ -234,7 +246,7 @@ pub fn merge_den_and_client_tools(
         );
         Vec::new()
     } else {
-        den_tools_for_profile(role)
+        den_tools_for_profile(role, &effective_policy.capabilities)
     };
     if !work_enabled {
         merged.retain(|tool| !is_work_tool_provider_name(&tool.name));
