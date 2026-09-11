@@ -378,8 +378,8 @@ async fn work_execution_orientation(
         "SELECT attempts.task_id, tasks.job_id \
          FROM docket_execution_attempts attempts \
          JOIN bear_tasks tasks ON tasks.id = attempts.task_id \
-         WHERE attempts.bear_id = $1 AND attempts.owner_kind = 'work' \
-           AND attempts.work_run_id = $2 AND attempts.state = 'running'",
+         WHERE attempts.bear_id = $1 AND attempts.binding_kind = 'work_assignment' \
+           AND attempts.binding_id = $2::text AND attempts.state = 'running'",
     )
     .bind(bear_id)
     .bind(work_run_id)
@@ -839,7 +839,6 @@ fn wrap_session_stream(
     conversation_id: &str,
     client_session_id: &str,
     request_id: Option<String>,
-    stores: MemoryStoreManager,
 ) -> RuntimeEventStream {
     Box::pin(SessionTrackingStream::new(
         stream,
@@ -853,7 +852,6 @@ fn wrap_session_stream(
         client_session_id.to_string(),
         request_id,
         config,
-        stores,
         profile,
         NativeToolDispatchMode::DeferToClient,
     ))
@@ -1084,7 +1082,7 @@ async fn build_session(
     } else {
         None
     };
-    let run_id = ensure_pair_execution_run(
+    let run_id = ensure_session_task_run(
         deps.pool,
         profile.profile,
         &cached_activity_plan_projection,
@@ -1168,7 +1166,7 @@ async fn build_session(
     Ok(session)
 }
 
-async fn ensure_pair_execution_run(
+async fn ensure_session_task_run(
     pool: &PgPool,
     profile: BearProfile,
     task_list: &Option<TaskListProjection>,
@@ -1184,7 +1182,7 @@ async fn ensure_pair_execution_run(
     let Some(task_list) = task_list else {
         return Ok(supplied_run_id.map(str::to_string));
     };
-    if !pair_execution_needs_run(task_list, client_session_id) {
+    if !session_task_needs_run(task_list, client_session_id) {
         return Ok(supplied_run_id.map(str::to_string));
     }
 
@@ -1195,7 +1193,7 @@ async fn ensure_pair_execution_run(
         tracing::warn!(
             run_id,
             client_session_id,
-            "Pair execution received an unknown run ID; creating a durable Pair run instead"
+            "session task execution received an unknown run ID; creating a durable turn run instead"
         );
     }
     if let Some(run) = turn_runs::active_run_for_session(pool, client_session_id).await? {
@@ -1204,15 +1202,16 @@ async fn ensure_pair_execution_run(
 
     let user_id = user_id.ok_or_else(|| {
         DenError::ValidationError(
-            "Pair execution requires an authenticated user to create its durable run".to_string(),
+            "session task execution requires an authenticated user to create its durable run"
+                .to_string(),
         )
     })?;
-    let run_id = format!("pair-{}", Uuid::new_v4());
+    let run_id = format!("run_{}", Uuid::new_v4());
     turn_runs::create_run(pool, &run_id, client_session_id, bear_id, user_id).await?;
     Ok(Some(run_id))
 }
 
-fn pair_execution_needs_run(task_list: &TaskListProjection, client_session_id: &str) -> bool {
+fn session_task_needs_run(task_list: &TaskListProjection, client_session_id: &str) -> bool {
     task_list.source_client_session_id.as_deref() == Some(client_session_id)
         && task_list.current_item.is_some()
         && !matches!(
@@ -1222,7 +1221,7 @@ fn pair_execution_needs_run(task_list: &TaskListProjection, client_session_id: &
 }
 
 #[cfg(test)]
-mod pair_execution_run_tests {
+mod session_task_run_tests {
     use super::*;
 
     fn list(status: &str, session_id: Option<&str>, current: bool) -> TaskListProjection {
@@ -1271,19 +1270,19 @@ mod pair_execution_run_tests {
 
     #[test]
     fn pair_execution_run_requires_session_connected_current_item_in_active_list() {
-        assert!(pair_execution_needs_run(
+        assert!(session_task_needs_run(
             &list("active", Some("s"), true),
             "s"
         ));
-        assert!(!pair_execution_needs_run(
+        assert!(!session_task_needs_run(
             &list("active", Some("other"), true),
             "s"
         ));
-        assert!(!pair_execution_needs_run(
+        assert!(!session_task_needs_run(
             &list("active", Some("s"), false),
             "s"
         ));
-        assert!(!pair_execution_needs_run(
+        assert!(!session_task_needs_run(
             &list("blocked", Some("s"), true),
             "s"
         ));
@@ -1409,7 +1408,6 @@ pub async fn start_native_web_chat_turn_event_stream(
     let runtime = NativeWebChatLoopRuntime {
         pool: params.deps.pool.clone(),
         config,
-        stores: params.deps.stores.clone(),
         llm,
         session_key: session.session_key.clone(),
         bear_id: params.bear_id,
@@ -1551,7 +1549,6 @@ pub async fn start_native_profile_turn_event_stream(
         &conversation_id,
         client_session_id,
         Some(request.request_id.to_string()),
-        request.memory_stores.clone(),
     );
     let _ = StartTurnRequest {
         conversation: RuntimeConversationRef {
@@ -2102,14 +2099,22 @@ async fn execute_approved_den_tool_for_session(
         },
     };
     let content = match invoker
-        .invoke(
-            request.sqlx_pool,
-            request.config,
-            request.memory_stores,
-            &canonical,
-            args,
+        .invoke(super::RuntimeToolInvocation {
+            tool_name: canonical,
+            arguments: args,
             context,
-        )
+            effective_policy: den_core::EffectivePolicy::compile(
+                session.profile,
+                session.governance,
+                den_core::ArmatureAvailability::Connected,
+            ),
+            origin_run_id: session
+                .run_id
+                .clone()
+                .map(crate::turn_ids::TurnRunId::new)
+                .transpose()?,
+            tool_call_id: crate::turn_ids::ToolCallId::new(call.id.clone())?,
+        })
         .await
     {
         Ok(value) => serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string()),
@@ -2407,7 +2412,6 @@ pub async fn continue_native_client_turn_event_stream(
         &conversation_id,
         client_session_id,
         Some(request.request_id.to_string()),
-        request.memory_stores.clone(),
     );
     let _ = ContinueTurnRequest {
         conversation: request.conversation,

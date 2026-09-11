@@ -1286,7 +1286,7 @@ pub(super) async fn acquire_focused_execution(
     let existing = sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
         r"
         SELECT id, bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
-               owner_kind, pair_session_id, pair_run_id, work_run_id, fence_epoch,
+               fence_epoch,
                authorization_key, state, started_at, paused_at, settled_at, released_at,
                created_at, updated_at
         FROM docket_execution_attempts
@@ -1309,23 +1309,18 @@ pub(super) async fn acquire_focused_execution(
             ));
         }
         if existing.host != acquire.host {
-            let pair_run_id = matches!(acquire.host.kind, DocketExecutionHostKind::Pair)
-                .then(|| acquire.host.run_id.clone());
-            let work_run_id = if matches!(acquire.host.kind, DocketExecutionHostKind::Work) {
-                Some(Uuid::parse_str(&acquire.host.run_id).map_err(|_| {
+            if matches!(acquire.host.kind, DocketExecutionHostKind::WorkRun) {
+                Uuid::parse_str(&acquire.host.run_id).map_err(|_| {
                     DenError::ValidationError("work host run id must be a UUID".to_string())
-                })?)
-            } else {
-                None
-            };
+                })?;
+            }
             let row = sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
                 r"
                 UPDATE docket_execution_attempts
-                SET host_kind = $2, host_run_id = $3,
-                    pair_run_id = $4, work_run_id = $5, updated_at = NOW()
+                SET host_kind = $2, host_run_id = $3, updated_at = NOW()
                 WHERE id = $1
                 RETURNING id, bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
-                          owner_kind, pair_session_id, pair_run_id, work_run_id, fence_epoch,
+                          fence_epoch,
                           authorization_key, state, started_at, paused_at, settled_at, released_at,
                           created_at, updated_at
                 ",
@@ -1333,8 +1328,6 @@ pub(super) async fn acquire_focused_execution(
             .bind(existing.id)
             .bind(host_kind)
             .bind(&acquire.host.run_id)
-            .bind(pair_run_id)
-            .bind(work_run_id)
             .fetch_one(&mut *tx)
             .await?;
             tx.commit().await?;
@@ -1366,39 +1359,29 @@ pub(super) async fn acquire_focused_execution(
         )));
     }
 
-    let (owner_kind, pair_session_id, pair_run_id, work_run_id) =
-        match (&acquire.binding.kind, &acquire.host.kind) {
-            (DocketExecutionBindingKind::ClientSession, DocketExecutionHostKind::Pair) => (
-                "pair",
-                Some(acquire.binding.id.clone()),
-                Some(acquire.host.run_id.clone()),
-                None,
-            ),
-            (DocketExecutionBindingKind::WorkAssignment, DocketExecutionHostKind::Work) => (
-                "work",
-                None,
-                None,
-                Some(Uuid::parse_str(&acquire.host.run_id).map_err(|_| {
-                    DenError::ValidationError("work host run id must be a UUID".to_string())
-                })?),
-            ),
-            _ => {
-                return Err(DenError::ValidationError(
-                    "execution binding and host kinds are incompatible".to_string(),
-                ))
-            }
-        };
+    match (&acquire.binding.kind, &acquire.host.kind) {
+        (DocketExecutionBindingKind::ClientSession, DocketExecutionHostKind::TurnRun) => {}
+        (DocketExecutionBindingKind::WorkAssignment, DocketExecutionHostKind::WorkRun) => {
+            Uuid::parse_str(&acquire.binding.id).map_err(|_| {
+                DenError::ValidationError("work binding id must be a UUID".to_string())
+            })?;
+        }
+        _ => {
+            return Err(DenError::ValidationError(
+                "execution binding and host kinds are incompatible".to_string(),
+            ))
+        }
+    }
 
     let row = sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
         r"
         INSERT INTO docket_execution_attempts (
             bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
-            owner_kind, pair_session_id, pair_run_id, work_run_id,
             fence_epoch, authorization_key, state
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1, $11, 'authorized')
+        VALUES ($1, $2, $3, $4, $5, $6, 1, $7, 'authorized')
         RETURNING id, bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
-                  owner_kind, pair_session_id, pair_run_id, work_run_id, fence_epoch,
+                  fence_epoch,
                   authorization_key, state, started_at, paused_at, settled_at, released_at,
                   created_at, updated_at
         ",
@@ -1409,10 +1392,6 @@ pub(super) async fn acquire_focused_execution(
     .bind(&acquire.binding.id)
     .bind(host_kind)
     .bind(&acquire.host.run_id)
-    .bind(owner_kind)
-    .bind(pair_session_id)
-    .bind(pair_run_id)
-    .bind(work_run_id)
     .bind(acquire.acquisition_key)
     .fetch_one(&mut *tx)
     .await?;
@@ -1428,7 +1407,7 @@ pub(super) async fn get_live_focused_execution(
     sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
         r"
         SELECT id, bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
-               owner_kind, pair_session_id, pair_run_id, work_run_id, fence_epoch,
+               fence_epoch,
                authorization_key, state, started_at, paused_at, settled_at, released_at,
                created_at, updated_at
         FROM docket_execution_attempts
@@ -1450,48 +1429,30 @@ pub(super) async fn authorize_execution_attempt(
     pool: &PgPool,
     authorize: DocketExecutionAttemptAuthorize,
 ) -> Result<DocketExecutionAttemptRow, DenError> {
-    let (
-        owner_kind,
-        binding_kind,
-        binding_id,
-        host_kind,
-        host_run_id,
-        pair_session_id,
-        pair_run_id,
-        work_run_id,
-    ) = match authorize.owner {
-        super::model::DocketExecutionAttemptOwner::Pair {
-            session_id,
-            pair_run_id,
-        } => (
-            "pair",
-            "client_session",
-            session_id.clone(),
-            "pair",
-            pair_run_id.clone(),
-            Some(session_id),
-            Some(pair_run_id),
-            None,
-        ),
-        super::model::DocketExecutionAttemptOwner::Work { work_run_id } => (
-            "work",
-            "work_assignment",
-            work_run_id.to_string(),
-            "work",
-            work_run_id.to_string(),
-            None,
-            None,
-            Some(work_run_id),
-        ),
-    };
+    match (&authorize.binding.kind, &authorize.host.kind) {
+        (DocketExecutionBindingKind::ClientSession, DocketExecutionHostKind::TurnRun) => {}
+        (DocketExecutionBindingKind::WorkAssignment, DocketExecutionHostKind::WorkRun) => {
+            Uuid::parse_str(&authorize.binding.id).map_err(|_| {
+                DenError::ValidationError("work binding id must be a UUID".to_string())
+            })?;
+        }
+        _ => {
+            return Err(DenError::ValidationError(
+                "execution binding and host kinds are incompatible".to_string(),
+            ))
+        }
+    }
+    let binding_kind = authorize.binding.kind.as_str();
+    let binding_id = authorize.binding.id;
+    let host_kind = authorize.host.kind.as_str();
+    let host_run_id = authorize.host.run_id;
     let row = sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
         r"
         INSERT INTO docket_execution_attempts (
             bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
-            owner_kind, pair_session_id, pair_run_id, work_run_id,
             fence_epoch, authorization_key, state
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1, $11, 'authorized')
+        VALUES ($1, $2, $3, $4, $5, $6, 1, $7, 'authorized')
         ON CONFLICT (authorization_key) DO UPDATE
         SET fence_epoch = CASE
                 WHEN docket_execution_attempts.state = 'released'
@@ -1508,7 +1469,6 @@ pub(super) async fn authorize_execution_attempt(
             END,
             updated_at = NOW()
         RETURNING id, bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
-                  owner_kind, pair_session_id, pair_run_id, work_run_id,
                   fence_epoch, authorization_key, state, started_at, paused_at, settled_at,
                   released_at, created_at, updated_at
         ",
@@ -1519,46 +1479,42 @@ pub(super) async fn authorize_execution_attempt(
     .bind(binding_id)
     .bind(host_kind)
     .bind(host_run_id)
-    .bind(owner_kind)
-    .bind(pair_session_id)
-    .bind(pair_run_id)
-    .bind(work_run_id)
     .bind(authorize.authorization_key)
     .fetch_one(pool)
     .await?;
     row.try_into()
 }
 
-pub(super) async fn get_live_pair_execution_attempt(
+pub(super) async fn get_live_session_task_execution_attempt(
     pool: &PgPool,
     bear_id: Uuid,
     task_id: Uuid,
     session_id: &str,
-    pair_run_id: &str,
+    turn_run_id: &str,
 ) -> Result<Option<DocketExecutionAttemptRow>, DenError> {
     sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
         r"
         SELECT id, bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
-               owner_kind, pair_session_id, pair_run_id, work_run_id,
                fence_epoch, authorization_key, state, started_at, paused_at, settled_at,
                released_at, created_at, updated_at
         FROM docket_execution_attempts
-        WHERE bear_id = $1 AND task_id = $2 AND owner_kind = 'pair'
-          AND pair_session_id = $3 AND pair_run_id = $4
+        WHERE bear_id = $1 AND task_id = $2
+          AND binding_kind = 'client_session' AND binding_id = $3
+          AND host_kind = 'pair' AND host_run_id = $4
           AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')
         ",
     )
     .bind(bear_id)
     .bind(task_id)
     .bind(session_id)
-    .bind(pair_run_id)
+    .bind(turn_run_id)
     .fetch_optional(pool)
     .await?
     .map(TryInto::try_into)
     .transpose()
 }
 
-pub(super) async fn get_live_pair_execution_attempt_for_session(
+pub(super) async fn get_live_session_task_execution_attempt_for_session(
     pool: &PgPool,
     bear_id: Uuid,
     session_id: &str,
@@ -1566,12 +1522,11 @@ pub(super) async fn get_live_pair_execution_attempt_for_session(
     sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
         r"
         SELECT id, bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
-               owner_kind, pair_session_id, pair_run_id, work_run_id,
                fence_epoch, authorization_key, state, started_at, paused_at, settled_at,
                released_at, created_at, updated_at
         FROM docket_execution_attempts
-        WHERE bear_id = $1 AND owner_kind = 'pair'
-          AND pair_session_id = $2
+        WHERE bear_id = $1
+          AND binding_kind = 'client_session' AND binding_id = $2
           AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')
         ORDER BY created_at DESC
         LIMIT 1
@@ -1585,7 +1540,7 @@ pub(super) async fn get_live_pair_execution_attempt_for_session(
     .transpose()
 }
 
-pub(super) async fn get_live_pair_execution_attempt_for_task(
+pub(super) async fn get_live_session_task_execution_attempt_for_task(
     pool: &PgPool,
     bear_id: Uuid,
     task_id: Uuid,
@@ -1593,11 +1548,11 @@ pub(super) async fn get_live_pair_execution_attempt_for_task(
     sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
         r"
         SELECT id, bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
-               owner_kind, pair_session_id, pair_run_id, work_run_id,
                fence_epoch, authorization_key, state, started_at, paused_at, settled_at,
                released_at, created_at, updated_at
         FROM docket_execution_attempts
-        WHERE bear_id = $1 AND task_id = $2 AND owner_kind = 'pair'
+        WHERE bear_id = $1 AND task_id = $2
+          AND binding_kind = 'client_session'
           AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')
         ORDER BY created_at DESC
         LIMIT 1
@@ -1621,7 +1576,6 @@ pub(super) async fn start_execution_attempt(
         SET state = 'running', started_at = COALESCE(started_at, NOW()), updated_at = NOW()
         WHERE id = $1 AND fence_epoch = $2 AND state = 'authorized'
         RETURNING id, bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
-                  owner_kind, pair_session_id, pair_run_id, work_run_id,
                   fence_epoch, authorization_key, state, started_at, paused_at, settled_at,
                   released_at, created_at, updated_at
         ",
@@ -1635,7 +1589,6 @@ pub(super) async fn start_execution_attempt(
         None => sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
             r"
             SELECT id, bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
-               owner_kind, pair_session_id, pair_run_id, work_run_id,
                    fence_epoch, authorization_key, state, started_at, paused_at, settled_at,
                    released_at, created_at, updated_at
             FROM docket_execution_attempts
@@ -1673,7 +1626,6 @@ pub(super) async fn release_execution_attempt(
         WHERE id = $1 AND fence_epoch = $2
           AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')
         RETURNING id, bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
-                  owner_kind, pair_session_id, pair_run_id, work_run_id,
                   fence_epoch, authorization_key, state, started_at, paused_at, settled_at,
                   released_at, created_at, updated_at
         ",
@@ -1701,9 +1653,7 @@ pub(super) async fn release_execution_attempt(
             r"
             SELECT attempt.id, attempt.bear_id, attempt.task_id,
                    attempt.binding_kind, attempt.binding_id,
-                   attempt.host_kind, attempt.host_run_id, attempt.owner_kind,
-                   attempt.pair_session_id, attempt.pair_run_id, attempt.work_run_id,
-                   attempt.fence_epoch, attempt.authorization_key, attempt.state,
+                   attempt.host_kind, attempt.host_run_id, attempt.fence_epoch, attempt.authorization_key, attempt.state,
                    attempt.started_at, attempt.paused_at, attempt.settled_at,
                    attempt.released_at, attempt.created_at, attempt.updated_at
             FROM docket_execution_attempts attempt
@@ -1767,14 +1717,13 @@ pub(super) async fn report_pair_bounded_outcome(
             paused_at = CASE WHEN $3 = 'awaiting_user' THEN COALESCE(paused_at, NOW()) ELSE paused_at END,
             settled_at = CASE WHEN $3 = 'settled' THEN COALESCE(settled_at, NOW()) ELSE settled_at END,
             updated_at = NOW()
-        WHERE id = $1 AND fence_epoch = $2 AND owner_kind = 'pair'
+        WHERE id = $1 AND fence_epoch = $2 AND binding_kind = 'client_session'
           AND (
               ($3 = 'running' AND state = 'running')
               OR ($3 = 'awaiting_user' AND state IN ('running', 'awaiting_user'))
               OR ($3 = 'settled' AND state IN ('running', 'settled'))
           )
         RETURNING id, bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
-                  owner_kind, pair_session_id, pair_run_id, work_run_id,
                   fence_epoch, authorization_key, state, started_at, paused_at, settled_at,
                   released_at, created_at, updated_at
         ",
@@ -1844,15 +1793,14 @@ pub(super) async fn resume_pair_awaiting_user(
         UPDATE docket_execution_attempts attempt
         SET state = 'authorized', updated_at = NOW()
         WHERE attempt.id = $1 AND attempt.fence_epoch = $2
-          AND attempt.owner_kind = 'pair' AND attempt.state = 'awaiting_user'
+          AND attempt.binding_kind = 'client_session' AND attempt.state = 'awaiting_user'
           AND EXISTS (
               SELECT 1 FROM docket_pair_awaiting_user_questions question
               WHERE question.execution_attempt_id = attempt.id AND question.question_key = $3
           )
         RETURNING attempt.id, attempt.bear_id, attempt.task_id,
                   attempt.binding_kind, attempt.binding_id,
-                  attempt.host_kind, attempt.host_run_id, attempt.owner_kind,
-                  attempt.pair_session_id, attempt.pair_run_id, attempt.work_run_id,
+                   attempt.host_kind, attempt.host_run_id,
                   attempt.fence_epoch, attempt.authorization_key, attempt.state,
                   attempt.started_at, attempt.paused_at, attempt.settled_at, attempt.released_at,
                   attempt.created_at, attempt.updated_at
@@ -1880,7 +1828,6 @@ pub(super) async fn resume_pair_awaiting_user(
         }
         None if response_exists => sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
             "SELECT id, bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
-               owner_kind, pair_session_id, pair_run_id, work_run_id, \
                     fence_epoch, authorization_key, state, started_at, paused_at, settled_at, \
                     released_at, created_at, updated_at FROM docket_execution_attempts \
              WHERE id = $1 AND fence_epoch = $2 AND state = 'authorized'",
@@ -1914,10 +1861,9 @@ pub(super) async fn check_work_boundary(
     let _ = check.boundary_key;
     let attempt = sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
         "SELECT id, bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
-               owner_kind, pair_session_id, pair_run_id, work_run_id, \
                 fence_epoch, authorization_key, state, started_at, paused_at, settled_at, \
                 released_at, created_at, updated_at FROM docket_execution_attempts \
-         WHERE id = $1 AND bear_id = $2 AND fence_epoch = $3 AND owner_kind = 'work' AND state = 'running'",
+         WHERE id = $1 AND bear_id = $2 AND fence_epoch = $3 AND binding_kind = 'work_assignment' AND state = 'running'",
     )
     .bind(check.attempt_id)
     .bind(check.bear_id)
@@ -1949,12 +1895,9 @@ pub(super) async fn check_work_boundary(
             disposition: DocketExecutionDisposition::RequireCheckpoint,
         });
     }
-    let work_run_id = match attempt.owner {
-        super::model::DocketExecutionAttemptOwner::Work { work_run_id } => work_run_id,
-        super::model::DocketExecutionAttemptOwner::Pair { .. } => {
-            unreachable!("query filters work owner")
-        }
-    };
+    let work_run_id = Uuid::parse_str(&attempt.binding.id).map_err(|_| {
+        DenError::ValidationError("work-assignment binding id must be a UUID".to_string())
+    })?;
     Ok(DocketExecutionGate::Allowed {
         task_id: attempt.task_id,
         binding: DocketExecutionBinding::WorkRun {
@@ -1979,7 +1922,7 @@ pub(super) async fn require_checkpoint_directive(
         INSERT INTO docket_checkpoint_directives (execution_attempt_id, fence_epoch, state)
         SELECT id, fence_epoch, 'pending'
         FROM docket_execution_attempts
-        WHERE id = $1 AND fence_epoch = $2 AND owner_kind = 'work'
+        WHERE id = $1 AND fence_epoch = $2 AND binding_kind = 'work_assignment'
         ON CONFLICT (execution_attempt_id, fence_epoch) DO UPDATE
         SET state = docket_checkpoint_directives.state
         RETURNING id, execution_attempt_id, fence_epoch, state, acknowledged_artifact_ref,
@@ -2002,7 +1945,7 @@ pub(super) async fn require_checkpoint_directive_for_work_run(
 ) -> Result<Option<DocketCheckpointDirectiveRow>, DenError> {
     let attempt = sqlx::query_as::<_, (Uuid, i64)>(
         "SELECT id, fence_epoch FROM docket_execution_attempts
-         WHERE work_run_id = $1 AND owner_kind = 'work'
+         WHERE binding_id = $1::text AND binding_kind = 'work_assignment'
            AND state IN ('authorized', 'running', 'paused', 'stopping')
          ORDER BY updated_at DESC LIMIT 1",
     )
@@ -2036,7 +1979,7 @@ pub(super) async fn acknowledge_checkpoint_directive(
           AND directive.state = 'pending'
           AND attempt.id = directive.execution_attempt_id
           AND attempt.fence_epoch = directive.fence_epoch
-          AND attempt.owner_kind = 'work'
+          AND attempt.binding_kind = 'work_assignment'
           AND attempt.bear_id = $5
           AND EXISTS (
               SELECT 1 FROM artifact_links link
@@ -2044,7 +1987,7 @@ pub(super) async fn acknowledge_checkpoint_directive(
               WHERE artifact.artifact_ref = $4
                 AND artifact.bear_id = $5
                 AND link.target_kind = 'work_run'
-                AND link.target_id = attempt.work_run_id::text
+                AND link.target_id = attempt.binding_id
                 AND link.role = 'runtime_checkpoint'
           )
         RETURNING directive.id, directive.execution_attempt_id, directive.fence_epoch,
@@ -2109,7 +2052,7 @@ pub(super) async fn pending_checkpoint_directive_for_work_run(
                 directive.acknowledged_at, directive.superseded_at
          FROM docket_checkpoint_directives directive
          JOIN docket_execution_attempts attempt ON attempt.id = directive.execution_attempt_id
-         WHERE attempt.work_run_id = $1 AND attempt.owner_kind = 'work'
+         WHERE attempt.binding_id = $1::text AND attempt.binding_kind = 'work_assignment'
            AND attempt.fence_epoch = directive.fence_epoch AND directive.state = 'pending'
          ORDER BY directive.created_at DESC LIMIT 1",
     )
@@ -2220,7 +2163,7 @@ pub(super) async fn settle_execution_task(
             SELECT id
             FROM docket_execution_attempts
             WHERE bear_id = $1 AND task_id = $2
-              AND owner_kind = 'pair' AND pair_session_id = $3
+              AND binding_kind = 'client_session' AND binding_id = $3
               AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')
             ORDER BY updated_at DESC LIMIT 1
             "#,
@@ -2846,7 +2789,7 @@ pub(super) async fn list_tasks(
 
 /// The one Pair eligibility query. It includes legacy session-owned tasks and
 /// durable job tasks explicitly attached to this Pair session.
-pub(super) async fn list_pair_session_tasks(
+pub(super) async fn list_session_tasks(
     pool: &PgPool,
     bear_id: Uuid,
     session_id: Uuid,
@@ -2917,7 +2860,7 @@ pub(super) async fn attach_job_tasks_to_pair_session(
     Ok(())
 }
 
-pub(super) async fn attach_task_to_pair_session(
+pub(super) async fn attach_task_to_session(
     pool: &PgPool,
     bear_id: Uuid,
     task_id: Uuid,

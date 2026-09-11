@@ -1229,17 +1229,18 @@ impl DocketExecutionBindingKind {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
 pub enum DocketExecutionHostKind {
-    Pair,
-    Work,
+    #[serde(rename = "pair")]
+    TurnRun,
+    #[serde(rename = "work")]
+    WorkRun,
 }
 
 impl DocketExecutionHostKind {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::Pair => "pair",
-            Self::Work => "work",
+            Self::TurnRun => "pair",
+            Self::WorkRun => "work",
         }
     }
 }
@@ -1263,18 +1264,6 @@ pub struct DocketFocusedExecutionAcquire {
     pub binding: DocketFocusedExecutionBinding,
     pub host: DocketExecutionHost,
     pub acquisition_key: Uuid,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum DocketExecutionAttemptOwner {
-    Pair {
-        session_id: String,
-        pair_run_id: String,
-    },
-    Work {
-        work_run_id: Uuid,
-    },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -1302,7 +1291,7 @@ impl DocketExecutionAttemptState {
         }
     }
 
-    fn parse(value: &str) -> Result<Self, DenError> {
+    pub fn try_from_storage(value: &str) -> Result<Self, DenError> {
         match value {
             "authorized" => Ok(Self::Authorized),
             "running" => Ok(Self::Running),
@@ -1325,7 +1314,6 @@ pub struct DocketExecutionAttemptRow {
     pub task_id: Uuid,
     pub binding: DocketFocusedExecutionBinding,
     pub host: DocketExecutionHost,
-    pub owner: DocketExecutionAttemptOwner,
     pub fence_epoch: i64,
     pub authorization_key: Uuid,
     pub state: DocketExecutionAttemptState,
@@ -1341,7 +1329,8 @@ pub struct DocketExecutionAttemptRow {
 pub struct DocketExecutionAttemptAuthorize {
     pub bear_id: Uuid,
     pub task_id: Uuid,
-    pub owner: DocketExecutionAttemptOwner,
+    pub binding: DocketFocusedExecutionBinding,
+    pub host: DocketExecutionHost,
     pub authorization_key: Uuid,
 }
 
@@ -1440,10 +1429,6 @@ pub(super) struct DocketExecutionAttemptDbRow {
     binding_id: String,
     host_kind: String,
     host_run_id: String,
-    owner_kind: String,
-    pair_session_id: Option<String>,
-    pair_run_id: Option<String>,
-    work_run_id: Option<Uuid>,
     fence_epoch: i64,
     authorization_key: Uuid,
     state: String,
@@ -1459,26 +1444,6 @@ impl TryFrom<DocketExecutionAttemptDbRow> for DocketExecutionAttemptRow {
     type Error = DenError;
 
     fn try_from(row: DocketExecutionAttemptDbRow) -> Result<Self, Self::Error> {
-        let owner = match row.owner_kind.as_str() {
-            "pair" => DocketExecutionAttemptOwner::Pair {
-                session_id: row.pair_session_id.ok_or_else(|| {
-                    DenError::ValidationError("pair attempt missing session id".to_string())
-                })?,
-                pair_run_id: row.pair_run_id.ok_or_else(|| {
-                    DenError::ValidationError("pair attempt missing run id".to_string())
-                })?,
-            },
-            "work" => DocketExecutionAttemptOwner::Work {
-                work_run_id: row.work_run_id.ok_or_else(|| {
-                    DenError::ValidationError("work attempt missing run id".to_string())
-                })?,
-            },
-            _ => {
-                return Err(DenError::ValidationError(
-                    "invalid execution attempt owner".to_string(),
-                ))
-            }
-        };
         let binding = DocketFocusedExecutionBinding {
             kind: match row.binding_kind.as_str() {
                 "client_session" => DocketExecutionBindingKind::ClientSession,
@@ -1493,8 +1458,8 @@ impl TryFrom<DocketExecutionAttemptDbRow> for DocketExecutionAttemptRow {
         };
         let host = DocketExecutionHost {
             kind: match row.host_kind.as_str() {
-                "pair" => DocketExecutionHostKind::Pair,
-                "work" => DocketExecutionHostKind::Work,
+                "pair" => DocketExecutionHostKind::TurnRun,
+                "work" => DocketExecutionHostKind::WorkRun,
                 _ => {
                     return Err(DenError::ValidationError(
                         "invalid execution host kind".to_string(),
@@ -1509,10 +1474,9 @@ impl TryFrom<DocketExecutionAttemptDbRow> for DocketExecutionAttemptRow {
             task_id: row.task_id,
             binding,
             host,
-            owner,
             fence_epoch: row.fence_epoch,
             authorization_key: row.authorization_key,
-            state: DocketExecutionAttemptState::parse(&row.state)?,
+            state: DocketExecutionAttemptState::try_from_storage(&row.state)?,
             started_at: row.started_at,
             paused_at: row.paused_at,
             settled_at: row.settled_at,

@@ -22,12 +22,11 @@ use den_docket::{
         record_work_run_provisioned, WorkExecutionTarget, WorkJobEnqueue, WorkRunProvisioned,
     },
     DocketCommitPolicy, DocketCriterionKind, DocketEffortHint, DocketExecutionAttemptAuthorize,
-    DocketExecutionAttemptOwner, DocketExecutionAttemptRelease, DocketExecutionBindingKind,
-    DocketExecutionHost, DocketExecutionHostKind, DocketFocusedExecutionAcquire,
-    DocketFocusedExecutionBinding, DocketJobCreate, DocketJobCriterionInput,
-    DocketJobOverlapResolution, DocketService, DocketTaskCreate, DocketTaskDifficulty,
-    DocketTaskInput, DocketTaskKind, DocketTaskPlacement, DocketTaskScope, PgDocketService,
-    RoutingStrategy, TaskListVisibility,
+    DocketExecutionAttemptRelease, DocketExecutionBindingKind, DocketExecutionHost,
+    DocketExecutionHostKind, DocketFocusedExecutionAcquire, DocketFocusedExecutionBinding,
+    DocketJobCreate, DocketJobCriterionInput, DocketJobOverlapResolution, DocketService,
+    DocketTaskCreate, DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskPlacement,
+    DocketTaskScope, PgDocketService, RoutingStrategy, TaskListVisibility,
 };
 use den_http::armature_tokens;
 use den_protocol::{
@@ -42,7 +41,7 @@ use den_runtime::native_runtime::{
 use den_runtime::{
     bearwire_events,
     native_runtime::NativeRuntimeConversationBackend,
-    turn_ids::{ClientSessionId, TurnRunId},
+    turn_ids::{ClientSessionId, ToolCallId, TurnRunId},
     turn_obligations, turn_runs,
 };
 use den_service::{
@@ -607,7 +606,7 @@ async fn focused_pair_loop_continues_across_two_bounded_slices(pool: sqlx::PgPoo
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
         let attempt = sqlx::query!(
-            "SELECT task_id, pair_run_id, fence_epoch FROM docket_execution_attempts WHERE pair_run_id = $1 AND state = 'running'",
+            "SELECT task_id, host_run_id, fence_epoch FROM docket_execution_attempts WHERE host_run_id = $1 AND state = 'running'",
             run_id,
         )
         .fetch_one(&pool)
@@ -617,7 +616,7 @@ async fn focused_pair_loop_continues_across_two_bounded_slices(pool: sqlx::PgPoo
             attempt.task_id, task_id,
             "slice {expected_slices} changed task"
         );
-        assert_eq!(attempt.pair_run_id.as_deref(), Some(run_id));
+        assert_eq!(attempt.host_run_id.as_deref(), Some(run_id));
         assert_eq!(
             attempt.fence_epoch, 1,
             "slice {expected_slices} changed fence"
@@ -652,7 +651,7 @@ async fn focused_pair_loop_continues_across_two_bounded_slices(pool: sqlx::PgPoo
         "settling the only focused task must return control to ordinary chat: {settled}"
     );
     let running_attempts: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM docket_execution_attempts WHERE pair_run_id = $1 AND state = 'running'",
+        "SELECT count(*) FROM docket_execution_attempts WHERE host_run_id = $1 AND state = 'running'",
     )
     .bind(run_id)
     .fetch_one(&pool)
@@ -823,7 +822,7 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
             .expect("client session exists");
     assert_eq!(before_focus.current_task_id, Some(assigned_task_id));
     let attempts_before_focus: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM docket_execution_attempts WHERE pair_session_id = $1 AND state = 'running'",
+        "SELECT count(*) FROM docket_execution_attempts WHERE binding_kind = 'client_session' AND binding_id = $1 AND state = 'running'",
     )
     .bind(&session_id)
     .fetch_one(&pool)
@@ -909,7 +908,7 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
         "focused Pair loop emitted a terminal event before explicit settlement"
     );
     let live_attempts: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM docket_execution_attempts WHERE pair_run_id = $1 AND state = 'running'",
+        "SELECT count(*) FROM docket_execution_attempts WHERE host_run_id = $1 AND state = 'running'",
     )
     .bind(loop_run_id)
     .fetch_one(&pool)
@@ -1044,7 +1043,7 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
         .unwrap_or_else(|| panic!("run start did not return a run id: {continued}"));
     let continued_attempts: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM docket_execution_attempts \
-         WHERE pair_run_id = $1 AND task_id = $2 AND state = 'running'",
+         WHERE host_run_id = $1 AND task_id = $2 AND state = 'running'",
     )
     .bind(successor_run_id)
     .bind(Uuid::parse_str(successor_id).expect("parse successor task id"))
@@ -1086,7 +1085,7 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
         "settling every task must complete the Docket run: {settled_successor}"
     );
     let terminal_attempts: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM docket_execution_attempts WHERE pair_session_id = $1 AND state = 'running'",
+        "SELECT count(*) FROM docket_execution_attempts WHERE binding_kind = 'client_session' AND binding_id = $1 AND state = 'running'",
     )
     .bind(&session_id)
     .fetch_one(&pool)
@@ -1115,7 +1114,7 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
     );
     let chat_run_id = chat_run["result"]["run_id"].as_str().expect("chat run id");
     let chat_attempts: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM docket_execution_attempts WHERE pair_run_id = $1")
+        sqlx::query_scalar("SELECT count(*) FROM docket_execution_attempts WHERE host_run_id = $1")
             .bind(chat_run_id)
             .fetch_one(&pool)
             .await
@@ -1280,7 +1279,7 @@ async fn blocked_focused_task_ends_docket_control_and_returns_to_chat(pool: sqlx
             .expect("client session exists");
     assert_eq!(before_focus.current_task_id, Some(assigned_task_id));
     let attempts_before_focus: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM docket_execution_attempts WHERE pair_session_id = $1 AND state = 'running'",
+        "SELECT count(*) FROM docket_execution_attempts WHERE binding_kind = 'client_session' AND binding_id = $1 AND state = 'running'",
     )
     .bind(&session_id)
     .fetch_one(&pool)
@@ -1315,7 +1314,7 @@ async fn blocked_focused_task_ends_docket_control_and_returns_to_chat(pool: sqlx
         .as_str()
         .expect("Pair loop run id");
     let live_attempts: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM docket_execution_attempts WHERE pair_run_id = $1 AND state = 'running'",
+        "SELECT count(*) FROM docket_execution_attempts WHERE host_run_id = $1 AND state = 'running'",
     )
     .bind(loop_run_id)
     .fetch_one(&pool)
@@ -1357,7 +1356,7 @@ async fn blocked_focused_task_ends_docket_control_and_returns_to_chat(pool: sqlx
     .expect("load blocked Docket run state");
     assert_eq!(terminal_run_state, "blocked", "{blocked}");
     let live_attempts: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM docket_execution_attempts WHERE pair_session_id = $1 AND state = 'running'",
+        "SELECT count(*) FROM docket_execution_attempts WHERE binding_kind = 'client_session' AND binding_id = $1 AND state = 'running'",
     )
     .bind(&session_id)
     .fetch_one(&pool)
@@ -1391,7 +1390,7 @@ async fn blocked_focused_task_ends_docket_control_and_returns_to_chat(pool: sqlx
     );
     let chat_run_id = chat_run["result"]["run_id"].as_str().expect("chat run id");
     let chat_attempts: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM docket_execution_attempts WHERE pair_run_id = $1")
+        sqlx::query_scalar("SELECT count(*) FROM docket_execution_attempts WHERE host_run_id = $1")
             .bind(chat_run_id)
             .fetch_one(&pool)
             .await
@@ -3303,11 +3302,10 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
         r"
         INSERT INTO docket_execution_attempts (
             bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
-            owner_kind, pair_session_id, pair_run_id,
             fence_epoch, authorization_key, state, started_at
         )
         VALUES ($1, $2, 'client_session', $3, 'pair', $4::text,
-                'pair', $3, $4, 1, $5, 'running', NOW())
+                1, $5, 'running', NOW())
         ",
     )
     .bind(bear_id)
@@ -4199,7 +4197,7 @@ async fn run_cancel_settles_outstanding_obligations(pool: sqlx::PgPool) {
                 id: session_id.clone(),
             },
             host: DocketExecutionHost {
-                kind: DocketExecutionHostKind::Pair,
+                kind: DocketExecutionHostKind::TurnRun,
                 run_id: run_id.clone(),
             },
             acquisition_key: Uuid::new_v4(),
@@ -4270,7 +4268,7 @@ async fn focused_pair_git_commit_creates_candidate_task_artifact(pool: sqlx::PgP
                 id: session_id.clone(),
             },
             host: DocketExecutionHost {
-                kind: DocketExecutionHostKind::Pair,
+                kind: DocketExecutionHostKind::TurnRun,
                 run_id,
             },
             acquisition_key: Uuid::new_v4(),
@@ -4360,6 +4358,157 @@ async fn focused_pair_git_commit_creates_candidate_task_artifact(pool: sqlx::PgP
         .await
         .expect("list promoted task artifact links");
     assert!(links.iter().any(|link| link.role == "primary_output"));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn model_focus_promotes_the_origin_run_idempotently(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    let task_id = create_session_task(
+        &pool,
+        user_id,
+        bear_id,
+        &session_id,
+        "Promote the current turn run",
+    )
+    .await;
+    let state = test_state(pool.clone());
+    let policy = den_core::EffectivePolicy::compile(
+        den_core::TrustProfile::Pair,
+        den_core::Governance::Interactive,
+        den_core::ArmatureAvailability::Connected,
+    );
+    let selected = rpc_value(
+        state.clone(),
+        &token,
+        "session.current_task.select",
+        json!({ "bear_slug": bear_slug, "session_id": session_id, "task_id": task_id }),
+    )
+    .await;
+    assert_eq!(selected["result"]["current_task_id"], task_id.to_string());
+
+    let run_id = TurnRunId::new(format!("run_{}", Uuid::new_v4().simple())).unwrap();
+    turn_runs::create_run(&pool, run_id.as_str(), &session_id, bear_id, user_id)
+        .await
+        .expect("create interactive Pair run");
+    turn_runs::transition_run(
+        &pool,
+        run_id.as_str(),
+        turn_runs::TurnRunState::Running,
+        None,
+    )
+    .await
+    .expect("start interactive Pair run");
+    let (controller, _cancel_rx) = state.turn_cancellations.register(
+        session_id.clone(),
+        Uuid::new_v4(),
+        Some("conversation-model-focus".to_string()),
+    );
+    assert!(controller.record_run_id(run_id.as_str()));
+    let bear = bears_db::get_bear(&pool, bear_id)
+        .await
+        .expect("load Bear")
+        .expect("Bear exists");
+    let tool_call_id = ToolCallId::new("call-model-focus").unwrap();
+    let chat_policy = den_core::EffectivePolicy::compile(
+        den_core::TrustProfile::Chat,
+        den_core::Governance::Interactive,
+        den_core::ArmatureAvailability::Connected,
+    );
+    let denied = crate::methods::focused_execution::acquire_selected_task_for_run(
+        &state,
+        user_id,
+        bear.clone(),
+        &session_id,
+        &run_id,
+        &tool_call_id,
+        &chat_policy.capabilities,
+    )
+    .await
+    .expect_err("trust profile without focused-execution capability must be rejected");
+    assert!(denied.to_string().contains("ExecuteFocusedTask"));
+
+    let first = crate::methods::focused_execution::acquire_selected_task_for_run(
+        &state,
+        user_id,
+        bear.clone(),
+        &session_id,
+        &run_id,
+        &tool_call_id,
+        &policy.capabilities,
+    )
+    .await
+    .expect("promote origin run");
+    let replay = crate::methods::focused_execution::acquire_selected_task_for_run(
+        &state,
+        user_id,
+        bear.clone(),
+        &session_id,
+        &run_id,
+        &tool_call_id,
+        &policy.capabilities,
+    )
+    .await
+    .expect("replay focus");
+    assert_eq!(&first.run_id, &run_id);
+    assert_eq!(replay.run_id, first.run_id);
+    assert_eq!(replay.attempt_id, first.attempt_id);
+    assert_eq!(replay.fence_epoch, first.fence_epoch);
+    assert_eq!(
+        replay.launch_state,
+        crate::methods::focused_execution::FocusedExecutionLaunchState::AlreadyRunning
+    );
+
+    let run_count = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) AS "count!" FROM turn_runs WHERE session_id = $1"#,
+        session_id,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count Pair runs");
+    assert_eq!(run_count, 1, "model focus must not create a successor run");
+    let attempt_count = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) AS "count!" FROM docket_execution_attempts WHERE binding_kind = 'client_session' AND binding_id = $1"#,
+        session_id,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count Pair attempts");
+    assert_eq!(attempt_count, 1, "focus replay must reuse one attempt");
+    let events = bearwire_events::list_bearwire_events_after(&pool, &session_id, None, 50)
+        .await
+        .expect("list focus events");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.event_type == "docket.execution.started")
+            .count(),
+        1,
+        "focus replay must not duplicate execution-start projection"
+    );
+    assert!(events.iter().all(|event| {
+        !matches!(
+            event.event_type.as_str(),
+            "run.recovering" | "run.recovered" | "run.completed" | "run.failed" | "run.cancelled"
+        )
+    }));
+
+    drop(controller);
+    let error = crate::methods::focused_execution::acquire_selected_task_for_run(
+        &state,
+        user_id,
+        bear,
+        &session_id,
+        &run_id,
+        &ToolCallId::new("call-after-controller-loss").unwrap(),
+        &policy.capabilities,
+    )
+    .await
+    .expect_err("model focus must require the canonical origin controller");
+    assert!(error.to_string().contains("no live controller"));
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -4504,9 +4653,13 @@ async fn current_task_start_releases_orphaned_foreign_task_authority(pool: sqlx:
         .authorize_execution_attempt(DocketExecutionAttemptAuthorize {
             bear_id,
             task_id,
-            owner: DocketExecutionAttemptOwner::Pair {
-                session_id: foreign_session_id,
-                pair_run_id: format!("run_{}", Uuid::new_v4().simple()),
+            binding: DocketFocusedExecutionBinding {
+                kind: DocketExecutionBindingKind::ClientSession,
+                id: foreign_session_id,
+            },
+            host: DocketExecutionHost {
+                kind: DocketExecutionHostKind::TurnRun,
+                run_id: format!("run_{}", Uuid::new_v4().simple()),
             },
             authorization_key: Uuid::new_v4(),
         })
@@ -4567,9 +4720,13 @@ async fn current_task_start_releases_stale_session_authority_for_previous_task(p
         .authorize_execution_attempt(DocketExecutionAttemptAuthorize {
             bear_id,
             task_id: stale_task_id,
-            owner: DocketExecutionAttemptOwner::Pair {
-                session_id: session_id.clone(),
-                pair_run_id: stale_run_id,
+            binding: DocketFocusedExecutionBinding {
+                kind: DocketExecutionBindingKind::ClientSession,
+                id: session_id.clone(),
+            },
+            host: DocketExecutionHost {
+                kind: DocketExecutionHostKind::TurnRun,
+                run_id: stale_run_id,
             },
             authorization_key: Uuid::new_v4(),
         })
@@ -4697,14 +4854,14 @@ async fn current_task_start_requires_selection_and_reuses_active_run(pool: sqlx:
     );
 
     let attempt: (String, String, String, String) = sqlx::query_as(
-        "SELECT id::TEXT, owner_kind, pair_session_id, pair_run_id
+        "SELECT id::TEXT, binding_kind, binding_id, host_run_id
          FROM docket_execution_attempts WHERE id = $1::uuid",
     )
     .bind(execution_attempt_id)
     .fetch_one(&pool)
     .await
     .expect("Pair start persists canonical execution attempt");
-    assert_eq!(attempt.1, "pair");
+    assert_eq!(attempt.1, "client_session");
     assert_eq!(attempt.2, session_id);
     assert_eq!(attempt.3, first["result"]["run_id"].as_str().unwrap());
 

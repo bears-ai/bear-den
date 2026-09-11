@@ -165,7 +165,7 @@ pub(crate) async fn work_checkpoint_evidence_result(
     // cannot leave an orphaned checkpoint artifact behind.
     let mut tx = state.sqlx_pool.begin().await?;
     let work_run_id: Uuid = sqlx::query_scalar(
-        "SELECT work_run_id FROM docket_execution_attempts WHERE id = $1 AND fence_epoch = $2 AND owner_kind = 'work' AND bear_id = $3",
+        "SELECT binding_id::uuid FROM docket_execution_attempts WHERE id = $1 AND fence_epoch = $2 AND binding_kind = 'work_assignment' AND bear_id = $3",
     )
     .bind(request.execution_attempt_id)
     .bind(request.fence_epoch)
@@ -178,7 +178,7 @@ pub(crate) async fn work_checkpoint_evidence_result(
          FROM docket_checkpoint_directives directive \
          JOIN docket_execution_attempts attempt ON attempt.id = directive.execution_attempt_id \
          WHERE directive.id = $1 AND directive.execution_attempt_id = $2 \
-           AND directive.fence_epoch = $3 AND attempt.owner_kind = 'work' \
+           AND directive.fence_epoch = $3 AND attempt.binding_kind = 'work_assignment' \
            AND attempt.bear_id = $4 FOR UPDATE",
     )
     .bind(request.directive_id)

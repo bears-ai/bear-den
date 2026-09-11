@@ -110,15 +110,15 @@ pub trait DocketService: Send + Sync {
 
     /// Loads the exact live Pair authority already bound to a run. Repeated
     /// focus/start calls must reuse this row rather than minting new authority.
-    async fn get_live_pair_execution_attempt(
+    async fn get_live_session_task_execution_attempt(
         &self,
         bear_id: Uuid,
         task_id: Uuid,
         session_id: &str,
-        pair_run_id: &str,
+        turn_run_id: &str,
     ) -> Result<Option<DocketExecutionAttemptRow>, DenError>;
 
-    async fn get_live_pair_execution_attempt_for_session(
+    async fn get_live_session_task_execution_attempt_for_session(
         &self,
         bear_id: Uuid,
         session_id: &str,
@@ -126,7 +126,7 @@ pub trait DocketService: Send + Sync {
 
     /// Loads any live Pair authority for this task, regardless of session.
     /// Callers must verify a foreign host is truly orphaned before releasing it.
-    async fn get_live_pair_execution_attempt_for_task(
+    async fn get_live_session_task_execution_attempt_for_task(
         &self,
         bear_id: Uuid,
         task_id: Uuid,
@@ -165,13 +165,13 @@ pub trait DocketService: Send + Sync {
         acknowledge: DocketCheckpointDirectiveAcknowledge,
     ) -> Result<DocketCheckpointDirectiveRow, DenError>;
 
-    async fn list_pair_session_tasks(
+    async fn list_session_tasks(
         &self,
         bear_id: Uuid,
         session_id: Uuid,
     ) -> Result<Vec<DocketTaskProjection>, DenError>;
 
-    async fn attach_task_to_pair_session(
+    async fn attach_task_to_session(
         &self,
         bear_id: Uuid,
         task_id: Uuid,
@@ -334,31 +334,38 @@ impl DocketService for PgDocketService {
         db::start_execution_attempt(&self.pool, start).await
     }
 
-    async fn get_live_pair_execution_attempt(
+    async fn get_live_session_task_execution_attempt(
         &self,
         bear_id: Uuid,
         task_id: Uuid,
         session_id: &str,
-        pair_run_id: &str,
+        turn_run_id: &str,
     ) -> Result<Option<DocketExecutionAttemptRow>, DenError> {
-        db::get_live_pair_execution_attempt(&self.pool, bear_id, task_id, session_id, pair_run_id)
+        db::get_live_session_task_execution_attempt(
+            &self.pool,
+            bear_id,
+            task_id,
+            session_id,
+            turn_run_id,
+        )
+        .await
+    }
+
+    async fn get_live_session_task_execution_attempt_for_session(
+        &self,
+        bear_id: Uuid,
+        session_id: &str,
+    ) -> Result<Option<DocketExecutionAttemptRow>, DenError> {
+        db::get_live_session_task_execution_attempt_for_session(&self.pool, bear_id, session_id)
             .await
     }
 
-    async fn get_live_pair_execution_attempt_for_session(
-        &self,
-        bear_id: Uuid,
-        session_id: &str,
-    ) -> Result<Option<DocketExecutionAttemptRow>, DenError> {
-        db::get_live_pair_execution_attempt_for_session(&self.pool, bear_id, session_id).await
-    }
-
-    async fn get_live_pair_execution_attempt_for_task(
+    async fn get_live_session_task_execution_attempt_for_task(
         &self,
         bear_id: Uuid,
         task_id: Uuid,
     ) -> Result<Option<DocketExecutionAttemptRow>, DenError> {
-        db::get_live_pair_execution_attempt_for_task(&self.pool, bear_id, task_id).await
+        db::get_live_session_task_execution_attempt_for_task(&self.pool, bear_id, task_id).await
     }
 
     async fn check_work_boundary(
@@ -396,21 +403,21 @@ impl DocketService for PgDocketService {
         db::acknowledge_checkpoint_directive(&self.pool, acknowledge).await
     }
 
-    async fn list_pair_session_tasks(
+    async fn list_session_tasks(
         &self,
         bear_id: Uuid,
         session_id: Uuid,
     ) -> Result<Vec<DocketTaskProjection>, DenError> {
-        db::list_pair_session_tasks(&self.pool, bear_id, session_id).await
+        db::list_session_tasks(&self.pool, bear_id, session_id).await
     }
 
-    async fn attach_task_to_pair_session(
+    async fn attach_task_to_session(
         &self,
         bear_id: Uuid,
         task_id: Uuid,
         session_id: Uuid,
     ) -> Result<(), DenError> {
-        db::attach_task_to_pair_session(&self.pool, bear_id, task_id, session_id).await
+        db::attach_task_to_session(&self.pool, bear_id, task_id, session_id).await
     }
 
     async fn create_task(&self, create: DocketTaskCreate) -> Result<DocketTaskRow, DenError> {
@@ -473,7 +480,7 @@ impl DocketService for PgDocketService {
                 if let Some(session_id) = request.pair_session_id {
                     db::attach_job_tasks_to_pair_session(&self.pool, bear_id, job_id, session_id)
                         .await?;
-                    let tasks = self.list_pair_session_tasks(bear_id, session_id).await?;
+                    let tasks = self.list_session_tasks(bear_id, session_id).await?;
                     Ok(task_list_projection_from_session_tasks(
                         bear_id,
                         BearProfile::Pair,

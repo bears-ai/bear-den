@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id, fence_epoch\n        FROM docket_execution_attempts\n        WHERE binding_kind = 'client_session'\n          AND binding_id = $1\n          AND host_kind = 'pair'\n          AND host_run_id = $2\n          AND state = 'running'\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "fence_epoch",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "21936261bdbe738ae54595e52cb5ee30ee1845156f9f41f4cc14d12e0abc116d"
+}

@@ -36,6 +36,7 @@ use crate::context_budget::AssembledTurnBudgetComponents;
 use crate::runtime::compaction::{
     on_turn_assemble_compaction, render_compaction_prompt_context, CompactionMode,
 };
+use crate::runtime::task_context::orientation_task_ref_from_item;
 
 #[derive(Debug, Clone)]
 pub struct AssembleTurnContext<'a> {
@@ -298,29 +299,6 @@ fn objective_orientation_input(
         } else {
             FreeformPolicy::closed()
         },
-    }
-}
-
-fn orientation_task_ref_from_item(
-    plan: &TaskListProjection,
-    item: &den_docket::TaskListItem,
-) -> OrientationTaskRef {
-    if let Some(task_id) = item.source_ref.docket_task_id.clone() {
-        return OrientationTaskRef::DocketTask {
-            job_id: item
-                .source_ref
-                .docket_job_id
-                .clone()
-                .or_else(|| plan.source_ref.docket_job_id.clone()),
-            task_id,
-            title: Some(item.title.clone()),
-        };
-    }
-
-    OrientationTaskRef::TaskListItem {
-        task_list_id: plan.id.to_string(),
-        item_id: item.id.clone(),
-        title: Some(item.title.clone()),
     }
 }
 
@@ -783,5 +761,11 @@ mod tests {
             objective_orientation_input(BearProfile::Pair, Some(&plan), Some(task_id), true),
         );
         assert!(matches!(orientation, ObjectiveOrientation::Oriented { .. }));
+        let runtime_task = crate::runtime::task_context::RuntimeTaskContext {
+            source: crate::runtime::task_context::RuntimeTaskSource::SessionCurrentTask,
+            current_task_id: Some(task_id),
+            cached_activity_plan_projection: Some(plan),
+        };
+        assert_eq!(runtime_task.focused_orientation(), Some(orientation));
     }
 }

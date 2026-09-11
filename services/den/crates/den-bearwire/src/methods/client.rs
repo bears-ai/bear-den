@@ -191,7 +191,7 @@ pub(crate) async fn persist_work_git_commit_artifact(
             .filter(|run| run.bear_id == bear_id);
     let pair_attempt = if work_run.is_none() {
         den_docket::PgDocketService::from_pool(&state.sqlx_pool)
-            .get_live_pair_execution_attempt_for_session(bear_id, session_id)
+            .get_live_session_task_execution_attempt_for_session(bear_id, session_id)
             .await
             .ok()
             .flatten()

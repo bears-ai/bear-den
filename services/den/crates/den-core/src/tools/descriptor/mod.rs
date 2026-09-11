@@ -736,7 +736,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_CREATE,
             "Create Docket task",
-            "Create a durable Docket task under an explicit work Docket job or, when job_id is omitted in Pair, under the authenticated current Pair session. Use for durable/resumable plans, checklists, next steps, and roadmap slices; this records user-visible Docket state and does not execute work. A task has exactly one owner: its Job or its current Pair session. Pair can add planned/template tasks; work can add run-scoped child tasks during execution. Every Docket task requires concrete completion_criteria so execution has a stopping condition. Terminal task outcomes are recorded atomically in the task journal; Job-run evidence is required when the Job task's execution policy requires it. Keep full UUIDs for tool calls and evidence; in prose use a typed unambiguous short handle such as `task e4e4797b` (extend the prefix if needed). Do not invent a web URL: use a UI link only when a tool result provides one.",
+            "Create a durable Docket task under an explicit work Docket job or, when effective policy grants session-task ownership and job_id is omitted, under the authenticated current session. Use for durable/resumable plans, checklists, next steps, and roadmap slices; this records user-visible Docket state and does not execute work. A task has exactly one owner: its Job or its client session. Session-capable profiles can add planned/template tasks; work execution can add run-scoped child tasks. Every Docket task requires concrete completion_criteria so execution has a stopping condition. Terminal task outcomes are recorded atomically in the task journal; Job-run evidence is required when the Job task's execution policy requires it. Keep full UUIDs for tool calls and evidence; in prose use a typed unambiguous short handle such as `task e4e4797b` (extend the prefix if needed). Do not invent a web URL: use a UI link only when a tool result provides one.",
             "bear.docket",
             &["docket.task.write"],
             &["pair", "work"],
@@ -745,7 +745,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_LIST,
             "List Docket tasks",
-            "List durable Docket task definitions for an explicit job/task subtree or, in pair conversation scope when job_id is omitted, the current conversation's implied Docket objective. Includes current-run state when available. Use for canonical Docket task hierarchy; use list_task_lists for conversation/job working focus. Treat returned full UUIDs as canonical identity/evidence and use typed unambiguous short task handles in prose.",
+            "List durable Docket task definitions for an explicit job/task subtree or, when job_id is omitted, the current session's implied Docket objective. Includes current-run state when available. Use for canonical Docket task hierarchy; use list_task_lists for conversation/job working focus. Treat returned full UUIDs as canonical identity/evidence and use typed unambiguous short task handles in prose.",
             "bear.docket",
             &["docket.task.read"],
             TASK_LIST_READ_PROFILES,
@@ -771,8 +771,8 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         ),
         descriptor(
             DEN_TASK_SELECT,
-            "Select current Pair task",
-            "Select an actionable task anchored to this Pair session as its canonical current task. Omit task_id to clear the selection. This changes Pair context only; it does not execute or settle work and cannot affect Work runs, which remain Job-scoped. Do not call this merely because the conversational topic appears to change: first ask the user to confirm the proposed task switch. If several eligible tasks could match, ask which one to select. If none matches, ask whether to create a new session task or continue with no selected task. Never silently select, clear, replace, complete, or create a Pair task in response to redirection.",
+            "Select current session task",
+            "Select an actionable task anchored to this client session as its canonical current task. Omit task_id to clear the selection. This changes session context only; it does not execute or settle work and cannot affect Job-scoped work runs. Do not call this merely because the conversational topic appears to change: first ask the user to confirm the proposed task switch. If several eligible tasks could match, ask which one to select. If none matches, ask whether to create a new session task or continue with no selected task. Never silently select, clear, replace, complete, or create a session task in response to redirection.",
             "bear.docket",
             &["docket.task.write"],
             PAIR_PROFILES,
@@ -780,8 +780,8 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         ),
         descriptor(
             DEN_TASK_FOCUS,
-            "Focus current Pair task",
-            "Start or resume Docket loop control for this Pair session's already-selected executable task. This does not select, create, replace, or settle a task. Success means Den acquired execution control and durably queued or started the first loop slice; a typed failure leaves the selection unchanged. Use this when the selected task should proceed without requiring a second user message.",
+            "Focus current session task",
+            "Start or resume focused execution for this client session's already-selected executable task. This does not select, create, replace, or settle a task. Success means Den acquired execution control and durably queued or started the first loop slice; a typed failure leaves the selection unchanged. Use this when the selected task should proceed without requiring a second user message.",
             "bear.docket",
             &["docket.task.write"],
             PAIR_PROFILES,
@@ -790,7 +790,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_UPDATE_CURRENT_STATUS,
             "Update current task status",
-            "Update a session-owned Pair task's status/results. Omit job_id and run_id only for a task owned by this Pair session. Never use this for a task returned or claimed by execute_job/reconcile_job_execution: use settle_execution_task with its job_id and task_id; it settles the active execution run without a run_id. Every terminal status (done, blocked, or cancelled) requires a non-empty result_summary; Den records it atomically as the durable task outcome. Use outcome_disposition when the default does not describe the result: done accepts completed, no_change, or delegated; blocked accepts blocked or failed; cancelled accepts only cancelled. For report-only work, result_summary is sufficient and result_refs may be omitted. If the task has a verified primary output, provide result_refs.primary_output {kind: git_commit|den_artifact, artifact_ref, immutable_identity} and result_refs.validation {primary_output_ref, immutable_identity, command, result: passed, execution_provenance}; validation must match the primary output exactly. Do not invent primary-output evidence for work that did not produce it. Does not edit durable task definitions or execute task bodies.",
+            "Update a session-owned task's status/results. Omit job_id and run_id only for a task owned by this client session. Never use this for a task returned or claimed by execute_job/reconcile_job_execution: use settle_execution_task with its job_id and task_id; it settles the active execution run without a run_id. Every terminal status (done, blocked, or cancelled) requires a non-empty result_summary; Den records it atomically as the durable task outcome. Use outcome_disposition when the default does not describe the result: done accepts completed, no_change, or delegated; blocked accepts blocked or failed; cancelled accepts only cancelled. For report-only work, result_summary is sufficient and result_refs may be omitted. If the task has a verified primary output, provide result_refs.primary_output {kind: git_commit|den_artifact, artifact_ref, immutable_identity} and result_refs.validation {primary_output_ref, immutable_identity, command, result: passed, execution_provenance}; validation must match the primary output exactly. Do not invent primary-output evidence for work that did not produce it. Does not edit durable task definitions or execute task bodies.",
             "bear.docket",
             &["docket.task.write"],
             PAIR_PROFILES,

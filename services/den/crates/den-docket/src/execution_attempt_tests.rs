@@ -1,13 +1,34 @@
 use crate::integration_tests::{seed_user_and_bear, test_pool, two_task_job};
 use crate::{
-    DocketExecutionAttemptAuthorize, DocketExecutionAttemptOwner, DocketExecutionAttemptRelease,
-    DocketExecutionAttemptStart, DocketExecutionAttemptState, DocketExecutionBindingKind,
-    DocketExecutionHost, DocketExecutionHostKind, DocketFocusedExecutionAcquire,
-    DocketFocusedExecutionBinding, DocketPairAwaitingUserQuestion, DocketPairAwaitingUserResume,
-    DocketPairBoundedOutcome, DocketPairBoundedOutcomeReport, DocketPairContinuationDecision,
-    DocketService, PgDocketService,
+    DocketExecutionAttemptAuthorize, DocketExecutionAttemptRelease, DocketExecutionAttemptStart,
+    DocketExecutionAttemptState, DocketExecutionBindingKind, DocketExecutionHost,
+    DocketExecutionHostKind, DocketFocusedExecutionAcquire, DocketFocusedExecutionBinding,
+    DocketPairAwaitingUserQuestion, DocketPairAwaitingUserResume, DocketPairBoundedOutcome,
+    DocketPairBoundedOutcomeReport, DocketPairContinuationDecision, DocketService, PgDocketService,
 };
 use uuid::Uuid;
+
+fn session_authorization(
+    bear_id: Uuid,
+    task_id: Uuid,
+    session_id: String,
+    turn_run_id: String,
+    authorization_key: Uuid,
+) -> DocketExecutionAttemptAuthorize {
+    DocketExecutionAttemptAuthorize {
+        bear_id,
+        task_id,
+        binding: DocketFocusedExecutionBinding {
+            kind: DocketExecutionBindingKind::ClientSession,
+            id: session_id,
+        },
+        host: DocketExecutionHost {
+            kind: DocketExecutionHostKind::TurnRun,
+            run_id: turn_run_id,
+        },
+        authorization_key,
+    }
+}
 
 #[tokio::test]
 async fn focused_acquisition_reuses_binding_and_reattaches_host() {
@@ -30,7 +51,7 @@ async fn focused_acquisition_reuses_binding_and_reattaches_host() {
             id: session_id.clone(),
         },
         host: DocketExecutionHost {
-            kind: DocketExecutionHostKind::Pair,
+            kind: DocketExecutionHostKind::TurnRun,
             run_id,
         },
         acquisition_key: key,
@@ -75,7 +96,7 @@ async fn focused_acquisition_reuses_binding_and_reattaches_host() {
                 id: format!("other-pair-{}", Uuid::new_v4()),
             },
             host: DocketExecutionHost {
-                kind: DocketExecutionHostKind::Pair,
+                kind: DocketExecutionHostKind::TurnRun,
                 run_id: "other-run".to_string(),
             },
             acquisition_key: Uuid::new_v4(),
@@ -130,15 +151,13 @@ async fn execution_attempt_authorization_and_start_are_idempotent_and_fenced() {
         .expect("create job");
     let task_id = job.tasks[0].id;
     let authorization_key = Uuid::new_v4();
-    let request = DocketExecutionAttemptAuthorize {
+    let request = session_authorization(
         bear_id,
         task_id,
-        owner: DocketExecutionAttemptOwner::Pair {
-            session_id: format!("pair-{}", Uuid::new_v4()),
-            pair_run_id: Uuid::new_v4().to_string(),
-        },
+        format!("session-{}", Uuid::new_v4()),
+        format!("run_{}", Uuid::new_v4()),
         authorization_key,
-    };
+    );
 
     let authorized = service
         .authorize_execution_attempt(request.clone())
@@ -178,15 +197,13 @@ async fn execution_attempt_authorization_and_start_are_idempotent_and_fenced() {
         .is_err());
 
     let conflicting = service
-        .authorize_execution_attempt(DocketExecutionAttemptAuthorize {
+        .authorize_execution_attempt(session_authorization(
             bear_id,
             task_id,
-            owner: DocketExecutionAttemptOwner::Pair {
-                session_id: format!("other-pair-{}", Uuid::new_v4()),
-                pair_run_id: Uuid::new_v4().to_string(),
-            },
-            authorization_key: Uuid::new_v4(),
-        })
+            format!("other-session-{}", Uuid::new_v4()),
+            format!("run_{}", Uuid::new_v4()),
+            Uuid::new_v4(),
+        ))
         .await;
     assert!(conflicting.is_err(), "only one live attempt may own a task");
 }
@@ -204,15 +221,13 @@ async fn pair_bounded_outcomes_are_fenced_and_choose_canonical_yields() {
         .await
         .expect("create job");
     let authorized = service
-        .authorize_execution_attempt(DocketExecutionAttemptAuthorize {
+        .authorize_execution_attempt(session_authorization(
             bear_id,
-            task_id: job.tasks[0].id,
-            owner: DocketExecutionAttemptOwner::Pair {
-                session_id: format!("pair-{}", Uuid::new_v4()),
-                pair_run_id: Uuid::new_v4().to_string(),
-            },
-            authorization_key: Uuid::new_v4(),
-        })
+            job.tasks[0].id,
+            format!("session-{}", Uuid::new_v4()),
+            format!("run_{}", Uuid::new_v4()),
+            Uuid::new_v4(),
+        ))
         .await
         .expect("authorize attempt");
     let running = service
@@ -314,15 +329,13 @@ async fn released_running_attempt_is_fenced_idempotent_and_not_startable() {
         .await
         .expect("create job");
     let authorized = service
-        .authorize_execution_attempt(DocketExecutionAttemptAuthorize {
+        .authorize_execution_attempt(session_authorization(
             bear_id,
-            task_id: job.tasks[0].id,
-            owner: DocketExecutionAttemptOwner::Pair {
-                session_id: format!("pair-{}", Uuid::new_v4()),
-                pair_run_id: Uuid::new_v4().to_string(),
-            },
-            authorization_key: Uuid::new_v4(),
-        })
+            job.tasks[0].id,
+            format!("session-{}", Uuid::new_v4()),
+            format!("run_{}", Uuid::new_v4()),
+            Uuid::new_v4(),
+        ))
         .await
         .expect("authorize attempt");
     let running = service

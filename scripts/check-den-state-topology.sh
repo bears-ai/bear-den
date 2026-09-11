@@ -8,11 +8,7 @@ cd "$(dirname "$0")/.."
 
 # Exact production files currently allowed to compose DenState.
 allowlist=(
-    # API composition root shared by the API and injected peer routers.
-    "services/den/crates/den-api/src/service.rs"
-    # Temporary P0 sanction: the open-session reflection worker must run when
-    # RUN_WORKERS=true even if RUN_API=false, so it cannot yet clone api_state.
-    # Remove this entry when DenState composition moves above optional edges.
+    # Process composition root shared by API, runtime tools, and workers.
     "services/den/src/lib.rs"
     # Test-only state construction in a #[cfg(test)] module.
     "services/den/crates/den-bearwire/src/events.rs"

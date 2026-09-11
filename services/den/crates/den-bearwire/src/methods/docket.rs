@@ -27,7 +27,7 @@ use den_service::{
 };
 
 use crate::auth::authenticated_bear;
-use crate::methods::pair_execution::start_or_reconcile_docket_pair_execution;
+use crate::methods::focused_execution::start_or_reconcile_session_task_execution;
 use crate::methods::parse_params;
 
 pub async fn docket_jobs_list_result(
@@ -460,7 +460,7 @@ pub(crate) async fn resolve_candidate_git_commit_output(
         return Ok(result_refs);
     };
     let attempt = PgDocketService::from_pool(&state.sqlx_pool)
-        .get_live_pair_execution_attempt_for_session(bear_id, session_id)
+        .get_live_session_task_execution_attempt_for_session(bear_id, session_id)
         .await?
         .filter(|attempt| attempt.task_id == task_id);
     let Some(attempt) = attempt else {
@@ -574,12 +574,18 @@ async fn execution_result(
         if let (Some(client_session_id), Some(task_id)) =
             (client_session_id, outcome.control.task.selected_task_id)
         {
-            let execution = start_or_reconcile_docket_pair_execution(
+            let policy = den_core::EffectivePolicy::compile(
+                den_core::TrustProfile::Pair,
+                den_core::Governance::Interactive,
+                den_core::ArmatureAvailability::Connected,
+            );
+            let execution = start_or_reconcile_session_task_execution(
                 state,
                 user_id,
                 bear.clone(),
                 client_session_id,
                 task_id,
+                &policy.capabilities,
             )
             .await?;
             pair_binding = json!({

@@ -63,7 +63,8 @@ const BEARWIRE_LIVESTREAM_CAPACITY: usize = 64;
 
 impl DenState {
     /// Build the shared state, initializing the process-local turn coordinators.
-    /// Called by each edge's composition root (e.g. `den-api`'s `create_api_app`).
+    /// Production calls this once at the process composition root; edges and workers
+    /// receive clones so they share one epoch and controller registry.
     #[must_use]
     pub fn new(
         sqlx_pool: PgPool,

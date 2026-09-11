@@ -1,8 +1,7 @@
 //! API service setup and configuration
 //!
-//! This module provides the main API service setup, including application state,
-//! middleware configuration, and router assembly. It creates an independent
-//! API service that can run separately from or alongside the web service.
+//! This module assembles the API router and middleware over the process-owned
+//! [`DenState`] supplied by the binary composition root.
 
 use axum::{
     extract::{MatchedPath, State},
@@ -22,12 +21,8 @@ use tracing::info_span;
 
 use den_core::config::Config;
 use den_http::auth_backend::Backend;
-use den_memory::MemoryStoreManager;
-use den_service::bifrost::BifrostClient;
 
 use den_oauth::oauth::{endpoints::OAuthState, router::create_oauth_router};
-
-use std::sync::Arc;
 
 // `DenState` lives in `den-service` (below every HTTP edge) per ADR-0043, so the
 // JSON/REST edge no longer depends on sibling edges for shared state. Re-exported
@@ -91,29 +86,14 @@ async fn api_readiness(State(state): State<DenState>) -> Result<&'static str, St
 /// are nested before state/middleware so they share `DenState` and the API CORS
 /// and tracing layers.
 pub async fn create_api_app(
-    sqlx_pool: PgPool,
+    api_state: DenState,
     session_store: PostgresStore,
-    config: Arc<Config>,
-    memory_stores: MemoryStoreManager,
     peer_routers: Vec<(&'static str, Router<DenState>)>,
-) -> Result<(Router, DenState), Box<dyn std::error::Error>> {
-    // Extract URLs before moving config
+) -> Result<Router, Box<dyn std::error::Error>> {
+    let sqlx_pool = api_state.sqlx_pool.clone();
+    let config = api_state.config.clone();
     let web_server_url = config.web_server_url.clone();
     let api_server_url = config.api_server_url.clone();
-
-    // Create shared application state (DenState lives in den-service, below every edge).
-    let api_state = DenState::new(
-        sqlx_pool.clone(),
-        config.clone(),
-        Arc::new(BifrostClient::new(config.as_ref())),
-        memory_stores,
-    );
-    den_service::bifrost::spawn_managed_catalog_refresh(
-        api_state.bifrost.clone(),
-        api_state.bifrost_catalog.clone(),
-        config.bifrost_catalog_refresh_secs,
-        config.clone(),
-    );
 
     // Create OAuth state (separate from main API state for OAuth endpoints)
     let oauth_state = OAuthState::new(sqlx_pool.clone(), web_server_url, api_server_url);
@@ -156,7 +136,7 @@ pub async fn create_api_app(
                 .layer(auth_layer),
         );
 
-    Ok((router, api_state))
+    Ok(router)
 }
 
 /// Create session management layer

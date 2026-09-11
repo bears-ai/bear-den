@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS(SELECT 1 FROM docket_execution_attempts WHERE bear_id = $1 AND binding_id = $2 AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')) AS \"exists!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "exists!: bool",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "1366ffb22c201ca7680893705b4cf5442a54ddd0e432bc3efc091ff56630cf4f"
+}

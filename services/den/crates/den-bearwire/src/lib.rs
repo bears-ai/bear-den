@@ -11,7 +11,7 @@ mod obligation_expiry;
 mod open_reflection;
 mod rpc;
 
-pub use methods::session::start_pair_current_task;
+pub use methods::focused_execution::acquire_selected_task_for_run;
 pub use obligation_expiry::{expire_client_obligations_once, run_client_obligation_expiry_loop};
 pub use open_reflection::run_open_session_reflection_loop;
 

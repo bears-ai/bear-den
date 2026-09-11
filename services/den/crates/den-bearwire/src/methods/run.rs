@@ -22,7 +22,7 @@ use den_protocol::{RoleRuntimeBinding, RuntimeContinuation};
 use den_runtime::{
     agent_loop::{LedgerEvidenceRef, LoopControlDecisionKind, LoopControlLedgerInput},
     bearwire_events,
-    current_task::preview_pair_current_task_selection,
+    current_task::preview_session_current_task_selection,
     native_runtime::start_native_profile_turn_event_stream,
     runtime::bearwire_projection::wire::runtime_stream_event_to_bearwire_events,
     runtime_error_ux::{log_sample, run_failure_projection, runtime_event_history_marker},
@@ -1844,9 +1844,10 @@ pub(crate) async fn report_pair_bounded_outcome(
         r#"
         SELECT id, fence_epoch
         FROM docket_execution_attempts
-        WHERE owner_kind = 'pair'
-          AND pair_session_id = $1
-          AND pair_run_id = $2
+        WHERE binding_kind = 'client_session'
+          AND binding_id = $1
+          AND host_kind = 'pair'
+          AND host_run_id = $2
           AND state = 'running'
         "#,
         session_id,
@@ -2189,7 +2190,7 @@ pub(crate) async fn run_recover_result(
             "current Pair task changed; refusing recovery".to_string(),
         ));
     }
-    preview_pair_current_task_selection(
+    preview_session_current_task_selection(
         &state.sqlx_pool,
         user_id,
         bear.id,
@@ -2414,7 +2415,7 @@ async fn run_start_with_recovery_source(
     let session_run_id = run_id.to_string();
     let inherited_pair_task_id = if pair_task_id.is_none() {
         PgDocketService::from_pool(&state.sqlx_pool)
-            .get_live_pair_execution_attempt_for_session(bear.id, &session_id)
+            .get_live_session_task_execution_attempt_for_session(bear.id, &session_id)
             .await?
             .map(|attempt| attempt.task_id)
     } else {
@@ -2514,7 +2515,7 @@ async fn run_start_with_recovery_source(
                         id: session_id.to_string(),
                     },
                     host: DocketExecutionHost {
-                        kind: DocketExecutionHostKind::Pair,
+                        kind: DocketExecutionHostKind::TurnRun,
                         run_id: session_run_id.clone(),
                     },
                     acquisition_key: Uuid::new_v5(&Uuid::NAMESPACE_URL, session_run_id.as_bytes()),

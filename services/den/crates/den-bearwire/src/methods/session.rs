@@ -1,8 +1,8 @@
 use axum::http::HeaderMap;
 use den_core::DenError;
 use den_docket::{
-    DocketExecutionAttemptRelease, DocketExecutionBindingKind, DocketFocusedExecutionBinding,
-    DocketService, PgDocketService,
+    DocketExecutionAttemptRelease, DocketExecutionBindingKind, DocketExecutionHostKind,
+    DocketFocusedExecutionBinding, DocketService, PgDocketService,
 };
 use serde_json::{json, Value};
 use sqlx::PgPool;
@@ -23,7 +23,7 @@ use den_runtime::{
         ConversationReview, ConversationReviewFinding, ConversationReviewFindingDetail,
         ConversationReviewTrigger, FindingSource,
     },
-    current_task::{preview_pair_current_task_selection, select_pair_current_task},
+    current_task::{preview_session_current_task_selection, select_session_current_task},
     pair_reflection::create_pair_reflection_proposals_from_latest_summary,
     runtime::compaction::{prepare_turn_compaction, TurnCompactionState, TurnCompactionTrigger},
     runtime::task_context::{resolve_runtime_task_context, RuntimeTaskResolveRequest},
@@ -36,6 +36,14 @@ use den_service::{
 
 use crate::auth::{authenticate_for_bear_slug, authenticated_bear};
 use crate::methods::{parse_params, DEFAULT_CLIENT};
+
+fn interactive_session_policy() -> den_core::EffectivePolicy {
+    den_core::EffectivePolicy::compile(
+        den_core::TrustProfile::Pair,
+        den_core::Governance::Interactive,
+        den_core::ArmatureAvailability::Connected,
+    )
+}
 
 pub async fn reflect_open_sessions_once(state: &DenState) -> Result<usize, CustomError> {
     let candidates = client_sessions::list_open_reflection_candidates(
@@ -255,11 +263,11 @@ async fn session_state_payload(
         .await
         .map_err(|error| match error {
             DenError::Database(message) => CustomError::Database(format!(
-                "resolve Pair runtime task context for BearWire session.state: bear_id={}, client_session_id={}, conversation_id={}: {message}",
+                "resolve session runtime task context for BearWire session.state: bear_id={}, client_session_id={}, conversation_id={}: {message}",
                 session.bear_id, session.client_session_id, conversation_runtime_id
             )),
             DenError::DatabaseUnavailable(message) => CustomError::DatabaseUnavailable(format!(
-                "resolve Pair runtime task context for BearWire session.state: bear_id={}, client_session_id={}, conversation_id={}: {message}",
+                "resolve session runtime task context for BearWire session.state: bear_id={}, client_session_id={}, conversation_id={}: {message}",
                 session.bear_id, session.client_session_id, conversation_runtime_id
             )),
             error => error.into(),
@@ -270,14 +278,14 @@ async fn session_state_payload(
     };
     let current_task = runtime_task_context
         .as_ref()
-        .and_then(pair_current_task_projection);
+        .and_then(session_current_task_projection);
     let active_activity_plan = runtime_task_context.as_ref().and_then(|focus| {
         focus.active_activity_plan().cloned().map(|plan| {
             active_activity_plan_projection(plan, focus.source.as_str(), current_task.clone())
         })
     });
     let active_docket_execution = if work_enabled {
-        active_pair_execution_attempt(
+        active_session_execution_attempt(
             &state.sqlx_pool,
             session.bear_id,
             &session.client_session_id,
@@ -352,7 +360,7 @@ async fn session_state_payload(
     }))
 }
 
-fn pair_current_task_projection(
+fn session_current_task_projection(
     context: &den_runtime::runtime::task_context::RuntimeTaskContext,
 ) -> Option<Value> {
     let task_id = context.current_task_id?;
@@ -373,7 +381,7 @@ fn pair_current_task_projection(
     }))
 }
 
-async fn active_pair_execution_attempt(
+async fn active_session_execution_attempt(
     pool: &PgPool,
     bear_id: uuid::Uuid,
     session_id: &str,
@@ -753,7 +761,7 @@ pub(crate) async fn session_current_task_selection_request_result(
     let request: SessionCurrentTaskSelectionRequest = parse_params(params)?;
     let task_id = uuid::Uuid::parse_str(&request.task_id)
         .map_err(|_| CustomError::ValidationError("task_id must be a UUID".to_string()))?;
-    let title = preview_pair_current_task_selection(
+    let title = preview_session_current_task_selection(
         &state.sqlx_pool,
         user_id,
         bear.id,
@@ -777,15 +785,17 @@ pub(crate) async fn session_current_task_select_result(
         .map_err(|_| CustomError::ValidationError("task_id must be a UUID".to_string()))?;
     if !bear.work_enabled {
         return Err(CustomError::ValidationError(
-            "Pair task controls are disabled".to_string(),
+            "focused task controls are disabled".to_string(),
         ));
     }
-    let result = select_pair_current_task(
+    let policy = interactive_session_policy();
+    let result = select_session_current_task(
         &state.sqlx_pool,
         user_id,
         bear.id,
         &request.session_id,
         Some(task_id),
+        &policy.capabilities,
     )
     .await?;
     Ok(
@@ -802,7 +812,7 @@ pub(crate) async fn session_current_task_start_result(
     let request: SessionCurrentTaskStartRequest = parse_params(params)?;
     if !bear.work_enabled {
         return Err(CustomError::ValidationError(
-            "Pair task controls are disabled".to_string(),
+            "focused task controls are disabled".to_string(),
         ));
     }
     if let Some(run) =
@@ -824,17 +834,21 @@ pub(crate) async fn session_current_task_start_result(
             return Ok(recovered);
         }
     }
-    let execution = super::pair_execution::start_selected_docket_pair_execution(
+    let policy = interactive_session_policy();
+    let execution = super::focused_execution::start_selected_session_task_execution(
         state,
         user_id,
         bear,
         &request.session_id,
+        &policy.capabilities,
     )
     .await?;
     Ok(json!({
         "ok": true,
-        "started": execution.launch_state == "started",
-        "reused": execution.launch_state == "already_running",
+        "started": execution.launch_state
+            == super::focused_execution::FocusedExecutionLaunchState::Started,
+        "reused": execution.launch_state
+            == super::focused_execution::FocusedExecutionLaunchState::AlreadyRunning,
         "run_id": execution.run_id,
         "session_id": execution.session_id,
         "task_id": execution.task_id,
@@ -847,7 +861,7 @@ pub(crate) async fn session_current_task_start_result(
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct PairTaskStartResult {
+pub struct SessionTaskStartResult {
     pub ok: bool,
     pub started: bool,
     pub reused: bool,
@@ -861,15 +875,15 @@ pub struct PairTaskStartResult {
     pub fence_epoch: i64,
 }
 
-/// Starts the Pair loop for the session's selected task. Docket `/focus` uses
+/// Starts focused execution for the session's selected task. Docket `/focus` uses
 /// this after selecting its task so task assignment cannot leave loop control
 /// inactive.
-pub async fn start_pair_current_task(
+pub(crate) async fn start_session_task_execution(
     state: &DenState,
     user_id: i32,
     bear: den_service::bears::Bear,
     session_id: &str,
-) -> Result<PairTaskStartResult, CustomError> {
+) -> Result<SessionTaskStartResult, CustomError> {
     let session = client_sessions::find_for_user_bear_session_id(
         &state.sqlx_pool,
         user_id,
@@ -880,7 +894,7 @@ pub async fn start_pair_current_task(
     .ok_or_else(|| CustomError::NotFound("client session not found".to_string()))?;
     let task_id = session.current_task_id.ok_or_else(|| {
         CustomError::ValidationError(
-            "no current Pair task is selected for this session".to_string(),
+            "no current session task is selected for this session".to_string(),
         )
     })?;
     let mut recovered_run_id = None;
@@ -897,7 +911,7 @@ pub async fn start_pair_current_task(
                 .await?;
             recovered_run_id = Some(run.run_id);
         } else {
-            let attempt = existing_pair_execution_attempt(
+            let attempt = existing_session_execution_attempt(
                 &state.sqlx_pool,
                 bear.id,
                 task_id,
@@ -905,7 +919,7 @@ pub async fn start_pair_current_task(
                 &run.run_id,
             )
             .await?;
-            return Ok(PairTaskStartResult {
+            return Ok(SessionTaskStartResult {
                 ok: true,
                 started: false,
                 reused: true,
@@ -922,19 +936,17 @@ pub async fn start_pair_current_task(
     }
 
     if let Some(attempt) = PgDocketService::from_pool(&state.sqlx_pool)
-        .get_live_pair_execution_attempt_for_session(bear.id, session_id)
+        .get_live_session_task_execution_attempt_for_session(bear.id, session_id)
         .await?
     {
-        let run_id = match &attempt.owner {
-            den_docket::DocketExecutionAttemptOwner::Pair { pair_run_id, .. } => {
-                pair_run_id.clone()
-            }
-            den_docket::DocketExecutionAttemptOwner::Work { .. } => {
-                return Err(CustomError::ValidationError(
-                    "live Pair execution authority has a non-Pair owner".to_string(),
-                ));
-            }
-        };
+        if attempt.binding.kind != DocketExecutionBindingKind::ClientSession
+            || attempt.host.kind != DocketExecutionHostKind::TurnRun
+        {
+            return Err(CustomError::ValidationError(
+                "live session execution authority has an incompatible binding or host".to_string(),
+            ));
+        }
+        let run_id = attempt.host.run_id.clone();
         let run = den_runtime::turn_runs::get_run(&state.sqlx_pool, &run_id)
             .await?
             .filter(|run| run.bear_id == bear.id && run.user_id == user_id);
@@ -945,7 +957,7 @@ pub async fn start_pair_current_task(
         if run.is_some_and(|run| {
             controller_is_live && matches!(run.state.as_str(), "running" | "waiting_for_client")
         }) {
-            return Ok(PairTaskStartResult {
+            return Ok(SessionTaskStartResult {
                 ok: true,
                 started: false,
                 reused: true,
@@ -970,30 +982,27 @@ pub async fn start_pair_current_task(
     }
 
     if let Some(attempt) = PgDocketService::from_pool(&state.sqlx_pool)
-        .get_live_pair_execution_attempt_for_task(bear.id, task_id)
+        .get_live_session_task_execution_attempt_for_task(bear.id, task_id)
         .await?
         .filter(|attempt| {
-            !matches!(
-                &attempt.owner,
-                den_docket::DocketExecutionAttemptOwner::Pair { session_id: owner_session_id, .. }
-                    if owner_session_id == session_id
-            )
+            attempt.binding.kind != DocketExecutionBindingKind::ClientSession
+                || attempt.binding.id != session_id
         })
     {
         // ponytail: a foreign attempt is released only after its durable host run
         // is terminal or absent. Live foreign controllers remain authoritative.
-        let run_id = match &attempt.owner {
-            den_docket::DocketExecutionAttemptOwner::Pair { pair_run_id, .. } => pair_run_id,
-            den_docket::DocketExecutionAttemptOwner::Work { .. } => {
-                unreachable!("query filters Pair owner")
-            }
-        };
+        if attempt.host.kind != DocketExecutionHostKind::TurnRun {
+            return Err(CustomError::ValidationError(
+                "session task execution authority has an incompatible host".to_string(),
+            ));
+        }
+        let run_id = &attempt.host.run_id;
         let foreign_run_is_live = den_runtime::turn_runs::get_run(&state.sqlx_pool, run_id)
             .await?
             .is_some_and(|run| matches!(run.state.as_str(), "running" | "waiting_for_client"));
         if foreign_run_is_live {
             return Err(CustomError::ValidationError(
-                "focused task is already controlled by a live Pair session".to_string(),
+                "focused task is already controlled by another live client session".to_string(),
             ));
         }
         PgDocketService::from_pool(&state.sqlx_pool)
@@ -1007,7 +1016,7 @@ pub async fn start_pair_current_task(
             .await?;
     }
 
-    let title = preview_pair_current_task_selection(
+    let title = preview_session_current_task_selection(
         &state.sqlx_pool,
         user_id,
         bear.id,
@@ -1102,7 +1111,7 @@ pub async fn start_pair_current_task(
         )
         .await?;
     }
-    Ok(PairTaskStartResult {
+    Ok(SessionTaskStartResult {
         ok: true,
         started: true,
         reused: false,
@@ -1126,7 +1135,7 @@ async fn reconcile_orphaned_task_run(
     run_id: &str,
 ) -> Result<(), CustomError> {
     let attempt = PgDocketService::from_pool(&state.sqlx_pool)
-        .get_live_pair_execution_attempt(bear_id, task_id, session_id, run_id)
+        .get_live_session_task_execution_attempt(bear_id, task_id, session_id, run_id)
         .await?;
     let mut event = BearWireEvent::ephemeral(
         "run.recovering",
@@ -1172,7 +1181,7 @@ async fn reconcile_orphaned_task_run(
     Ok(())
 }
 
-async fn existing_pair_execution_attempt(
+async fn existing_session_execution_attempt(
     pool: &PgPool,
     bear_id: uuid::Uuid,
     task_id: uuid::Uuid,
@@ -1180,11 +1189,11 @@ async fn existing_pair_execution_attempt(
     run_id: &str,
 ) -> Result<den_docket::DocketExecutionAttemptRow, CustomError> {
     PgDocketService::from_pool(pool)
-        .get_live_pair_execution_attempt(bear_id, task_id, session_id, run_id)
+        .get_live_session_task_execution_attempt(bear_id, task_id, session_id, run_id)
         .await?
         .ok_or_else(|| {
             CustomError::ValidationError(
-                "active Pair run has no matching live execution authority".to_string(),
+                "active turn run has no matching live execution authority".to_string(),
             )
         })
 }
@@ -1198,15 +1207,17 @@ pub(crate) async fn session_current_task_clear_result(
     let request: SessionCurrentTaskClearRequest = parse_params(params)?;
     if !bear.work_enabled {
         return Err(CustomError::ValidationError(
-            "Pair task controls are disabled".to_string(),
+            "focused task controls are disabled".to_string(),
         ));
     }
-    let result = select_pair_current_task(
+    let policy = interactive_session_policy();
+    let result = select_session_current_task(
         &state.sqlx_pool,
         user_id,
         bear.id,
         &request.session_id,
         None,
+        &policy.capabilities,
     )
     .await?;
     Ok(
@@ -1350,7 +1361,7 @@ mod tests {
         let item = TaskListItem {
             id: task_id.to_string(),
             title: "Selected task".to_string(),
-            summary: Some("Current Pair task".to_string()),
+            summary: Some("Current session task".to_string()),
             status: TaskListItemStatus::Pending,
             blocked_reason: None,
             source_ref: TaskListSourceRef::local(vec![]),
@@ -1384,7 +1395,7 @@ mod tests {
     #[test]
     fn pair_current_task_projects_session_focus_only() {
         let task_id = Uuid::new_v4();
-        let projected = pair_current_task_projection(&session_current_task_context(task_id))
+        let projected = session_current_task_projection(&session_current_task_context(task_id))
             .expect("session-selected task should project");
         assert_eq!(projected["id"], task_id.to_string());
         assert_eq!(projected["title"], "Selected task");
@@ -1405,7 +1416,7 @@ mod tests {
 
         let mut no_selection = session_current_task_context(task_id);
         no_selection.current_task_id = None;
-        assert!(pair_current_task_projection(&no_selection).is_none());
+        assert!(session_current_task_projection(&no_selection).is_none());
 
         let no_selection_plan = no_selection
             .active_activity_plan()

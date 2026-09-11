@@ -1,4 +1,4 @@
-//! `BearStance`: the operational stance vocabulary (ADR-0036/ADR-0039).
+//! `TrustProfile`: durable trust, memory, prompt, and capability defaults.
 //!
 //! This is a foundational closed-set enum shared across den crates (runtime,
 //! docket, tools, memory, web/api), so it lives in `den-core`. The original
@@ -11,10 +11,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::BearId;
 
-/// Operational stance a Bear runs under (not a membership role).
+/// Durable trust profile applied as policy defaults for a model turn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum BearStance {
+pub enum TrustProfile {
     Chat,
     Pair,
     Curate,
@@ -22,7 +22,7 @@ pub enum BearStance {
     Watch,
 }
 
-impl BearStance {
+impl TrustProfile {
     pub const ALL: [Self; 5] = [
         Self::Chat,
         Self::Pair,
@@ -67,13 +67,13 @@ impl BearStance {
     }
 }
 
-impl fmt::Display for BearStance {
+impl fmt::Display for TrustProfile {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
 }
 
-impl FromStr for BearStance {
+impl FromStr for TrustProfile {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -88,5 +88,7 @@ impl FromStr for BearStance {
     }
 }
 
-/// Deprecated compatibility alias while downstream code migrates from profile terminology.
-pub type BearProfile = BearStance;
+/// Existing code shorthand retained for compatibility with profile-bound APIs.
+pub type BearProfile = TrustProfile;
+/// UI and protocol shorthand; runtime ownership must not be derived from this label.
+pub type BearStance = TrustProfile;

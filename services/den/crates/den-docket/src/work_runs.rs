@@ -19,9 +19,10 @@ use den_core::DenError;
 use crate::execution_profiles::resolve_execution_profile;
 use crate::model::{
     select_dispatch_notebook_context, DocketEntryListFilter, DocketEntryRow,
-    DocketExecutionAttemptAuthorize, DocketExecutionAttemptOwner, DocketExecutionAttemptRow,
-    DocketExecutionAttemptStart, DocketExecutionBinding, DocketExecutionDisposition,
-    DocketExecutionGate, DocketExecutionReason, DocketTaskDifficulty,
+    DocketExecutionAttemptAuthorize, DocketExecutionAttemptRow, DocketExecutionAttemptStart,
+    DocketExecutionBinding, DocketExecutionBindingKind, DocketExecutionDisposition,
+    DocketExecutionGate, DocketExecutionHost, DocketExecutionHostKind, DocketExecutionReason,
+    DocketFocusedExecutionBinding, DocketTaskDifficulty,
 };
 use crate::recovery::claim_turn_attempt;
 use crate::routing::{route_turn, ExecutionSurface, TurnIntent, TurnSource};
@@ -1680,8 +1681,13 @@ pub async fn checkout_work_run_for_session(
         .authorize_execution_attempt(DocketExecutionAttemptAuthorize {
             bear_id,
             task_id: task.0,
-            owner: DocketExecutionAttemptOwner::Work {
-                work_run_id: run.id,
+            binding: DocketFocusedExecutionBinding {
+                kind: DocketExecutionBindingKind::WorkAssignment,
+                id: run.id.to_string(),
+            },
+            host: DocketExecutionHost {
+                kind: DocketExecutionHostKind::WorkRun,
+                run_id: run.id.to_string(),
             },
             // A work run is one durable dispatch attempt. Re-checkout must
             // replay authorization rather than create a competing authority.

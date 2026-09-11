@@ -24,9 +24,9 @@ use crate::work_runs::{
     WorkRunEnqueue, WorkRunFinalize, WorkRunProvisioned, WorkRunState,
 };
 use crate::{
-    DocketCommitPolicy, DocketCriterionKind, DocketExecutionAttemptOwner,
-    DocketExecutionAttemptState, DocketExecutionBinding, DocketExecutionDisposition,
-    DocketExecutionGate, DocketExecutionReason, DocketJobCreate, DocketJobCriterionInput,
+    DocketCommitPolicy, DocketCriterionKind, DocketExecutionAttemptState, DocketExecutionBinding,
+    DocketExecutionBindingKind, DocketExecutionDisposition, DocketExecutionGate,
+    DocketExecutionHostKind, DocketExecutionReason, DocketJobCreate, DocketJobCriterionInput,
     DocketJobExecuteRequest, DocketJobOverlapResolution, DocketService, DocketTaskDefinitionPatch,
     DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskRunStateUpdate,
     DocketTaskScope, DocketTaskUpdate, PgDocketService, RoutingStrategy, TaskListVisibility,
@@ -361,7 +361,7 @@ async fn checkout_rejects_without_binding_when_no_task_is_actionable() {
     assert!(persisted.bearwire_session_id.is_none());
     let active_attempts: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM docket_execution_attempts
-         WHERE owner_kind = 'work' AND work_run_id = $1
+         WHERE binding_kind = 'work_assignment' AND binding_id = $1::text
            AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')",
     )
     .bind(run.id)
@@ -979,15 +979,22 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
         execution_attempt.state,
         DocketExecutionAttemptState::Running
     );
-    assert!(matches!(
-        execution_attempt.owner,
-        DocketExecutionAttemptOwner::Work { work_run_id } if work_run_id == run.id
-    ));
+    assert_eq!(
+        execution_attempt.binding.kind,
+        DocketExecutionBindingKind::WorkAssignment
+    );
+    assert_eq!(execution_attempt.binding.id, run.id.to_string());
+    assert_eq!(
+        execution_attempt.host.kind,
+        DocketExecutionHostKind::WorkRun
+    );
+    assert_eq!(execution_attempt.host.run_id, run.id.to_string());
+    let work_binding_id = run.id.to_string();
     let execution_count = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM docket_execution_attempts
-         WHERE bear_id = $1 AND owner_kind = 'work' AND work_run_id = $2 AND state = 'running'",
+         WHERE bear_id = $1 AND binding_kind = 'work_assignment' AND binding_id = $2 AND state = 'running'",
         bear_id,
-        run.id,
+        work_binding_id,
     )
     .fetch_one(&pool)
     .await

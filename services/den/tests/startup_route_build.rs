@@ -40,7 +40,13 @@ async fn api_router_builds_without_startup_route_conflicts() {
     ];
 
     let memory_stores = den_memory::MemoryStoreManager::new(config.as_ref());
-    let (_app, _state) = api::create_api_app(pool, store, config, memory_stores, peer_routers)
+    let state = den_service::DenState::new(
+        pool,
+        config.clone(),
+        Arc::new(den_service::bifrost::BifrostClient::new(config.as_ref())),
+        memory_stores,
+    );
+    let _app = api::create_api_app(state, store, peer_routers)
         .await
         .expect("API router should build without Axum route conflicts");
 }

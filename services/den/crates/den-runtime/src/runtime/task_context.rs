@@ -5,6 +5,9 @@
 //! behavior resolves persisted state rather than treating cached or legacy
 //! execution state as authoritative.
 
+use crate::agent_loop::{
+    ObjectiveOrientation, OrientationTaskRef, OrientedChildTaskPolicy, TaskOrientation,
+};
 use den_core::DenError;
 use den_docket::{
     task_list_projection_from_session_tasks_with_current_task, DocketService, PgDocketService,
@@ -47,6 +50,43 @@ impl RuntimeTaskContext {
             RuntimeTaskSource::SessionCurrentTask => self.cached_activity_plan_projection.as_ref(),
             RuntimeTaskSource::None => None,
         }
+    }
+
+    pub fn focused_orientation(&self) -> Option<ObjectiveOrientation> {
+        let current_task_id = self.current_task_id?;
+        let plan = self.active_activity_plan()?;
+        let item = plan
+            .items
+            .iter()
+            .find(|item| item.id == current_task_id.to_string())?;
+        Some(ObjectiveOrientation::Oriented {
+            task: TaskOrientation {
+                task_ref: orientation_task_ref_from_item(plan, item),
+                child_policy: OrientedChildTaskPolicy::default(),
+            },
+        })
+    }
+}
+
+pub(crate) fn orientation_task_ref_from_item(
+    plan: &TaskListProjection,
+    item: &den_docket::TaskListItem,
+) -> OrientationTaskRef {
+    if let Some(task_id) = item.source_ref.docket_task_id.clone() {
+        return OrientationTaskRef::DocketTask {
+            job_id: item
+                .source_ref
+                .docket_job_id
+                .clone()
+                .or_else(|| plan.source_ref.docket_job_id.clone()),
+            task_id,
+            title: Some(item.title.clone()),
+        };
+    }
+    OrientationTaskRef::TaskListItem {
+        task_list_id: plan.id.to_string(),
+        item_id: item.id.clone(),
+        title: Some(item.title.clone()),
     }
 }
 
@@ -95,7 +135,7 @@ pub async fn resolve_runtime_task_context(
         });
     };
     let service = PgDocketService::from_pool(pool);
-    let tasks = service.list_pair_session_tasks(bear_id, session.id).await?;
+    let tasks = service.list_session_tasks(bear_id, session.id).await?;
     let current_task_id = session.current_task_id.filter(|selected_task_id| {
         tasks
             .iter()
@@ -127,12 +167,8 @@ pub async fn resolve_runtime_task_context(
         current_task_id,
     );
     Ok(RuntimeTaskContext {
-        source: if current_task_id.is_some() || plan.is_some() {
-            RuntimeTaskSource::SessionCurrentTask
-        } else {
-            RuntimeTaskSource::None
-        },
-        current_task_id,
+        source: RuntimeTaskSource::None,
+        current_task_id: None,
         cached_activity_plan_projection: plan,
     })
 }
@@ -155,16 +191,5 @@ mod tests {
         assert!(!is_actionable_session_task_status(
             den_docket::DocketTaskStatus::Cancelled
         ));
-    }
-
-    #[test]
-    fn session_current_task_exposes_its_projection() {
-        let context = RuntimeTaskContext {
-            source: RuntimeTaskSource::SessionCurrentTask,
-            current_task_id: None,
-            cached_activity_plan_projection: None,
-        };
-        assert!(context.active_activity_plan().is_none());
-        assert_eq!(context.source.as_str(), "session_current_task");
     }
 }

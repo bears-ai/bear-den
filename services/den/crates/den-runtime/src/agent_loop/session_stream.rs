@@ -4,7 +4,6 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use den_memory::MemoryStoreManager;
 use den_protocol::{RuntimeEventStream, RuntimeSemanticEvent, RuntimeStreamEvent};
 use den_service::bears::prompt_fragments::{
     render_turn_fragment, repository_prompt_fragment_registry,
@@ -54,9 +53,10 @@ use crate::{
 use den_core::tools::{
     arguments::DenToolChannelContext,
     constants::{
-        DEN_TASK_CREATE_PROVIDER, DEN_TASK_FOCUS_PROVIDER, DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER,
-        DEN_TASK_LISTS_UPDATE_PROVIDER, DEN_TASK_LIST_SYNC_PROVIDER,
-        DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER, DEN_TASK_UPDATE_PROVIDER, DEN_TOOL_OUTPUT_READ,
+        DEN_TASK_CREATE_PROVIDER, DEN_TASK_FOCUS, DEN_TASK_FOCUS_PROVIDER,
+        DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER, DEN_TASK_LISTS_UPDATE_PROVIDER,
+        DEN_TASK_LIST_SYNC_PROVIDER, DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER,
+        DEN_TASK_UPDATE_PROVIDER, DEN_TOOL_OUTPUT_READ,
     },
     context::DenToolInvocationContext,
     descriptor::builtin_den_tool_descriptor_for_provider_name,
@@ -287,26 +287,6 @@ fn focus_task_id(orientation: &ObjectiveOrientation) -> Option<&str> {
     }
 }
 
-fn recent_tool_result_matches(messages: &[ChatMessage], tool_call_id: &str) -> bool {
-    messages.last().is_some_and(|last| {
-        last.role == "tool" && last.tool_call_id.as_deref() == Some(tool_call_id)
-    })
-}
-
-fn recent_tool_exchange_start(messages: &[ChatMessage], tool_call_id: &str) -> Option<usize> {
-    if !recent_tool_result_matches(messages, tool_call_id) || messages.len() < 2 {
-        return None;
-    }
-    let assistant_index = messages.len() - 2;
-    let assistant = &messages[assistant_index];
-    (assistant.role == "assistant"
-        && assistant
-            .tool_calls
-            .as_ref()
-            .is_some_and(|calls| calls.iter().any(|call| call.id == tool_call_id)))
-    .then_some(assistant_index)
-}
-
 fn oriented_child_limit_error(max_children: u8, child_count: i64) -> Option<String> {
     (child_count >= i64::from(max_children)).then(|| {
         format!("oriented task decomposition child limit exceeded; max_children is {max_children}")
@@ -442,7 +422,6 @@ pub struct SessionTrackingStream {
     pending_pause_persistence: Option<PausePersistenceFuture>,
     dispatch_mode: NativeToolDispatchMode,
     config: Arc<Config>,
-    stores: MemoryStoreManager,
     profile: BearProfile,
     may_define_task: bool,
 }
@@ -460,7 +439,6 @@ impl SessionTrackingStream {
         client_session_id: String,
         request_id: Option<String>,
         config: Arc<Config>,
-        stores: MemoryStoreManager,
         profile: BearProfile,
         dispatch_mode: NativeToolDispatchMode,
     ) -> Self {
@@ -500,7 +478,6 @@ impl SessionTrackingStream {
             pending_pause_persistence: None,
             dispatch_mode,
             config,
-            stores,
             profile,
             may_define_task,
         }
@@ -544,19 +521,6 @@ impl SessionTrackingStream {
             );
         });
         self.assistant_synced_to_session = true;
-    }
-
-    fn remove_recent_server_tool_chain_from_session(&self, tool_call_id: &str) {
-        self.store.update(
-            &self.session_key,
-            |session| match recent_tool_exchange_start(&session.messages, tool_call_id) {
-                Some(assistant_index) => session.messages.truncate(assistant_index),
-                None if recent_tool_result_matches(&session.messages, tool_call_id) => {
-                    session.messages.pop();
-                }
-                None => {}
-            },
-        );
     }
 
     fn outstanding_tool_details(&self) -> Vec<serde_json::Value> {
@@ -878,14 +842,27 @@ impl SessionTrackingStream {
                 ));
             return;
         }
-        let objective_orientation = self
-            .store
-            .get(&self.session_key)
-            .map(|session| session.objective_orientation);
+        let session_snapshot = self.store.get(&self.session_key);
+        let objective_orientation = session_snapshot
+            .as_ref()
+            .map(|session| session.objective_orientation.clone());
+        let governance = session_snapshot
+            .as_ref()
+            .map_or(den_core::Governance::Interactive, |session| {
+                session.governance
+            });
+        let armature = if self.dispatch_mode == NativeToolDispatchMode::DeferToClient {
+            den_core::ArmatureAvailability::Connected
+        } else {
+            den_core::ArmatureAvailability::Absent
+        };
+        let effective_policy =
+            den_core::EffectivePolicy::compile(self.profile, governance, armature);
+        let focus_promotion = canonical == DEN_TASK_FOCUS;
         let context = self.server_tool_context();
+        let origin_run_id = self.run_id.clone();
         let pool = self.pool.clone();
         let config = self.config.clone();
-        let stores = self.stores.clone();
         let store = self.store.clone();
         let session_key = self.session_key.clone();
         let profile = self.profile;
@@ -909,7 +886,16 @@ impl SessionTrackingStream {
                 tool_output_read_result(&pool, bear_id, &client_session_id, args).await
             } else {
                 invoker
-                    .invoke(&pool, config.as_ref(), &stores, &canonical, args, context)
+                    .invoke(crate::native_runtime::RuntimeToolInvocation {
+                        tool_name: canonical.clone(),
+                        arguments: args,
+                        context,
+                        effective_policy,
+                        origin_run_id: origin_run_id
+                            .map(crate::turn_ids::TurnRunId::new)
+                            .transpose()?,
+                        tool_call_id: crate::turn_ids::ToolCallId::new(call.id.clone())?,
+                    })
                     .await
             };
             let content = match result {
@@ -1069,9 +1055,31 @@ impl SessionTrackingStream {
                 .await?;
                 session.cached_activity_plan_projection =
                     task_context.cached_activity_plan_projection.clone();
+                let focused_orientation = if focus_promotion && !observation.failed {
+                    Some(task_context.focused_orientation().ok_or_else(|| {
+                        DenError::ValidationError(
+                            "focus_current_task completed without an actionable selected task"
+                                .to_string(),
+                        )
+                    })?)
+                } else {
+                    None
+                };
+                if let Some(orientation) = focused_orientation.as_ref() {
+                    session.objective_orientation = orientation.clone();
+                    session.step = 0;
+                    session.turn_budget_state = Default::default();
+                    session.checkpoint_state = Default::default();
+                }
                 store.update(&session_key, |stored_session| {
                     stored_session.cached_activity_plan_projection =
                         task_context.cached_activity_plan_projection.clone();
+                    if let Some(orientation) = focused_orientation {
+                        stored_session.objective_orientation = orientation;
+                        stored_session.step = 0;
+                        stored_session.turn_budget_state = Default::default();
+                        stored_session.checkpoint_state = Default::default();
+                    }
                 });
                 let checkpoint_request = Self::checkpoint_request_for_tool_observation(
                     &session,
@@ -2276,6 +2284,13 @@ impl Stream for SessionTrackingStream {
                 Poll::Ready(Ok((call, message, continuation))) => {
                     self.pending_server_tool = None;
                     self.tool_calls.remove(&call.id);
+                    if is_focus_tool(&call.function.name)
+                        && !crate::agent_loop::tool_result_content_indicates_error(
+                            message.content.as_deref(),
+                        )
+                    {
+                        self.may_define_task = true;
+                    }
                     self.pending_server_tool_stream = Some(continuation);
                     self.pending_pause_after_tool =
                         Self::plan_update_event_from_tool_message(&message).or_else(|| {
@@ -2757,7 +2772,7 @@ mod tests {
         llm::{ChatMessage, ChatToolCall, ChatToolCallFunction},
     };
     use den_core::config::Config;
-    use den_memory::MemoryStoreManager;
+
     use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
     use den_service::bears::BearProfile;
     use futures::StreamExt;
@@ -3026,13 +3041,9 @@ mod tests {
     }
 
     #[test]
-    fn focus_tool_detection_only_matches_the_canonical_provider() {
+    fn focus_helpers_distinguish_focus_tools_and_docket_orientations() {
         assert!(is_focus_tool(DEN_TASK_FOCUS_PROVIDER));
         assert!(!is_focus_tool("select_current_task"));
-    }
-
-    #[test]
-    fn focus_task_id_extracts_docket_task_from_oriented_and_execution_modes() {
         let task_id = Uuid::new_v4().to_string();
         let task = OrientationTaskRef::DocketTask {
             job_id: Some(Uuid::new_v4().to_string()),
@@ -3335,7 +3346,6 @@ mod tests {
             session.client_session_id.clone(),
             session.request_id.clone(),
             Arc::new(Config::test_stub()),
-            MemoryStoreManager::new(&Config::test_stub()),
             session.profile,
             NativeToolDispatchMode::DeferToClient,
         )
@@ -4145,7 +4155,6 @@ mod tests {
             "client-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
-            MemoryStoreManager::new(&den_core::config::Config::test_stub()),
             BearProfile::Pair,
             NativeToolDispatchMode::ServerSideInProcess,
         );
@@ -4187,7 +4196,6 @@ mod tests {
             "client-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
-            MemoryStoreManager::new(&den_core::config::Config::test_stub()),
             BearProfile::Pair,
             NativeToolDispatchMode::ServerSideInProcess,
         );
@@ -4230,7 +4238,6 @@ mod tests {
             "client-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
-            MemoryStoreManager::new(&den_core::config::Config::test_stub()),
             BearProfile::Pair,
             NativeToolDispatchMode::DeferToClient,
         );
@@ -4396,7 +4403,6 @@ mod tests {
             session.client_session_id.clone(),
             session.request_id.clone(),
             Arc::new(Config::test_stub()),
-            MemoryStoreManager::new(&Config::test_stub()),
             BearProfile::Pair,
             NativeToolDispatchMode::DeferToClient,
         );
@@ -4430,64 +4436,11 @@ mod tests {
             session.client_session_id.clone(),
             session.request_id.clone(),
             Arc::new(Config::test_stub()),
-            MemoryStoreManager::new(&Config::test_stub()),
             BearProfile::Work,
             NativeToolDispatchMode::DeferToClient,
         );
 
         assert_eq!(stream.server_tool_context().work_run_id, Some(work_run_id));
-    }
-
-    #[tokio::test]
-    async fn server_tool_continuation_cleanup_removes_recent_tool_chain() {
-        let bear_id = uuid::Uuid::new_v4();
-        let mut session = test_session("den-conv-test:client-test", bear_id);
-        session.messages.push(ChatMessage {
-            role: "user".to_string(),
-            content: Some("continue".to_string()),
-            tool_call_id: None,
-            name: None,
-            tool_calls: None,
-        });
-        session.messages.push(ChatMessage {
-            role: "assistant".to_string(),
-            content: None,
-            tool_call_id: None,
-            name: None,
-            tool_calls: Some(vec![sample_tool_call("call_1")]),
-        });
-        session.messages.push(ChatMessage {
-            role: "tool".to_string(),
-            content: Some("{}".to_string()),
-            tool_call_id: Some("call_1".to_string()),
-            name: Some("memory_read".to_string()),
-            tool_calls: None,
-        });
-        let store = AgentLoopSessionStore::default();
-        store.insert(session.clone());
-        let stream = SessionTrackingStream::new(
-            Box::pin(futures::stream::empty()),
-            &session,
-            store.clone(),
-            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop")
-                .expect("lazy test pool"),
-            bear_id,
-            "test-bear".to_string(),
-            Some(7),
-            "den-conv-test".to_string(),
-            "client-test".to_string(),
-            Some("request-test".to_string()),
-            Arc::new(den_core::config::Config::test_stub()),
-            MemoryStoreManager::new(&den_core::config::Config::test_stub()),
-            BearProfile::Pair,
-            NativeToolDispatchMode::DeferToClient,
-        );
-
-        stream.remove_recent_server_tool_chain_from_session("call_1");
-
-        let repaired = store.get(&session.session_key).expect("session");
-        assert_eq!(repaired.messages.len(), 1);
-        assert_eq!(repaired.messages[0].role, "user");
     }
 
     #[tokio::test]
@@ -4509,7 +4462,6 @@ mod tests {
             "client-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
-            MemoryStoreManager::new(&den_core::config::Config::test_stub()),
             BearProfile::Pair,
             NativeToolDispatchMode::DeferToClient,
         );
@@ -4547,7 +4499,6 @@ mod tests {
             "client-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
-            MemoryStoreManager::new(&den_core::config::Config::test_stub()),
             BearProfile::Pair,
             NativeToolDispatchMode::DeferToClient,
         );
@@ -4589,7 +4540,6 @@ mod tests {
             "client-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
-            MemoryStoreManager::new(&den_core::config::Config::test_stub()),
             BearProfile::Pair,
             NativeToolDispatchMode::DeferToClient,
         );
@@ -4663,7 +4613,6 @@ mod tests {
             "client-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
-            MemoryStoreManager::new(&den_core::config::Config::test_stub()),
             BearProfile::Pair,
             NativeToolDispatchMode::DeferToClient,
         );
@@ -4721,7 +4670,6 @@ mod tests {
             "client-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
-            MemoryStoreManager::new(&den_core::config::Config::test_stub()),
             BearProfile::Pair,
             NativeToolDispatchMode::DeferToClient,
         );
@@ -4786,7 +4734,6 @@ mod tests {
             "client-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
-            MemoryStoreManager::new(&den_core::config::Config::test_stub()),
             BearProfile::Pair,
             NativeToolDispatchMode::DeferToClient,
         );
@@ -4839,7 +4786,6 @@ mod tests {
             "client-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
-            MemoryStoreManager::new(&den_core::config::Config::test_stub()),
             BearProfile::Pair,
             NativeToolDispatchMode::DeferToClient,
         );
@@ -4896,7 +4842,6 @@ mod tests {
             "client-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
-            MemoryStoreManager::new(&den_core::config::Config::test_stub()),
             BearProfile::Pair,
             NativeToolDispatchMode::DeferToClient,
         );
@@ -4944,7 +4889,6 @@ mod tests {
             "client-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
-            MemoryStoreManager::new(&den_core::config::Config::test_stub()),
             BearProfile::Pair,
             NativeToolDispatchMode::DeferToClient,
         );
@@ -4990,7 +4934,6 @@ mod tests {
             "client-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
-            MemoryStoreManager::new(&den_core::config::Config::test_stub()),
             BearProfile::Pair,
             NativeToolDispatchMode::DeferToClient,
         );
@@ -5030,7 +4973,6 @@ mod tests {
             "client-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
-            MemoryStoreManager::new(&den_core::config::Config::test_stub()),
             BearProfile::Pair,
             NativeToolDispatchMode::DeferToClient,
         );

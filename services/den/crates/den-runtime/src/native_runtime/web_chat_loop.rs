@@ -8,7 +8,6 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
-use den_memory::MemoryStoreManager;
 use den_protocol::{
     RuntimeErrorCategory, RuntimeEventStream, RuntimeSemanticEvent, RuntimeStreamEvent,
     ToolCallFinishStatus,
@@ -46,7 +45,6 @@ const WEB_CHAT_TURN_BUDGET: Duration = Duration::from_mins(2);
 pub struct NativeWebChatLoopRuntime {
     pub pool: PgPool,
     pub config: Arc<Config>,
-    pub stores: MemoryStoreManager,
     pub llm: LlmClient,
     pub session_key: String,
     pub bear_id: Uuid,
@@ -237,7 +235,6 @@ impl NativeWebChatLoopStream {
             runtime.session_id.clone(),
             Some(runtime.request_id.clone()),
             runtime.config.clone(),
-            runtime.stores.clone(),
             BearProfile::Chat,
             NativeToolDispatchMode::ServerSideInProcess,
         ))
@@ -620,14 +617,18 @@ async fn execute_one_web_chat_den_tool(
         };
         match runtime
             .tool_invoker
-            .invoke(
-                &runtime.pool,
-                runtime.config.as_ref(),
-                &runtime.stores,
-                &canonical,
-                args,
-                tool_context,
-            )
+            .invoke(crate::native_runtime::RuntimeToolInvocation {
+                tool_name: canonical,
+                arguments: args,
+                context: tool_context,
+                effective_policy: den_core::EffectivePolicy::compile(
+                    den_core::TrustProfile::Chat,
+                    den_core::Governance::Interactive,
+                    den_core::ArmatureAvailability::Absent,
+                ),
+                origin_run_id: None,
+                tool_call_id: crate::turn_ids::ToolCallId::new(call.id.clone())?,
+            })
             .await
         {
             Ok(value) => serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string()),

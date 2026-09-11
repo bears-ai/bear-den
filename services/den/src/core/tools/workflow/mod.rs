@@ -44,7 +44,7 @@ use den_runtime::runtime_exception_events::{
 };
 use den_runtime::{
     agent_loop::{LedgerEvidenceRef, LoopControlDecisionKind, LoopControlLedgerInput},
-    current_task::select_pair_current_task,
+    current_task::select_session_current_task,
 };
 use den_service::bears::db::get_bear;
 use den_service::{
@@ -52,6 +52,21 @@ use den_service::{
 };
 
 const FOCUSED_CONVERSATION_TITLE_MAX_CHARS: usize = 120;
+
+fn effective_tool_policy(
+    role: BearProfile,
+    context: &DenToolInvocationContext,
+) -> den_core::EffectivePolicy {
+    den_core::EffectivePolicy::compile(
+        role,
+        den_core::Governance::Interactive,
+        if context.client_session_id.is_some() {
+            den_core::ArmatureAvailability::Connected
+        } else {
+            den_core::ArmatureAvailability::Absent
+        },
+    )
+}
 
 /// Chat-facing identity for a Docket resource. `id` remains the only value
 /// callers may pass back to a tool; `display` is deliberately presentation
@@ -660,7 +675,7 @@ pub(crate) async fn get_task_list_status(
     // generic task list defaults to root tasks and hides an attached child task.
     let tasks = if let Some(session_anchor_id) = session_anchor_id {
         PgDocketService::from_pool(pool)
-            .list_pair_session_tasks(context.bear_id, session_anchor_id)
+            .list_session_tasks(context.bear_id, session_anchor_id)
             .await?
     } else {
         Vec::new()
@@ -734,37 +749,36 @@ pub(crate) async fn update_task_list(
     arguments: Value,
     _activity_payload: fn(Option<&docket::TaskListLocalProjection>) -> Value,
 ) -> Result<Value, CustomError> {
-    if role != BearProfile::Pair {
-        return Err(DenError::ValidationError(
-            "update_task_list activation is available only in Pair stance".to_string(),
-        )
-        .into());
-    }
+    let policy = effective_tool_policy(role, context);
+    policy
+        .capabilities
+        .require(den_core::BearCapability::SelectSessionTask)?;
     let args: DocketTaskSelectArguments = serde_json::from_value(arguments)?;
     let task_id = args.task_id.ok_or_else(|| {
         DenError::ValidationError(
-            "update_task_list needs task_id to activate a Pair task list".to_string(),
+            "update_task_list needs task_id to activate a session task list".to_string(),
         )
     })?;
     let client_session_id = context.client_session_id.as_deref().ok_or_else(|| {
         DenError::ValidationError("update_task_list needs the current client session".to_string())
     })?;
-    let selection = select_pair_current_task(
+    let selection = select_session_current_task(
         pool,
         context.user_id,
         context.bear_id,
         client_session_id,
         Some(task_id),
+        &policy.capabilities,
     )
     .await?;
     let task_list = selection.task_list.ok_or_else(|| {
-        DenError::ValidationError("Pair task list disappeared during activation".to_string())
+        DenError::ValidationError("session task list disappeared during activation".to_string())
     })?;
     let phase = task_list.status.clone();
     Ok(json!({
         "domain": "activity",
-        "content": "Activated the Pair task list.",
-        "summary": "Activated the Pair task list and selected its current task.",
+        "content": "Activated the session task list.",
+        "summary": "Activated the session task list and selected its current task.",
         "task_id": task_id,
         "phase": phase,
         "status": task_list.status,
@@ -1063,7 +1077,7 @@ fn docket_task_create_summary(
 
     if defaulted_to_pair_task_tree {
         return format!(
-            "Task '{}' was created in the current Pair task tree.",
+            "Task '{}' was created in the current session task tree.",
             task.title
         );
     }
@@ -1088,7 +1102,7 @@ fn docket_tasks_summary_for_scope(
         return format!("Found {count} in Docket Job {job_id}.");
     }
     if defaulted_to_pair_task_tree {
-        return format!("Found {count} in the current Pair task tree.");
+        return format!("Found {count} in the current session task tree.");
     }
     docket_tasks_summary(tasks)
 }
@@ -1229,7 +1243,7 @@ async fn session_anchored_task_list_projection(
 ) -> Result<Option<TaskListProjection>, CustomError> {
     // Keep cached activity plans consistent with current-task selection.
     let tasks = PgDocketService::from_pool(pool)
-        .list_pair_session_tasks(context.bear_id, pair_session_id)
+        .list_session_tasks(context.bear_id, pair_session_id)
         .await?;
     let selected_task_id = if let Some(client_session_id) = context.client_session_id.as_deref() {
         client_sessions::find_for_user_bear_session_id(
@@ -1748,12 +1762,10 @@ pub(crate) async fn execute_job(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketJobExecuteArguments = serde_json::from_value(arguments)?;
-    if role != BearProfile::Pair {
-        return Err(DenError::Authorization(
-            "execute_job is currently limited to pair stance".to_string(),
-        )
-        .into());
-    }
+    let policy = effective_tool_policy(role, context);
+    policy
+        .capabilities
+        .require(den_core::BearCapability::ExecuteJob)?;
     if let Some(mode_label) = context
         .session_policy
         .as_ref()
@@ -1779,7 +1791,9 @@ pub(crate) async fn execute_job(
             source_client_session_id: context.client_session_id.clone(),
         })
         .await?;
-    let pair_binding = bind_selected_pair_task_to_current_session(pool, context, &outcome).await?;
+    let pair_binding =
+        bind_selected_task_to_current_session(pool, context, &outcome, &policy.capabilities)
+            .await?;
     let status_report = docket_job_status_report(&outcome.job);
     update_focused_conversation_title(pool, context, &outcome.job, &status_report).await?;
     let run = outcome.job.current_run.as_ref();
@@ -1810,12 +1824,10 @@ pub(crate) async fn reconcile_job_execution(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketJobExecuteArguments = serde_json::from_value(arguments)?;
-    if role != BearProfile::Pair {
-        return Err(DenError::Authorization(
-            "reconcile_job_execution is currently limited to pair stance".to_string(),
-        )
-        .into());
-    }
+    let policy = effective_tool_policy(role, context);
+    policy
+        .capabilities
+        .require(den_core::BearCapability::ExecuteJob)?;
     let outcome = PgDocketService::from_pool(pool)
         .reconcile_execution(DocketJobExecuteRequest {
             bear_id: context.bear_id,
@@ -1828,7 +1840,9 @@ pub(crate) async fn reconcile_job_execution(
             source_client_session_id: context.client_session_id.clone(),
         })
         .await?;
-    let pair_binding = bind_selected_pair_task_to_current_session(pool, context, &outcome).await?;
+    let pair_binding =
+        bind_selected_task_to_current_session(pool, context, &outcome, &policy.capabilities)
+            .await?;
     let status_report = docket_job_status_report(&outcome.job);
     update_focused_conversation_title(pool, context, &outcome.job, &status_report).await?;
     let run = outcome.job.current_run.as_ref();
@@ -1848,12 +1862,13 @@ pub(crate) async fn reconcile_job_execution(
 }
 
 /// Keep hosted Docket execution aligned with the BearWire endpoint: a task
-/// selected for Pair execution must be attached to, and current in, this
+/// selected for focused execution must be attached to, and current in, this
 /// client session before the result is reported to the model.
-async fn bind_selected_pair_task_to_current_session(
+async fn bind_selected_task_to_current_session(
     pool: &PgPool,
     context: &DenToolInvocationContext,
     outcome: &docket::DocketJobExecuteOutcome,
+    capabilities: &den_core::CapabilitySet,
 ) -> Result<Value, CustomError> {
     if !matches!(
         outcome.control.next_action,
@@ -1861,13 +1876,13 @@ async fn bind_selected_pair_task_to_current_session(
     ) {
         return Ok(json!({
             "status": "not_applicable",
-            "reason": "Docket did not select a Pair task.",
+            "reason": "Docket did not select a session task.",
         }));
     }
     let Some(task_id) = outcome.control.task.selected_task_id else {
         return Ok(json!({
             "status": "not_applicable",
-            "reason": "Docket did not select a Pair task.",
+            "reason": "Docket did not select a session task.",
         }));
     };
     let Some(client_session_id) = context.client_session_id.as_deref() else {
@@ -1887,14 +1902,15 @@ async fn bind_selected_pair_task_to_current_session(
     .await?
     .ok_or_else(|| CustomError::NotFound("client session not found".to_string()))?;
     PgDocketService::from_pool(pool)
-        .attach_task_to_pair_session(context.bear_id, task_id, session.id)
+        .attach_task_to_session(context.bear_id, task_id, session.id)
         .await?;
-    select_pair_current_task(
+    select_session_current_task(
         pool,
         context.user_id,
         context.bear_id,
         client_session_id,
         Some(task_id),
+        capabilities,
     )
     .await?;
     Ok(json!({
@@ -2017,7 +2033,7 @@ pub(crate) async fn create_task(
         .await?;
     if let Some(session_id) = pair_session_attachment_id {
         service
-            .attach_task_to_pair_session(context.bear_id, task.id, session_id)
+            .attach_task_to_session(context.bear_id, task.id, session_id)
             .await?;
     }
     if job_id.is_none() && pair_session_id.is_some() {
@@ -2101,24 +2117,23 @@ pub(crate) async fn select_current_task(
     role: BearProfile,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    if role != BearProfile::Pair {
-        return Err(DenError::ValidationError(
-            "select_current_task is available only in Pair stance".to_string(),
-        )
-        .into());
-    }
+    let policy = effective_tool_policy(role, context);
+    policy
+        .capabilities
+        .require(den_core::BearCapability::SelectSessionTask)?;
     let args: DocketTaskSelectArguments = serde_json::from_value(arguments)?;
     let client_session_id = context.client_session_id.as_deref().ok_or_else(|| {
         DenError::ValidationError(
             "select_current_task needs the current client session".to_string(),
         )
     })?;
-    match den_runtime::current_task::select_pair_current_task(
+    match den_runtime::current_task::select_session_current_task(
         pool,
         context.user_id,
         context.bear_id,
         client_session_id,
         args.task_id,
+        &policy.capabilities,
     )
     .await
     {
@@ -2127,7 +2142,7 @@ pub(crate) async fn select_current_task(
             "status": "selected",
             "current_task_id": args.task_id,
             "task_list": selection.task_list,
-            "summary": if args.task_id.is_some() { "Selected the current Pair task." } else { "Cleared the current Pair task." },
+            "summary": if args.task_id.is_some() { "Selected the current session task." } else { "Cleared the current session task." },
         })),
         Err(CustomError::ValidationError(message)) => Ok(json!({
             "domain": "docket",
@@ -2424,7 +2439,7 @@ pub(crate) async fn update_current_task_status(
                     )
                     .await
                     {
-                        tracing::warn!(task_id = %args.task_id, error = %error, "failed to record Pair task settlement in loop-control ledger");
+                        tracing::warn!(task_id = %args.task_id, error = %error, "failed to record session task settlement in loop-control ledger");
                     }
                 }
             }
@@ -2926,7 +2941,7 @@ mod test {
 
         let summary = docket_task_create_summary(&task, None, true, false);
 
-        assert!(summary.contains("current Pair task tree"));
+        assert!(summary.contains("current session task tree"));
         assert!(!summary.contains("Docket Job"));
     }
 

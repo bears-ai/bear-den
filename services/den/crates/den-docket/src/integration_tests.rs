@@ -7,8 +7,9 @@ use crate::{
     docket_task_status_from_task_list_item_status, task_list_projection_from_docket_job,
     DocketCommitPolicy, DocketCriterionKind, DocketCriterionStateUpdate, DocketEffortHint,
     DocketEntryCreate, DocketEntryKind, DocketEntryListFilter, DocketEntryPromotion,
-    DocketEntryScope, DocketExecutionAttemptAuthorize, DocketExecutionAttemptOwner,
-    DocketExecutionTaskSettlement, DocketJobCreate, DocketJobCriterionInput,
+    DocketEntryScope, DocketExecutionAttemptAuthorize, DocketExecutionBindingKind,
+    DocketExecutionHost, DocketExecutionHostKind, DocketExecutionTaskSettlement,
+    DocketFocusedExecutionBinding, DocketJobCreate, DocketJobCriterionInput,
     DocketJobExecuteRequest, DocketJobOverlapResolution, DocketService,
     DocketSessionTaskSettlement, DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskDifficulty,
     DocketTaskInput, DocketTaskKind, DocketTaskListFilter, DocketTaskRunStateUpdate,
@@ -39,8 +40,8 @@ pub(super) async fn live_pair_attempt(
     pair_session_id: &str,
 ) -> Option<(Uuid, Uuid, String)> {
     sqlx::query_as(
-        "SELECT task_id, pair_run_id, state FROM docket_execution_attempts
-         WHERE bear_id = $1 AND owner_kind = 'pair' AND pair_session_id = $2
+        "SELECT task_id, host_run_id, state FROM docket_execution_attempts
+         WHERE bear_id = $1 AND binding_kind = 'client_session' AND binding_id = $2
            AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')
          ORDER BY updated_at DESC LIMIT 1",
     )
@@ -280,7 +281,7 @@ async fn creates_session_anchored_task_without_job() {
 
     assert_eq!(task.job_id, None);
     assert!(service
-        .list_pair_session_tasks(bear_id, pair_session_id)
+        .list_session_tasks(bear_id, pair_session_id)
         .await
         .expect("list attached tasks")
         .iter()
@@ -473,17 +474,17 @@ async fn pair_task_attachment_is_reassignable_within_a_bear_and_released_on_sett
         .await
         .expect("attach durable job to first Pair session");
     assert!(service
-        .list_pair_session_tasks(bear_id, first_session)
+        .list_session_tasks(bear_id, first_session)
         .await
         .expect("project first Pair session")
         .iter()
         .any(|task| task.task.id == task_id));
     service
-        .attach_task_to_pair_session(bear_id, task_id, second_session)
+        .attach_task_to_session(bear_id, task_id, second_session)
         .await
         .expect("same Bear can recover a durable task from another Pair session");
     assert!(service
-        .list_pair_session_tasks(bear_id, second_session)
+        .list_session_tasks(bear_id, second_session)
         .await
         .expect("project recovered Pair session")
         .iter()
@@ -505,7 +506,7 @@ async fn pair_task_attachment_is_reassignable_within_a_bear_and_released_on_sett
         .await
         .expect("settle attached task releases Pair attachment");
     assert!(service
-        .list_pair_session_tasks(bear_id, first_session)
+        .list_session_tasks(bear_id, first_session)
         .await
         .expect("project released Pair session")
         .iter()
@@ -530,16 +531,20 @@ async fn bear_can_cancel_orphaned_docket_run_and_release_its_pair_claim() {
         .authorize_execution_attempt(DocketExecutionAttemptAuthorize {
             bear_id,
             task_id: created.tasks[0].id,
-            owner: DocketExecutionAttemptOwner::Pair {
-                session_id: session_id.clone(),
-                pair_run_id: "defunct-pair-run".to_string(),
+            binding: DocketFocusedExecutionBinding {
+                kind: DocketExecutionBindingKind::ClientSession,
+                id: session_id.clone(),
+            },
+            host: DocketExecutionHost {
+                kind: DocketExecutionHostKind::TurnRun,
+                run_id: "defunct-turn-run".to_string(),
             },
             authorization_key: Uuid::new_v4(),
         })
         .await
         .expect("create original Pair execution claim");
     let live_attempt = sqlx::query_scalar!(
-        "SELECT EXISTS(SELECT 1 FROM docket_execution_attempts WHERE bear_id = $1 AND pair_session_id = $2 AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')) AS \"exists!: bool\"",
+        "SELECT EXISTS(SELECT 1 FROM docket_execution_attempts WHERE bear_id = $1 AND binding_id = $2 AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')) AS \"exists!: bool\"",
         bear_id,
         &session_id,
     )
@@ -557,7 +562,7 @@ async fn bear_can_cancel_orphaned_docket_run_and_release_its_pair_claim() {
         Some("cancelled")
     );
     let claim_released = sqlx::query_scalar!(
-        "SELECT NOT EXISTS(SELECT 1 FROM docket_execution_attempts WHERE bear_id = $1 AND pair_session_id = $2 AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')) AS \"released!: bool\"",
+        "SELECT NOT EXISTS(SELECT 1 FROM docket_execution_attempts WHERE bear_id = $1 AND binding_id = $2 AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')) AS \"released!: bool\"",
         bear_id,
         &session_id,
     )

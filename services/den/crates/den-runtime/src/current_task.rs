@@ -1,3 +1,4 @@
+use den_core::{BearCapability, CapabilitySet};
 use den_docket::{
     task_list_projection_from_session_tasks_with_current_task, DocketService, PgDocketService,
     TaskListItemStatus, TaskListProjection,
@@ -10,12 +11,12 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
-pub struct PairCurrentTaskSelection {
+pub struct SessionCurrentTaskSelection {
     pub title: Option<String>,
     pub task_list: Option<TaskListProjection>,
 }
 
-pub async fn preview_pair_current_task_selection(
+pub async fn preview_session_current_task_selection(
     pool: &PgPool,
     user_id: i32,
     bear_id: Uuid,
@@ -27,7 +28,7 @@ pub async fn preview_pair_current_task_selection(
             .await?
             .ok_or_else(|| CustomError::NotFound("client session not found".to_string()))?;
     let tasks = PgDocketService::from_pool(pool)
-        .list_pair_session_tasks(bear_id, session.id)
+        .list_session_tasks(bear_id, session.id)
         .await?;
     actionable_task_title(
         bear_id,
@@ -94,21 +95,23 @@ fn actionable_task_title(
         })
 }
 
-/// Canonical Pair-session current-task mutation. All client and model transports
+/// Canonical client-session current-task mutation. All client and model transports
 /// must use this operation rather than writing `client_sessions.current_task_id`.
-pub async fn select_pair_current_task(
+pub async fn select_session_current_task(
     pool: &PgPool,
     user_id: i32,
     bear_id: Uuid,
     client_session_id: &str,
     task_id: Option<Uuid>,
-) -> Result<PairCurrentTaskSelection, CustomError> {
+    capabilities: &CapabilitySet,
+) -> Result<SessionCurrentTaskSelection, CustomError> {
+    capabilities.require(BearCapability::SelectSessionTask)?;
     let session =
         client_sessions::find_for_user_bear_session_id(pool, user_id, bear_id, client_session_id)
             .await?
             .ok_or_else(|| CustomError::NotFound("client session not found".to_string()))?;
     let tasks = PgDocketService::from_pool(pool)
-        .list_pair_session_tasks(bear_id, session.id)
+        .list_session_tasks(bear_id, session.id)
         .await?;
     let selected_title = task_id
         .map(|task_id| {
@@ -153,7 +156,7 @@ pub async fn select_pair_current_task(
         client_session_id,
         task_list.clone(),
     );
-    Ok(PairCurrentTaskSelection {
+    Ok(SessionCurrentTaskSelection {
         title: selected_title,
         task_list,
     })

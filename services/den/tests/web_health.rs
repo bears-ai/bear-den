@@ -53,10 +53,15 @@ async fn api_app() -> axum::Router {
         .await
         .expect("tower-sessions postgres migrate");
     let memory_stores = den_memory::MemoryStoreManager::new(config.as_ref());
-    api::create_api_app(pool, store, config, memory_stores, Vec::new())
+    let state = den_service::DenState::new(
+        pool,
+        config.clone(),
+        Arc::new(den_service::bifrost::BifrostClient::new(config.as_ref())),
+        memory_stores,
+    );
+    api::create_api_app(state, store, Vec::new())
         .await
         .expect("build api router")
-        .0
 }
 
 #[tokio::test]

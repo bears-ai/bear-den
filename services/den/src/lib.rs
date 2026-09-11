@@ -137,14 +137,6 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
 
     init_tracing()?;
 
-    // Inject the concrete builtin-Den-tool invoker into the API/armature edges. The edge
-    // (den-api) depends only on the `RuntimeToolInvoker` trait; the den-side tool
-    // composition lives here in the binary (`core::tools`), so we install it at the
-    // composition root before any request can execute a tool.
-    den_runtime::native_runtime::set_tool_invoker(Arc::new(
-        crate::core::tools::runtime_invoker::DenRuntimeToolInvoker,
-    ));
-
     let build = crate::build_info::snapshot();
     tracing::info!(
         service = build.service,
@@ -224,6 +216,22 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
         }
         ensure_database_schema_supported(&sqlx_pool).await?;
 
+        let den_state = den_service::DenState::new(
+            sqlx_pool.clone(),
+            config.clone(),
+            Arc::new(den_service::bifrost::BifrostClient::new(config.as_ref())),
+            memory_stores.clone(),
+        );
+        den_service::bifrost::spawn_managed_catalog_refresh(
+            den_state.bifrost.clone(),
+            den_state.bifrost_catalog.clone(),
+            config.bifrost_catalog_refresh_secs,
+            config.clone(),
+        );
+        den_runtime::native_runtime::set_tool_invoker(Arc::new(
+            crate::core::tools::runtime_invoker::DenRuntimeToolInvoker::new(den_state.clone()),
+        ));
+
         let session_store = PostgresStore::new(sqlx_pool.clone());
         session_store
             .migrate()
@@ -286,7 +294,6 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
                 e
             })?;
 
-            let config_api = config.clone();
             // Composition root: wire peer HTTP edges together. den-api owns the
             // JSON/REST + OAuth app; BearWire is injected here as a peer router so
             // neither edge depends on the other (ADR-0043).
@@ -294,18 +301,13 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
                 ("/internal", crate::internal_tools::router()),
                 ("/bearwire", den_bearwire::router()),
             ];
-            let (api_app, api_state) = api::create_api_app(
-                sqlx_pool.clone(),
-                session_store.clone(),
-                config_api,
-                memory_stores.clone(),
-                peer_routers,
-            )
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to create API application: {}", e);
-                std::io::Error::other(e.to_string())
-            })?;
+            let api_app =
+                api::create_api_app(den_state.clone(), session_store.clone(), peer_routers)
+                    .await
+                    .map_err(|e| {
+                        tracing::error!("Failed to create API application: {}", e);
+                        std::io::Error::other(e.to_string())
+                    })?;
 
             task_set.spawn(async move {
                 tracing::info!("API service started successfully");
@@ -317,9 +319,10 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
 
             let expiry_token = CancellationToken::new();
             bearwire_expiry_token_opt = Some(expiry_token.clone());
+            let expiry_state = den_state.clone();
             task_set.spawn(async move {
                 den_bearwire::run_client_obligation_expiry_loop(
-                    api_state,
+                    expiry_state,
                     expiry_token,
                     std::time::Duration::from_secs(1),
                 )
@@ -364,19 +367,9 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
 
         if let Some(token) = worker_token_opt.clone() {
             let t = token;
-            let worker_pool = sqlx_pool.clone();
-            let worker_config = config.clone();
-            let worker_stores = memory_stores.clone();
+            let worker_state = den_state.clone();
             task_set.spawn(async move {
                 tracing::info!("Workers: open-session pair reflection loop enabled");
-                let worker_state = den_service::DenState::new(
-                    worker_pool,
-                    worker_config.clone(),
-                    Arc::new(den_service::bifrost::BifrostClient::new(
-                        worker_config.as_ref(),
-                    )),
-                    worker_stores,
-                );
                 den_bearwire::run_open_session_reflection_loop(
                     worker_state,
                     t,

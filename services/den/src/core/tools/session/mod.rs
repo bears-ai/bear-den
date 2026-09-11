@@ -1,4 +1,3 @@
-use serde::Serialize;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
@@ -14,13 +13,12 @@ use den_core::tools::{
         DEN_JOB_CANCEL, DEN_JOB_CANCEL_RUN, DEN_JOB_CREATE, DEN_JOB_EVALUATE_CRITERION,
         DEN_JOB_EXECUTE, DEN_JOB_FIND, DEN_JOB_GET, DEN_JOB_LIST, DEN_JOB_RECONCILE,
         DEN_JOB_SETTLE_TASK, DEN_JOB_UPDATE, DEN_RUNTIME_DIAGNOSTICS_LIST, DEN_TASK_CREATE,
-        DEN_TASK_FIND, DEN_TASK_FOCUS, DEN_TASK_FOCUS_PROVIDER, DEN_TASK_LIST,
-        DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST, DEN_TASK_LISTS_REQUEST_HANDOFF,
-        DEN_TASK_LISTS_UPDATE, DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC, DEN_TASK_SELECT,
-        DEN_TASK_UPDATE, DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_CATALOG, DEN_WORK_DISPATCH,
-        DEN_WORK_PREPARE_RUST_DEPENDENCIES, DEN_WORK_RUN_CANCEL, DEN_WORK_RUN_FIND,
-        DEN_WORK_RUN_GET, DEN_WORK_RUN_LIST, DEN_WORK_RUN_RESOLVE_STALLED,
-        DEN_WORK_SURFACE_CONFIRM,
+        DEN_TASK_FIND, DEN_TASK_LIST, DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST,
+        DEN_TASK_LISTS_REQUEST_HANDOFF, DEN_TASK_LISTS_UPDATE, DEN_TASK_LIST_CHECKOUT,
+        DEN_TASK_LIST_SYNC, DEN_TASK_SELECT, DEN_TASK_UPDATE, DEN_TASK_UPDATE_CURRENT_STATUS,
+        DEN_WORK_CATALOG, DEN_WORK_DISPATCH, DEN_WORK_PREPARE_RUST_DEPENDENCIES,
+        DEN_WORK_RUN_CANCEL, DEN_WORK_RUN_FIND, DEN_WORK_RUN_GET, DEN_WORK_RUN_LIST,
+        DEN_WORK_RUN_RESOLVE_STALLED, DEN_WORK_SURFACE_CONFIRM,
     },
 };
 use den_docket::{DocketService, PgDocketService, TaskListHandoffRequest};
@@ -42,10 +40,6 @@ pub async fn invoke_den_tool(
     arguments: Value,
     context: DenToolInvocationContext,
 ) -> Result<Value, CustomError> {
-    if matches!(tool_name, DEN_TASK_FOCUS | DEN_TASK_FOCUS_PROVIDER) {
-        return Err(focus_current_task_containment_error());
-    }
-
     if tool_name == DEN_WORK_PREPARE_RUST_DEPENDENCIES {
         let arguments: PrepareRustDependenciesArguments = serde_json::from_value(arguments)
             .map_err(|error| CustomError::ValidationError(error.to_string()))?;
@@ -163,34 +157,6 @@ pub async fn invoke_den_tool(
     den_core::tools::dispatch::invoke_den_tool(&ctx, tool_name, arguments, context)
         .await
         .map_err(CustomError::from)
-}
-
-#[derive(Serialize)]
-struct FocusCurrentTaskContainmentDiagnostic {
-    code: &'static str,
-    component: &'static str,
-    operation: &'static str,
-    reason: &'static str,
-    retryable: bool,
-    mutation_applied: bool,
-    message: &'static str,
-}
-
-fn focus_current_task_containment_error() -> CustomError {
-    let diagnostic = FocusCurrentTaskContainmentDiagnostic {
-        code: "focus_current_task_temporarily_unavailable",
-        component: "den.tools.session",
-        operation: DEN_TASK_FOCUS,
-        reason: "canonical_runtime_state_unavailable",
-        retryable: true,
-        mutation_applied: false,
-        message: "Task focus was blocked before lifecycle mutation because canonical runtime state is unavailable to this tool executor.",
-    };
-
-    CustomError::Session(
-        serde_json::to_string(&diagnostic)
-            .expect("static focus-current-task containment diagnostic is serializable"),
-    )
 }
 
 /// Den-owned bridge from an authorized work run to its active sandbox provider.
@@ -516,7 +482,9 @@ impl den_core::tools::conversation::ConversationTitleOps for DenConversationTitl
 
 #[cfg(test)]
 mod native_session_routing_tests {
-    use den_core::tools::descriptor::builtin_den_tool_descriptors_for_pair_acp_surface;
+    use den_core::tools::{
+        constants::DEN_TASK_FOCUS, descriptor::builtin_den_tool_descriptors_for_pair_acp_surface,
+    };
 
     use super::*;
 

@@ -66,15 +66,29 @@ async fn invoke_den_tool(
             "builtin Den tool runtime is not initialized",
         );
     };
+    let tool_call_id = den_runtime::turn_ids::ToolCallId::new(if request_id.is_empty() {
+        format!("internal-{}", uuid::Uuid::new_v4())
+    } else {
+        request_id.clone()
+    })
+    .expect("generated internal tool call id is non-empty");
+    let trust_profile = payload
+        .context
+        .profile
+        .unwrap_or(den_core::TrustProfile::Chat);
     match invoker
-        .invoke(
-            &state.sqlx_pool,
-            state.config.as_ref(),
-            &state.memory_stores,
-            &tool_name,
-            payload.arguments,
-            payload.context,
-        )
+        .invoke(den_runtime::native_runtime::RuntimeToolInvocation {
+            tool_name: tool_name.clone(),
+            arguments: payload.arguments,
+            context: payload.context,
+            effective_policy: den_core::EffectivePolicy::compile(
+                trust_profile,
+                den_core::Governance::Interactive,
+                den_core::ArmatureAvailability::Absent,
+            ),
+            origin_run_id: None,
+            tool_call_id,
+        })
         .await
         .map_err(CustomError::from)
     {

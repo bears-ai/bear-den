@@ -33,7 +33,9 @@ use den_docket::{
 };
 use den_llm::ModelOption;
 use den_protocol::ContextBudgetReport;
-use den_runtime::current_task::{preview_pair_current_task_selection, select_pair_current_task};
+use den_runtime::current_task::{
+    preview_session_current_task_selection, select_session_current_task,
+};
 use den_service::archived_conversations;
 use den_service::{
     artifacts::{self, ArtifactAccessContext},
@@ -273,11 +275,19 @@ struct ChatCurrentTaskCreate {
     title: String,
 }
 
-fn browser_pair_session_id(user_id: i32, bear_id: Uuid, conversation_id: &str) -> String {
+fn browser_client_session_id(user_id: i32, bear_id: Uuid, conversation_id: &str) -> String {
     format!("den-web:{user_id}:{bear_id}:{conversation_id}")
 }
 
-async fn browser_pair_session(
+fn browser_session_policy() -> den_core::EffectivePolicy {
+    den_core::EffectivePolicy::compile(
+        den_core::TrustProfile::Pair,
+        den_core::Governance::Interactive,
+        den_core::ArmatureAvailability::Absent,
+    )
+}
+
+async fn browser_client_session(
     state: &AppState,
     user_id: i32,
     bear: &den_service::bears::Bear,
@@ -288,7 +298,7 @@ async fn browser_pair_session(
             "choose a task after the conversation is created".to_string(),
         ));
     }
-    let session_id = browser_pair_session_id(user_id, bear.id, conversation_id);
+    let session_id = browser_client_session_id(user_id, bear.id, conversation_id);
     client_sessions::upsert_session(
         state.sqlx_pool(),
         client_sessions::UpsertClientSession {
@@ -307,7 +317,7 @@ async fn browser_pair_session(
     .await?;
     client_sessions::find_for_user_bear_session_id(state.sqlx_pool(), user_id, bear.id, &session_id)
         .await?
-        .ok_or_else(|| CustomError::System("browser Pair session was not persisted".to_string()))
+        .ok_or_else(|| CustomError::System("browser client session was not persisted".to_string()))
 }
 
 async fn current_task_bear(
@@ -325,7 +335,7 @@ async fn current_task_bear(
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
     if !bear.work_enabled {
         return Err(CustomError::ValidationError(
-            "Pair task controls are disabled".to_string(),
+            "focused task controls are disabled".to_string(),
         ));
     }
     Ok(bear)
@@ -343,7 +353,7 @@ async fn chat_current_task_get(
         .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
     let conversation_id = normalize_client_conversation_id(q.conversation_id.as_deref())?;
     let bear = current_task_bear(&state, user_id, q.bear_id).await?;
-    let session = browser_pair_session(&state, user_id, &bear, &conversation_id).await?;
+    let session = browser_client_session(&state, user_id, &bear, &conversation_id).await?;
     let tasks = PgDocketService::from_pool(state.sqlx_pool())
         .list_tasks(
             bear.id,
@@ -386,7 +396,7 @@ async fn chat_current_task_create(
         ));
     }
     let bear = current_task_bear(&state, user_id, body.bear_id).await?;
-    let session = browser_pair_session(&state, user_id, &bear, &conversation_id).await?;
+    let session = browser_client_session(&state, user_id, &bear, &conversation_id).await?;
     let service = PgDocketService::from_pool(state.sqlx_pool());
     let task = service
         .create_task(DocketTaskCreate {
@@ -430,8 +440,8 @@ async fn chat_current_task_selection_request(
         .task_id
         .ok_or_else(|| CustomError::ValidationError("task_id is required".to_string()))?;
     let bear = current_task_bear(&state, user_id, body.bear_id).await?;
-    let session = browser_pair_session(&state, user_id, &bear, &conversation_id).await?;
-    let title = preview_pair_current_task_selection(
+    let session = browser_client_session(&state, user_id, &bear, &conversation_id).await?;
+    let title = preview_session_current_task_selection(
         state.sqlx_pool(),
         user_id,
         bear.id,
@@ -462,13 +472,15 @@ async fn chat_current_task_select(
         .task_id
         .ok_or_else(|| CustomError::ValidationError("task_id is required".to_string()))?;
     let bear = current_task_bear(&state, user_id, body.bear_id).await?;
-    let session = browser_pair_session(&state, user_id, &bear, &conversation_id).await?;
-    let result = select_pair_current_task(
+    let session = browser_client_session(&state, user_id, &bear, &conversation_id).await?;
+    let policy = browser_session_policy();
+    let result = select_session_current_task(
         state.sqlx_pool(),
         user_id,
         bear.id,
         &session.client_session_id,
         Some(task_id),
+        &policy.capabilities,
     )
     .await?;
     Ok(Json(json!({
@@ -491,13 +503,15 @@ async fn chat_current_task_clear(
         .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
     let conversation_id = normalize_client_conversation_id(Some(&body.conversation_id))?;
     let bear = current_task_bear(&state, user_id, body.bear_id).await?;
-    let session = browser_pair_session(&state, user_id, &bear, &conversation_id).await?;
-    let result = select_pair_current_task(
+    let session = browser_client_session(&state, user_id, &bear, &conversation_id).await?;
+    let policy = browser_session_policy();
+    let result = select_session_current_task(
         state.sqlx_pool(),
         user_id,
         bear.id,
         &session.client_session_id,
         None,
+        &policy.capabilities,
     )
     .await?;
     Ok(Json(json!({
@@ -1542,15 +1556,15 @@ async fn chat_send_inner(
 }
 
 #[cfg(test)]
-mod browser_pair_session_tests {
-    use super::browser_pair_session_id;
+mod browser_client_session_tests {
+    use super::browser_client_session_id;
     use uuid::Uuid;
 
     #[test]
     fn browser_session_id_is_scoped_to_user_bear_and_conversation() {
         let bear_id = Uuid::from_u128(7);
         assert_eq!(
-            browser_pair_session_id(42, bear_id, "conv-chat_1"),
+            browser_client_session_id(42, bear_id, "conv-chat_1"),
             "den-web:42:00000000-0000-0000-0000-000000000007:conv-chat_1"
         );
     }
