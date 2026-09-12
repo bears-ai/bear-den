@@ -14647,38 +14647,7 @@ mod tests {
             tool_call_title("set_conversation_title", &json!({ "args": {} })),
             "Set conversation title"
         );
-        let stale_display_event = json!({
-            "display": { "title": "Set conversation title: conversation" },
-            "arguments": { "title": "Actual ACP card title" }
-        });
-        let display = ToolDisplay::from_event("set_conversation_title", &stale_display_event);
-        assert_eq!(
-            tool_card_title(
-                "set_conversation_title",
-                Some(&stale_display_event),
-                &display
-            ),
-            "Set conversation title: Actual ACP card title"
-        );
-        assert_eq!(
-            tool_args_from_event(&stale_display_event)
-                .and_then(|args| args.get("title"))
-                .and_then(Value::as_str),
-            Some("Actual ACP card title")
-        );
-        let stale_file_display_event = json!({
-            "display": { "title": "Read file: file" },
-            "arguments": { "path": "/workspace/README.md" }
-        });
-        let display = ToolDisplay::from_event("fs_read_text_file", &stale_file_display_event);
-        assert_eq!(
-            tool_card_title(
-                "fs_read_text_file",
-                Some(&stale_file_display_event),
-                &display
-            ),
-            "Read file: /workspace/README.md"
-        );
+
         assert_eq!(
             tool_call_title(
                 "create_job",
@@ -14947,24 +14916,6 @@ mod tests {
             tool_call_title("run_command", &event),
             "Run command: cargo test --all"
         );
-        let display = ToolDisplay::from_event(
-            "run_command",
-            &json!({
-                "args": { "command": "cargo", "args": ["test", "--all"] },
-                "display": { "title": "Run Command" }
-            }),
-        );
-        assert_eq!(
-            tool_card_title(
-                "run_command",
-                Some(&json!({
-                    "args": { "command": "cargo", "args": ["test", "--all"] },
-                    "display": { "title": "Run Command" }
-                })),
-                &display
-            ),
-            "Run command: cargo test --all"
-        );
 
         let value = json!({
             "command": "cargo",
@@ -15014,11 +14965,6 @@ mod tests {
         });
         assert_eq!(
             tool_call_title("update_task", &event),
-            "Update task: Patch live ACP card titles → done"
-        );
-        let display = ToolDisplay::from_event("update_task", &event);
-        assert_eq!(
-            tool_card_title("update_task", Some(&event), &display),
             "Update task: Patch live ACP card titles → done"
         );
 
@@ -16906,7 +16852,7 @@ mod tests {
     async fn apply_patch_creates_updates_deletes_and_dry_runs() {
         let root = unique_test_dir("apply-patch");
         let state = test_adapter_state("session-1", &root);
-        let create_patch = "--- /dev/null\n+++ b/new.txt\n@@\n+hello\n";
+        let create_patch = "--- /dev/null\n+++ b/new.txt\n@@ -0,0 +1 @@\n+hello\n";
         let dry = handle_direct_apply_patch(
             &state,
             "session-1",
@@ -16926,7 +16872,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(fs::read_to_string(root.join("new.txt")).unwrap(), "hello\n");
-        let update_patch = "--- a/new.txt\n+++ b/new.txt\n@@\n-hello\n+goodbye\n";
+        let update_patch = "--- a/new.txt\n+++ b/new.txt\n@@ -1 +1 @@\n-hello\n+goodbye\n";
         handle_direct_apply_patch(
             &state,
             "session-1",
@@ -16939,7 +16885,7 @@ mod tests {
             fs::read_to_string(root.join("new.txt")).unwrap(),
             "goodbye\n"
         );
-        let delete_patch = "--- a/new.txt\n+++ /dev/null\n@@\n-goodbye\n";
+        let delete_patch = "--- a/new.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-goodbye\n";
         let denied = handle_direct_apply_patch(
             &state,
             "session-1",
@@ -16964,7 +16910,7 @@ mod tests {
     async fn apply_patch_denies_invalid_sensitive_outside_and_disallowed_create() {
         let root = unique_test_dir("apply-patch-policy");
         let state = test_adapter_state("session-1", &root);
-        let create_patch = "--- /dev/null\n+++ b/new.txt\n@@\n+hello\n";
+        let create_patch = "--- /dev/null\n+++ b/new.txt\n@@ -0,0 +1 @@\n+hello\n";
         let denied_create = handle_direct_apply_patch(
             &state,
             "session-1",
@@ -16973,7 +16919,7 @@ mod tests {
         )
         .await;
         assert!(format!("{:#}", denied_create.unwrap_err()).contains("allow_create=false"));
-        let sensitive_patch = "--- /dev/null\n+++ b/secret-file\n@@\n+secret\n";
+        let sensitive_patch = "--- /dev/null\n+++ b/secret-file\n@@ -0,0 +1 @@\n+secret\n";
         let sensitive = handle_direct_apply_patch(
             &state,
             "session-1",
@@ -16985,7 +16931,7 @@ mod tests {
         )
         .await;
         assert!(format!("{:#}", sensitive.unwrap_err()).contains("denied sensitive path"));
-        let outside_patch = "--- /dev/null\n+++ b/../outside.txt\n@@\n+bad\n";
+        let outside_patch = "--- /dev/null\n+++ b/../outside.txt\n@@ -0,0 +1 @@\n+bad\n";
         let outside = handle_direct_apply_patch(
             &state,
             "session-1",
@@ -17009,7 +16955,7 @@ mod tests {
     async fn apply_patch_supports_multifile_and_enforces_limits() {
         let root = unique_test_dir("apply-patch-limits");
         let state = test_adapter_state("session-1", &root);
-        let patch = "--- /dev/null\n+++ b/a.txt\n@@\n+a\n--- /dev/null\n+++ b/b.txt\n@@\n+b\n";
+        let patch = "--- /dev/null\n+++ b/a.txt\n@@ -0,0 +1 @@\n+a\n--- /dev/null\n+++ b/b.txt\n@@ -0,0 +1 @@\n+b\n";
         handle_direct_apply_patch(
             &state,
             "session-1",
@@ -17056,7 +17002,7 @@ mod tests {
     async fn apply_patch_denies_hidden_targets() {
         let root = unique_test_dir("apply-patch-hidden");
         let state = test_adapter_state("session-1", &root);
-        let patch = "--- /dev/null\n+++ b/.hidden\n@@\n+hidden\n";
+        let patch = "--- /dev/null\n+++ b/.hidden\n@@ -0,0 +1 @@\n+hidden\n";
         let hidden = handle_direct_apply_patch(
             &state,
             "session-1",

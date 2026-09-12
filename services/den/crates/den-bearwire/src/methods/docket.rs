@@ -345,6 +345,45 @@ pub async fn docket_jobs_settle_task_result(
             FocusedExecutionTransitionReason::TaskSettled,
         )
         .await;
+        if matches!(
+            &outcome.control.next_action,
+            DocketExecutionNextAction::RecoverBlockedRun | DocketExecutionNextAction::JobCompleted
+        ) {
+            let run_id = &attempt.host.run_id;
+            let terminal_reason = match &outcome.control.next_action {
+                DocketExecutionNextAction::RecoverBlockedRun => "task_blocked",
+                DocketExecutionNextAction::JobCompleted => "job_completed",
+                _ => unreachable!("terminal Docket outcome checked above"),
+            };
+            if den_runtime::turn_runs::complete_run(
+                &state.sqlx_pool,
+                session_id,
+                run_id,
+                bear.id,
+                user_id,
+                Some(terminal_reason),
+                json!({
+                    "outcome": terminal_reason,
+                    "task_id": attempt.task_id,
+                }),
+            )
+            .await?
+            .is_some()
+            {
+                state.publish_bearwire_livestream(
+                    session_id,
+                    json!({
+                        "type": "run.completed",
+                        "scope": "ephemeral",
+                        "run_id": run_id,
+                        "outcome": terminal_reason,
+                    }),
+                );
+            }
+            state.turn_cancellations.cancel_run(session_id, run_id);
+            state.tool_turns.cancel_active_turn(session_id);
+            den_runtime::native_runtime::remove_native_client_run(session_id, run_id);
+        }
     }
     if let (Some(session_id), Some(successor_task_id)) = (
         attempt_session_id.as_deref(),

@@ -1716,7 +1716,7 @@ fn parse_simple_unified_patch(patch: &str) -> Result<Vec<PatchFile>> {
             let old_start = parse_hunk_old_start(lines[idx])?;
             idx += 1;
             let mut hunk_lines = Vec::new();
-            let mut target_has_final_newline = None;
+            let mut target_has_final_newline = is_create.then_some(true);
             let mut last_kind = None;
             while idx < lines.len()
                 && !lines[idx].starts_with("@@ ")
@@ -2279,6 +2279,15 @@ mod tests {
         .expect("valid patch");
         assert_eq!(
             apply_unified_hunks("old\n", &patch[0].hunks).expect("hunk applies"),
+            "new"
+        );
+
+        let create = parse_simple_unified_patch(
+            "--- /dev/null\n+++ b/example.txt\n@@ -0,0 +1 @@\n+new\n\\ No newline at end of file\n",
+        )
+        .expect("valid create patch");
+        assert_eq!(
+            apply_unified_hunks("", &create[0].hunks).expect("create hunk applies"),
             "new"
         );
     }

@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT task_id, host_run_id, fence_epoch FROM docket_execution_attempts WHERE host_run_id = $1 AND state = 'running'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "task_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "host_run_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "fence_epoch",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "ff0ad2d4015335ad4f8258a10233c03e3d9eca923ba724fd2f4247dfee1e4ead"
+}

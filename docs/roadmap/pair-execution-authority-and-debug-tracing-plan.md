@@ -13,6 +13,8 @@
 - Validation exposed and repaired three adjacent single-source-of-truth failures: smoke seeding did not provision required Bear-scoped Bifrost credentials, native materialization discarded explicit conversation model selection by looking up the internal `den-conv-*` ID, and session-task settlement rejected the selected task it was designed to settle.
 - The stale Letta/MemFS/Codepool smoke matrix and redundant direct-inference check were retired. Three broad checks now cover native stack readiness, BearWire authentication, and the full live Armature ACP focus lifecycle.
 - Rollout tooling now shares one response-counting Armature test client, keeps fake BearWire coverage aligned with durable event pages and tool leases, and inspects canonical `turn_*` lifecycle tables without dumping transcript or tool-result bodies.
+- The former three-failure BearWire baseline is eliminated: blocked Docket settlement now atomically blocks the job run, preserves task selection, terminalizes the exact BearWire host when no successor exists, and returns chat control; command-expiry and replay tests now model current process ownership and asynchronous persistence truthfully. The broad BearWire suite passes 124/124.
+- The former seven-failure Armature baseline is also eliminated. Invalid bare-hunk fixtures now use standard unified ranges, created-file patches preserve the conventional final newline unless explicitly negated, and duplicate argument-reconstructed card-title assertions were retired in favor of descriptor-owned display coverage. The broad Armature suite passes 322/322 with two intentionally ignored legacy web-fetch tests.
 
 ### Completed stabilization phase P11
 

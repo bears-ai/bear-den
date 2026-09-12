@@ -50,7 +50,7 @@ use super::model::{
     DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketJobStatus, DocketJobUpdate,
     DocketSessionTaskSettlement, DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskInput,
     DocketTaskListFilter, DocketTaskPlacement, DocketTaskProjection, DocketTaskRow,
-    DocketTaskRunStateRow, DocketTaskUpdate, DocketValidationError, DocketWorkBoundaryCheck,
+    DocketTaskRunStateRow, DocketTaskStatus, DocketTaskUpdate, DocketValidationError, DocketWorkBoundaryCheck,
     TaskListItemStatus, TaskListProjection, TaskListSourceRef, TaskListSyncOutcome,
     TaskListSyncRequest, TaskListSyncState,
 };
@@ -2106,6 +2106,7 @@ pub(super) async fn settle_execution_task(
 ) -> Result<DocketJobExecuteOutcome, DenError> {
     let execution = settlement.execution.clone();
     let status = settlement.status.as_str();
+    let task_blocked = matches!(&settlement.status, DocketTaskStatus::Blocked);
     if !matches!(status, "done" | "blocked" | "cancelled") {
         return Err(DenError::ValidationError(
             "Docket execution settlement requires a terminal task status".to_string(),
@@ -2232,31 +2233,70 @@ pub(super) async fn settle_execution_task(
         .execute(&mut *tx)
         .await?;
     }
-    if let (Some(session_id), Some(user_id)) =
-        (execution.session_id.as_deref(), execution.actor_user_id)
-    {
-        // Do not leave a session claiming the task just settled if the process
-        // stops before `execute_job` derives and projects its successor.
-        tracing::debug!(
-            job_id = %execution.job_id,
-            settled_task_id = %settlement.task_id,
-            client_session_id = session_id,
-            "clearing client session current task during Docket settlement"
-        );
+    if task_blocked {
         sqlx::query!(
-            r#"
-            UPDATE client_sessions
-            SET current_task_id = NULL, updated_at = NOW()
-            WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3
-            "#,
-            user_id,
-            execution.bear_id,
-            session_id,
+            "UPDATE bear_job_runs SET state = 'blocked', updated_at = NOW() WHERE id = $1",
+            run.id,
         )
         .execute(&mut *tx)
         .await?;
     }
+    if !task_blocked {
+        if let (Some(session_id), Some(user_id)) =
+            (execution.session_id.as_deref(), execution.actor_user_id)
+        {
+            // Do not leave a session claiming the task just settled if the process
+            // stops before `execute_job` derives and projects its successor.
+            tracing::debug!(
+                job_id = %execution.job_id,
+                settled_task_id = %settlement.task_id,
+                client_session_id = session_id,
+                "clearing client session current task during Docket settlement"
+            );
+            sqlx::query!(
+                r#"
+            UPDATE client_sessions
+            SET current_task_id = NULL, updated_at = NOW()
+            WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3
+            "#,
+                user_id,
+                execution.bear_id,
+                session_id,
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
+    }
     tx.commit().await?;
+
+    if task_blocked {
+        let job = get_job(pool, execution.bear_id, execution.job_id)
+            .await?
+            .ok_or_else(|| {
+                DenError::NotFound(format!("Docket job not found: {}", execution.job_id))
+            })?;
+        let current_run = job
+            .current_run
+            .as_ref()
+            .expect("blocked job retains its current run");
+        return Ok(DocketJobExecuteOutcome {
+            control: execution_control(
+                current_run,
+                None,
+                None,
+                None,
+                DocketExecutionNextAction::RecoverBlockedRun,
+                false,
+                Some(DocketExecutionReason::JobBlocked),
+            ),
+            job,
+            selected_task_id: None,
+            completed: false,
+            blocked: true,
+            message: "The current task is blocked; recover the blocked Docket run before resuming execution."
+                .to_string(),
+        });
+    }
 
     execute_job(pool, execution).await
 }

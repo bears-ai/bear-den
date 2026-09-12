@@ -1262,6 +1262,15 @@ async fn blocked_focused_task_ends_docket_control_and_returns_to_chat(pool: sqlx
     let state = test_state_with_config(pool.clone(), config);
     let session_id = format!("session-{}", Uuid::new_v4().simple());
     upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    set_next_scripted_runtime_streams(
+        &session_id,
+        vec![
+            ScriptedRuntimeStream::Pending,
+            ScriptedRuntimeStream::Pending,
+            ScriptedRuntimeStream::Pending,
+            ScriptedRuntimeStream::Pending,
+        ],
+    );
     let surface_id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO work_surfaces (id, name, kind, created_by_user_id, created_at, updated_at)\n         VALUES ($1, $2, 'git_workspace', $3, now(), now())",
@@ -2168,8 +2177,8 @@ async fn run_start_second_turn_replays_first_user_and_assistant_once(pool: sqlx:
 
     let resolved = wait_for_resolved_conversation_id(&pool, user_id, &bear_slug, &session_id).await;
 
-    let mut first_turn_ready = false;
-    for _ in 0..50 {
+    let first_turn_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
         let state: Option<String> =
             sqlx::query_scalar("SELECT state FROM turn_runs WHERE run_id = $1 LIMIT 1")
                 .bind(&first_run_id)
@@ -2195,15 +2204,14 @@ async fn run_start_second_turn_replays_first_user_and_assistant_once(pool: sqlx:
         .await
         .expect("count first assistant message");
         if state.as_deref() == Some("completed") && assistant_count == 1 {
-            first_turn_ready = true;
             break;
         }
-        thread::sleep(Duration::from_millis(20));
+        assert!(
+            tokio::time::Instant::now() < first_turn_deadline,
+            "first turn did not complete and persist assistant output before second turn"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    assert!(
-        first_turn_ready,
-        "first turn did not complete and persist assistant output before second turn"
-    );
 
     let second_response = rpc(
         State(state.clone()),
@@ -4169,7 +4177,7 @@ async fn command_obligation_expiry_blocks_automatic_retry_as_outcome_unknown(poo
         None,
         json!({
             "tool_name": "run_command",
-            "den_process_epoch_id": Uuid::new_v4(),
+            "den_process_epoch_id": state.process_epoch_id,
         }),
     )
     .await
