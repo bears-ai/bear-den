@@ -611,18 +611,18 @@ async fn activate_session_task(
 
     let attached = sqlx::query(
         r#"
-        INSERT INTO bear_pair_task_attachments (task_id, session_id)
+        INSERT INTO bear_session_task_attachments (task_id, session_id)
         SELECT id, $3 FROM bear_tasks
         WHERE id = $2 AND bear_id = $1 AND settled_by_entry_id IS NULL
           AND (job_id IS NOT NULL OR EXISTS (
-            SELECT 1 FROM bear_pair_task_attachments existing
+            SELECT 1 FROM bear_session_task_attachments existing
             WHERE existing.task_id = bear_tasks.id
               AND existing.session_id = $3 AND existing.released_at IS NULL
           ))
         ON CONFLICT (task_id) DO UPDATE
         SET session_id = EXCLUDED.session_id, attached_at = NOW(), released_at = NULL
-        WHERE bear_pair_task_attachments.released_at IS NOT NULL
-           OR bear_pair_task_attachments.session_id = EXCLUDED.session_id
+        WHERE bear_session_task_attachments.released_at IS NOT NULL
+           OR bear_session_task_attachments.session_id = EXCLUDED.session_id
         "#,
     )
     .bind(bear_id)

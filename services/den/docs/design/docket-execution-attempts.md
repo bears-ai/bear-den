@@ -65,29 +65,29 @@ Consequently:
 
 ## Migration boundary
 
-The existing table is the migration base; no parallel authority abstraction is
-needed. The current `owner_kind = pair | work` and `pair_session_id`,
-`pair_run_id`, and `work_run_id` columns conflate the durable owner binding with
-a particular host run. Migrate in place in the smallest compatible stages:
+This migration completed in place; no parallel authority abstraction was
+introduced. The former `owner_kind = pair | work`, `pair_session_id`,
+`pair_run_id`, and `work_run_id` representation conflated the durable owner
+binding with a particular host run. The compatible stages were:
 
 1. Add a host-neutral binding identity and kind to execution attempts. The
    binding identifies the stable execution owner (for example a client session
    or Work assignment); host-run correlation is separate, replaceable evidence.
-2. Backfill binding identity from `pair_session_id` and `work_run_id`. Keep the
-   existing columns as compatibility projections while Pair and Work callers
-   move to shared Docket acquisition.
+2. Backfill binding identity from the former `pair_session_id` and `work_run_id`
+   columns. Keep those columns temporarily as compatibility projections while
+   session and Work callers move to shared Docket acquisition.
 3. Move live-owner uniqueness and lookup to the host-neutral binding. Keep
    one-live-attempt-per-task fencing. Acquisition must be transactional and
    idempotent by caller-supplied authorization/acquisition key.
-4. Route Pair `/focus`, model-initiated focus, Work dispatch, settlement,
+4. Route session `/focus`, model-initiated focus, Work dispatch, settlement,
    cancellation, and recovery through the shared service path. Host adapters
    attach or replace their run correlation after acquisition; they do not grant
    authority. Cancellation terminalizes available host evidence and releases
    the stable binding even when that host run or controller is already absent.
-   UI/tool projections read the binding and host fields; legacy Pair columns are
-   compatibility storage, not presentation contracts.
-5. Remove Pair-specific authority columns, indexes, queries, and reconciliation
-   only after no caller treats them as canonical. Preserve terminal attempt and
+   UI/tool projections read the binding and host fields; legacy stance-specific
+   columns were compatibility storage, not presentation contracts.
+5. Remove stance-specific authority columns, indexes, queries, and reconciliation
+   after no caller treats them as canonical. Preserve terminal attempt and
    host-run evidence.
 
 The implementation may initially represent binding kind as the existing Pair

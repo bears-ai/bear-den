@@ -293,10 +293,25 @@ mod tests {
         })
         .await;
 
-        assert_eq!(output.len(), 2);
-        assert!(output.iter().all(|value| {
+        let notifications = output
+            .iter()
+            .filter(|value| {
+                matches!(
+                    value.pointer("/params/side").and_then(Value::as_str),
+                    Some("left" | "right")
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(notifications.len(), 2, "captured output: {output:?}");
+        assert!(notifications.iter().all(|value| {
             value.get("jsonrpc").and_then(Value::as_str) == Some("2.0")
                 && value.get("method").and_then(Value::as_str) == Some("session/update")
         }));
+        assert!(notifications
+            .iter()
+            .any(|value| value.pointer("/params/side") == Some(&json!("left"))));
+        assert!(notifications
+            .iter()
+            .any(|value| value.pointer("/params/side") == Some(&json!("right"))));
     }
 }

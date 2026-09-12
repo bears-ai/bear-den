@@ -1,0 +1,149 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT t.id, t.bear_id, t.job_id, t.parent_task_id, t.sibling_order,\n               t.kind, t.scope, t.title, t.body, t.completion_criteria AS \"completion_criteria: _\",\n               t.difficulty, t.effort_hint, t.routing_strategy, t.expected_context_size,\n               t.result_rollup_policy, t.created_by_role, t.created_by_user_id, t.created_by_agent_id,\n               t.created_in_run_id, t.settled_by_entry_id, t.created_at, t.updated_at\n        FROM bear_tasks t\n        LEFT JOIN bear_session_task_attachments a\n          ON a.task_id = t.id AND a.released_at IS NULL\n        WHERE t.bear_id = $1\n          AND a.session_id = $2\n        ORDER BY t.sibling_order, t.created_at, t.id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "bear_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "job_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "parent_task_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "sibling_order",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 5,
+        "name": "kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "scope",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "body",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "completion_criteria: _",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 10,
+        "name": "difficulty",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "effort_hint",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "routing_strategy",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
+        "name": "expected_context_size",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 14,
+        "name": "result_rollup_policy",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 15,
+        "name": "created_by_role",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 16,
+        "name": "created_by_user_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 17,
+        "name": "created_by_agent_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 18,
+        "name": "created_in_run_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 19,
+        "name": "settled_by_entry_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 20,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 21,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "8e084657f51215c02f847b05ae44fb9f431a8ed6334086cc80e2c75cd0533fb8"
+}

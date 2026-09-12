@@ -1,0 +1,152 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH RECURSIVE task_tree AS (\n            SELECT id, bear_id, job_id, parent_task_id, sibling_order,\n                   kind, scope, title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,\n                   result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id, settled_by_entry_id,\n                   created_at, updated_at\n            FROM bear_tasks t\n            LEFT JOIN bear_session_task_attachments a\n              ON a.task_id = t.id AND a.released_at IS NULL\n            WHERE t.bear_id = $1\n              AND ($2::uuid IS NULL OR t.job_id = $2)\n              AND ($3::uuid IS NULL OR a.session_id = $3)\n              AND (\n                    ($4::uuid IS NULL AND parent_task_id IS NULL)\n                 OR ($4::uuid IS NOT NULL AND parent_task_id = $4)\n              )\n            UNION ALL\n            SELECT child.id, child.bear_id, child.job_id,\n                   child.parent_task_id, child.sibling_order, child.kind, child.scope,\n                   child.title, child.body, child.completion_criteria, child.difficulty, child.effort_hint,\n                   child.routing_strategy, child.expected_context_size, child.result_rollup_policy, child.created_by_role, child.created_by_user_id,\n                   child.created_by_agent_id, child.created_in_run_id, child.settled_by_entry_id, child.created_at,\n                   child.updated_at\n            FROM bear_tasks child\n            JOIN task_tree parent ON child.parent_task_id = parent.id\n        )\n        SELECT id AS \"id!: _\",\n               bear_id AS \"bear_id!: _\",\n               job_id,\n               parent_task_id,\n               sibling_order AS \"sibling_order!: _\",\n               kind AS \"kind!: _\",\n               scope AS \"scope!: _\",\n               title AS \"title!: _\",\n               body AS \"body!: _\",\n               completion_criteria AS \"completion_criteria!: _\",\n               difficulty,\n               effort_hint,\n               routing_strategy AS \"routing_strategy!: _\",\n               expected_context_size,\n               result_rollup_policy,\n               created_by_role AS \"created_by_role!: _\",\n               created_by_user_id,\n               created_by_agent_id,\n               created_in_run_id,\n               settled_by_entry_id,\n               created_at AS \"created_at!: _\",\n               updated_at AS \"updated_at!: _\"\n        FROM task_tree\n        ORDER BY COALESCE(parent_task_id, '00000000-0000-0000-0000-000000000000'::uuid), sibling_order, created_at\n        LIMIT $5\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!: _",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "bear_id!: _",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "job_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "parent_task_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "sibling_order!: _",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 5,
+        "name": "kind!: _",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "scope!: _",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "title!: _",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "body!: _",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "completion_criteria!: _",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 10,
+        "name": "difficulty",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "effort_hint",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "routing_strategy!: _",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
+        "name": "expected_context_size",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 14,
+        "name": "result_rollup_policy",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 15,
+        "name": "created_by_role!: _",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 16,
+        "name": "created_by_user_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 17,
+        "name": "created_by_agent_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 18,
+        "name": "created_in_run_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 19,
+        "name": "settled_by_entry_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 20,
+        "name": "created_at!: _",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 21,
+        "name": "updated_at!: _",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "e72014e6223e0e13bca128b15f0599a9071f38bb394a2ee3294744b6c3f70443"
+}

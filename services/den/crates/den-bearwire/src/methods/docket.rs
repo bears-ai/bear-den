@@ -450,7 +450,7 @@ pub async fn docket_session_tasks_settle_result(
     let task = service
         .settle_session_task(DocketSessionTaskSettlement {
             bear_id: bear.id,
-            pair_session_id: session.id,
+            session_anchor_id: session.id,
             task_id,
             status,
             outcome_disposition,

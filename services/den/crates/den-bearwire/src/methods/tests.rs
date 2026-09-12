@@ -314,7 +314,7 @@ async fn create_session_task(
         .create_task(DocketTaskCreate {
             bear_id,
             job_id: None,
-            pair_session_id: Some(session_anchor_id),
+            session_anchor_id: Some(session_anchor_id),
             parent_task_id: None,
             sibling_order: 0,
             placement: None,
@@ -472,7 +472,7 @@ async fn rpc_value(state: DenState, token: &str, method: &str, params: Value) ->
 
 #[cfg(feature = "test-fixtures")]
 #[sqlx::test(migrations = "../../migrations")]
-async fn focused_pair_loop_continues_across_two_bounded_slices(pool: sqlx::PgPool) {
+async fn focused_session_loop_continues_across_two_bounded_slices(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;
     let token = create_token_for_bear(&pool, user_id, bear_id).await;
@@ -549,7 +549,7 @@ async fn focused_pair_loop_continues_across_two_bounded_slices(pool: sqlx::PgPoo
         .expect("load task");
     let session_anchor: Uuid = sqlx::query_scalar("SELECT id FROM client_sessions WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3")
         .bind(user_id).bind(bear_id).bind(&session_id).fetch_one(&pool).await.expect("load session");
-    sqlx::query("INSERT INTO bear_pair_task_attachments (task_id, session_id) VALUES ($1, $2)")
+    sqlx::query("INSERT INTO bear_session_task_attachments (task_id, session_id) VALUES ($1, $2)")
         .bind(task_id)
         .bind(session_anchor)
         .execute(&pool)
@@ -668,7 +668,7 @@ async fn focused_pair_loop_continues_across_two_bounded_slices(pool: sqlx::PgPoo
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
+async fn docket_execute_starts_focused_session_loop_for_selected_task(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;
     let token = create_token_for_bear(&pool, user_id, bear_id).await;
@@ -787,7 +787,7 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
     .fetch_one(&pool)
     .await
     .expect("load Pair session anchor");
-    sqlx::query("INSERT INTO bear_pair_task_attachments (task_id, session_id) VALUES ($1, $2)")
+    sqlx::query("INSERT INTO bear_session_task_attachments (task_id, session_id) VALUES ($1, $2)")
         .bind(assigned_task_id)
         .bind(session_anchor_id)
         .execute(&pool)
@@ -978,7 +978,7 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
     .expect("load live Pair execution authority");
     assert_eq!(live_attempts, 1);
     let attached_count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM bear_pair_task_attachments WHERE task_id = $1 AND released_at IS NULL",
+        "SELECT count(*) FROM bear_session_task_attachments WHERE task_id = $1 AND released_at IS NULL",
     )
     .bind(Uuid::parse_str(task_id).expect("parse attached task id"))
     .fetch_one(&pool)
@@ -999,7 +999,7 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
         .create_task(DocketTaskCreate {
             bear_id,
             job_id: Some(job.job.id),
-            pair_session_id: None,
+            session_anchor_id: None,
             parent_task_id: Some(Uuid::parse_str(task_id).expect("parse root task id")),
             sibling_order: 0,
             placement: Some(DocketTaskPlacement::Last),
@@ -1364,7 +1364,7 @@ async fn blocked_focused_task_ends_docket_control_and_returns_to_chat(pool: sqlx
     .fetch_one(&pool)
     .await
     .expect("load Pair session anchor");
-    sqlx::query("INSERT INTO bear_pair_task_attachments (task_id, session_id) VALUES ($1, $2)")
+    sqlx::query("INSERT INTO bear_session_task_attachments (task_id, session_id) VALUES ($1, $2)")
         .bind(assigned_task_id)
         .bind(session_anchor_id)
         .execute(&pool)
@@ -1452,7 +1452,7 @@ async fn blocked_focused_task_ends_docket_control_and_returns_to_chat(pool: sqlx
     .expect("load live Pair execution authority");
     assert_eq!(live_attempts, 1);
     let attached_count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM bear_pair_task_attachments WHERE task_id = $1 AND released_at IS NULL",
+        "SELECT count(*) FROM bear_session_task_attachments WHERE task_id = $1 AND released_at IS NULL",
     )
     .bind(Uuid::parse_str(task_id).expect("parse attached task id"))
     .fetch_one(&pool)
@@ -5506,14 +5506,14 @@ async fn work_checkpoint_signals_require_a_fresh_fence(pool: sqlx::PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn work_checkout_preserves_selected_pair_current_task(pool: sqlx::PgPool) {
+async fn work_checkout_preserves_selected_session_current_task(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;
     let token = create_token_for_bear(&pool, user_id, bear_id).await;
-    let pair_session_id = format!("pair-{}", Uuid::new_v4().simple());
-    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &pair_session_id).await;
-    let selected_pair_task_id =
-        create_session_task(&pool, user_id, bear_id, &pair_session_id, "Pair task").await;
+    let client_session_id = format!("session-{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &client_session_id).await;
+    let selected_session_task_id =
+        create_session_task(&pool, user_id, bear_id, &client_session_id, "Session task").await;
     let state = test_state(pool.clone());
     let selected = rpc_value(
         state.clone(),
@@ -5521,14 +5521,14 @@ async fn work_checkout_preserves_selected_pair_current_task(pool: sqlx::PgPool) 
         "session.current_task.select",
         json!({
             "bear_slug": bear_slug,
-            "session_id": pair_session_id,
-            "task_id": selected_pair_task_id,
+            "session_id": client_session_id,
+            "task_id": selected_session_task_id,
         }),
     )
     .await;
     assert_eq!(
         selected["result"]["current_task_id"],
-        selected_pair_task_id.to_string()
+        selected_session_task_id.to_string()
     );
 
     let work_run_id = create_checkoutable_work_run(&pool, user_id, bear_id).await;
@@ -5538,15 +5538,15 @@ async fn work_checkout_preserves_selected_pair_current_task(pool: sqlx::PgPool) 
         .expect("checkout work run");
     assert_eq!(checkout.run.id, work_run_id);
 
-    let pair_session =
-        client_sessions::find_for_user_bear_session_id(&pool, user_id, bear_id, &pair_session_id)
+    let client_session =
+        client_sessions::find_for_user_bear_session_id(&pool, user_id, bear_id, &client_session_id)
             .await
-            .expect("load Pair session")
-            .expect("Pair session exists");
+            .expect("load client session")
+            .expect("client session exists");
     assert_eq!(
-        pair_session.current_task_id,
-        Some(selected_pair_task_id),
-        "Work checkout must not replace the selected Pair task"
+        client_session.current_task_id,
+        Some(selected_session_task_id),
+        "Work checkout must not replace the selected session task"
     );
 }
 
@@ -6071,7 +6071,7 @@ async fn session_task_settlement_rpc_settles_and_releases_attachment(pool: sqlx:
     assert_eq!(settled["result"]["task"]["task"]["id"], json!(task_id));
     assert!(settled["result"]["task"]["task"]["settled_by_entry_id"].is_string());
     let attachment_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM bear_pair_task_attachments WHERE task_id = $1 AND released_at IS NULL",
+        "SELECT COUNT(*) FROM bear_session_task_attachments WHERE task_id = $1 AND released_at IS NULL",
     )
     .bind(task_id)
     .fetch_one(&pool)

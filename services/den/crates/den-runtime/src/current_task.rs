@@ -34,6 +34,7 @@ pub async fn preview_session_current_task_selection(
         bear_id,
         &session.conversation_id,
         session.id,
+        client_session_id,
         &tasks,
         task_id,
     )
@@ -42,7 +43,8 @@ pub async fn preview_session_current_task_selection(
 fn actionable_task_title(
     bear_id: Uuid,
     conversation_id: &str,
-    session_id: Uuid,
+    session_anchor_id: Uuid,
+    client_session_id: &str,
     tasks: &[den_docket::DocketTaskProjection],
     task_id: Uuid,
 ) -> Result<String, CustomError> {
@@ -50,7 +52,8 @@ fn actionable_task_title(
         bear_id,
         BearProfile::Pair,
         conversation_id,
-        session_id,
+        session_anchor_id,
+        Some(client_session_id),
         tasks,
         Some(task_id),
     );
@@ -70,7 +73,8 @@ fn actionable_task_title(
                 bear_id,
                 BearProfile::Pair,
                 conversation_id,
-                session_id,
+                session_anchor_id,
+                Some(client_session_id),
                 tasks,
                 None,
             )
@@ -119,6 +123,7 @@ pub async fn select_session_current_task(
                 bear_id,
                 &session.conversation_id,
                 session.id,
+                client_session_id,
                 &tasks,
                 task_id,
             )
@@ -148,6 +153,7 @@ pub async fn select_session_current_task(
         BearProfile::Pair,
         conversation_id,
         session.id,
+        Some(client_session_id),
         &tasks,
         task_id,
     );

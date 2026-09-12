@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT COALESCE(MAX(sibling_order), -1) + 1 AS \"sibling_order!: i32\"\n            FROM bear_tasks t\n            WHERE t.bear_id = $1\n              AND t.job_id IS NOT DISTINCT FROM $2\n              AND (\n                    $3::uuid IS NULL\n                 OR EXISTS (\n                    SELECT 1 FROM bear_session_task_attachments a\n                    WHERE a.task_id = t.id AND a.session_id = $3 AND a.released_at IS NULL\n                 )\n              )\n              AND t.parent_task_id IS NOT DISTINCT FROM $4\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "sibling_order!: i32",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "25bc1b44e05f5f33dfaea55619a3b520a15095d3a20067c14986239c27ec6bf9"
+}

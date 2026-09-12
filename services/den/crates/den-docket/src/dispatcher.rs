@@ -195,7 +195,7 @@ impl TaskDispatcher for PgDocketService {
             DocketTaskListFilter {
                 job_id: None,
                 parent_task_id: None,
-                pair_session_id: None,
+                session_anchor_id: None,
                 include_descendants: true,
                 limit: 500,
             },

@@ -359,7 +359,7 @@ async fn chat_current_task_get(
             bear.id,
             DocketTaskListFilter {
                 job_id: None,
-                pair_session_id: Some(session.id),
+                session_anchor_id: Some(session.id),
                 parent_task_id: None,
                 include_descendants: false,
                 limit: 500,
@@ -402,7 +402,7 @@ async fn chat_current_task_create(
         .create_task(DocketTaskCreate {
             bear_id: bear.id,
             job_id: None,
-            pair_session_id: Some(session.id),
+            session_anchor_id: Some(session.id),
             parent_task_id: None,
             sibling_order: 0,
             placement: None,

@@ -1031,14 +1031,14 @@ Bounded delegation is allowed only through approved symbolic model refs. Capable
 
 ## Phase 9 — Session-task and Docket integration
 
-**Status: Complete (updated 2026-08-20).** Pair now has one attachment-aware eligibility model for session task projection, checkout, selection, and settlement: legacy session-owned tasks are visible by session anchor, while durable Job tasks are explicitly and exclusively attached to a Pair session through `bear_pair_task_attachments`. Pair checkout attaches available Job tasks, the shared Pair-session query projects both ownership forms, and terminal settlement releases the attachment. Postgres-backed integration coverage proves attachment visibility, cross-session exclusion, and release on settlement. Explicit current-task start coverage proves that Pair selection/start requires an explicit selection, reuses its active Pair run, and creates neither a Docket Job nor a Work run. A focused BearWire regression also proves that explicit Work checkout leaves an already selected Pair current task unchanged. Explicit Work Job binding, managed-surface assignment rejection, checkpoint advisory task-state follow-through, and checkpoint audit correlation are implemented. Do not reintroduce a separate focus or checkpoint task authority.
+**Status: Complete (updated 2026-09-12).** Den has one attachment-aware eligibility model for session task projection, checkout, selection, and settlement. Standalone and durable Job tasks are explicitly and exclusively attached to a client-session anchor through `bear_session_task_attachments`; checkout attaches available Job tasks, the shared session query projects active attachments, and terminal settlement releases them. Postgres-backed integration coverage proves attachment visibility, reassignment fences the stale session, and settlement releases the current attachment. Explicit current-task start coverage proves that selection/start requires an explicit selection, reuses active session execution, and creates neither a Docket Job nor a Work run. A focused BearWire regression also proves that explicit Work checkout leaves an already selected session current task unchanged. Explicit Work Job binding, managed-surface assignment rejection, checkpoint advisory task-state follow-through, and checkpoint audit correlation are implemented. Do not reintroduce a stance-specific focus or checkpoint authority.
 
 **Goal:** keep session current tasks, Work assignments, and Docket task state coherent without turning projections or checkpoints into a second authority.
 
-Pair behavior:
+Session-task behavior:
 
-- the optional current task is a session-owned task and is the session objective; Job-owned Docket tasks remain Job execution state rather than Pair focus;
-- a jobless Pair task is anchored by Den to the authenticated current session; Pair never handles a raw session-anchor identifier;
+- the optional current task is session-owned and is the session objective; Job-owned Docket tasks remain Job execution state rather than session focus;
+- a jobless session task is anchored by Den to the authenticated current session; models never handle a raw session-anchor identifier;
 - every durable Docket task has exactly one owner: its session or its Job; an unowned or jointly owned task is invalid;
 - Pair works its current task directly by default;
 - establishing a session-local task does not create a Job, dispatch Work, or change permissions;

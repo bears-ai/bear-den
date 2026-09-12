@@ -749,7 +749,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "bear.docket",
             &["docket.task.read"],
             TASK_LIST_READ_PROFILES,
-            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"pair_session_id":{"type":"string","format":"uuid"},"parent_task_id":{"type":"string","format":"uuid"},"include_descendants":{"type":"boolean"},"limit":{"type":"integer","minimum":1,"maximum":500}},"additionalProperties":false}),
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"parent_task_id":{"type":"string","format":"uuid"},"include_descendants":{"type":"boolean"},"limit":{"type":"integer","minimum":1,"maximum":500}},"additionalProperties":false}),
         ),
         descriptor(
             DEN_TASK_FIND,

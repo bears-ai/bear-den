@@ -1,0 +1,152 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT id, bear_id, job_id, parent_task_id, sibling_order,\n                   kind, scope, title, body, completion_criteria AS \"completion_criteria: _\", difficulty, effort_hint, routing_strategy, expected_context_size,\n                   result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id, settled_by_entry_id,\n                   created_at, updated_at\n            FROM bear_tasks t\n            LEFT JOIN bear_session_task_attachments a\n              ON a.task_id = t.id AND a.released_at IS NULL\n            WHERE t.bear_id = $1\n              AND ($2::uuid IS NULL OR t.job_id = $2)\n              AND ($3::uuid IS NULL OR a.session_id = $3)\n              AND (\n                    ($4::uuid IS NULL AND parent_task_id IS NULL)\n                 OR ($4::uuid IS NOT NULL AND parent_task_id = $4)\n              )\n            ORDER BY sibling_order, created_at\n            LIMIT $5\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "bear_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "job_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "parent_task_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "sibling_order",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 5,
+        "name": "kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "scope",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "body",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "completion_criteria: _",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 10,
+        "name": "difficulty",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "effort_hint",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "routing_strategy",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
+        "name": "expected_context_size",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 14,
+        "name": "result_rollup_policy",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 15,
+        "name": "created_by_role",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 16,
+        "name": "created_by_user_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 17,
+        "name": "created_by_agent_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 18,
+        "name": "created_in_run_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 19,
+        "name": "settled_by_entry_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 20,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 21,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "0b063a9372c872b848ecbd0091cf4532adb24ed6aa6977c6f7c82ee436305752"
+}

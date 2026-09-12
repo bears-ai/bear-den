@@ -5856,7 +5856,7 @@ const LOCAL_SLASH_COMMANDS: &[LocalSlashCommandDescriptor] = &[
     LocalSlashCommandDescriptor {
         name: "focus",
         aliases: &[],
-        description: "Focus this pair session on a Docket job: /focus [job_id].",
+        description: "Focus this client session on a Docket job: /focus [job_id].",
         command: LocalSlashCommand::Focus,
         den_required: true,
     },
@@ -18011,43 +18011,6 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
-    #[ignore = "canonical web_fetch is Den-executed; adapter local fetch will be renamed if reintroduced"]
-    #[tokio::test]
-    async fn web_fetch_fetches_and_truncates_http_response() {
-        std::env::set_var("DEN_ACP_ALLOW_LOCAL_WEB_FETCH_FOR_TESTS", "1");
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            if let Ok((mut stream, _)) = listener.accept().await {
-                use tokio::io::{AsyncReadExt, AsyncWriteExt};
-                let mut buf = [0u8; 1024];
-                let _ = stream.read(&mut buf).await;
-                let body = "hello world";
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    body.len(),
-                    body
-                );
-                let _ = stream.write_all(response.as_bytes()).await;
-            }
-        });
-        let result = crate::tools::web::handle_local_web_fetch(
-            "session-1",
-            &json!({ "url": format!("http://{}", addr), "max_bytes": 5 }),
-            &ToolPolicy {
-                max_bytes: Some(5),
-                total_timeout_ms: Some(10_000),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-        assert_eq!(result["status"], 200);
-        assert_eq!(result["body"], "hello");
-        assert_eq!(result["truncated"], true);
-        std::env::remove_var("DEN_ACP_ALLOW_LOCAL_WEB_FETCH_FOR_TESTS");
-    }
-
     #[tokio::test]
     async fn process_run_redirects_rg_and_grep_to_fs_search_files() {
         let root = std::env::temp_dir().join(format!("bear-armature-rg-{}", uuid::Uuid::new_v4()));
@@ -18112,33 +18075,6 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(root);
-    }
-
-    #[ignore = "canonical web_fetch is Den-executed; adapter local fetch will be renamed if reintroduced"]
-    #[tokio::test]
-    async fn web_fetch_rejects_unsafe_urls() {
-        std::env::remove_var("DEN_ACP_ALLOW_LOCAL_WEB_FETCH_FOR_TESTS");
-        let localhost = crate::tools::web::handle_local_web_fetch(
-            "session-1",
-            &json!({ "url": "http://localhost:3000" }),
-            &ToolPolicy::default(),
-        )
-        .await;
-        assert!(format!("{:#}", localhost.unwrap_err()).contains("localhost"));
-        let metadata = crate::tools::web::handle_local_web_fetch(
-            "session-1",
-            &json!({ "url": "http://169.254.169.254/latest" }),
-            &ToolPolicy::default(),
-        )
-        .await;
-        assert!(format!("{:#}", metadata.unwrap_err()).contains("private"));
-        let invalid = crate::tools::web::handle_local_web_fetch(
-            "session-1",
-            &json!({ "url": "file:///tmp/x" }),
-            &ToolPolicy::default(),
-        )
-        .await;
-        assert!(format!("{:#}", invalid.unwrap_err()).contains("http and https"));
     }
 
     #[test]

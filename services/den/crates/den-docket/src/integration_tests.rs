@@ -1,4 +1,4 @@
-use den_core::BearProfile;
+use den_core::{BearProfile, DenError};
 use serde_json::{json, Value};
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use uuid::Uuid;
@@ -34,10 +34,10 @@ fn primary_output_result_refs() -> Value {
     })
 }
 
-pub(super) async fn live_pair_attempt(
+pub(super) async fn live_session_attempt(
     pool: &PgPool,
     bear_id: Uuid,
-    pair_session_id: &str,
+    client_session_id: &str,
 ) -> Option<(Uuid, Uuid, String)> {
     sqlx::query_as(
         "SELECT task_id, host_run_id, state FROM docket_execution_attempts
@@ -46,7 +46,7 @@ pub(super) async fn live_pair_attempt(
          ORDER BY updated_at DESC LIMIT 1",
     )
     .bind(bear_id)
-    .bind(pair_session_id)
+    .bind(client_session_id)
     .fetch_optional(pool)
     .await
     .expect("lookup live canonical Pair attempt")
@@ -233,7 +233,7 @@ async fn creates_session_anchored_task_without_job() {
     };
     let (user_id, bear_id) = seed_user_and_bear(&pool, "session-task").await;
     let service = PgDocketService::from_pool(&pool);
-    let pair_session_id = sqlx::query_scalar!(
+    let session_anchor_id = sqlx::query_scalar!(
         r"
         INSERT INTO client_sessions (
             user_id, bear_id, bear_slug, client_session_id, runtime_session_id, conversation_id, client
@@ -257,7 +257,7 @@ async fn creates_session_anchored_task_without_job() {
         .create_task(DocketTaskCreate {
             bear_id,
             job_id: None,
-            pair_session_id: Some(pair_session_id),
+            session_anchor_id: Some(session_anchor_id),
             parent_task_id: None,
             sibling_order: 0,
             placement: None,
@@ -281,7 +281,7 @@ async fn creates_session_anchored_task_without_job() {
 
     assert_eq!(task.job_id, None);
     assert!(service
-        .list_session_tasks(bear_id, pair_session_id)
+        .list_session_tasks(bear_id, session_anchor_id)
         .await
         .expect("list attached tasks")
         .iter()
@@ -292,7 +292,7 @@ async fn creates_session_anchored_task_without_job() {
     let settled = service
         .settle_session_task(DocketSessionTaskSettlement {
             bear_id,
-            pair_session_id,
+            session_anchor_id,
             task_id: task.id,
             status: DocketTaskStatus::Done,
             outcome_disposition: None,
@@ -324,7 +324,7 @@ async fn creates_session_anchored_task_without_job() {
     let error = service
         .settle_session_task(DocketSessionTaskSettlement {
             bear_id,
-            pair_session_id: other_session_id,
+            session_anchor_id: other_session_id,
             task_id: task.id,
             status: DocketTaskStatus::Cancelled,
             outcome_disposition: None,
@@ -347,7 +347,7 @@ async fn lists_session_anchored_task_with_latest_run_state() {
     };
     let (user_id, bear_id) = seed_user_and_bear(&pool, "session-task-state").await;
     let service = PgDocketService::from_pool(&pool);
-    let pair_session_id = sqlx::query_scalar!(
+    let session_anchor_id = sqlx::query_scalar!(
         r"
         INSERT INTO client_sessions (
             user_id, bear_id, bear_slug, client_session_id, runtime_session_id, conversation_id, client
@@ -378,7 +378,7 @@ async fn lists_session_anchored_task_with_latest_run_state() {
         .create_task(DocketTaskCreate {
             bear_id,
             job_id: None,
-            pair_session_id: Some(pair_session_id),
+            session_anchor_id: Some(session_anchor_id),
             parent_task_id: None,
             sibling_order: 0,
             placement: None,
@@ -423,7 +423,7 @@ async fn lists_session_anchored_task_with_latest_run_state() {
         .list_tasks(
             bear_id,
             DocketTaskListFilter {
-                pair_session_id: Some(pair_session_id),
+                session_anchor_id: Some(session_anchor_id),
                 include_descendants: true,
                 ..DocketTaskListFilter::default()
             },
@@ -443,7 +443,7 @@ async fn lists_session_anchored_task_with_latest_run_state() {
 }
 
 #[tokio::test]
-async fn pair_task_attachment_is_reassignable_within_a_bear_and_released_on_settlement() {
+async fn session_task_attachment_reassignment_fences_stale_owner_and_releases_on_settlement() {
     let Some(pool) = test_pool().await else {
         eprintln!("skipping postgres-backed docket integration test; database unavailable");
         return;
@@ -468,47 +468,63 @@ async fn pair_task_attachment_is_reassignable_within_a_bear_and_released_on_sett
                     job_id: created.job.id,
                     parent_task_id: None,
                 },
-                pair_session_id: Some(first_session),
+                session_anchor_id: Some(first_session),
             },
         )
         .await
-        .expect("attach durable job to first Pair session");
+        .expect("attach durable job to first client session");
     assert!(service
         .list_session_tasks(bear_id, first_session)
         .await
-        .expect("project first Pair session")
+        .expect("project first client session")
         .iter()
         .any(|task| task.task.id == task_id));
     service
         .attach_task_to_session(bear_id, task_id, second_session)
         .await
-        .expect("same Bear can recover a durable task from another Pair session");
+        .expect("same Bear can reassign a durable task to another client session");
     assert!(service
         .list_session_tasks(bear_id, second_session)
         .await
-        .expect("project recovered Pair session")
+        .expect("project reassigned client session")
         .iter()
         .any(|task| task.task.id == task_id));
-
-    service
-        .settle_session_task(DocketSessionTaskSettlement {
-            bear_id,
-            task_id,
-            pair_session_id: first_session,
-            status: DocketTaskStatus::Done,
-            outcome_disposition: Some(crate::DocketOutcomeDisposition::Completed),
-            result_summary: Some("Pair task completed.".to_string()),
-            result_refs: None,
-            actor_role: BearProfile::Pair,
-            actor_user_id: Some(user_id),
-            actor_agent_id: None,
-        })
-        .await
-        .expect("settle attached task releases Pair attachment");
     assert!(service
         .list_session_tasks(bear_id, first_session)
         .await
-        .expect("project released Pair session")
+        .expect("project stale client session")
+        .iter()
+        .all(|task| task.task.id != task_id));
+
+    let stale_settlement = DocketSessionTaskSettlement {
+        bear_id,
+        task_id,
+        session_anchor_id: first_session,
+        status: DocketTaskStatus::Done,
+        outcome_disposition: Some(crate::DocketOutcomeDisposition::Completed),
+        result_summary: Some("Session task completed.".to_string()),
+        result_refs: None,
+        actor_role: BearProfile::Pair,
+        actor_user_id: Some(user_id),
+        actor_agent_id: None,
+    };
+    assert!(matches!(
+        service.settle_session_task(stale_settlement.clone()).await,
+        Err(DenError::ValidationError(message))
+            if message == "session task settlement requires a task attached to the current session"
+    ));
+
+    service
+        .settle_session_task(DocketSessionTaskSettlement {
+            session_anchor_id: second_session,
+            ..stale_settlement
+        })
+        .await
+        .expect("settle attached task releases current session attachment");
+    assert!(service
+        .list_session_tasks(bear_id, second_session)
+        .await
+        .expect("project released client session")
         .iter()
         .all(|task| task.task.id != task_id));
 }
@@ -730,7 +746,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
     // Selecting a task establishes only objective context. Pair execution authority
     // starts later through the fenced canonical-attempt gate.
     assert!(
-        live_pair_attempt(&pool, bear_id, "pair-integration-session")
+        live_session_attempt(&pool, bear_id, "pair-integration-session")
             .await
             .is_none()
     );
@@ -1033,7 +1049,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
 
     // A criteria-only block must not retain a claim for a terminal task.
     assert!(
-        live_pair_attempt(&pool, bear_id, "pair-integration-session")
+        live_session_attempt(&pool, bear_id, "pair-integration-session")
             .await
             .is_none()
     );
@@ -1091,7 +1107,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
         "completed"
     );
     assert!(
-        live_pair_attempt(&pool, bear_id, "pair-integration-session")
+        live_session_attempt(&pool, bear_id, "pair-integration-session")
             .await
             .is_none()
     );
@@ -1212,7 +1228,7 @@ async fn docket_execution_focus_prefers_conversation_over_client_session() {
         Some(first_task_id)
     );
 
-    assert!(live_pair_attempt(&pool, bear_id, "conversation-1")
+    assert!(live_session_attempt(&pool, bear_id, "conversation-1")
         .await
         .is_none());
 
@@ -1655,7 +1671,7 @@ async fn docket_dispatcher_follows_depth_first_sibling_order() {
         .create_task(DocketTaskCreate {
             bear_id,
             job_id: Some(created.job.id),
-            pair_session_id: None,
+            session_anchor_id: None,
             parent_task_id: Some(phase_one_id),
             sibling_order: 0,
             placement: None,
@@ -1680,7 +1696,7 @@ async fn docket_dispatcher_follows_depth_first_sibling_order() {
         .create_task(DocketTaskCreate {
             bear_id,
             job_id: Some(created.job.id),
-            pair_session_id: None,
+            session_anchor_id: None,
             parent_task_id: Some(phase_one_id),
             sibling_order: 1,
             placement: None,

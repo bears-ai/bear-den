@@ -689,6 +689,7 @@ pub(crate) async fn get_task_list_status(
                 .as_deref()
                 .unwrap_or(""),
             session.id,
+            context.client_session_id.as_deref(),
             &tasks,
             session.current_task_id,
         )
@@ -902,7 +903,7 @@ async fn enforce_oriented_task_create_policy(
             context.bear_id,
             DocketTaskListFilter {
                 job_id: None,
-                pair_session_id: None,
+                session_anchor_id: None,
                 parent_task_id: Some(policy.root_task_id),
                 include_descendants: true,
                 limit: 500,
@@ -923,7 +924,7 @@ async fn enforce_oriented_task_create_policy(
             context.bear_id,
             DocketTaskListFilter {
                 job_id: None,
-                pair_session_id: None,
+                session_anchor_id: None,
                 parent_task_id: Some(parent_task_id),
                 include_descendants: false,
                 limit: (policy.max_children as i64).saturating_add(1).max(1),
@@ -1068,14 +1069,14 @@ fn docket_task_row_summary(task: &docket::DocketTaskRow) -> String {
 fn docket_task_create_summary(
     task: &docket::DocketTaskRow,
     job_id: Option<Uuid>,
-    defaulted_to_pair_task_tree: bool,
+    defaulted_to_session_task_tree: bool,
     planned_session_task: bool,
 ) -> String {
     if let Some(job_id) = job_id {
         return format!("Task '{}' was created in Docket Job {job_id}.", task.title);
     }
 
-    if defaulted_to_pair_task_tree {
+    if defaulted_to_session_task_tree {
         return format!(
             "Task '{}' was created in the current session task tree.",
             task.title
@@ -1095,13 +1096,13 @@ fn docket_task_create_summary(
 fn docket_tasks_summary_for_scope(
     tasks: &[docket::DocketTaskProjection],
     job_id: Option<Uuid>,
-    defaulted_to_pair_task_tree: bool,
+    defaulted_to_session_task_tree: bool,
 ) -> String {
     let count = count_label(tasks.len(), "Docket task", "Docket tasks");
     if let Some(job_id) = job_id {
         return format!("Found {count} in Docket Job {job_id}.");
     }
-    if defaulted_to_pair_task_tree {
+    if defaulted_to_session_task_tree {
         return format!("Found {count} in the current session task tree.");
     }
     docket_tasks_summary(tasks)
@@ -1239,11 +1240,11 @@ pub(crate) async fn session_anchored_task_list_projection(
     pool: &PgPool,
     context: &DenToolInvocationContext,
     role: BearProfile,
-    pair_session_id: Uuid,
+    session_anchor_id: Uuid,
 ) -> Result<Option<TaskListProjection>, CustomError> {
     // Keep cached activity plans consistent with current-task selection.
     let tasks = PgDocketService::from_pool(pool)
-        .list_session_tasks(context.bear_id, pair_session_id)
+        .list_session_tasks(context.bear_id, session_anchor_id)
         .await?;
     let selected_task_id = if let Some(client_session_id) = context.client_session_id.as_deref() {
         client_sessions::find_for_user_bear_session_id(
@@ -1264,7 +1265,8 @@ pub(crate) async fn session_anchored_task_list_projection(
             clean_optional(&context.conversation_id)
                 .as_deref()
                 .unwrap_or(""),
-            pair_session_id,
+            session_anchor_id,
+            context.client_session_id.as_deref(),
             &tasks,
             selected_task_id,
         ),
@@ -1407,7 +1409,7 @@ pub(crate) async fn confirm_work_surface(
         "ok": true,
         "status": "confirmed",
         "work_surface_id": args.work_surface_id,
-        "notes": ["Recorded the user's explicit work-surface selection for this Pair session."]
+        "notes": ["Recorded the user's explicit work-surface selection for this client session."]
     }))
 }
 
@@ -1785,7 +1787,7 @@ pub(crate) async fn execute_job(
             source_client_session_id: context.client_session_id.clone(),
         })
         .await?;
-    let pair_binding =
+    let session_execution =
         bind_selected_task_to_current_session(pool, context, &outcome, &policy.capabilities)
             .await?;
     let status_report = docket_job_status_report(&outcome.job);
@@ -1802,7 +1804,7 @@ pub(crate) async fn execute_job(
             "run_id": run.map(|run| run.id),
         },
         "outcome": outcome,
-        "pair_binding": pair_binding,
+        "session_execution": session_execution,
         "domain": "docket",
         "bear_id": context.bear_id,
         "status_report": status_report,
@@ -1834,7 +1836,7 @@ pub(crate) async fn reconcile_job_execution(
             source_client_session_id: context.client_session_id.clone(),
         })
         .await?;
-    let pair_binding =
+    let session_execution =
         bind_selected_task_to_current_session(pool, context, &outcome, &policy.capabilities)
             .await?;
     let status_report = docket_job_status_report(&outcome.job);
@@ -1848,7 +1850,7 @@ pub(crate) async fn reconcile_job_execution(
             "run_id": run.map(|run| run.id),
         },
         "outcome": outcome,
-        "pair_binding": pair_binding,
+        "session_execution": session_execution,
         "domain": "docket",
         "bear_id": context.bear_id,
         "status_report": status_report,
@@ -1882,7 +1884,7 @@ async fn bind_selected_task_to_current_session(
     let Some(client_session_id) = context.client_session_id.as_deref() else {
         return Ok(json!({
             "status": "not_attempted",
-            "reason": "no_authenticated_pair_session",
+            "reason": "no_authenticated_client_session",
             "task_id": task_id,
             "current_task_selected": false,
         }));
@@ -1993,13 +1995,14 @@ pub(crate) async fn create_task(
 ) -> Result<Value, CustomError> {
     let args: DocketTaskCreateArguments = serde_json::from_value(arguments)?;
     let capabilities = effective_tool_policy(role, context).capabilities;
-    let defaulted_to_pair_task_tree = should_default_session_task_tree(&capabilities, args.job_id);
+    let defaulted_to_session_task_tree =
+        should_default_session_task_tree(&capabilities, args.job_id);
     let job_id = args.job_id;
     // ponytail: jobless tasks belong only to the authenticated current session;
     // delegated work must first become a Job-owned task.
-    let pair_session_id = resolve_task_session_anchor_id(pool, context, job_id).await?;
+    let session_anchor_id = resolve_task_session_anchor_id(pool, context, job_id).await?;
     enforce_oriented_task_create_policy(pool, context, &args).await?;
-    let pair_session_attachment_id =
+    let session_attachment_id =
         if capabilities.contains(den_core::BearCapability::OwnSessionTasks) && job_id.is_some() {
             resolve_task_session_anchor_id(pool, context, None).await?
         } else {
@@ -2010,7 +2013,7 @@ pub(crate) async fn create_task(
         .create_task(DocketTaskCreate {
             bear_id: context.bear_id,
             job_id,
-            pair_session_id,
+            session_anchor_id,
             parent_task_id: args.parent_task_id,
             sibling_order: args.sibling_order,
             placement: args.placement,
@@ -2030,12 +2033,12 @@ pub(crate) async fn create_task(
             created_in_run_id: args.created_in_run_id,
         })
         .await?;
-    if let Some(session_id) = pair_session_attachment_id {
+    if let Some(session_id) = session_attachment_id {
         service
             .attach_task_to_session(context.bear_id, task.id, session_id)
             .await?;
     }
-    if job_id.is_none() && pair_session_id.is_some() {
+    if job_id.is_none() && session_anchor_id.is_some() {
         let client_session_id = context.client_session_id.as_deref().ok_or_else(|| {
             DenError::ValidationError(
                 "session task creation needs the current client session".to_string(),
@@ -2060,8 +2063,8 @@ pub(crate) async fn create_task(
         }
     }
     let task_list = if job_id.is_none() {
-        if let Some(pair_session_id) = pair_session_id {
-            session_anchored_task_list_projection(pool, context, role, pair_session_id).await?
+        if let Some(session_anchor_id) = session_anchor_id {
+            session_anchored_task_list_projection(pool, context, role, session_anchor_id).await?
         } else {
             None
         }
@@ -2079,7 +2082,7 @@ pub(crate) async fn create_task(
     let summary = docket_task_create_summary(
         &task,
         job_id,
-        defaulted_to_pair_task_tree,
+        defaulted_to_session_task_tree,
         planned_session_task,
     );
     Ok(json!({
@@ -2093,9 +2096,9 @@ pub(crate) async fn create_task(
         "execution_allowed": execution_allowed,
         "item_counts": task_list.as_ref().map(task_list_item_counts),
         "docket_scope": {
-            "kind": if defaulted_to_pair_task_tree { "pair_task_tree" } else if job_id.is_some() { "work_job" } else { "session_task_list" },
+            "kind": if defaulted_to_session_task_tree { "session_task_tree" } else if job_id.is_some() { "work_job" } else { "session_task_list" },
             "job_id": job_id,
-            "pair_session_id": pair_session_id,
+            "session_anchor_id": session_anchor_id,
         },
         "notes": if job_id.is_none() && matches!(task_list_phase, Some("planned")) {
             vec![
@@ -2167,9 +2170,10 @@ pub(crate) async fn list_tasks(
 ) -> Result<Value, CustomError> {
     let args: DocketTaskListArguments = serde_json::from_value(arguments)?;
     let capabilities = effective_tool_policy(role, context).capabilities;
-    let defaulted_to_pair_task_tree = should_default_session_task_tree(&capabilities, args.job_id);
+    let defaulted_to_session_task_tree =
+        should_default_session_task_tree(&capabilities, args.job_id);
     let job_id = args.job_id;
-    let pair_session_id = if capabilities.contains(den_core::BearCapability::OwnSessionTasks) {
+    let session_anchor_id = if capabilities.contains(den_core::BearCapability::OwnSessionTasks) {
         resolve_task_session_anchor_id(pool, context, args.job_id).await?
     } else {
         None
@@ -2179,7 +2183,7 @@ pub(crate) async fn list_tasks(
             context.bear_id,
             DocketTaskListFilter {
                 job_id,
-                pair_session_id,
+                session_anchor_id,
                 parent_task_id: args.parent_task_id,
                 include_descendants: args.include_descendants,
                 limit: args.limit,
@@ -2187,7 +2191,7 @@ pub(crate) async fn list_tasks(
         )
         .await?;
     let content = docket_tasks_card_content(&tasks);
-    let summary = docket_tasks_summary_for_scope(&tasks, job_id, defaulted_to_pair_task_tree);
+    let summary = docket_tasks_summary_for_scope(&tasks, job_id, defaulted_to_session_task_tree);
     let web_base = docket_web_base(pool, config, context.bear_id).await?;
     Ok(json!({
         "domain": "docket",
@@ -2202,9 +2206,9 @@ pub(crate) async fn list_tasks(
         }),
         "counts": docket_task_counts(&tasks),
         "docket_scope": {
-            "kind": if defaulted_to_pair_task_tree { "pair_task_tree" } else if job_id.is_some() { "work_job" } else { "session_task_list" },
+            "kind": if defaulted_to_session_task_tree { "session_task_tree" } else if job_id.is_some() { "work_job" } else { "session_task_list" },
             "job_id": job_id,
-            "pair_session_id": pair_session_id,
+            "session_anchor_id": session_anchor_id,
         },
         "tasks": tasks,
     }))
@@ -2366,12 +2370,12 @@ pub(crate) async fn update_current_task_status(
 ) -> Result<Value, CustomError> {
     let args: DocketCurrentTaskStatusArguments = serde_json::from_value(arguments)?;
     if args.job_id.is_none() && args.run_id.is_none() {
-        let pair_session_id = resolve_task_session_anchor_id(pool, context, None).await?;
+        let session_anchor_id = resolve_task_session_anchor_id(pool, context, None).await?;
         let session_tasks = PgDocketService::from_pool(pool)
             .list_tasks(
                 context.bear_id,
                 DocketTaskListFilter {
-                    pair_session_id,
+                    session_anchor_id,
                     limit: 500,
                     ..DocketTaskListFilter::default()
                 },
@@ -2384,7 +2388,8 @@ pub(crate) async fn update_current_task_status(
             let task = PgDocketService::from_pool(pool)
                 .settle_session_task(DocketSessionTaskSettlement {
                     bear_id: context.bear_id,
-                    pair_session_id: pair_session_id.expect("jobless task scope resolves session"),
+                    session_anchor_id: session_anchor_id
+                        .expect("jobless task scope resolves session"),
                     task_id: args.task_id,
                     status: args.status,
                     outcome_disposition: args.outcome_disposition,
@@ -2416,7 +2421,7 @@ pub(crate) async fn update_current_task_status(
                             reason: Some(status.to_string()),
                             orientation_kind: Some("task_oriented".to_string()),
                             checkpoint_id: None,
-                            related_task_list_id: Some(pair_session_id.expect("jobless task scope resolves session").to_string()),
+                            related_task_list_id: Some(session_anchor_id.expect("jobless task scope resolves session").to_string()),
                             related_task_item_id: Some(args.task_id.to_string()),
                             related_docket_job_id: None,
                             related_docket_task_id: Some(args.task_id),
@@ -2674,7 +2679,7 @@ pub(crate) async fn checkout_task_list(
             .await?
             .ok_or_else(|| {
                 DenError::ValidationError(
-                    "pair checkout_task_list needs the current client session anchor".to_string(),
+                    "checkout_task_list needs the current client session anchor".to_string(),
                 )
             })?;
         let task_list =
@@ -2682,7 +2687,7 @@ pub(crate) async fn checkout_task_list(
                 .await?
                 .ok_or_else(|| {
                     DenError::ValidationError(
-                        "pair checkout_task_list could not project the current session task tree"
+                        "checkout_task_list could not project the current session task tree"
                             .to_string(),
                     )
                 })?;
@@ -2692,12 +2697,12 @@ pub(crate) async fn checkout_task_list(
         )
     } else {
         return Err(DenError::ValidationError(
-            "checkout_task_list requires job_id outside pair stance; provide a Docket job id to project as a task list"
+            "checkout_task_list requires job_id without session-task ownership; provide a Docket job id to project as a task list"
                 .to_string(),
         )
         .into());
     };
-    let pair_session_id = if effective_tool_policy(role, context)
+    let session_anchor_id = if effective_tool_policy(role, context)
         .capabilities
         .contains(den_core::BearCapability::OwnSessionTasks)
         && checkout_job_id.is_some()
@@ -2713,7 +2718,7 @@ pub(crate) async fn checkout_task_list(
             context.user_id,
             TaskListCheckoutRequest {
                 source,
-                pair_session_id,
+                session_anchor_id,
             },
         )
         .await?;
@@ -2933,7 +2938,7 @@ mod test {
     }
 
     #[test]
-    fn task_create_summary_names_pair_task_tree_scope() {
+    fn task_create_summary_names_session_task_tree_scope() {
         let mut task = task_projection(Uuid::new_v4(), None).task;
         task.title = "Capture next step".to_string();
 

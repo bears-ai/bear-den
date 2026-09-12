@@ -129,7 +129,7 @@ async fn load_session_anchored_activity_plan(
         .list_tasks(
             ctx.bear_id,
             DocketTaskListFilter {
-                pair_session_id: Some(session_anchor_id),
+                session_anchor_id: Some(session_anchor_id),
                 include_descendants: false,
                 limit: 100,
                 ..DocketTaskListFilter::default()
@@ -141,6 +141,7 @@ async fn load_session_anchored_activity_plan(
         ctx.profile,
         ctx.conversation_id,
         session_anchor_id,
+        Some(client_session_id),
         &tasks,
     ))
 }

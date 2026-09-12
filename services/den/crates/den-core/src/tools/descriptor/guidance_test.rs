@@ -106,7 +106,7 @@ fn docket_recovery_descriptors_have_callable_provider_names() {
     }
 }
 #[test]
-fn docket_descriptors_distinguish_pair_task_trees_from_work_jobs() {
+fn docket_descriptors_distinguish_session_task_trees_from_work_jobs() {
     let descriptors = builtin_den_tool_descriptors();
 
     let create_job = descriptors
@@ -126,7 +126,7 @@ fn docket_descriptors_distinguish_pair_task_trees_from_work_jobs() {
     assert!(create_task.description.contains("durable/resumable plans"));
     assert!(create_task
         .description
-        .contains("authenticated current Pair session"));
+        .contains("authenticated current session"));
     assert!(create_task.description.contains("exactly one owner"));
     assert!(create_task.description.contains("does not execute work"));
     assert!(create_task
@@ -140,7 +140,7 @@ fn docket_descriptors_distinguish_pair_task_trees_from_work_jobs() {
         .expect("list_tasks descriptor");
     assert!(list_tasks
         .description
-        .contains("current conversation's implied Docket objective"));
+        .contains("current session's implied Docket objective"));
 
     let checkout = descriptors
         .iter()

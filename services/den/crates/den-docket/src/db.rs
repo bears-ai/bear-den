@@ -50,9 +50,9 @@ use super::model::{
     DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketJobStatus, DocketJobUpdate,
     DocketSessionTaskSettlement, DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskInput,
     DocketTaskListFilter, DocketTaskPlacement, DocketTaskProjection, DocketTaskRow,
-    DocketTaskRunStateRow, DocketTaskStatus, DocketTaskUpdate, DocketValidationError, DocketWorkBoundaryCheck,
-    TaskListItemStatus, TaskListProjection, TaskListSourceRef, TaskListSyncOutcome,
-    TaskListSyncRequest, TaskListSyncState,
+    DocketTaskRunStateRow, DocketTaskStatus, DocketTaskUpdate, DocketValidationError,
+    DocketWorkBoundaryCheck, TaskListItemStatus, TaskListProjection, TaskListSourceRef,
+    TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState,
 };
 
 pub(super) async fn create_job(
@@ -439,10 +439,10 @@ pub(super) async fn create_task(
     let mut create = create;
     create.sibling_order = sibling_order;
     let row = insert_task(&mut tx, &create).await?;
-    if let Some(session_id) = create.pair_session_id {
+    if let Some(session_id) = create.session_anchor_id {
         sqlx::query!(
             r#"
-            INSERT INTO bear_pair_task_attachments (task_id, session_id)
+            INSERT INTO bear_session_task_attachments (task_id, session_id)
             VALUES ($1, $2)
             "#,
             row.id,
@@ -479,10 +479,10 @@ async fn place_task(
             .fetch_optional(&mut **tx)
             .await?
             .ok_or_else(|| DenError::ValidationError("Docket job not found".to_string()))?;
-    } else if let Some(pair_session_id) = create.pair_session_id {
+    } else if let Some(session_anchor_id) = create.session_anchor_id {
         sqlx::query!(
             "SELECT id FROM client_sessions WHERE id = $1 FOR UPDATE",
-            pair_session_id
+            session_anchor_id
         )
         .fetch_optional(&mut **tx)
         .await?
@@ -502,7 +502,7 @@ async fn place_task(
               AND (
                     $3::uuid IS NULL
                  OR EXISTS (
-                    SELECT 1 FROM bear_pair_task_attachments a
+                    SELECT 1 FROM bear_session_task_attachments a
                     WHERE a.task_id = t.id AND a.session_id = $3 AND a.released_at IS NULL
                  )
               )
@@ -510,7 +510,7 @@ async fn place_task(
             "#,
                 create.bear_id,
                 create.job_id,
-                create.pair_session_id,
+                create.session_anchor_id,
                 create.parent_task_id
             )
             .fetch_one(&mut **tx)
@@ -554,7 +554,7 @@ async fn place_task(
           AND (
                 $3::uuid IS NULL
              OR EXISTS (
-                SELECT 1 FROM bear_pair_task_attachments a
+                SELECT 1 FROM bear_session_task_attachments a
                 WHERE a.task_id = t.id AND a.session_id = $3 AND a.released_at IS NULL
              )
           )
@@ -563,7 +563,7 @@ async fn place_task(
         ",
         create.bear_id,
         create.job_id,
-        create.pair_session_id,
+        create.session_anchor_id,
         create.parent_task_id,
         target_order
     )
@@ -2802,7 +2802,7 @@ pub(super) async fn list_tasks(
                    result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id, settled_by_entry_id,
                    created_at, updated_at
             FROM bear_tasks t
-            LEFT JOIN bear_pair_task_attachments a
+            LEFT JOIN bear_session_task_attachments a
               ON a.task_id = t.id AND a.released_at IS NULL
             WHERE t.bear_id = $1
               AND ($2::uuid IS NULL OR t.job_id = $2)
@@ -2816,7 +2816,7 @@ pub(super) async fn list_tasks(
             "#,
             bear_id,
             filter.job_id,
-            filter.pair_session_id,
+            filter.session_anchor_id,
             filter.parent_task_id,
             limit,
         )
@@ -2830,8 +2830,8 @@ pub(super) async fn list_tasks(
         .collect())
 }
 
-/// The one Pair eligibility query. It includes legacy session-owned tasks and
-/// durable job tasks explicitly attached to this client session.
+/// The canonical session-task eligibility query. It returns tasks with an active
+/// attachment to the specified client-session anchor, regardless of Bear stance.
 pub(super) async fn list_session_tasks(
     pool: &PgPool,
     bear_id: Uuid,
@@ -2846,7 +2846,7 @@ pub(super) async fn list_session_tasks(
                t.result_rollup_policy, t.created_by_role, t.created_by_user_id, t.created_by_agent_id,
                t.created_in_run_id, t.settled_by_entry_id, t.created_at, t.updated_at
         FROM bear_tasks t
-        LEFT JOIN bear_pair_task_attachments a
+        LEFT JOIN bear_session_task_attachments a
           ON a.task_id = t.id AND a.released_at IS NULL
         WHERE t.bear_id = $1
           AND a.session_id = $2
@@ -2864,7 +2864,7 @@ pub(super) async fn list_session_tasks(
         .collect())
 }
 
-pub(super) async fn attach_job_tasks_to_pair_session(
+pub(super) async fn attach_job_tasks_to_session(
     pool: &PgPool,
     bear_id: Uuid,
     job_id: Uuid,
@@ -2872,13 +2872,13 @@ pub(super) async fn attach_job_tasks_to_pair_session(
 ) -> Result<(), DenError> {
     let attached = sqlx::query(
         r"
-        INSERT INTO bear_pair_task_attachments (task_id, session_id)
+        INSERT INTO bear_session_task_attachments (task_id, session_id)
         SELECT id, $3 FROM bear_tasks
         WHERE bear_id = $1 AND job_id = $2 AND settled_by_entry_id IS NULL
         ON CONFLICT (task_id) DO UPDATE
         SET session_id = EXCLUDED.session_id, attached_at = NOW(), released_at = NULL
-        WHERE bear_pair_task_attachments.released_at IS NOT NULL
-           OR bear_pair_task_attachments.session_id = EXCLUDED.session_id
+        WHERE bear_session_task_attachments.released_at IS NOT NULL
+           OR bear_session_task_attachments.session_id = EXCLUDED.session_id
         ",
     )
     .bind(bear_id)
@@ -2911,13 +2911,13 @@ pub(super) async fn attach_task_to_session(
 ) -> Result<(), DenError> {
     let attached = sqlx::query(
         r"
-        INSERT INTO bear_pair_task_attachments (task_id, session_id)
+        INSERT INTO bear_session_task_attachments (task_id, session_id)
         SELECT id, $3 FROM bear_tasks
         WHERE id = $2 AND bear_id = $1 AND settled_by_entry_id IS NULL
           AND (
             job_id IS NOT NULL
             OR EXISTS (
-              SELECT 1 FROM bear_pair_task_attachments existing
+              SELECT 1 FROM bear_session_task_attachments existing
               WHERE existing.task_id = bear_tasks.id
                 AND existing.session_id = $3
                 AND existing.released_at IS NULL
@@ -3187,7 +3187,7 @@ async fn list_tasks_with_descendants(
                    result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id, settled_by_entry_id,
                    created_at, updated_at
             FROM bear_tasks t
-            LEFT JOIN bear_pair_task_attachments a
+            LEFT JOIN bear_session_task_attachments a
               ON a.task_id = t.id AND a.released_at IS NULL
             WHERE t.bear_id = $1
               AND ($2::uuid IS NULL OR t.job_id = $2)
@@ -3234,7 +3234,7 @@ async fn list_tasks_with_descendants(
         "#,
         bear_id,
         filter.job_id,
-        filter.pair_session_id,
+        filter.session_anchor_id,
         filter.parent_task_id,
         limit,
     )
@@ -3389,12 +3389,12 @@ pub(super) async fn settle_session_task(
     let task = select_task(&mut tx, settlement.bear_id, settlement.task_id).await?;
     let attached = sqlx::query_scalar::<_, bool>(
         r"SELECT EXISTS(
-            SELECT 1 FROM bear_pair_task_attachments
+            SELECT 1 FROM bear_session_task_attachments
             WHERE task_id = $1 AND session_id = $2 AND released_at IS NULL
         )",
     )
     .bind(task.id)
-    .bind(settlement.pair_session_id)
+    .bind(settlement.session_anchor_id)
     .fetch_one(&mut *tx)
     .await?;
     if !attached {
@@ -3431,10 +3431,10 @@ pub(super) async fn settle_session_task(
     .fetch_one(&mut *tx)
     .await?;
     sqlx::query(
-        "UPDATE bear_pair_task_attachments SET released_at = NOW() WHERE task_id = $1 AND session_id = $2 AND released_at IS NULL",
+        "UPDATE bear_session_task_attachments SET released_at = NOW() WHERE task_id = $1 AND session_id = $2 AND released_at IS NULL",
     )
     .bind(task.id)
-    .bind(settlement.pair_session_id)
+    .bind(settlement.session_anchor_id)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -4273,7 +4273,7 @@ pub(super) async fn sync_task_list(
                 DocketTaskCreate {
                     bear_id: request.task_list.bear_id,
                     job_id: Some(job_id),
-                    pair_session_id: None,
+                    session_anchor_id: None,
                     parent_task_id,
                     sibling_order: i32::MAX / 2,
                     placement: Some(DocketTaskPlacement::Last),

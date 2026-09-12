@@ -108,7 +108,7 @@ pub trait DocketService: Send + Sync {
         start: DocketExecutionAttemptStart,
     ) -> Result<DocketExecutionAttemptRow, DenError>;
 
-    /// Loads the exact live Pair authority already bound to a run. Repeated
+    /// Loads the exact live session-task authority already bound to a run. Repeated
     /// focus/start calls must reuse this row rather than minting new authority.
     async fn get_live_session_task_execution_attempt(
         &self,
@@ -124,7 +124,7 @@ pub trait DocketService: Send + Sync {
         session_id: &str,
     ) -> Result<Option<DocketExecutionAttemptRow>, DenError>;
 
-    /// Loads any live Pair authority for this task, regardless of session.
+    /// Loads any live session-task authority for this task, regardless of session.
     /// Callers must verify a foreign host is truly orphaned before releasing it.
     async fn get_live_session_task_execution_attempt_for_task(
         &self,
@@ -468,7 +468,7 @@ impl DocketService for PgDocketService {
     async fn checkout_task_list(
         &self,
         bear_id: Uuid,
-        _viewer_role: BearProfile,
+        viewer_role: BearProfile,
         _user_id: i32,
         request: TaskListCheckoutRequest,
     ) -> Result<Option<TaskListProjection>, DenError> {
@@ -477,15 +477,16 @@ impl DocketService for PgDocketService {
                 job_id,
                 parent_task_id,
             } => {
-                if let Some(session_id) = request.pair_session_id {
-                    db::attach_job_tasks_to_pair_session(&self.pool, bear_id, job_id, session_id)
+                if let Some(session_id) = request.session_anchor_id {
+                    db::attach_job_tasks_to_session(&self.pool, bear_id, job_id, session_id)
                         .await?;
                     let tasks = self.list_session_tasks(bear_id, session_id).await?;
                     Ok(task_list_projection_from_session_tasks(
                         bear_id,
-                        BearProfile::Pair,
+                        viewer_role,
                         "",
                         session_id,
+                        None,
                         &tasks,
                     ))
                 } else {

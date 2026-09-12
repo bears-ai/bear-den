@@ -14,14 +14,21 @@
 - The stale Letta/MemFS/Codepool smoke matrix and redundant direct-inference check were retired. Three broad checks now cover native stack readiness, BearWire authentication, and the full live Armature ACP focus lifecycle.
 - Rollout tooling now shares one response-counting Armature test client, keeps fake BearWire coverage aligned with durable event pages and tool leases, and inspects canonical `turn_*` lifecycle tables without dumping transcript or tool-result bodies.
 - The former three-failure BearWire baseline is eliminated: blocked Docket settlement now atomically blocks the job run, preserves task selection, terminalizes the exact BearWire host when no successor exists, and returns chat control; command-expiry and replay tests now model current process ownership and asynchronous persistence truthfully. The broad BearWire suite passes 124/124.
-- The former seven-failure Armature baseline is also eliminated. Invalid bare-hunk fixtures now use standard unified ranges, created-file patches preserve the conventional final newline unless explicitly negated, and duplicate argument-reconstructed card-title assertions were retired in favor of descriptor-owned display coverage. The broad Armature suite passes 322/322 with two intentionally ignored legacy web-fetch tests.
+- The former seven-failure Armature baseline is also eliminated. Invalid bare-hunk fixtures now use standard unified ranges, created-file patches preserve the conventional final newline unless explicitly negated, and duplicate argument-reconstructed card-title assertions were retired in favor of descriptor-owned display coverage. The two ignored adapter-local `web_fetch` tests were removed because canonical `web_fetch` is Den-owned; the separately named local hook retains active unit coverage. The broad Armature suite passes without failures or ignored tests.
+
+### Completed post-P11 cleanup
+
+- The attachment table and active-session index are now named `bear_session_task_attachments` and `idx_bear_session_task_attachments_active_session`; the migration documents that ownership is client-session scoped and independent of Bear stance.
+- Internal request fields, filters, settlement DTOs, projections, workflow result shapes, and test language distinguish the UUID `session_anchor_id` from the external `client_session_id`.
+- Session task-list projections no longer serialize a session-anchor UUID as `source_client_session_id`, and checkout projections retain the caller's actual stance instead of hardcoding Pair.
+- Dead ignored adapter-local `web_fetch` tests were retired; the canonical tool remains Den-owned and the separately named local hook retains active unit coverage.
 
 ### Completed stabilization phase P11
 
 - Docket bounded-loop types and methods now use focused-slice terminology; execution continuation no longer names the Pair trust profile.
 - The internal execution gate variant is `Session`; its serialized `"pair_session"` spelling remains pinned for deployed compatibility.
 - BearWire responses expose canonical `session_execution` while retaining generated read-only `pair_binding`, and Armature prefers the canonical field with legacy fallback.
-- Session-attempt helpers, diagnostics, error text, and focused runtime tests use session/focused terminology. Legacy SQL table names remain unchanged to avoid a no-value migration.
+- Session-attempt helpers, diagnostics, error text, and focused runtime tests use session/focused terminology. Versioned BearWire `pair_binding` and serialized `"pair_session"` compatibility remain explicit observation-window seams, not canonical names.
 
 ### Completed stabilization phase P10
 

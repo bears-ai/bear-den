@@ -148,6 +148,7 @@ pub async fn resolve_runtime_task_context(
             profile,
             &conversation_id,
             session.id,
+            Some(&client_session_id),
             &tasks,
             current_task_id,
         );
@@ -163,6 +164,7 @@ pub async fn resolve_runtime_task_context(
         profile,
         &conversation_id,
         session.id,
+        Some(&client_session_id),
         &tasks,
         current_task_id,
     );

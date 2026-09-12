@@ -1330,7 +1330,7 @@ async fn add_top_level_task(
         .create_task(DocketTaskCreate {
             bear_id,
             job_id: Some(job_id),
-            pair_session_id: None,
+            session_anchor_id: None,
             parent_task_id: None,
             sibling_order,
             placement: None,
@@ -1681,7 +1681,7 @@ async fn add_child_task(
         .create_task(DocketTaskCreate {
             bear_id,
             job_id: Some(job_id),
-            pair_session_id: None,
+            session_anchor_id: None,
             parent_task_id: Some(parent_task_id),
             sibling_order,
             placement: None,
