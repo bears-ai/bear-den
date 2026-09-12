@@ -11,7 +11,8 @@
 - A live `gpt-5.5` Pair-stance write turn created and selected a session task, invoked `focus_current_task`, continued focused execution on the same BearWire run, completed an Armature-local file tool, settled the task, and produced exactly one terminal ACP prompt response.
 - The persistent focused transition stream was contiguous (`focus_acquired` → client-wait continuation → terminal completion), all tool calls retained one run ID, the client obligation reached `continued`, and final `run.state` reported no open obligations.
 - Validation exposed and repaired three adjacent single-source-of-truth failures: smoke seeding did not provision required Bear-scoped Bifrost credentials, native materialization discarded explicit conversation model selection by looking up the internal `den-conv-*` ID, and session-task settlement rejected the selected task it was designed to settle.
-- The stale Letta/MemFS/Codepool smoke matrix was retired. Four broad checks now cover native stack readiness, BearWire authentication, minimal live inference, and the full live Armature ACP focus lifecycle.
+- The stale Letta/MemFS/Codepool smoke matrix and redundant direct-inference check were retired. Three broad checks now cover native stack readiness, BearWire authentication, and the full live Armature ACP focus lifecycle.
+- Rollout tooling now shares one response-counting Armature test client, keeps fake BearWire coverage aligned with durable event pages and tool leases, and inspects canonical `turn_*` lifecycle tables without dumping transcript or tool-result bodies.
 
 ### Completed stabilization phase P11
 

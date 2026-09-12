@@ -1,19 +1,18 @@
 import json
 import os
-import queue
 import subprocess
-import sys
 import threading
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-ARMATURE_BIN = Path(
-    os.environ.get(
-        "BEAR_ARMATURE_BIN", ROOT / "tools/bear-armature/target/debug/bear-armature"
-    )
+import pytest
+
+from tests.support.armature_client import (
+    ARMATURE_BIN,
+    ROOT,
+    ArmatureClient,
+    build_armature,
 )
 
 
@@ -90,9 +89,9 @@ class FakeBearWireState:
 
 
 class FakeBearWireHandler(BaseHTTPRequestHandler):
-    state: FakeBearWireState = None
+    state: FakeBearWireState
 
-    def log_message(self, fmt, *args):
+    def log_message(self, format, *args):
         return
 
     def _json(self, status, body):
@@ -136,19 +135,39 @@ class FakeBearWireHandler(BaseHTTPRequestHandler):
         if parsed.path == "/version.json":
             self._json(200, {"service": "den", "version": "e2e", "git_sha": "fake"})
             return
-        if not parsed.path.startswith(
-            "/bearwire/v1/sessions/"
-        ) or not parsed.path.endswith("/events"):
+        if not parsed.path.startswith("/bearwire/v1/sessions/"):
             self._json(404, {"error": "not found"})
             return
         query = urllib.parse.parse_qs(parsed.query)
         after_values = query.get("after") or []
         after = int(after_values[0]) if after_values else None
-        frames = []
-        for seq, event in self.state.events_after(after):
-            payload = {"jsonrpc": "2.0", "method": "event", "params": event}
-            frames.append(f"id: {seq}\ndata: {json.dumps(payload)}\n\n".encode())
-        self._sse(frames)
+        events = self.state.events_after(after)
+        if parsed.path.endswith("/events/page"):
+            next_after = events[-1][0] if events else after or 0
+            self._json(
+                200,
+                {
+                    "ok": True,
+                    "session_id": self.state.session_id,
+                    "events": [
+                        {"sequence": sequence, "event": event}
+                        for sequence, event in events
+                    ],
+                    "next_after": next_after,
+                    "has_more": False,
+                },
+            )
+            return
+        if parsed.path.endswith("/events"):
+            frames = []
+            for sequence, event in events:
+                payload = {"jsonrpc": "2.0", "method": "event", "params": event}
+                frames.append(
+                    f"id: {sequence}\ndata: {json.dumps(payload)}\n\n".encode()
+                )
+            self._sse(frames)
+            return
+        self._json(404, {"error": "not found"})
 
     def rpc_result(self, method, params):
         state = self.state
@@ -160,6 +179,32 @@ class FakeBearWireHandler(BaseHTTPRequestHandler):
             }
         if method == "session.state":
             return {"kind": "session_state", "ok": True}
+        if method == "run.state":
+            recent_events = [event for _, event in state.events_after(None)]
+            terminal = next(
+                (
+                    event
+                    for event in reversed(recent_events)
+                    if event.get("type")
+                    in {"run.completed", "run.failed", "run.cancelled"}
+                ),
+                None,
+            )
+            run_state = (
+                terminal["type"].removeprefix("run.") if terminal else "running"
+            )
+            return {
+                "kind": "run_state",
+                "run": {
+                    "run_id": state.run_id,
+                    "session_id": state.session_id,
+                    "state": run_state,
+                    "terminal_reason": (terminal or {}).get("data", {}).get("reason"),
+                },
+                "open_obligations": [],
+                "obligations": [],
+                "recent_events": recent_events,
+            }
         if method == "resource.update":
             return {"ok": True}
         if method == "session.model.get":
@@ -223,6 +268,21 @@ class FakeBearWireHandler(BaseHTTPRequestHandler):
                     }
                 )
             return {"ok": True, "run_id": state.run_id, "event_sequence": 1}
+        if method == "client.tool.claim":
+            return {
+                "ok": True,
+                "status": "claimed",
+                "attempt_token": f"attempt-{params.get('tool_call_id')}",
+                "lease_expires_at": "2099-01-01T00:00:00Z",
+                "renew_after_ms": 30_000,
+            }
+        if method == "client.tool.renew":
+            return {
+                "ok": True,
+                "status": "renewed",
+                "lease_expires_at": "2099-01-01T00:00:00Z",
+                "renew_after_ms": 30_000,
+            }
         if method == "client.permission.result":
             state.permission_result_payloads.append(params)
             if state.scenario == "loop":
@@ -328,112 +388,6 @@ class FakeBearWireHandler(BaseHTTPRequestHandler):
         raise RuntimeError(method)
 
 
-class ArmatureClient:
-    def __init__(self, proc):
-        self.proc = proc
-        self.responses = {}
-        self.notifications = []
-        self.client_requests = queue.Queue()
-        self.stderr_lines = []
-        self._reader = threading.Thread(target=self._read_stdout, daemon=True)
-        self._err_reader = threading.Thread(target=self._read_stderr, daemon=True)
-        self._reader.start()
-        self._err_reader.start()
-
-    def _read_stdout(self):
-        for line in self.proc.stdout:
-            if not line.strip():
-                continue
-            msg = json.loads(line)
-            if "id" in msg and ("result" in msg or "error" in msg):
-                self.responses[str(msg["id"])] = msg
-            elif "method" in msg:
-                if msg.get("method") == "session/update":
-                    self.notifications.append(msg)
-                else:
-                    self.client_requests.put(msg)
-            else:
-                self.notifications.append(msg)
-
-    def _read_stderr(self):
-        for line in self.proc.stderr:
-            self.stderr_lines.append(line.rstrip())
-
-    def send(self, method, params=None, req_id=None):
-        req_id = req_id or f"req-{int(time.time() * 1000)}"
-        self.proc.stdin.write(
-            json.dumps(
-                {
-                    "jsonrpc": "2.0",
-                    "id": req_id,
-                    "method": method,
-                    "params": params or {},
-                }
-            )
-            + "\n"
-        )
-        self.proc.stdin.flush()
-        return req_id
-
-    def wait_response(self, req_id, timeout=10):
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            if str(req_id) in self.responses:
-                return self.responses.pop(str(req_id))
-            time.sleep(0.02)
-        raise AssertionError(
-            f"timed out waiting for response {req_id}; stderr={self.stderr_lines}"
-        )
-
-    def wait_any_client_request(self, timeout=10):
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            try:
-                return self.client_requests.get(timeout=0.05)
-            except queue.Empty:
-                continue
-        raise AssertionError(
-            f"timed out waiting for client request; stderr={self.stderr_lines}"
-        )
-
-    def wait_client_request(self, method, timeout=10):
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            msg = self.wait_any_client_request(
-                timeout=max(0.05, deadline - time.time())
-            )
-            if msg.get("method") == method:
-                return msg
-            # Respond harmlessly to session/update notifications that arrive as requests in tests.
-            self.notifications.append(msg)
-        raise AssertionError(
-            f"timed out waiting for client request {method}; stderr={self.stderr_lines}"
-        )
-
-    def respond(self, req, result=None, error=None):
-        msg = {"jsonrpc": "2.0", "id": req["id"]}
-        if error is not None:
-            msg["error"] = error
-        else:
-            msg["result"] = result or {}
-        self.proc.stdin.write(json.dumps(msg) + "\n")
-        self.proc.stdin.flush()
-
-
-def build_armature_if_needed():
-    if ARMATURE_BIN.exists():
-        return
-    subprocess.run(
-        [
-            "cargo",
-            "build",
-            "--manifest-path",
-            str(ROOT / "tools/bear-armature/Cargo.toml"),
-        ],
-        check=True,
-        cwd=ROOT,
-    )
-
 
 def start_fake_bearwire_server(scenario="single"):
     state = FakeBearWireState(scenario=scenario)
@@ -446,7 +400,7 @@ def start_fake_bearwire_server(scenario="single"):
 
 
 def test_acp_bearwire_relative_tool_flow(tmp_path):
-    build_armature_if_needed()
+    build_armature()
     workspace = tmp_path / "workspace"
     plan = workspace / "docs" / "roadmap" / "PLAN.md"
     plan.parent.mkdir(parents=True)
@@ -512,11 +466,6 @@ def test_acp_bearwire_relative_tool_flow(tmp_path):
             permission, {"outcome": {"outcome": "selected", "optionId": "allow_once"}}
         )
 
-        fs_req = client.wait_client_request("fs/read_text_file", timeout=10)
-        path = fs_req["params"].get("path") or fs_req["params"].get("uri")
-        assert path == str(plan), fs_req
-        client.respond(fs_req, {"content": plan.read_text()})
-
         prompt = client.wait_response(prompt_id, timeout=15)
         assert "result" in prompt, prompt
 
@@ -538,7 +487,7 @@ def test_acp_bearwire_relative_tool_flow(tmp_path):
         update = completed_updates[-1]["params"]["update"]
         raw_input = update.get("rawInput") or update.get("raw_input")
         raw_output = update.get("rawOutput") or update.get("raw_output")
-        assert raw_input and raw_input.get("path") == "docs/roadmap/PLAN.md", update
+        assert "docs/roadmap/PLAN.md" in json.dumps(raw_input), update
         visible_text = json.dumps(update.get("content", []))
         assert "e2e fixture plan" in visible_text, update
         assert raw_output, update
@@ -558,7 +507,7 @@ def test_acp_bearwire_relative_tool_flow(tmp_path):
 
 
 def test_acp_bearwire_tool_loop_terminates_cleanly_without_stderr_noise(tmp_path):
-    build_armature_if_needed()
+    build_armature()
     workspace = tmp_path / "workspace"
     plan = workspace / "docs" / "roadmap" / "PLAN.md"
     plan.parent.mkdir(parents=True)
@@ -627,24 +576,19 @@ def test_acp_bearwire_tool_loop_terminates_cleanly_without_stderr_noise(tmp_path
                 client.respond(
                     req, {"outcome": {"outcome": "selected", "optionId": "allow_once"}}
                 )
-            elif method == "fs/read_text_file":
-                # The first loop intentionally asks for a missing file. It must be a tool result,
-                # not an armature/run crash.
-                client.respond(
-                    req,
-                    error={
-                        "code": -32002,
-                        "message": "Resource not found",
-                        "data": {"uri": req.get("params", {}).get("path")},
-                    },
-                )
             else:
-                client.notifications.append(req)
+                pytest.fail(f"unexpected ACP client request: {req}")
 
         prompt = client.wait_response(prompt_id, timeout=10)
         assert "error" in prompt, prompt
-        error_message = prompt["error"].get("data", {}).get("message", "")
-        assert "Tool budget exhausted before final answer" in error_message, prompt
+        assert "Den could not complete this turn" in prompt["error"]["message"], prompt
+        terminal = next(
+            event
+            for _, event in reversed(state.events_after(None))
+            if event.get("type") == "run.failed"
+        )
+        assert terminal["data"]["reason"] == "max_agent_steps", terminal
+        assert "Tool budget exhausted before final answer" in terminal["data"]["message"]
         assert len(state.permission_result_payloads) == len(state.loop_tools)
         assert len(state.tool_result_payloads) == len(state.loop_tools)
         assert state.tool_result_payloads[0]["status"] == "error"

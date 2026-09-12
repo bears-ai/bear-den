@@ -7,7 +7,7 @@ import uuid
 import pytest
 import requests
 
-from tests.e2e.test_acp_bearwire_tool_flow import ARMATURE_BIN, ArmatureClient
+from tests.support.armature_client import ARMATURE_BIN, ArmatureClient
 
 
 def service_url(env_name, service_name, port):
@@ -123,26 +123,6 @@ def bearwire_events(session_id, after):
     return events, body.get("next_after", after)
 
 
-def wait_for_run_terminal(session_id, run_id, timeout=120):
-    deadline = time.time() + timeout
-    after = 0
-    events = []
-    while time.time() < deadline:
-        page, after = bearwire_events(session_id, after)
-        events.extend(page)
-        terminal = [
-            event
-            for event in events
-            if event.get("run_id") == run_id and event.get("type") in TERMINAL_EVENTS
-        ]
-        if terminal:
-            return events, terminal
-        time.sleep(0.25)
-    pytest.fail(
-        f"run {run_id} did not terminate; last events="
-        f"{[(event.get('_sequence'), event.get('type'), event.get('run_id')) for event in events[-30:]]}"
-    )
-
 
 def tool_names(events, run_id):
     names = []
@@ -183,74 +163,13 @@ def test_bearwire_rejects_unauthenticated_session_open():
     assert "Authorization" in body["error"]["data"]["error"], body
 
 
-def test_live_bearwire_pair_stance_turn_has_one_clean_terminal():
-    if not API:
-        pytest.skip("Den API service is disabled")
-    if os.environ.get("OPENAI_API_KEY", "").strip() in PLACEHOLDER_SECRETS:
-        pytest.skip("No live OpenAI key is configured")
-
-    session_id = f"smoke-live-{uuid.uuid4().hex}"
-    conversation_id = f"new-smoke-live-{uuid.uuid4()}"
-    marker = f"smoke-live-ok-{uuid.uuid4().hex[:8]}"
-    client_context = {"cwd": "/workspace", "tools": []}
-
-    opened = bearwire_rpc(
-        "session.open",
-        {
-            "session_id": session_id,
-            "client": "smoke",
-            "conversation_id": conversation_id,
-            "cwd": "/workspace",
-            "mode": "ask",
-            "client_context": client_context,
-        },
-    )["result"]
-    assert opened["ok"] is True, opened
-
-    started = bearwire_rpc(
-        "run.start",
-        {
-            "session_id": session_id,
-            "client": "smoke",
-            "conversation_id": conversation_id,
-            "cwd": "/workspace",
-            "requested_mode": "ask",
-            "prompt": f"Reply with exactly: {marker}",
-            "client_context": client_context,
-        },
-    )["result"]
-    assert started["accepted"] is True, started
-    run_id = started["run_id"]
-
-    events, terminal = wait_for_run_terminal(session_id, run_id)
-    assert len(terminal) == 1, terminal
-    assert terminal[0]["type"] == "run.completed", terminal[0]
-    assert not [
-        event
-        for event in events
-        if event.get("run_id") == run_id and event.get("type") == "tool_call.requested"
-    ], events
-
-    assistant_text = "".join(
-        (event.get("data") or {}).get("delta", "")
-        for event in events
-        if event.get("run_id") == run_id and event.get("type") == "message.delta"
-    )
-    assert marker in assistant_text, assistant_text
-
-    state = bearwire_rpc(
-        "run.state",
-        {"session_id": session_id, "run_id": run_id, "limit": 100},
-    )["result"]
-    assert state["run"]["state"] == "completed", state
-    assert state["open_obligations"] == [], state
-
-
-
 
 def test_live_armature_acp_focus_flow_has_one_terminal_response():
     if not API:
         pytest.skip("Den API service is disabled")
+    live_setting = os.environ.get("BEARS_LIVE_MODEL_SMOKE", "auto").strip().lower()
+    if live_setting in {"0", "false", "no", "off"}:
+        pytest.skip("Live model smoke is disabled")
     if os.environ.get("OPENAI_API_KEY", "").strip() in PLACEHOLDER_SECRETS:
         pytest.skip("No live OpenAI key is configured")
 
@@ -366,7 +285,7 @@ a Job, dispatch work, call any other tools, or start another run.
         assert "result" in response, {"response": response, "stderr": client.stderr_lines}
         assert len(fs_requests) <= 1, fs_requests
         time.sleep(0.5)
-        assert prompt_id not in client.responses, "duplicate terminal ACP response"
+        assert client.response_count(prompt_id) == 1, "duplicate terminal ACP response"
         assert client.client_requests.empty(), "ACP client request remained unanswered"
 
         events, _ = bearwire_events(session_id, 0)

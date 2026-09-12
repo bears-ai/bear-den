@@ -12,6 +12,7 @@ echo "Running smoke tests..."
 export JWT_SECRET="${JWT_SECRET:-dev-placeholder}"
 export OPENAI_API_KEY="${OPENAI_API_KEY:-dev-placeholder}"
 export AGENT_RUNTIME="${AGENT_RUNTIME:-native}"
+export BEARS_LIVE_MODEL_SMOKE="${BEARS_LIVE_MODEL_SMOKE:-auto}"
 # When set, the Qdrant recall assertion in tests/smoke is active.
 export QDRANT_URL="${QDRANT_URL:-}"
 export EMBEDDING_MODEL="${EMBEDDING_MODEL:-text-embedding-3-small}"
@@ -45,6 +46,7 @@ fi
 DEN_URL="http://bears-den:3000" \
 BEARS_API_URL="${API_URL}" \
 AGENT_RUNTIME="${AGENT_RUNTIME}" \
+BEARS_LIVE_MODEL_SMOKE="${BEARS_LIVE_MODEL_SMOKE}" \
 QDRANT_URL="${QDRANT_URL}" \
 OPENAI_API_KEY="${OPENAI_API_KEY}" \
 EMBEDDING_MODEL="${EMBEDDING_MODEL}" \

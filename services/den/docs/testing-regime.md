@@ -57,7 +57,7 @@ The image workflow builds and publishes deployable images on the deployment bran
 
 ### Deployment checks
 
-Deployment readiness and Git-SHA checks verify that the intended image started. Test-environment smoke coverage should exercise a disposable Pair/Docket focus-to-terminal-control cycle without calling an LLM. Never run mutating smoke tests against production.
+Deployment readiness and Git-SHA checks verify that the intended image started. Deterministic Pair/Docket focus-to-terminal coverage belongs in the Postgres integration lane and must not call an LLM. On a disposable development or UAT stack, `./scripts/smoke.sh` additionally runs one live Armature ACP focus cycle when a real provider key is configured; set `BEARS_LIVE_MODEL_SMOKE=off` to skip that cost-bearing check. Never run mutating smoke tests against production.
 
 ## CI policy
 

@@ -7,40 +7,96 @@ if [ -z "$RUN_ID" ]; then
   exit 64
 fi
 
-CONTAINER="${BEARS_POSTGRES_CONTAINER:-bears-stack-bears-postgres-1}"
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+CONTAINER="${BEARS_POSTGRES_CONTAINER:-}"
 DB_USER="${BEARS_POSTGRES_USER:-bears}"
 DB_NAME="${BEARS_POSTGRES_DB:-den}"
 
+if [ -z "$CONTAINER" ]; then
+  CONTAINER="$(cd "$ROOT" && docker compose ps -q bears-postgres)"
+fi
+if [ -z "$CONTAINER" ] || ! docker inspect "$CONTAINER" >/dev/null 2>&1; then
+  echo "The Compose bears-postgres service is not running. Set BEARS_POSTGRES_CONTAINER to inspect another stack." >&2
+  exit 69
+fi
+
 psql_cmd() {
-  docker exec "$CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 "$@"
+  docker exec -i "$CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 "$@"
 }
 
-if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
-  echo "Postgres container '$CONTAINER' is not running. Set BEARS_POSTGRES_CONTAINER if needed." >&2
+TABLES_READY="$(psql_cmd -Atc "
+  SELECT to_regclass('public.turn_runs') IS NOT NULL
+     AND to_regclass('public.turn_obligations') IS NOT NULL
+     AND to_regclass('public.turn_obligation_results') IS NOT NULL
+     AND to_regclass('public.bearwire_events') IS NOT NULL
+")"
+if [ "$TABLES_READY" != "t" ]; then
+  echo "Current BearWire lifecycle tables are not present in $DB_NAME." >&2
+  echo "Available run/obligation/event tables:" >&2
+  psql_cmd -c "
+    SELECT schemaname, tablename
+    FROM pg_tables
+    WHERE tablename LIKE '%run%'
+       OR tablename LIKE '%obligation%'
+       OR tablename = 'bearwire_events'
+    ORDER BY tablename
+  " >&2 || true
   exit 69
 fi
 
-if ! psql_cmd -Atc "select to_regclass('public.bearwire_runs') is not null and to_regclass('public.bearwire_events') is not null" | grep -qx t; then
-  echo "BearWire tables are not present in $DB_NAME on $CONTAINER. This Den may be an older schema or a different environment." >&2
-  echo "Available BearWire-like tables:" >&2
-  psql_cmd -c "select schemaname, tablename from pg_tables where tablename like 'bearwire%' order by tablename" >&2 || true
-  exit 69
-fi
-
-SESSION_ID="$(psql_cmd -v run_id="$RUN_ID" -Atc "select session_id from bearwire_runs where run_id = :'run_id' limit 1")"
+SESSION_ID="$(
+  psql_cmd -v run_id="$RUN_ID" -At <<'SQL'
+SELECT session_id FROM turn_runs WHERE run_id = :'run_id' LIMIT 1;
+SQL
+)"
 if [ -z "$SESSION_ID" ]; then
-  echo "No bearwire_runs row found for run_id '$RUN_ID'." >&2
+  echo "No turn_runs row found for run_id '$RUN_ID'." >&2
   exit 66
 fi
 
 printf '# BearWire run\n'
-psql_cmd -v run_id="$RUN_ID" -x -c "select run_id, session_id, state, terminal_reason, created_at, updated_at from bearwire_runs where run_id = :'run_id'"
+psql_cmd -v run_id="$RUN_ID" -x <<'SQL'
+SELECT run_id, session_id, state, terminal_reason, created_at, updated_at, completed_at
+FROM turn_runs
+WHERE run_id = :'run_id';
+SQL
 
 printf '\n# Obligations\n'
-psql_cmd -v run_id="$RUN_ID" -x -c "select kind, expected_client_method, tool_call_id, permission_id, state, request_payload, result_payload, created_at, updated_at from bearwire_run_obligations where run_id = :'run_id' order by created_at"
+psql_cmd -v run_id="$RUN_ID" -x <<'SQL'
+SELECT id, kind, expected_responder_action, tool_call_id, permission_id, state,
+       request_payload->>'tool_name' AS tool_name,
+       request_payload->>'execution_target' AS execution_target,
+       result_payload->>'status' AS result_status,
+       responder_ref_id, turn_step_id, claimed_at, lease_expires_at,
+       created_at, updated_at, completed_at
+FROM turn_obligations
+WHERE run_id = :'run_id'
+ORDER BY created_at, id;
+SQL
 
-printf '\n# Client results\n'
-psql_cmd -v run_id="$RUN_ID" -x -c "select obligation_kind, obligation_id, payload_json, created_at from bearwire_client_results where run_id = :'run_id' order by created_at"
+printf '\n# Obligation results\n'
+psql_cmd -v run_id="$RUN_ID" -x <<'SQL'
+SELECT obligation_kind, obligation_id, result_hash, turn_step_id,
+       payload_json->>'status' AS status,
+       created_at
+FROM turn_obligation_results
+WHERE run_id = :'run_id'
+ORDER BY created_at, id;
+SQL
 
 printf '\n# Event timeline\n'
-psql_cmd -v run_id="$RUN_ID" -x -c "select sequence_no, event_type, event_json->>'run_id' as run_id, event_json->>'subject' as subject, event_json->'data' as data, created_at from bearwire_events where event_json->>'run_id' = :'run_id' order by sequence_no"
+psql_cmd -v run_id="$RUN_ID" -x <<'SQL'
+SELECT sequence_no, event_type, event_json->>'run_id' AS run_id,
+       event_json->>'subject' AS subject,
+       event_json->'data'->'tool_call'->>'name' AS tool_name,
+       event_json->'data'->>'status' AS status,
+       event_json->'data'->>'reason' AS reason,
+       event_json->'data'->'from'->>'phase' AS from_phase,
+       event_json->'data'->'to'->>'phase' AS to_phase,
+       event_json->'data'->>'state_version' AS state_version,
+       created_at
+FROM bearwire_events
+WHERE event_json->>'run_id' = :'run_id'
+  AND event_type NOT IN ('message.delta', 'message.reasoning.delta', 'run.progress')
+ORDER BY sequence_no;
+SQL
