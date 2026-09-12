@@ -2366,16 +2366,6 @@ pub(crate) async fn update_current_task_status(
 ) -> Result<Value, CustomError> {
     let args: DocketCurrentTaskStatusArguments = serde_json::from_value(arguments)?;
     if args.job_id.is_none() && args.run_id.is_none() {
-        if let Some(task_id) = current_client_session_task_id(pool, context).await? {
-            if task_id == args.task_id {
-                return Err(DenError::ValidationError(
-                    "update_current_task_status cannot settle the current task claimed by execute_job/reconcile_job_execution; use settle_execution_task with its job_id and task_id"
-                        .to_string(),
-                )
-                .into());
-            }
-        }
-
         let pair_session_id = resolve_task_session_anchor_id(pool, context, None).await?;
         let session_tasks = PgDocketService::from_pool(pool)
             .list_tasks(

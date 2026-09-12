@@ -4,7 +4,10 @@ import subprocess
 import time
 import uuid
 
+import pytest
 import requests
+
+from tests.e2e.test_acp_bearwire_tool_flow import ARMATURE_BIN, ArmatureClient
 
 
 def service_url(env_name, service_name, port):
@@ -35,34 +38,13 @@ def service_url(env_name, service_name, port):
 
 
 DEN = service_url("BEARS_DEN_URL", "bears-den", 3000)
-BIFROST = service_url("BEARS_BIFROST_URL", "bears-bifrost", 8080)
-MEMFS_MANAGER = service_url("BEARS_MEMFS_MANAGER_URL", "bears-memfs-manager", 8285)
-CODEPOOL = service_url("BEARS_CODEPOOL_URL", "bears-codepool", 3030)
 API = os.environ.get("BEARS_API_URL", "").rstrip("/")
-EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small").strip()
-EMBEDDING_DIMENSIONS = int(os.environ.get("EMBEDDING_DIMENSIONS", "1536"))
-PLACEHOLDER_SECRETS = {"", "dev-placeholder", "SETME"}
 SEEDED_USERNAME = "alice"
 SEEDED_PASSWORD = "Never deploy seed passwords."
 SEEDED_BEAR_SLUG = "test-bear"
-SEEDED_ACP_TOKEN = "bears_acp_smoke_known_token_for_dev_and_ci_only_000000000000"
-LETTA = service_url("BEARS_LETTA_URL", "bears-letta", 8283)
-LETTA_API_KEY = os.environ.get("LETTA_API_KEY") or os.environ.get(
-    "LETTA_SERVER_PASS", "dev-placeholder"
-)
-AGENT_RUNTIME = os.environ.get("AGENT_RUNTIME", "native").strip().lower()
-
-
-def real_openai_key_present():
-    return os.environ.get("OPENAI_API_KEY", "").strip() not in PLACEHOLDER_SECRETS
-
-
-def uses_native_agent_runtime():
-    return AGENT_RUNTIME == "native"
-
-
-def letta_stack_enabled():
-    return not uses_native_agent_runtime()
+SEEDED_ARMATURE_TOKEN = "bear_arm_smoke_known_token_for_dev_and_ci_only_000000000000"
+PLACEHOLDER_SECRETS = {"", "dev-placeholder", "SETME"}
+TERMINAL_EVENTS = {"run.completed", "run.failed", "run.cancelled", "run.blocked"}
 
 
 def request_with_retries(method, url, **kwargs):
@@ -82,348 +64,6 @@ def request_with_retries(method, url, **kwargs):
     raise AssertionError(f"request failed after retries: {url}: {last_error}")
 
 
-def test_memfs_manager_health():
-    if uses_native_agent_runtime():
-        return
-    response = request_with_retries("GET", f"{MEMFS_MANAGER}/health", timeout=5)
-    assert response.status_code == 200
-
-
-def test_den_reachable():
-    response = request_with_retries("GET", f"{DEN}/health", timeout=5)
-    assert response.status_code == 200
-
-
-def test_den_status_reports_qdrant_when_recall_enabled():
-    # Only meaningful when the derived-recall (Qdrant) profile is part of the stack.
-    if not os.environ.get("QDRANT_URL"):
-        return
-    response = request_with_retries("GET", f"{DEN}/status.json", timeout=10)
-    # /status.json returns 503 only when a check *fails*; an optional recall store
-    # that is merely degraded stays a warning, so the body is the source of truth.
-    assert response.status_code in (200, 503), response.text
-    body = response.json()
-    checks = {c["id"]: c for c in body["health"]["checks"]}
-    assert "qdrant" in checks, body
-    qdrant = checks["qdrant"]
-    assert qdrant["state"] == "ok", qdrant
-    assert "den_recall_" in qdrant["detail"], qdrant
-
-
-def test_bifrost_embeds_fixture_text_when_recall_enabled():
-    # Phase 0 derived-recall exit: embed fixture text through Bifrost (which injects the
-    # OpenAI key server-side) and confirm the platform standard's vector width.
-    if not os.environ.get("QDRANT_URL"):
-        return  # recall not part of this stack
-    if not real_openai_key_present():
-        return  # no live embedding-capable key in this environment
-    model = EMBEDDING_MODEL if "/" in EMBEDDING_MODEL else f"openai/{EMBEDDING_MODEL}"
-    response = request_with_retries(
-        "POST",
-        f"{BIFROST}/v1/embeddings",
-        json={
-            "model": model,
-            "input": ["bears keep canonical memory in sqlite"],
-            "dimensions": EMBEDDING_DIMENSIONS,
-        },
-        timeout=30,
-    )
-    assert response.status_code == 200, response.text
-    vectors = response.json().get("data", [])
-    assert len(vectors) == 1, response.text
-    embedding = vectors[0].get("embedding", [])
-    assert (
-        len(embedding) == EMBEDDING_DIMENSIONS
-    ), f"expected {EMBEDDING_DIMENSIONS} dims, got {len(embedding)}"
-
-
-def test_pool_health():
-    if uses_native_agent_runtime():
-        return
-    response = request_with_retries("GET", f"{CODEPOOL}/health", timeout=5)
-    assert response.status_code == 200
-
-
-def test_api_health_when_enabled():
-    if not API:
-        return
-    response = request_with_retries("GET", f"{API}/health", timeout=5)
-    assert response.status_code == 200
-
-
-def test_acp_requires_bearer_token_when_api_enabled():
-    if not API:
-        return
-    response = request_with_retries(
-        "POST",
-        f"{API}/acp/bears/{SEEDED_BEAR_SLUG}/sessions/smoke-session/prompt",
-        json={"message": "hello", "client": "zed"},
-        timeout=5,
-    )
-    assert response.status_code in (401, 404), response.text
-    if response.status_code == 401:
-        assert "error_code" in response.text
-
-
-def parse_sse_data(response):
-    events = []
-    for frame in response.text.split("\n\n"):
-        for line in frame.splitlines():
-            if not line.startswith("data:"):
-                continue
-            raw = line[len("data:") :].strip()
-            if raw and raw != "[DONE]":
-                try:
-                    events.append(__import__("json").loads(raw))
-                except Exception:
-                    pass
-    return events
-
-
-def stream_acp_prompt_events(session_id, payload, timeout=30):
-    with requests.post(
-        f"{API}/acp/bears/{SEEDED_BEAR_SLUG}/sessions/{session_id}/prompt",
-        json=payload,
-        headers={"Authorization": f"Bearer {SEEDED_ACP_TOKEN}"},
-        timeout=timeout,
-        stream=True,
-    ) as response:
-        assert response.status_code == 200, response.text
-        for line in response.iter_lines(decode_unicode=True):
-            if line is None or line == "" or not line.startswith("data:"):
-                continue
-            raw = line[len("data:") :].strip()
-            if not raw or raw == "[DONE]":
-                continue
-            yield __import__("json").loads(raw)
-
-
-def post_tool_result(session_id, tool_call_id, tool_name, body, timeout=30):
-    response = request_with_retries(
-        "POST",
-        f"{API}/acp/bears/{SEEDED_BEAR_SLUG}/sessions/{session_id}/tool-results/{tool_call_id}",
-        headers={"Authorization": f"Bearer {SEEDED_ACP_TOKEN}"},
-        json={
-            "tool_call_id": tool_call_id,
-            "tool_name": tool_name,
-            **body,
-        },
-        timeout=timeout,
-    )
-    assert response.status_code == 200, response.text
-    return response.json()
-
-
-def wait_for_conversation_history_signal(conversation_id, timeout=30):
-    deadline = time.time() + timeout
-    last_body = None
-    while time.time() < deadline:
-        history = request_with_retries(
-            "GET",
-            f"{API}/acp/bears/{SEEDED_BEAR_SLUG}/conversations/{conversation_id}/history",
-            headers={"Authorization": f"Bearer {SEEDED_ACP_TOKEN}"},
-            timeout=10,
-        )
-        assert history.status_code == 200, history.text
-        body = history.json()
-        last_body = body
-        messages = body.get("messages") or []
-        if any((msg.get("role") == "assistant" and (msg.get("text") or "").strip()) for msg in messages):
-            return "assistant_message", body
-        if any((msg.get("role") == "user" and (msg.get("text") or "").strip()) for msg in messages):
-            # Keep polling; user-only history proves the conversation exists but not
-            # that resumed runtime progressed yet.
-            pass
-        time.sleep(1)
-    return None, last_body
-
-
-def post_acp_prompt_until_conversation_resolved(session_id, payload, timeout=30):
-    with requests.post(
-        f"{API}/acp/bears/{SEEDED_BEAR_SLUG}/sessions/{session_id}/prompt",
-        json=payload,
-        headers={"Authorization": f"Bearer {SEEDED_ACP_TOKEN}"},
-        timeout=timeout,
-        stream=True,
-    ) as response:
-        assert response.status_code == 200, response.text
-        for line in response.iter_lines(decode_unicode=True):
-            if line is None:
-                continue
-            if line == "":
-                continue
-            if not line.startswith("data:"):
-                continue
-            raw = line[len("data:") :].strip()
-            if not raw or raw == "[DONE]":
-                continue
-            event = __import__("json").loads(raw)
-            if event.get("type") == "conversation_resolved" and event.get(
-                "conversation_id"
-            ):
-                response.close()
-                return event["conversation_id"]
-        raise AssertionError("conversation_resolved not received")
-
-
-def letta_headers():
-    return {"Authorization": f"Bearer {LETTA_API_KEY}"}
-
-
-def letta_reachable():
-    try:
-        response = requests.get(
-            f"{LETTA}/v1/health",
-            headers=letta_headers(),
-            timeout=5,
-        )
-        return response.status_code == 200
-    except requests.RequestException:
-        return False
-
-
-def create_smoke_letta_agent():
-    agent_id = f"agent-smoke-boundary-{uuid.uuid4()}"
-    agent = request_with_retries(
-        "POST",
-        f"{LETTA}/v1/agents/",
-        headers=letta_headers(),
-        json={
-            "name": f"Smoke Boundary {agent_id}",
-            "memory_blocks": [
-                {"label": "human", "value": "Smoke test human."},
-                {"label": "persona", "value": "Smoke test pair agent."},
-            ],
-            "model": "letta/letta-free",
-            "embedding": "letta/letta-free",
-            "agent_type": "letta_v1_agent",
-        },
-        timeout=30,
-    )
-    assert agent.status_code in (200, 201), agent.text
-    agent_body = agent.json()
-    agent_id = agent_body.get("id") or agent_body.get("agent", {}).get("id")
-    assert agent_id, agent.text
-
-    return agent_id
-
-
-def test_native_acp_pair_turn_completes_when_api_enabled():
-    if not API or not uses_native_agent_runtime():
-        return
-
-    session_id = f"smoke-native-{int(time.time())}-{uuid.uuid4().hex[:8]}"
-    marker = "smoke-native-ok"
-    assistant_chunks = []
-    saw_turn_complete = False
-    conversation_id = None
-
-    for event in stream_acp_prompt_events(
-        session_id,
-        {
-            "message": f"Reply with exactly: {marker}",
-            "conversation_id": f"new-smoke-native-{uuid.uuid4()}",
-            "client": "zed",
-            "client_context": {"cwd": "/workspace"},
-        },
-        timeout=90,
-    ):
-        event_type = event.get("type")
-        if event_type == "assistant_text_delta":
-            assistant_chunks.append(event.get("text") or "")
-        if event_type == "turn_complete":
-            saw_turn_complete = True
-        if event_type == "conversation_resolved" and event.get("conversation_id"):
-            conversation_id = event["conversation_id"]
-
-    assistant_text = "".join(assistant_chunks)
-    assert saw_turn_complete or marker in assistant_text, {
-        "assistant_text": assistant_text,
-        "conversation_id": conversation_id,
-    }
-
-
-def test_acp_pair_does_not_persist_runtime_context_in_letta_user_message():
-    if not API or not letta_stack_enabled() or not letta_reachable():
-        return
-    create_smoke_letta_agent()
-    marker = f"smoke-boundary-check-{int(time.time())}"
-    session_id = f"smoke-boundary-{int(time.time())}"
-    conversation_id = post_acp_prompt_until_conversation_resolved(
-        session_id,
-        {
-            "message": marker,
-            "conversation_id": f"new-smoke-boundary-{uuid.uuid4()}",
-            "client": "zed",
-            "client_context": {"cwd": "/workspace"},
-        },
-    )
-
-    history = request_with_retries(
-        "GET",
-        f"{LETTA}/v1/conversations/{conversation_id}/messages?limit=20&order=desc",
-        headers=letta_headers(),
-        timeout=10,
-    )
-    assert history.status_code == 200, history.text
-    body = history.json()
-    raw_messages = (
-        body
-        if isinstance(body, list)
-        else body.get("messages") or body.get("data") or []
-    )
-    user_texts = []
-    for msg in raw_messages:
-        inner = msg.get("message") if isinstance(msg.get("message"), dict) else msg
-        message_type = (
-            inner.get("message_type")
-            or inner.get("type")
-            or msg.get("message_type")
-            or msg.get("type")
-        )
-        role = inner.get("role") or msg.get("role")
-        if message_type not in ("user_message", "user") and role != "user":
-            continue
-        text = (
-            inner.get("content")
-            or inner.get("text")
-            or inner.get("message")
-            or msg.get("content")
-            or msg.get("text")
-            or msg.get("message")
-        )
-        if isinstance(text, str):
-            user_texts.append(text)
-    matching = [text for text in user_texts if marker in text]
-    forbidden = [
-        "<system-reminder",
-        "<system_reminder",
-        "ACP workflow state",
-        "AUTHORITATIVE WORKFLOW STATE",
-        "Den workboard context",
-        "Trusted ACP session mode this turn",
-    ]
-    if matching:
-        text = matching[0]
-        assert text.strip() == marker
-        for needle in forbidden:
-            assert needle not in text
-        return
-
-    # Some Letta error paths create the conversation and expose it to Den/ACP
-    # before the user message is persisted in the conversation message listing.
-    # This smoke test is specifically guarding the clean user-message boundary:
-    # if the marker has not been persisted at all, still assert that no persisted
-    # user message contains Den runtime scaffolding.
-    assert user_texts == [], (
-        f"marker {marker!r} not found, but unexpected user messages were present: {user_texts!r}"
-    )
-    serialized_history = __import__("json").dumps(raw_messages)
-    assert marker not in serialized_history
-    for needle in forbidden:
-        assert needle not in serialized_history
-
-
 def seeded_user_session():
     session = requests.Session()
     login = request_with_retries(
@@ -438,135 +78,361 @@ def seeded_user_session():
     return session
 
 
-def test_seeded_user_can_open_seeded_bear_page():
-    session = seeded_user_session()
+def bearwire_headers():
+    return {
+        "Authorization": f"Bearer {SEEDED_ARMATURE_TOKEN}",
+        "BearWire-Version": "1",
+    }
 
-    response = session.get(f"{DEN}/bear/{SEEDED_BEAR_SLUG}", timeout=5)
+
+def bearwire_rpc(method, params, *, authenticated=True, timeout=30):
+    response = request_with_retries(
+        "POST",
+        f"{API}/bearwire/v1/rpc",
+        headers=bearwire_headers() if authenticated else {"BearWire-Version": "1"},
+        json={
+            "jsonrpc": "2.0",
+            "id": f"smoke-{uuid.uuid4()}",
+            "method": method,
+            "params": {"bear_slug": SEEDED_BEAR_SLUG, **params},
+        },
+        timeout=timeout,
+    )
     assert response.status_code == 200, response.text
-    assert "Test Bear" in response.text
+    body = response.json()
+    if authenticated:
+        assert "error" not in body, body
+    return body
 
 
-def test_bear_admin_overview_and_domain_routes():
-    session = seeded_user_session()
-    domain_pages = [
-        (f"/bear/{SEEDED_BEAR_SLUG}/overview", ("Readiness", "Profiles")),
-        (f"/bear/{SEEDED_BEAR_SLUG}/profiles", ("Profiles",)),
-        (f"/bear/{SEEDED_BEAR_SLUG}/memory", ("Memory",)),
-        (f"/bear/{SEEDED_BEAR_SLUG}/access", ("Access",)),
-        (f"/bear/{SEEDED_BEAR_SLUG}/persona", ("Persona",)),
-    ]
-    for path, needles in domain_pages:
-        response = session.get(f"{DEN}{path}", timeout=10)
-        assert response.status_code == 200, f"{path} -> {response.status_code}: {response.text[:400]}"
-        for needle in needles:
-            assert needle in response.text, f"{path} missing {needle!r}"
-
-    chat = session.get(f"{DEN}/bear/{SEEDED_BEAR_SLUG}", timeout=10)
-    assert chat.status_code == 200, chat.text
-    assert f"/bear/{SEEDED_BEAR_SLUG}/overview" in chat.text, chat.text[:600]
-    assert f"/bear/{SEEDED_BEAR_SLUG}/details" not in chat.text, chat.text[:600]
-    assert "Overview</a" in chat.text, chat.text[:600]
-
-
-def test_bear_details_legacy_path_redirects_to_overview():
-    session = seeded_user_session()
-    response = session.get(
-        f"{DEN}/bear/{SEEDED_BEAR_SLUG}/details",
-        timeout=10,
-        allow_redirects=False,
+def bearwire_events(session_id, after):
+    response = request_with_retries(
+        "GET",
+        f"{API}/bearwire/v1/sessions/{session_id}/events/page",
+        headers=bearwire_headers(),
+        params={"bear_slug": SEEDED_BEAR_SLUG, "after": after, "limit": 100},
+        timeout=30,
     )
-    assert response.status_code in (301, 308), (
-        f"expected permanent redirect, got {response.status_code}: {response.text[:200]}"
+    assert response.status_code == 200, response.text
+    body = response.json()
+    events = []
+    for item in body.get("events", []):
+        event = dict(item.get("event", item))
+        event["_sequence"] = item.get("sequence", event.get("sequence"))
+        events.append(event)
+    return events, body.get("next_after", after)
+
+
+def wait_for_run_terminal(session_id, run_id, timeout=120):
+    deadline = time.time() + timeout
+    after = 0
+    events = []
+    while time.time() < deadline:
+        page, after = bearwire_events(session_id, after)
+        events.extend(page)
+        terminal = [
+            event
+            for event in events
+            if event.get("run_id") == run_id and event.get("type") in TERMINAL_EVENTS
+        ]
+        if terminal:
+            return events, terminal
+        time.sleep(0.25)
+    pytest.fail(
+        f"run {run_id} did not terminate; last events="
+        f"{[(event.get('_sequence'), event.get('type'), event.get('run_id')) for event in events[-30:]]}"
     )
-    location = response.headers.get("location", "")
-    assert f"/bear/{SEEDED_BEAR_SLUG}/overview" in location, location
-
-    follow = session.get(f"{DEN}/bear/{SEEDED_BEAR_SLUG}/details", timeout=10)
-    assert follow.status_code == 200, follow.text
-    assert "Readiness" in follow.text, follow.text[:400]
 
 
-def test_acp_tool_result_replay_continues_and_is_idempotent_when_api_enabled():
+def tool_names(events, run_id):
+    names = []
+    for event in events:
+        if event.get("run_id") != run_id or event.get("type") != "tool_call.requested":
+            continue
+        data = event.get("data") or {}
+        tool_call = data.get("tool_call") or {}
+        name = tool_call.get("name") or data.get("tool_name")
+        if name:
+            names.append(name)
+    return names
+
+
+def test_native_stack_and_seeded_bear_are_ready():
+    health = request_with_retries("GET", f"{DEN}/health/ready", timeout=5)
+    assert health.status_code == 200, health.text
+
+    session = seeded_user_session()
+    landing = session.get(f"{DEN}/bear/{SEEDED_BEAR_SLUG}", timeout=10)
+    assert landing.status_code == 200, landing.text[:400]
+    assert "Test Bear" in landing.text
+
+    for path in ("overview", "profiles", "memory"):
+        response = session.get(f"{DEN}/bear/{SEEDED_BEAR_SLUG}/{path}", timeout=10)
+        assert response.status_code == 200, f"{path}: {response.text[:400]}"
+
+
+def test_bearwire_rejects_unauthenticated_session_open():
     if not API:
-        return
-    # Tool-result replay + Den conversation history resume is validated on the Letta
-    # stack; native runtime history persistence is still catching up.
-    if uses_native_agent_runtime():
-        return
-
-    session_id = f"smoke-tool-replay-{int(time.time())}-{uuid.uuid4().hex[:8]}"
-    prompt = {
-        "message": "Please read /workspace/README.md using the available file tools and then summarize it in one sentence.",
-        "conversation_id": f"new-smoke-tool-replay-{uuid.uuid4()}",
-        "client": "zed",
-        "client_context": {"cwd": "/workspace"},
-    }
-
-    tool_request = None
-    conversation_id = None
-    observed_events = []
-    for event in stream_acp_prompt_events(session_id, prompt, timeout=60):
-        observed_events.append(event.get("type") or event.get("message_type") or "unknown")
-        if event.get("type") == "conversation_resolved" and event.get("conversation_id"):
-            conversation_id = event["conversation_id"]
-        if event.get("type") == "tool_request":
-            tool_request = event
-            break
-
-    if not tool_request:
-        # Smoke-stack reality can vary with provider/runtime behavior; if the
-        # prompt resolved without requiring a tool, treat this as a skipped
-        # replay-path proof rather than a hard stack failure.
-        assert conversation_id or "conversation_resolved" in observed_events, observed_events
-        return
-    tool_call_id = tool_request.get("tool_call_id")
-    assert tool_call_id, tool_request
-    tool_name = tool_request.get("name") or tool_request.get("tool_name")
-    assert tool_name, tool_request
-    arguments = tool_request.get("arguments") or {}
-    assert "README.md" in __import__("json").dumps(arguments)
-
-    tool_result_body = {
-        "status": "ok",
-        "content": "# Smoke README\n\nThis is a replay smoke test result.",
-        "structured_content": {"path": "/workspace/README.md", "kind": "file_excerpt"},
-        "diagnostic": {"phase": "smoke-first"},
-    }
-    first_json = post_tool_result(
-        session_id,
-        tool_call_id,
-        tool_name,
-        tool_result_body,
-        timeout=30,
+        pytest.skip("Den API service is disabled")
+    body = bearwire_rpc(
+        "session.open",
+        {"session_id": f"smoke-unauth-{uuid.uuid4().hex}"},
+        authenticated=False,
     )
-    assert first_json["accepted"] is True
-    assert first_json["settlement"] in ("accepted", "delivered", "pending_continuation", None)
+    assert body["error"]["code"] == -32001, body
+    assert "Authorization" in body["error"]["data"]["error"], body
 
-    if conversation_id:
-        signal, history_body = wait_for_conversation_history_signal(conversation_id, timeout=30)
-        assert signal == "assistant_message", history_body
 
-    replay_json = post_tool_result(
-        session_id,
-        tool_call_id,
-        tool_name,
-        tool_result_body,
-        timeout=30,
+def test_live_bearwire_pair_stance_turn_has_one_clean_terminal():
+    if not API:
+        pytest.skip("Den API service is disabled")
+    if os.environ.get("OPENAI_API_KEY", "").strip() in PLACEHOLDER_SECRETS:
+        pytest.skip("No live OpenAI key is configured")
+
+    session_id = f"smoke-live-{uuid.uuid4().hex}"
+    conversation_id = f"new-smoke-live-{uuid.uuid4()}"
+    marker = f"smoke-live-ok-{uuid.uuid4().hex[:8]}"
+    client_context = {"cwd": "/workspace", "tools": []}
+
+    opened = bearwire_rpc(
+        "session.open",
+        {
+            "session_id": session_id,
+            "client": "smoke",
+            "conversation_id": conversation_id,
+            "cwd": "/workspace",
+            "mode": "ask",
+            "client_context": client_context,
+        },
+    )["result"]
+    assert opened["ok"] is True, opened
+
+    started = bearwire_rpc(
+        "run.start",
+        {
+            "session_id": session_id,
+            "client": "smoke",
+            "conversation_id": conversation_id,
+            "cwd": "/workspace",
+            "requested_mode": "ask",
+            "prompt": f"Reply with exactly: {marker}",
+            "client_context": client_context,
+        },
+    )["result"]
+    assert started["accepted"] is True, started
+    run_id = started["run_id"]
+
+    events, terminal = wait_for_run_terminal(session_id, run_id)
+    assert len(terminal) == 1, terminal
+    assert terminal[0]["type"] == "run.completed", terminal[0]
+    assert not [
+        event
+        for event in events
+        if event.get("run_id") == run_id and event.get("type") == "tool_call.requested"
+    ], events
+
+    assistant_text = "".join(
+        (event.get("data") or {}).get("delta", "")
+        for event in events
+        if event.get("run_id") == run_id and event.get("type") == "message.delta"
     )
-    assert replay_json["accepted"] is True
-    assert replay_json["reason"] == "duplicate_result_ignored"
-    assert replay_json["settlement"] == "already_settled"
-    assert replay_json["diagnostic"]["tool_call_id"] == tool_call_id
-    assert replay_json["diagnostic"]["status"] == "ok"
+    assert marker in assistant_text, assistant_text
 
-    if conversation_id:
-        history = request_with_retries(
-            "GET",
-            f"{API}/acp/bears/{SEEDED_BEAR_SLUG}/conversations/{conversation_id}/history",
-            headers={"Authorization": f"Bearer {SEEDED_ACP_TOKEN}"},
-            timeout=30,
+    state = bearwire_rpc(
+        "run.state",
+        {"session_id": session_id, "run_id": run_id, "limit": 100},
+    )["result"]
+    assert state["run"]["state"] == "completed", state
+    assert state["open_obligations"] == [], state
+
+
+
+
+def test_live_armature_acp_focus_flow_has_one_terminal_response():
+    if not API:
+        pytest.skip("Den API service is disabled")
+    if os.environ.get("OPENAI_API_KEY", "").strip() in PLACEHOLDER_SECRETS:
+        pytest.skip("No live OpenAI key is configured")
+
+    subprocess.run(
+        [
+            "cargo",
+            "build",
+            "--manifest-path",
+            "tools/bear-armature/Cargo.toml",
+        ],
+        cwd="/workspace",
+        check=True,
+        timeout=300,
+    )
+    marker = f"smoke-acp-focus-ok-{uuid.uuid4().hex[:8]}"
+    env = os.environ.copy()
+    env.update(
+        {
+            "DEN_API_URL": API,
+            "BEAR_SLUG": SEEDED_BEAR_SLUG,
+            "DEN_TOKEN": SEEDED_ARMATURE_TOKEN,
+            "DEN_ACP_CLIENT": "smoke-acp",
+            "BEARS_BEARWIRE": "true",
+            "BEAR_DEBUG": "off",
+        }
+    )
+    proc = subprocess.Popen(
+        [str(ARMATURE_BIN), "acp"],
+        cwd="/workspace",
+        env=env,
+        text=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=1,
+    )
+    client = ArmatureClient(proc)
+    try:
+        init_id = client.send(
+            "initialize", {"clientCapabilities": {"fs": {"readTextFile": True}}}, "init"
         )
-        assert history.status_code == 200, history.text
-        body = history.json()
-        messages = body.get("messages") or []
-        assert any(msg.get("role") == "user" for msg in messages), body
+        assert "result" in client.wait_response(init_id, timeout=20)
+
+        new_id = client.send(
+            "session/new",
+            {
+                "cwd": "/workspace",
+                "workspace": {"roots": [{"rootUri": "file:///workspace"}]},
+            },
+            "new",
+        )
+        opened = client.wait_response(new_id, timeout=30)
+        assert "result" in opened, opened
+        session_id = opened["result"]["sessionId"]
+
+        mode_id = client.send(
+            "session/set_mode",
+            {"sessionId": session_id, "modeId": "write"},
+            "mode",
+        )
+        assert "result" in client.wait_response(mode_id, timeout=30)
+        model_id = client.send(
+            "session/set_config_option",
+            {
+                "sessionId": session_id,
+                "configId": "model",
+                "value": "openai/gpt-5.5",
+            },
+            "model",
+        )
+        assert "result" in client.wait_response(model_id, timeout=30)
+
+        prompt = f"""
+Create one session-owned execution task titled "{marker}" with body
+"Read README.md through the client tool and report success", and completion criteria
+["README.md was read through fs_read_text_file", "Report {marker}"]. Then call
+get_task_list_status, select_current_task with that new task's exact UUID, and
+focus_current_task to promote this same run into focused execution. In focused execution call
+fs_read_text_file for README.md exactly once. Then settle the new task by calling
+update_current_task_status with its exact task UUID, status "done", outcome_disposition
+"completed", and result_summary "{marker}". Finally reply with exactly: {marker}. Do not create
+a Job, dispatch work, call any other tools, or start another run.
+""".strip()
+        prompt_id = client.send(
+            "session/prompt",
+            {"sessionId": session_id, "prompt": [{"type": "text", "text": prompt}]},
+            "prompt",
+        )
+
+        fs_requests = []
+        deadline = time.time() + 180
+        while time.time() < deadline and prompt_id not in client.responses:
+            try:
+                request = client.wait_any_client_request(timeout=1)
+            except AssertionError:
+                continue
+            method = request.get("method")
+            if method == "session/request_permission":
+                client.respond(
+                    request,
+                    {"outcome": {"outcome": "selected", "optionId": "allow_once"}},
+                )
+            elif method == "fs/read_text_file":
+                fs_requests.append(request)
+                client.respond(
+                    request,
+                    {"content": "# Smoke fixture\n\nThe focused ACP tool completed."},
+                )
+            else:
+                pytest.fail(f"unexpected ACP client request: {request}")
+
+        response = client.wait_response(prompt_id, timeout=10)
+        assert "result" in response, {"response": response, "stderr": client.stderr_lines}
+        assert len(fs_requests) <= 1, fs_requests
+        time.sleep(0.5)
+        assert prompt_id not in client.responses, "duplicate terminal ACP response"
+        assert client.client_requests.empty(), "ACP client request remained unanswered"
+
+        events, _ = bearwire_events(session_id, 0)
+        focus_transitions = [
+            event
+            for event in events
+            if event.get("type") == "diagnostic.state_transition"
+            and (event.get("data") or {}).get("reason") == "focus_acquired"
+        ]
+        assert len(focus_transitions) == 1, focus_transitions
+        run_id = focus_transitions[0]["run_id"]
+        terminal = [
+            event
+            for event in events
+            if event.get("run_id") == run_id and event.get("type") in TERMINAL_EVENTS
+        ]
+        assert [event["type"] for event in terminal] == ["run.completed"], terminal
+
+        names = tool_names(events, run_id)
+        assert names[:5] == [
+            "create_task",
+            "get_task_list_status",
+            "select_current_task",
+            "focus_current_task",
+            "fs_read_text_file",
+        ], names
+        assert "update_current_task_status" in names, names
+        assert len(names) <= 8, names
+
+        state = bearwire_rpc(
+            "run.state",
+            {"session_id": session_id, "run_id": run_id, "limit": 200},
+        )["result"]
+        assert state["run"]["state"] == "completed", state
+        assert state["open_obligations"] == [], state
+        client_obligations = [
+            obligation
+            for obligation in state["obligations"]
+            if obligation.get("tool_call_id")
+        ]
+        assert len(client_obligations) == 1, state
+        assert client_obligations[0]["state"] == "continued", state
+
+        diagnostics = bearwire_rpc(
+            "session.execution.diagnostics",
+            {"session_id": session_id, "limit": 100},
+        )["result"]["diagnostics"]
+        assert diagnostics["version_gap"] is False, diagnostics
+        assert diagnostics["snapshot_matches_latest_transition"] is True, diagnostics
+        assert any(
+            record["transition"].get("run_id") == run_id
+            for record in diagnostics["transitions"]
+        ), diagnostics
+
+        completed_cards = [
+            message
+            for message in client.notifications
+            if message.get("method") == "session/update"
+            and message.get("params", {}).get("update", {}).get("sessionUpdate")
+            == "tool_call"
+            and message.get("params", {}).get("update", {}).get("status") == "completed"
+        ]
+        assert completed_cards, client.notifications
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()

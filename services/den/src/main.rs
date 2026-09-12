@@ -12,7 +12,7 @@ use den::seeds::SeedProfile;
 #[tokio::main]
 async fn main() {
     if let Err(e) = run_main().await {
-        eprintln!("den: {e}");
+        eprintln!("den: {e:#}");
         std::process::exit(1);
     }
 }

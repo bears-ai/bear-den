@@ -95,9 +95,7 @@ async fn seed_smoke(pool: &PgPool, profile: SeedProfile) -> Result<SeedReport> {
     let bear_id = ensure_bear(pool, SMOKE_BEAR_SLUG)
         .await
         .context("ensure smoke bear")?;
-    ensure_smoke_bear_model(pool, bear_id, &config)
-        .await
-        .context("ensure smoke bear model")?;
+
     bears_db::ensure_default_runtime_plan(pool, bear_id, &default_runtime_plan())
         .await
         .context("ensure smoke bear runtime_plan")?;
@@ -107,9 +105,9 @@ async fn seed_smoke(pool: &PgPool, profile: SeedProfile) -> Result<SeedReport> {
     ensure_smoke_armature_token(pool, user_id, bear_id)
         .await
         .context("ensure smoke Armature token")?;
-    if let Err(err) = ensure_smoke_role_runtimes(pool, bear_id, &config).await {
-        tracing::warn!(error = %err, "smoke seed could not provision profile runtimes; continuing with database fixtures only");
-    }
+    ensure_smoke_runtime_dependencies(pool, bear_id, &config)
+        .await
+        .context("ensure smoke Bear runtime dependencies")?;
 
     Ok(SeedReport {
         profile,
@@ -169,38 +167,65 @@ async fn ensure_smoke_bear_model(
     bear_id: uuid::Uuid,
     config: &Config,
 ) -> Result<()> {
-    let model = smoke_default_model(config);
-    sqlx::query(
+    let catalog = den_service::bifrost::BifrostClient::new(config)
+        .refresh_bear_catalog_snapshot(pool, bear_id, &config.den_secret_encryption_key)
+        .await
+        .context("refresh smoke Bear Bifrost model catalog")?;
+    let configured = smoke_default_model(config);
+    let selected = [configured, "openai/gpt-5-mini", "openai/gpt-4.1-mini"]
+        .into_iter()
+        .find(|handle| {
+            catalog
+                .resolve(handle)
+                .is_some_and(|model| model.available && model.supports_tools != Some(false))
+        })
+        .map(str::to_string)
+        .or_else(|| {
+            catalog
+                .models_vec()
+                .into_iter()
+                .find(|model| model.enabled && model.supports_tools != Some(false))
+                .map(|model| model.handle)
+        })
+        .ok_or_else(|| anyhow!("Bifrost catalog has no tool-capable model for smoke testing"))?;
+
+    sqlx::query!(
         r"
         UPDATE bears
         SET default_model = $2
         WHERE id = $1
-          AND (
-            default_model IS NULL
-            OR btrim(default_model) = ''
-            OR default_model LIKE 'provider/%'
-            OR strpos(default_model, '/') = 0
-          )
         ",
+        bear_id,
+        selected,
     )
-    .bind(bear_id)
-    .bind(model)
     .execute(pool)
     .await?;
     Ok(())
 }
 
-async fn ensure_smoke_role_runtimes(
+async fn ensure_smoke_runtime_dependencies(
     pool: &PgPool,
     bear_id: uuid::Uuid,
     config: &Config,
 ) -> Result<()> {
+    den_service::bears::bifrost_key::ensure_bifrost_virtual_key_for_bear(
+        pool,
+        config,
+        bear_id,
+        SMOKE_BEAR_SLUG,
+    )
+    .await
+    .context("ensure smoke Bear Bifrost virtual key")?;
+    ensure_smoke_bear_model(pool, bear_id, config)
+        .await
+        .context("ensure smoke Bear model")?;
+
     // Sanctioned construction: `den seed` is a short-lived CLI process, so this
     // is its one process-local `MemoryStoreManager` (ADR-0031 write topology).
     let stores = den_memory::MemoryStoreManager::new(config);
     provision::provision_bear_if_configured(pool, config, &stores, bear_id)
         .await
-        .context("provision smoke bear native runtimes")
+        .context("provision smoke Bear native runtimes")
 }
 
 async fn ensure_smoke_armature_token(

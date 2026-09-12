@@ -30,7 +30,7 @@ cp "${EXAMPLE}" "${ENV_FILE}"
   echo "DEN_IMAGE=bears-den-dev:latest"
   echo "RUN_API=true"
   echo "ACP_GATEWAY_ENABLED=true"
-  echo "DEFAULT_LLM_MODEL=openai/gpt-4o-mini"
+  echo "DEFAULT_LLM_MODEL=openai/gpt-5-mini"
   echo "BEAR_SQLITE_DATA_DIR=./data/bear-sqlite"
 } >> "${ENV_FILE}"
 

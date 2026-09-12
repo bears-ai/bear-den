@@ -982,10 +982,15 @@ async fn build_session(
         .or_else(|| request_id.map(|id| id.to_string()))
         .unwrap_or_else(|| format!("unbound-{}", Uuid::new_v4().simple()));
     let session_key = agent_loop_session_key(conversation_id, client_session_id, &execution_id);
+    // Model selection belongs to the canonical persisted conversation. Native
+    // materialization gives this loop an internal `den-conv-*` ID, while
+    // `runtime_target` preserves the external conversation ID used by BearWire
+    // preflight and session.model.set.
+    let model_conversation_id = runtime_target.unwrap_or(conversation_id);
     let conversation_model = match conversation_persistence::get_conversation_for_external_id(
         deps.pool,
         bear.id,
-        conversation_id,
+        model_conversation_id,
     )
     .await?
     {

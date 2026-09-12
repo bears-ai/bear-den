@@ -1,10 +1,17 @@
 # Plan: Authoritative focused execution control and diagnostic transition tracing
 
-**Status:** Focused-execution lifecycle stabilization through P11 completed 2026-09-11; live model-driven validation remains environment-blocked
+**Status:** Focused-execution lifecycle stabilization through P11 completed 2026-09-11; live Den + Armature ACP validation completed 2026-09-12
 
 **Scope:** Focused Docket execution start, authoritative status projection, BearWire diagnostics, and client debug views
 
 `pair` is a trust-profile/capability shorthand, not an execution identity. Execution state and authority are named for sessions, tasks, runs, hosts, and attempts.
+
+### Completed live release validation
+
+- A live `gpt-5.5` Pair-stance write turn created and selected a session task, invoked `focus_current_task`, continued focused execution on the same BearWire run, completed an Armature-local file tool, settled the task, and produced exactly one terminal ACP prompt response.
+- The persistent focused transition stream was contiguous (`focus_acquired` → client-wait continuation → terminal completion), all tool calls retained one run ID, the client obligation reached `continued`, and final `run.state` reported no open obligations.
+- Validation exposed and repaired three adjacent single-source-of-truth failures: smoke seeding did not provision required Bear-scoped Bifrost credentials, native materialization discarded explicit conversation model selection by looking up the internal `den-conv-*` ID, and session-task settlement rejected the selected task it was designed to settle.
+- The stale Letta/MemFS/Codepool smoke matrix was retired. Four broad checks now cover native stack readiness, BearWire authentication, minimal live inference, and the full live Armature ACP focus lifecycle.
 
 ### Completed stabilization phase P11
 

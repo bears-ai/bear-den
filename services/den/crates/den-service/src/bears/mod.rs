@@ -1,6 +1,7 @@
 //! Bear registry and membership (Phase 1).
 //! Admin HTTP routes and native provisioning helpers.
 
+pub mod bifrost_key;
 pub mod context_composition;
 pub mod db;
 pub mod managed_blocks;

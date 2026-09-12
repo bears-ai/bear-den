@@ -649,82 +649,14 @@ pub async fn provision_bifrost_virtual_key_for_bear(
     bear_id: Uuid,
     bear_slug: &str,
 ) -> Result<bool, CustomError> {
-    let client = den_service::bifrost_governance::BifrostGovernanceClient::new(&state.config);
-    let archived_existing_key = match bears_db::get_bear_bifrost_virtual_key(
+    den_service::bears::bifrost_key::provision_bifrost_virtual_key_for_bear(
         state.sqlx_pool(),
+        &state.config,
         bear_id,
+        bear_slug,
     )
-    .await?
-    {
-        Some(existing) => {
-            if let Some(existing_id) = existing
-                .virtual_key_id
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                match client.archive_virtual_key_by_id(existing_id).await? {
-                    Some(archived_name) => {
-                        tracing::warn!(
-                            %bear_id,
-                            existing_virtual_key_id = %existing_id,
-                            archived_name,
-                            "archived existing Bifrost virtual key before reprovisioning Bear key"
-                        );
-                        true
-                    }
-                    None => {
-                        tracing::warn!(
-                            %bear_id,
-                            existing_virtual_key_id = %existing_id,
-                            "stored Bifrost virtual key id was not found while reprovisioning; continuing with replacement"
-                        );
-                        false
-                    }
-                }
-            } else {
-                false
-            }
-        }
-        None => false,
-    };
-    let key = client.create_bear_virtual_key(bear_id, bear_slug).await?;
-    let created_validation = client.validate_virtual_key_value(&key.value).await?;
-    tracing::info!(
-        %bear_id,
-        virtual_key_id = %key.id,
-        auth_mode = created_validation.auth_mode.as_str(),
-        "validated newly created Bifrost virtual key before storing it in Den"
-    );
-    bears_db::set_bear_bifrost_virtual_key(
-        state.sqlx_pool(),
-        bear_id,
-        Some(&key.id),
-        Some(&key.name),
-        Some(&key.value),
-        &state.config.den_secret_encryption_key,
-    )
-    .await?;
-
-    let stored_value = bears_db::bifrost_virtual_key_value_for_bear(
-        state.sqlx_pool(),
-        bear_id,
-        &state.config.den_secret_encryption_key,
-    )
-    .await?
-    .ok_or_else(|| {
-        CustomError::System(
-            "Bifrost virtual key was saved but could not be read back from Den storage".to_string(),
-        )
-    })?;
-    let validation = client.validate_virtual_key_value(&stored_value).await?;
-    tracing::info!(
-        %bear_id,
-        virtual_key_id = %key.id,
-        auth_mode = validation.auth_mode.as_str(),
-        "validated provisioned Bifrost virtual key after encrypted Den storage round trip"
-    );
-    Ok(archived_existing_key || key.reset_usage_tracking)
+    .await
+    .map_err(CustomError::from)
 }
 
 pub async fn insert_new_bear_row_with_context_profile(
