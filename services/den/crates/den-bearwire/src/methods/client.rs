@@ -460,7 +460,6 @@ fn continuation_conversation_id(session: &client_sessions::ClientSessionRow) -> 
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct WebFetchPermissionPayload {
     #[serde(rename = "tool_name")]
     _tool_name: String,
@@ -476,7 +475,6 @@ struct WebFetchPermissionPayload {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct WebFetchPermissionArguments {
     url: Option<String>,
     host: Option<String>,
@@ -1674,6 +1672,19 @@ pub(crate) async fn client_permission_result_result(
         .ok_or_else(|| {
             CustomError::System("Bear pair profile binding not configured".to_string())
         })?;
+    if normalized_decision == "granted" {
+        // Validate and persist external approval before claiming the one-shot model
+        // continuation. A failure after that claim would leave the run in
+        // `continuing` with no worker able to consume it.
+        record_web_fetch_approval_from_permission(
+            &state.sqlx_pool,
+            bear.id,
+            user_id,
+            decision.raw(),
+            &obligation.request_payload,
+        )
+        .await?;
+    }
     let coordinator_outcome = client_obligation_coordinator::record_and_settle_permission_result(
         &state.sqlx_pool,
         &run,
@@ -1720,16 +1731,6 @@ pub(crate) async fn client_permission_result_result(
                 &session_id,
             )
             .await?;
-            if normalized_decision == "granted" {
-                record_web_fetch_approval_from_permission(
-                    &state.sqlx_pool,
-                    bear.id,
-                    user_id,
-                    decision.raw(),
-                    &obligation.request_payload,
-                )
-                .await?;
-            }
             let event_type = match normalized_decision {
                 "granted" => "permission.granted",
                 "expired" => "permission.expired",
@@ -1807,16 +1808,6 @@ pub(crate) async fn client_permission_result_result(
                 &session_id,
             )
             .await?;
-            if normalized_decision == "granted" {
-                record_web_fetch_approval_from_permission(
-                    &state.sqlx_pool,
-                    bear.id,
-                    user_id,
-                    decision.raw(),
-                    &obligation.request_payload,
-                )
-                .await?;
-            }
             let event_type = match normalized_decision {
                 "granted" => "permission.granted",
                 "expired" => "permission.expired",
@@ -1945,25 +1936,25 @@ mod tests {
     }
 
     #[test]
-    fn web_fetch_permission_payload_rejects_unknown_fields() {
+    fn web_fetch_permission_payload_extracts_scope_from_extensible_wait_envelope() {
         let payload = json!({
+            "den_process_epoch_id": Uuid::new_v4(),
             "tool_name": DEN_WEB_FETCH,
-            "arguments": {"url": "https://example.com"},
+            "arguments": {
+                "url": "https://example.com/docs",
+                "max_chars": 4_000,
+            },
             "approval_required": true,
-            "unexpected": true,
+            "execution_target": "den",
+            "policy": { "execution_target": "den" },
         });
 
-        assert!(serde_json::from_value::<WebFetchPermissionPayload>(payload).is_err());
-    }
-
-    #[test]
-    fn web_fetch_permission_arguments_reject_unknown_fields() {
-        let payload = json!({
-            "tool_name": DEN_WEB_FETCH,
-            "arguments": {"url": "https://example.com", "unexpected": true},
-        });
-
-        assert!(serde_json::from_value::<WebFetchPermissionPayload>(payload).is_err());
+        let parsed = serde_json::from_value::<WebFetchPermissionPayload>(payload)
+            .expect("current wait envelope should remain forward-compatible");
+        assert_eq!(
+            parsed.arguments.url.as_deref(),
+            Some("https://example.com/docs")
+        );
     }
 
     #[test]

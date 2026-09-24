@@ -1740,9 +1740,6 @@ fn actionable_tool_request_event_from_obligation(
         return None;
     }
     let request = obligation_request_payload(obligation);
-    if obligation_execution_target_is_den(request, obligation) {
-        return None;
-    }
     let expected = obligation
         .get("expected_responder_action")
         .and_then(Value::as_str)
@@ -1767,6 +1764,11 @@ fn actionable_tool_request_event_from_obligation(
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| json!({}));
+    let execution_target = request
+        .get("execution_target")
+        .or_else(|| obligation.get("execution_target"))
+        .cloned()
+        .unwrap_or_else(|| json!("armature_local"));
 
     if expected == "permission_decision" || kind == "permission_decision" {
         let permission_id = request
@@ -1795,13 +1797,16 @@ fn actionable_tool_request_event_from_obligation(
                     "target": arguments,
                 },
                 "approval_required": true,
-                "execution_target": "armature_local",
+                "execution_target": execution_target,
                 "policy": request.get("policy").cloned().unwrap_or(Value::Null),
                 "serviced_from_run_state": true,
             }
         }));
     }
 
+    if obligation_execution_target_is_den(request, obligation) {
+        return None;
+    }
     if expected != "tool_result" && kind != "tool_result" {
         return None;
     }
@@ -1843,9 +1848,6 @@ fn unsupported_required_client_obligation_error(obligation: &Value) -> Option<an
         return None;
     }
     let request = obligation_request_payload(obligation);
-    if obligation_execution_target_is_den(request, obligation) {
-        return None;
-    }
 
     let id = obligation_id(obligation).unwrap_or("<unknown>");
     let kind = obligation
@@ -1857,6 +1859,12 @@ fn unsupported_required_client_obligation_error(obligation: &Value) -> Option<an
         .or_else(|| obligation.get("expected_client_method"))
         .and_then(Value::as_str)
         .unwrap_or("<unknown>");
+    if obligation_execution_target_is_den(request, obligation)
+        && expected != "permission_decision"
+        && kind != "permission_decision"
+    {
+        return None;
+    }
     let tool_call_id = request
         .get("tool_call_id")
         .or_else(|| obligation.get("tool_call_id"))
@@ -3523,27 +3531,24 @@ mod tests {
     }
 
     #[test]
-    fn reconstructs_permission_wait_from_run_state() {
+    fn reconstructs_den_owned_permission_wait_from_run_state() {
         let obligation = json!({
             "id": "obl-perm",
             "kind": "permission_decision",
             "expected_responder_action": "permission_decision",
             "state": "waiting_for_client",
-            "tool_call_id": "call-edit",
-            "permission_id": "perm-edit",
+            "tool_call_id": "call-fetch",
+            "permission_id": "perm-fetch",
             "request_payload": {
-                "tool_call_id": "call-edit",
-                "tool_name": "fs_edit_file",
-                "arguments": { "path": "README.md", "old_text": "a", "new_text": "b" },
+                "tool_call_id": "call-fetch",
+                "tool_name": "web_fetch",
+                "arguments": { "url": "https://example.com", "max_chars": 4_000 },
                 "approval_required": true,
-                "approval_request_id": "perm-edit",
-                "approval_reason": "Edit README.md",
-                "execution_target": "armature_local",
+                "approval_request_id": "perm-fetch",
+                "approval_reason": "Fetch example.com",
+                "execution_target": "den",
                 "policy": {
-                    "execution_target": "armature_local",
-                    "approval_required": true,
-                    "approval_policy": "required",
-                    "risk": "writes_workspace"
+                    "execution_target": "den"
                 }
             }
         });
@@ -3558,8 +3563,9 @@ mod tests {
             "client.permission.result"
         );
         assert_eq!(event["data"]["obligation_id"], "obl-perm");
-        assert_eq!(event["data"]["tool_call"]["id"], "call-edit");
-        assert_eq!(event["data"]["permission"]["id"], "perm-edit");
+        assert_eq!(event["data"]["tool_call"]["id"], "call-fetch");
+        assert_eq!(event["data"]["permission"]["id"], "perm-fetch");
+        assert_eq!(event["data"]["execution_target"], "den");
         assert_eq!(event["data"]["serviced_from_run_state"], true);
     }
 

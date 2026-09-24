@@ -9735,7 +9735,7 @@ async fn post_permission_result(
     payload: Value,
 ) -> Result<Value> {
     if let Some(run_id) = payload.get("run_id").and_then(Value::as_str) {
-        tracing::trace!(
+        tracing::debug!(
             target: "bear_armature::lifecycle",
             session_id,
             run_id,
@@ -9749,8 +9749,19 @@ async fn post_permission_result(
             permission_id,
             payload.clone(),
         )
-        .await?;
-        tracing::trace!(
+        .await
+        .map_err(|err| {
+            tracing::warn!(
+                target: "bear_armature::lifecycle",
+                session_id,
+                run_id,
+                permission_id,
+                error = %format!("{err:#}"),
+                "BearWire permission result failed"
+            );
+            err
+        })?;
+        tracing::debug!(
             target: "bear_armature::lifecycle",
             session_id,
             run_id,
@@ -10217,15 +10228,7 @@ pub(crate) async fn handle_permission_request_event(
         tool_name,
         "permission obligation accepted for ACP projection"
     );
-    if tool_request_execution_target(event) == Some("den") {
-        eprintln!(
-            "bear-armature: BearWire invariant violation: Den-owned tool arrived as client.waiting session_id={} tool_call_id={} tool_name={} permission_id={}",
-            session_id,
-            tool_call_id,
-            tool_name,
-            permission_id
-        );
-    }
+
     let title = canonical
         .permission
         .title
