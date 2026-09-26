@@ -1,0 +1,13 @@
+# Planning index
+
+This is the entry point for *verified* active delivery plans. A plan is not a description of deployed behavior: read the [topic map](../README.md) for current behavior and the relevant decision records for rationale.
+
+## Plans to reconcile
+
+The older [planning hub](PLAN.md) contains useful priorities and delivery history, but its dated status claims have not yet been reconciled against the current implementation. Do not treat its entire plan catalog as active. The [BearWire v1 refinement draft](BEARWIRE_V1_PROTOCOL_REFINEMENT_ROADMAP.md) and [Docket implementation plan](DOCKET_IMPLEMENTATION_PLAN.md) are linked from their topic pages with explicit caveats. The [focused-execution stabilization plan](pair-execution-authority-and-debug-tracing-plan.md) is completed delivery history.
+
+## Adding or advancing a plan
+
+- Start from an existing [topic page](../README.md); link the plan from that page and back to it.
+- New plans state **Status:** `Draft`, `Active`, `Completed`, or `Superseded` and **Topic:** a link to their home. Index them here in the same change. Archive completed plans only after the topic's current behavior has been reconciled.
+- Separate target outcomes and exit criteria from implemented milestones. Completing an ADR or a plan does not by itself prove that its intended behavior is deployed.

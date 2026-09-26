@@ -171,6 +171,13 @@ Repo guards (keep enabled):
 - `.cursor/hooks.json` — blocks partial `git checkout` when deletions are already present; auto-restores on session start
 - `scripts/git-hooks/pre-commit` — rejects commits deleting more than 10 files (install: `./scripts/install-git-hooks.sh`)
 
+## Documentation ownership
+
+- Start at [`docs/README.md`](docs/README.md) and locate the topic home before adding a document. Prefer updating the maintained topic, guide, or linked plan to creating another overview.
+- Treat **current behavior** (verified against code/tests/deployment), **intended change** (linked active plan), and **decision rationale** (ADR) as different claims. Do not present a proposal or accepted ADR as deployed behavior; completing a plan requires checking its exit criteria.
+- If a change affects a documented contract or capability, update the topic's current claim and affected plan/public description in the same change, or explicitly explain why no documentation change is needed. New topics/plans/ADRs must be linked from their indexes.
+- Run `python3 scripts/check-docs.py --base HEAD` for documentation edits. CI checks new links and new-document structure; reviewers verify the truth of implementation claims.
+
 ## Notes
 
 - Do not run `docker compose down`; restart individual services instead.

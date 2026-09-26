@@ -84,14 +84,14 @@ Rules:
 **`cargo` is available** in typical dev containers and CI images that include the Rust toolchain. After editing this crate, run checks from the repository root with `--manifest-path services/den/Cargo.toml`, or from `services/den/` directly, for example:
 
 - `cargo build` or `cargo check` — compile the library + binary; for host-side commands, prefix with `SQLX_OFFLINE=true` (details below).
-- `cargo test` — unit tests; integration tests that need Postgres require `DATABASE_URL` and applied migrations (see [`docs/quickstart.md`](docs/quickstart.md)).
-- `cargo clippy --all-targets` — Clippy is not suppressed at the crate root; the heaviest legacy bundle remains scoped on [`src/api/oauth/mod.rs`](src/api/oauth/mod.rs). Fix warnings in code you touch and shrink those module-level allows over time.
+- `cargo test` — unit tests; integration tests that need Postgres require `DATABASE_URL` and applied migrations (see [Den quickstart](../../docs/guides/den-quickstart.md)).
+- `cargo clippy --all-targets` — Clippy is not suppressed at the crate root; review module-level legacy allowances in the code you touch. Fix warnings in code you touch and shrink those module-level allows over time.
 
 Do not assume the environment is “simulated only”: prefer running focused `cargo` checks yourself to catch compile errors before handing work back.
 
 Useful focused checks:
 
-> **SQLx offline builds:** Normal focused Rust checks must use the checked-in SQLx query metadata rather than trying to resolve a development database host. Prefix host-side commands with `SQLX_OFFLINE=true`, for example `SQLX_OFFLINE=true cargo check --manifest-path services/den/Cargo.toml -p den-web`. The Docker smoke-stack build already enables this. New or modified static SQL must use `query!`, `query_as!`, or `query_scalar!`; treat the count of runtime-query call sites as a ratchet that must not grow. Genuinely dynamic SQL may use runtime APIs with an immediately preceding `// sqlx-dynamic: <reason>` comment. Do not replace SQLx compile-time macros with runtime queries to work around an unavailable database; refresh `.sqlx` with `../../scripts/sqlx.sh prepare-all` from an environment with the migrated database when queries or schema change. Never use a bare `cargo sqlx prepare --workspace -- --all-targets`: it does not expand member-crate test targets and deletes their existing entries, so it silently leaves `.sqlx` incomplete (see [`docs/guides/sqlx-patterns.md`](../../docs/guides/sqlx-patterns.md)). CI runs `../../scripts/sqlx.sh migrate run` then `../../scripts/sqlx.sh prepare --check --workspace -- --all-targets`, but `--check` only warns about extra entries; the clippy step is what fails on missing ones.
+> **SQLx offline builds:** Normal focused Rust checks must use the checked-in SQLx query metadata rather than trying to resolve a development database host. Prefix host-side commands with `SQLX_OFFLINE=true`, for example `SQLX_OFFLINE=true cargo check --manifest-path services/den/Cargo.toml -p den-web`. The Docker smoke-stack build already enables this. New or modified static SQL must use `query!`, `query_as!`, or `query_scalar!`; treat the count of runtime-query call sites as a ratchet that must not grow. Genuinely dynamic SQL may use runtime APIs with an immediately preceding `// sqlx-dynamic: <reason>` comment. Do not replace SQLx compile-time macros with runtime queries to work around an unavailable database; refresh `.sqlx` with `../../scripts/sqlx.sh prepare-all` from an environment with the migrated database when queries or schema change. Never use a bare `cargo sqlx prepare --workspace -- --all-targets`: it does not expand member-crate test targets and deletes their existing entries, so it silently leaves `.sqlx` incomplete (see [SQLx patterns](../../docs/guides/sqlx-patterns.md)). CI runs `../../scripts/sqlx.sh migrate run` then `../../scripts/sqlx.sh prepare --check --workspace -- --all-targets`, but `--check` only warns about extra entries; the clippy step is what fails on missing ones.
 
 ```bash
 SQLX_OFFLINE=true cargo test --manifest-path services/den/Cargo.toml -p den-bearwire bearwire_
@@ -100,16 +100,11 @@ cargo test --manifest-path services/den/Cargo.toml -p den-runtime den_tools_rout
 cargo test --manifest-path services/den/Cargo.toml -p den-bearwire bearwire_
 ```
 
-**Docker build:** For release/deploy-impacting changes, do not treat the change as complete until a `docker build` of [`Dockerfile`](Dockerfile) from `services/den/` succeeds. For narrow Rust/runtime changes, run the most specific cargo tests first and explicitly state if Docker was not run. Release images use `--features production`, Alpine/musl, and SQLx at build time in ways a local glibc `cargo check` does not fully replicate. When Docker is unavailable locally, say so explicitly (build-time env: [`docs/deploy.md`](docs/deploy.md), [`COOLIFY_DEPLOY.md`](COOLIFY_DEPLOY.md)).
+**Docker build:** For release/deploy-impacting changes, do not treat the change as complete until a `docker build` of [`Dockerfile`](Dockerfile) from `services/den/` succeeds. For narrow Rust/runtime changes, run the most specific cargo tests first and explicitly state if Docker was not run. Release images use `--features production`, Alpine/musl, and SQLx at build time in ways a local glibc `cargo check` does not fully replicate. When Docker is unavailable locally, say so explicitly (build-time env: [Den deployment](../../docs/guides/den-deploy.md), [`COOLIFY_DEPLOY.md`](COOLIFY_DEPLOY.md)).
 
-## Start here
+## Documentation entry point
 
-1. [`docs/README.md`](docs/README.md) — documentation index.
-2. [`docs/concepts-overview.md`](docs/concepts-overview.md) — repository layout and where things live in code.
-3. [`docs/quickstart.md`](docs/quickstart.md) — local development (env, migrations, `cargo run`).
-4. [`docs/axum-in-this-repo.md`](docs/axum-in-this-repo.md) — how Axum routers, state, and layers map to `src/web` and `src/api`.
-5. [`docs/development-principles.md`](docs/development-principles.md) — development principles (dependencies, frontend minimalism); populate for your product.
-6. Implementation patterns under [`docs/`](docs/): SQLx, MiniJinja contexts, Axum handlers, infrastructure, frontend, deploy.
+Start with the repository [topic map](../../docs/README.md) for verified current behavior, linked active plans, decisions, and developer guides. Do not use older roadmap status summaries as the source of truth for what is deployed. For this service, use [Den quickstart](../../docs/guides/den-quickstart.md) and the [architecture index](../../docs/architecture/README.md).
 
 ## Database migrations (SQLx)
 
@@ -124,40 +119,31 @@ cargo test --manifest-path services/den/Cargo.toml -p den-bearwire bearwire_
 - **Native runtime / agent loop** — `crates/den-runtime/src/agent_loop/`, `crates/den-runtime/src/native_runtime/`.
 - **Den-hosted tools** — descriptors and dispatch in `crates/den-core/src/tools/`; concrete service wiring in `src/core/tools/`.
 - **Conversation persistence/history** — `crates/den-runtime/src/conversation/`, `crates/den-runtime/src/native_runtime/turn.rs`, BearWire history/replay in `crates/den-bearwire/`.
-- **HTTP web UI** — `src/web/`, templates under `src/web/templates/`. CSS: follow [`docs/frontend-development.md`](docs/frontend-development.md): no authored `<style>` blocks or inline layout/theme in templates; standalone pages still use `/assets/css/style.css` and scoped rules in `src/web/assets/css/specifics.css`.
+- **HTTP web UI** — `src/web/`, templates under `src/web/templates/`. CSS: follow [frontend development](../../docs/guides/frontend-development.md): no authored `<style>` blocks or inline layout/theme in templates; standalone pages still use `/assets/css/style.css` and scoped rules in `src/web/assets/css/specifics.css`.
 - **HTTP API / OAuth provider** — `src/api/`.
-- **Config** — `src/config.rs`, plus env and ops notes in [`docs/deploy.md`](docs/deploy.md), [`docs/infrastructure-and-ops.md`](docs/infrastructure-and-ops.md), and [`.env.example`](.env.example).
+- **Config** — `src/config.rs`, plus env and ops notes in [Den deployment](../../docs/guides/den-deploy.md), [infrastructure and ops](../../docs/guides/infrastructure-and-ops.md), and [`.env.example`](.env.example).
 - **Entrypoint / workers** — [`src/lib.rs`](src/lib.rs) (`run()`), thin [`src/main.rs`](src/main.rs).
 
 ## After substantial changes
 
-- If project focus shifts, suggest updates to [`docs/concepts-overview.md`](docs/concepts-overview.md) and any affected run/deploy docs under [`docs/`](docs/); update the root [`README.md`](README.md) only if you still use it as the primary human-facing overview.
-- If you add a repeatable workflow, document it in `tasks.md` at the repo root (create if missing).
+- Update the affected [topic page](../../docs/README.md) when verified current behavior changes; link plans for intended work and ADRs for rationale. If documentation is unaffected, explain why in the PR.
+- Document repeatable developer workflows in the relevant guide or service-local runbook rather than creating another summary.
 
 ## Patterns (read when touching that layer)
 
 | Topic | Doc |
 |--------|-----|
-| Development principles | [`docs/development-principles.md`](docs/development-principles.md) |
-| SQLx macros & `cargo sqlx prepare` | [`docs/sqlx-patterns.md`](docs/sqlx-patterns.md) |
-| `minijinja::context!` | [`docs/minijinja-context-patterns.md`](docs/minijinja-context-patterns.md) |
-| Axum in this repo (routers, state, layers) | [`docs/axum-in-this-repo.md`](docs/axum-in-this-repo.md) |
-| Axum routes & extractors (`{id}` not `:id`) | [`docs/axum-handler-patterns.md`](docs/axum-handler-patterns.md) |
-| Services, deploy, ops | [`docs/infrastructure-and-ops.md`](docs/infrastructure-and-ops.md) |
-| Local quickstart (`cargo run`, dev quirks) | [`docs/quickstart.md`](docs/quickstart.md) |
-| Deploy notes | [`docs/deploy.md`](docs/deploy.md) |
-| Frontend / templates | [`docs/frontend-development.md`](docs/frontend-development.md) |
-| MiniJinja template limits (vs full Jinja2) | [`docs/minijinja-template-limitations.md`](docs/minijinja-template-limitations.md) |
+| Development principles | [Development principles](../../docs/guides/development-principles.md) |
+| SQLx macros & `cargo sqlx prepare` | [SQLx patterns](../../docs/guides/sqlx-patterns.md) |
+| `minijinja::context!` | [MiniJinja contexts](../../docs/guides/minijinja-context-patterns.md) |
+| Axum routers, state, layers | [Axum in this repo](../../docs/guides/axum-in-this-repo.md) |
+| Axum routes & extractors (`{id}` not `:id`) | [Axum handler patterns](../../docs/guides/axum-handler-patterns.md) |
+| Services, deploy, ops | [Infrastructure and ops](../../docs/guides/infrastructure-and-ops.md) |
+| Local quickstart (`cargo run`, dev quirks) | [Den quickstart](../../docs/guides/den-quickstart.md) |
+| Deploy notes | [Den deployment](../../docs/guides/den-deploy.md) |
+| Frontend / templates | [Frontend development](../../docs/guides/frontend-development.md) |
+| MiniJinja template limits | [MiniJinja template limitations](../../docs/guides/minijinja-template-limitations.md) |
 
 ## Planning docs (BEARS)
 
-Use monorepo roadmap docs under [`../../docs/roadmap/`](../../docs/roadmap/) for active implementation plans.
-
-Especially relevant for Den work:
-
-- [`../../docs/roadmap/BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md`](../../docs/roadmap/BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md)
-- [`../../docs/roadmap/DEN_CHANNELS_IMPLEMENTATION_PLAN.md`](../../docs/roadmap/DEN_CHANNELS_IMPLEMENTATION_PLAN.md)
-- [`../../docs/roadmap/DEN_NATIVE_RUNTIME_PLAN.md`](../../docs/roadmap/DEN_NATIVE_RUNTIME_PLAN.md)
-- [`../../docs/roadmap/DEN_CONTEXT_COMPACTION_IMPLEMENTATION_PLAN.md`](../../docs/roadmap/DEN_CONTEXT_COMPACTION_IMPLEMENTATION_PLAN.md)
-
-Do not duplicate roadmap markdown under `services/den/plans/`.
+Find the topic first and follow its linked plans or the [planning index](../../docs/roadmap/README.md). Do not duplicate roadmap Markdown under `services/den/plans/`.

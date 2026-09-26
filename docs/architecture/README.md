@@ -14,26 +14,7 @@ There is no Letta, Letta Code/Codepool, or MemFS sidecar in the current architec
 
 ## Start here
 
-If you need one linear path that yields a complete mental model without reading code, use this order:
-
-1. [den runtime](den-runtime.md) — canonical runtime architecture and storage boundary
-2. [overview](overview.md) — one-page system picture: components, flows, and responsibilities
-3. [den crate architecture](den-crate-architecture.md) — how the implementation is decomposed inside the Rust workspace
-4. [den bear spec](den-bear-spec.md) — what a Bear is, what stances exist, and what each stance is allowed to do
-5. [bears and den](bears-and-den.md) — product identity vs control plane
-6. [bear stances](bear-stances.md) — stance model and stance boundaries
-7. [bear channel and ACP](bear-channel-and-acp.md) — channels, armatures, and trusted work surfaces
-8. [context compilation scenarios](context-compilation-scenarios.md) — how prompt/context assembly behaves in practice
-9. [non-blocking structured updates](non-blocking-structured-updates.md) — model-facing actions vs blocking tools, obligations, progress, and metadata updates
-10. [Den state machine inventory](den-state-machine-inventory.md) — living inventory of conversation/session/turn/run state axes, owners, invariants, and test obligations
-11. [runtime error UX policy](runtime-error-ux-policy.md) — how failures split across user copy, model continuity, and diagnostics
-12. [memory model](memory-model.md) — canonical memory model and promotion boundaries
-12. [reflection system](reflection-system.md) — how reflection, review, and curation operate
-13. [tasks and autonomy](tasks-and-autonomy.md) — Docket work, approvals, and autonomous execution boundaries
-14. [planning](planning.md) — workboard plans, plan mode, and plan artifacts
-15. [capabilities and skills](capabilities-and-skills.md) — capability model, tools, and skill governance
-16. [task schema](task-schema.md) — current task and task-result shapes
-17. [stance vocabulary](stance-vocabulary.md) — canonical naming and terminology
+Use the [topic map](../README.md) first: it distinguishes verified current behavior, intended changes, and decision rationale. For an architecture overview, read [overview](overview.md), then [Den runtime](den-runtime.md); follow their links to details as needed. This directory also contains drafts and historical design material—location under `architecture/` alone does not prove a claim is deployed.
 
 ## What this section should let you answer
 
