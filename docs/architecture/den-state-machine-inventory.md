@@ -4,7 +4,7 @@
 
 This document inventories the state dimensions that apply to a Den conversation, session, turn, run, and Docket task unit of work. It is intentionally a matrix of orthogonal axes, not a proposal for one giant enum.
 
-Use this document when adding or changing runtime state, mode labels, continuation policy, approvals, current-task selection, model selection, or client projection. If a new state dimension can affect what the model may do, whether a turn may stop, what a client shows, or how a run resumes, update this inventory in the same change.
+Use this document when adding or changing runtime state, mode labels, continuation policy, approvals, current-task selection, model selection, or client projection. If a new state dimension can affect what the model may do, whether a turn may stop, what a client shows, or how a run resumes, update this inventory in the same change. The proposed [session memory and hats contract](../topics/bear-memory-hats.md) is not yet part of this current-state inventory; [its plan](../roadmap/HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md) requires updating these axes when code changes.
 
 ## Maintenance rule
 

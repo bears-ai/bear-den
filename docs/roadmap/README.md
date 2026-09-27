@@ -6,6 +6,10 @@ This is the entry point for *verified* active delivery plans. A plan is not a de
 
 The older [planning hub](PLAN.md) contains useful priorities and delivery history, but its dated status claims have not yet been reconciled against the current implementation. Do not treat its entire plan catalog as active. The [BearWire v1 refinement draft](BEARWIRE_V1_PROTOCOL_REFINEMENT_ROADMAP.md) and [Docket implementation plan](DOCKET_IMPLEMENTATION_PLAN.md) are linked from their topic pages with explicit caveats. The [focused-execution stabilization plan](pair-execution-authority-and-debug-tracing-plan.md) is completed delivery history.
 
+## Active contract and validation work
+
+- [Hats and session memory boundaries](HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md) — validate the memory and authority contract and hat UX with one isolated workflow before any general migration or stance removal. The current-system evidence and target are separated in the [Bear memory and hats topic](../topics/bear-memory-hats.md).
+
 ## Adding or advancing a plan
 
 - Start from an existing [topic page](../README.md); link the plan from that page and back to it.

@@ -4,6 +4,7 @@
 pub mod bifrost_key;
 pub mod context_composition;
 pub mod db;
+pub mod hats;
 pub mod managed_blocks;
 pub mod model;
 pub mod prompt_fragments;

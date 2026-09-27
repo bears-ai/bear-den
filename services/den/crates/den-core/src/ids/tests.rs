@@ -20,6 +20,17 @@ fn bear_id_serde_is_transparent() {
 }
 
 #[test]
+fn hat_id_is_distinct_and_round_trips() {
+    let raw = Uuid::new_v4();
+    let hat = HatId::new(raw);
+    assert_eq!(hat.as_uuid(), raw);
+    assert_eq!(Uuid::from(hat), raw);
+    assert_eq!(HatId::from_str(&raw.to_string()).unwrap(), hat);
+    let json = serde_json::to_string(&hat).unwrap();
+    assert_eq!(serde_json::from_str::<HatId>(&json).unwrap(), hat);
+}
+
+#[test]
 fn user_id_orders_and_converts() {
     assert!(UserId::new(1) < UserId::new(2));
     assert_eq!(i32::from(UserId::from(7)), 7);

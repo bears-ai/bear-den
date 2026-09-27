@@ -1,5 +1,7 @@
 # Memory Model
 
+**Current architecture.** Profile-local and shared memory below describe the existing system, not the proposed session/hat boundary. For the proposed target and its validation gates, see [Bear memory and hats](../topics/bear-memory-hats.md) and the [active plan](../roadmap/HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md).
+
 Bear memory is the durable knowledge a Bear can use across stances, work surfaces, channels, and time.
 
 In the current architecture, canonical Bear cognition lives in **per-Bear SQLite**. Memory is not the same thing as transcript history, task state, or external retrieval indexes.

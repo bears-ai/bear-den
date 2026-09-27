@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM work_surface_bears WHERE surface_id = $1 AND bear_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6ac96f690dbb9f84107fae562976f33b2d00a7c362603f378c57ce7ab23f1eaf"
+}

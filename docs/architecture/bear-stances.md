@@ -1,6 +1,6 @@
 # Bear stances: chat, pair, curate, work, and watch
 
-This document describes the five internal stances Bear Den uses. It is the core reference for stance names, stance responsibilities, cross-stance cooperation, and stance-facing product language. Other current architecture and guide docs should prefer linking here rather than restating the full stance model.
+This document describes the five internal stances Bear Den uses. It is the core reference for stance names, stance responsibilities, cross-stance cooperation, and stance-facing product language. Other current architecture and guide docs should prefer linking here rather than restating the full stance model. A proposed [session-scoped memory and hats design](../topics/bear-memory-hats.md) would change this contract; see its [validation plan](../roadmap/HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md), not this current reference, for the target.
 
 A Bear should feel like one coherent assistant to a user. The preferred conceptual model is **stances, channels, and work surfaces**, not Spaces or separate provider-managed agents. Internally, Bear Den uses a multi-stance runtime. Each stance has a distinct job, trust contract, memory branch, and relationship to external systems.
 

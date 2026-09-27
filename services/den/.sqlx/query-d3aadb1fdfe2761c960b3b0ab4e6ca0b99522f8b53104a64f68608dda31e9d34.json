@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO bear_hat_work_surfaces (bear_id, hat_id, surface_id)\n           VALUES ($1, $2, $3)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d3aadb1fdfe2761c960b3b0ab4e6ca0b99522f8b53104a64f68608dda31e9d34"
+}
