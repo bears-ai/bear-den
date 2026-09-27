@@ -1,4 +1,5 @@
-use super::{bindings::*, *};
+use super::{bindings::*, memory_binding, *};
+use den_memory::{scoped::MemoryReadGrant, MemorySource};
 
 async fn test_pool() -> Option<PgPool> {
     let url = std::env::var("TEST_DATABASE_URL")
@@ -94,6 +95,12 @@ async fn hats_only_attenuate_bear_surface_grants() {
     .await
     .expect("create other Bear conversation");
     assert_eq!(
+        memory_binding::for_conversation(&pool, BearId::new(bear), conversation_id)
+            .await
+            .unwrap(),
+        memory_binding::ResolvedMemoryBinding::Legacy
+    );
+    assert_eq!(
         conversation_hat(&pool, BearId::new(bear), conversation_id)
             .await
             .unwrap(),
@@ -120,6 +127,20 @@ async fn hats_only_attenuate_bear_surface_grants() {
             .await
             .unwrap(),
         Some(hat.id)
+    );
+    assert_eq!(
+        memory_binding::for_conversation(&pool, BearId::new(bear), conversation_id)
+            .await
+            .unwrap(),
+        memory_binding::ResolvedMemoryBinding::Bound(MemoryReadGrant::new(
+            MemorySource::Conversation(conversation_id),
+            Some(hat.id)
+        ))
+    );
+    assert!(
+        memory_binding::for_conversation(&pool, BearId::new(other_bear), conversation_id)
+            .await
+            .is_err()
     );
     assert_eq!(
         conversation_hat(&pool, BearId::new(other_bear), conversation_id)
@@ -248,6 +269,36 @@ async fn hats_only_attenuate_bear_surface_grants() {
             .unwrap(),
         Some(hat.id)
     );
+    let job_run_id = sqlx::query_scalar!(
+        "INSERT INTO bear_job_runs (job_id) VALUES ($1) RETURNING id",
+        job_id,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("create Job run");
+    let work_run_id = sqlx::query_scalar!(
+        "INSERT INTO bear_work_runs (bear_id, job_id, job_run_id) VALUES ($1, $2, $3) RETURNING id",
+        bear,
+        job_id,
+        job_run_id,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("create Work run");
+    assert_eq!(
+        memory_binding::for_work_run(&pool, BearId::new(bear), work_run_id)
+            .await
+            .unwrap(),
+        memory_binding::ResolvedMemoryBinding::Bound(MemoryReadGrant::new(
+            MemorySource::WorkRun(work_run_id),
+            Some(hat.id)
+        ))
+    );
+    assert!(
+        memory_binding::for_work_run(&pool, BearId::new(other_bear), work_run_id)
+            .await
+            .is_err()
+    );
     sqlx::query!(
         "DELETE FROM work_surface_bears WHERE surface_id = $1 AND bear_id = $2",
         surface,
@@ -271,6 +322,10 @@ async fn hats_only_attenuate_bear_surface_grants() {
             .unwrap(),
         None
     );
+    assert!(matches!(
+        memory_binding::for_work_run(&pool, BearId::new(bear), work_run_id).await,
+        Err(DenError::Authorization(_))
+    ));
 
     sqlx::query!("DELETE FROM bears WHERE id = ANY($1)", &[bear, other_bear])
         .execute(&pool)

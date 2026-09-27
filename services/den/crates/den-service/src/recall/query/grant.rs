@@ -1,0 +1,91 @@
+//! Derived recall filter for a Den-verified source/hat binding.
+//!
+//! This is a filter, not an authority source: callers must resolve the grant
+//! from canonical Den state, and the index may lag or omit entire scopes.
+
+use den_core::{config::Config, DenError};
+use den_memory::scoped::MemoryReadGrant;
+use serde_json::{json, Value};
+use uuid::Uuid;
+
+use super::{
+    bear_scope_conditions, disabled_projection, search_passages, DisabledRecallReason,
+    PassageEmbedder, QdrantRecall, RecallProjection,
+};
+
+#[cfg(test)]
+mod tests;
+
+fn grant_scope_filter(bear_id: Uuid, embedding_standard: &str, grant: MemoryReadGrant) -> Value {
+    let source = grant.source();
+    let mut should = vec![
+        json!({ "key": "scope_type", "match": { "value": "shared" } }),
+        json!({
+            "must": [
+                { "key": "scope_type", "match": { "value": "source_local" } },
+                { "key": "scope_source_kind", "match": { "value": source.kind() } },
+                { "key": "scope_source_id", "match": { "value": source.id().to_string() } },
+            ]
+        }),
+    ];
+    if let Some(hat_id) = grant.hat_id() {
+        should.push(json!({
+            "must": [
+                { "key": "scope_type", "match": { "value": "hat" } },
+                { "key": "scope_hat_id", "match": { "value": hat_id.to_string() } },
+            ]
+        }));
+    }
+    let mut must = bear_scope_conditions(bear_id, embedding_standard);
+    must.push(json!({ "should": should }));
+    json!({ "must": must })
+}
+
+/// Turn-start semantic recall under the bound source/hat policy. Until indexing
+/// of source and hat scopes is explicitly enabled, only matching shared points
+/// can appear; this never falls back to the broader role/profile filter.
+pub async fn recall_for_turn_with_grant<E: PassageEmbedder + ?Sized>(
+    qdrant: &QdrantRecall,
+    embedder: &E,
+    embedding_standard: &str,
+    bear_id: Uuid,
+    grant: MemoryReadGrant,
+    query_text: &str,
+    limit: usize,
+) -> Result<RecallProjection, DenError> {
+    search_passages(
+        qdrant,
+        embedder,
+        grant_scope_filter(bear_id, embedding_standard, grant),
+        embedding_standard,
+        query_text,
+        limit,
+    )
+    .await
+}
+
+pub async fn search_bear_memory_with_grant(
+    config: &Config,
+    bear_id: Uuid,
+    grant: MemoryReadGrant,
+    query_text: &str,
+    limit: usize,
+) -> Result<RecallProjection, DenError> {
+    let Some(qdrant) = QdrantRecall::from_config(config) else {
+        return Ok(disabled_projection(DisabledRecallReason::QdrantUnset));
+    };
+    let embedder = den_llm::EmbeddingClient::new(config);
+    if !embedder.is_enabled() {
+        return Ok(disabled_projection(DisabledRecallReason::EmbeddingsUnset));
+    }
+    recall_for_turn_with_grant(
+        &qdrant,
+        &embedder,
+        &config.embedding_standard,
+        bear_id,
+        grant,
+        query_text,
+        limit,
+    )
+    .await
+}

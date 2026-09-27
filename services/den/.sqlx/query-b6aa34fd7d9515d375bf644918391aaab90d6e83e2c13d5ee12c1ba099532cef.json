@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.job_id, j.hat_id FROM bear_work_runs r\n         JOIN bear_jobs j ON j.id = r.job_id AND j.bear_id = r.bear_id\n         WHERE r.bear_id = $1 AND r.id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "job_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "hat_id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "b6aa34fd7d9515d375bf644918391aaab90d6e83e2c13d5ee12c1ba099532cef"
+}

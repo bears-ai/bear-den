@@ -29,6 +29,14 @@ impl MemoryReadGrant {
     pub fn new(source: MemorySource, hat_id: Option<HatId>) -> Self {
         Self { source, hat_id }
     }
+
+    pub fn source(self) -> MemorySource {
+        self.source
+    }
+
+    pub fn hat_id(self) -> Option<HatId> {
+        self.hat_id
+    }
 }
 
 // sqlx-dynamic: the optional, verified hat branch changes the SQLite predicate;

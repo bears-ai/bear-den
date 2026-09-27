@@ -4,7 +4,8 @@ use uuid::Uuid;
 
 use crate::{
     append_memory_record, list_records_for_logical_path, records::normalize_lifecycle_status,
-    BearMemoryStore, LogicalMemoryPath, MemoryRecordRow, MemoryScopeType, MemoryStoreManager,
+    BearMemoryStore, LogicalMemoryPath, MemoryRecordRow, MemoryScopeType, MemorySource,
+    MemoryStoreManager,
 };
 
 pub async fn sqlite_write_at_path(
@@ -54,6 +55,17 @@ pub async fn sqlite_write_at_path(
     }))
 }
 
+pub struct SqliteMemoryEntryWrite<'a> {
+    pub kind: &'a str,
+    pub title: &'a str,
+    pub body: &'a str,
+    pub tags: &'a [String],
+    pub refs: Option<Value>,
+    pub lifecycle: Option<Value>,
+    pub source: Option<Value>,
+    pub author: Option<String>,
+}
+
 pub async fn sqlite_write_profile_entry(
     stores: &MemoryStoreManager,
     bear_id: Uuid,
@@ -68,7 +80,54 @@ pub async fn sqlite_write_profile_entry(
     author: Option<String>,
 ) -> Result<Value, DenError> {
     let store = stores.store_for_bear(bear_id).await?;
-    let logical = LogicalMemoryPath::profile_local(profile, kind);
+    write_semantic_entry(
+        &store,
+        LogicalMemoryPath::profile_local(profile, kind),
+        profile,
+        SqliteMemoryEntryWrite {
+            kind,
+            title,
+            body,
+            tags,
+            refs,
+            lifecycle,
+            source,
+            author,
+        },
+    )
+    .await
+}
+
+/// Source scope must come from a Den-verified conversation, Work run, or intake unit.
+/// Model arguments may propose the content, never select its scope.
+pub async fn sqlite_write_source_entry(
+    stores: &MemoryStoreManager,
+    bear_id: Uuid,
+    memory_source: MemorySource,
+    author_profile: &str,
+    entry: SqliteMemoryEntryWrite<'_>,
+) -> Result<Value, DenError> {
+    let store = stores.store_for_bear(bear_id).await?;
+    let logical = LogicalMemoryPath::source_local(memory_source, entry.kind);
+    write_semantic_entry(&store, logical, author_profile, entry).await
+}
+
+async fn write_semantic_entry(
+    store: &BearMemoryStore,
+    logical: LogicalMemoryPath,
+    profile: &str,
+    entry: SqliteMemoryEntryWrite<'_>,
+) -> Result<Value, DenError> {
+    let SqliteMemoryEntryWrite {
+        kind,
+        title,
+        body,
+        tags,
+        refs,
+        lifecycle,
+        source,
+        author,
+    } = entry;
     let content = format!("# {title}\n\n{body}");
     let mut lifecycle = lifecycle.unwrap_or_else(|| json!({}));
     if let Some(status) = lifecycle.get("status").and_then(Value::as_str) {
@@ -89,9 +148,9 @@ pub async fn sqlite_write_profile_entry(
         "runtime": "native",
     });
     let row =
-        append_memory_record(&store, &logical, kind, profile, None, &content, &metadata).await?;
+        append_memory_record(store, &logical, kind, profile, None, &content, &metadata).await?;
     Ok(json!({
-        "bear_id": bear_id,
+        "bear_id": store.bear_id(),
         "profile": profile,
         "kind": row.kind,
         "entry_id": row.memory_id,

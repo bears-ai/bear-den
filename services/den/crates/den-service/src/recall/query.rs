@@ -17,6 +17,9 @@ use super::policy::SOURCE_CLASS_BEAR_MEMORY;
 use super::qdrant::QdrantRecall;
 use super::temporal::{parse_time_expression, TemporalQuery};
 
+mod grant;
+pub use grant::{recall_for_turn_with_grant, search_bear_memory_with_grant};
+
 /// Total character budget for the rendered recall section (ADR-0038 Phase 2: ~2–3k).
 const RECALL_CHAR_BUDGET: usize = 2_600;
 /// Max characters of a single passage snippet before truncation.

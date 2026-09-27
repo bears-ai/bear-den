@@ -13,6 +13,7 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 pub mod bindings;
+pub mod memory_binding;
 
 #[cfg(test)]
 mod tests;
