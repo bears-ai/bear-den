@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO bear_jobs (bear_id, created_by_user_id, created_by_role, goal)\n         VALUES ($1, $2, 'ui', 'Review the repository') RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "e9cd7d78d927ec56f5b608fcabe334127c3682034f6fa09b4103e9fa5fa920f3"
+}

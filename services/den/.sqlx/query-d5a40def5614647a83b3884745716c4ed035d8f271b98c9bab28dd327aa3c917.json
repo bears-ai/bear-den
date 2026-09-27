@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT h.id\n           FROM bear_jobs j JOIN bear_hats h ON h.id = j.hat_id AND h.bear_id = j.bear_id\n           WHERE j.bear_id = $1 AND j.id = $2 AND h.work_enabled\n             AND EXISTS (SELECT 1 FROM job_work_surface_assignments a WHERE a.job_id = j.id)\n             AND NOT EXISTS (\n                 SELECT 1 FROM job_work_surface_assignments a\n                 WHERE a.job_id = j.id AND NOT EXISTS (\n                     SELECT 1 FROM bear_hat_work_surfaces hs\n                     WHERE hs.bear_id = j.bear_id AND hs.hat_id = h.id\n                       AND hs.surface_id = a.work_surface_id\n                 )\n             )",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d5a40def5614647a83b3884745716c4ed035d8f271b98c9bab28dd327aa3c917"
+}

@@ -12,6 +12,8 @@ use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+pub mod bindings;
+
 #[cfg(test)]
 mod tests;
 

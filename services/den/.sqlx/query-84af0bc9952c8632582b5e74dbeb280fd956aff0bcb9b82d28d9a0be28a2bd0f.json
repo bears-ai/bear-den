@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bear_jobs AS j SET hat_id = $3\n           FROM bear_hats AS h\n           WHERE j.id = $2 AND j.bear_id = $1\n             AND j.lifecycle_intent IS NULL AND j.current_run_id IS NULL\n             AND NOT EXISTS (SELECT 1 FROM bear_job_runs r WHERE r.job_id = j.id)\n             AND h.id = $3 AND h.bear_id = j.bear_id AND h.work_enabled\n             AND (j.hat_id IS NULL OR j.hat_id = $3)\n             AND EXISTS (SELECT 1 FROM job_work_surface_assignments a WHERE a.job_id = j.id)\n             AND NOT EXISTS (\n                 SELECT 1 FROM job_work_surface_assignments a\n                 WHERE a.job_id = j.id AND NOT EXISTS (\n                     SELECT 1 FROM bear_hat_work_surfaces hs\n                     WHERE hs.bear_id = j.bear_id AND hs.hat_id = h.id\n                       AND hs.surface_id = a.work_surface_id\n                 )\n             )\n           RETURNING j.hat_id AS \"hat_id!: Uuid\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "hat_id!: Uuid",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "84af0bc9952c8632582b5e74dbeb280fd956aff0bcb9b82d28d9a0be28a2bd0f"
+}
