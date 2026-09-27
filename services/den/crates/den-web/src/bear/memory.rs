@@ -1,10 +1,8 @@
 //! Bear memory + entity admin views at `/bear/{slug}/memory…` and `/bear/{slug}/entities…`.
 //!
-//! Read surface for members; delete / review-request gated to bear admins. Canonical memory
-//! lives in per-Bear SQLite (ADR-0031); the recall index (Qdrant + Postgres `recall_passages`)
-//! and the entity layer (ADR-0042) are derived/auxiliary and may be empty. Five use-cases:
-//! a dashboard ("how much memory"), a recent feed, search, library browse, and per-entry +
-//! per-entity detail pages that cross-link via the `memory_links` relation view.
+//! Members see curated shared and Bear-hat memory; Bear admins can explicitly inspect
+//! all scopes, review evidence, and derived entities. Canonical memory lives in per-Bear
+//! SQLite (ADR-0031). Qdrant passages are not an authorization source.
 
 use axum::{
     extract::{Multipart, Path, Query, State},
@@ -31,6 +29,8 @@ use crate::{
 };
 
 use super::settings::{bear_nav_context, load_session_bear, session_user};
+use den_core::ids::BearId;
+use den_memory::library::{self, CuratedMemoryGrant};
 use den_memory::{
     self as store, bear_memory_admin_stats, count_memory_proposals, count_records_by_kind,
     count_records_by_profile, get_memory_proposal as get_sqlite_memory_proposal,
@@ -41,7 +41,7 @@ use den_memory::{
     search_memory_records, LegacyMemoryImportOptions, MemoryRecordRow, MemoryStoreManager,
     PathSummary, SqliteMemoryProposal,
 };
-use den_service::bears::{db as bears_db, BearProfile};
+use den_service::bears::{db as bears_db, hats, BearProfile};
 use den_service::recall::{registry as recall_registry, semantic_search_for_bear};
 use den_service::{
     memory_proposals::{self, CreateMemoryProposal},
@@ -425,10 +425,124 @@ fn snippet(text: &str, max: usize) -> String {
     }
 }
 
-fn scope_label(scope_profile: Option<&str>) -> String {
-    match scope_profile {
-        Some(p) if !p.is_empty() => p.to_string(),
-        _ => "core".to_string(),
+fn scope_label(scope_type: store::MemoryScopeType, scope_profile: Option<&str>) -> String {
+    match scope_type {
+        store::MemoryScopeType::Shared => "core".to_string(),
+        store::MemoryScopeType::Hat => "hat".to_string(),
+        store::MemoryScopeType::SourceLocal => "session".to_string(),
+        store::MemoryScopeType::ProfileLocal => {
+            scope_profile.unwrap_or("legacy profile").to_string()
+        }
+    }
+}
+
+/// Derived from authenticated Bear membership, never from a path, record ID, or request parameter.
+/// Only the explicit admin variant can inspect raw, legacy, or review data.
+enum MemoryLibraryViewer {
+    AdminInspection,
+    Curated(CuratedMemoryGrant),
+}
+
+impl MemoryLibraryViewer {
+    async fn resolve(
+        state: &AppState,
+        bear_id: Uuid,
+        can_manage_bear: bool,
+    ) -> Result<Self, CustomError> {
+        if can_manage_bear {
+            return Ok(Self::AdminInspection);
+        }
+        // Hats belong to the Bear, not an individual session. An absent/revoked hat
+        // never becomes visible merely because SQLite still contains its records.
+        let hats = hats::list_hats(state.sqlx_pool(), BearId::new(bear_id)).await?;
+        Ok(Self::Curated(CuratedMemoryGrant::new(
+            hats.into_iter().map(|hat| hat.id).collect(),
+        )))
+    }
+
+    fn require_admin_review(&self) -> Result<(), CustomError> {
+        match self {
+            Self::AdminInspection => Ok(()),
+            Self::Curated(_) => Err(CustomError::Authorization(
+                "bear admin role required".to_string(),
+            )),
+        }
+    }
+
+    async fn recent(
+        &self,
+        manager: &MemoryStoreManager,
+        bear_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<MemoryRecordRow>, CustomError> {
+        Ok(match self {
+            Self::AdminInspection => list_recent_memory_records(manager, bear_id, limit).await?,
+            Self::Curated(grant) => {
+                library::recent(&manager.store_for_bear(bear_id).await?, grant, limit).await?
+            }
+        })
+    }
+
+    async fn search(
+        &self,
+        manager: &MemoryStoreManager,
+        bear_id: Uuid,
+        query: &str,
+        limit: i64,
+    ) -> Result<Vec<MemoryRecordRow>, CustomError> {
+        Ok(match self {
+            Self::AdminInspection => search_memory_records(manager, bear_id, query, limit).await?,
+            Self::Curated(grant) => {
+                library::search(&manager.store_for_bear(bear_id).await?, grant, query, limit)
+                    .await?
+            }
+        })
+    }
+
+    async fn browse(
+        &self,
+        manager: &MemoryStoreManager,
+        bear_id: Uuid,
+    ) -> Result<Vec<PathSummary>, CustomError> {
+        Ok(match self {
+            Self::AdminInspection => list_path_summaries(manager, bear_id).await?,
+            Self::Curated(grant) => {
+                library::browse(&manager.store_for_bear(bear_id).await?, grant).await?
+            }
+        })
+    }
+
+    async fn detail(
+        &self,
+        manager: &MemoryStoreManager,
+        bear_id: Uuid,
+        memory_id: &str,
+    ) -> Result<Option<store::MemoryRecordDetail>, CustomError> {
+        Ok(match self {
+            Self::AdminInspection => get_memory_record_detail(manager, bear_id, memory_id).await?,
+            Self::Curated(grant) => {
+                library::detail(&manager.store_for_bear(bear_id).await?, grant, memory_id).await?
+            }
+        })
+    }
+
+    async fn history(
+        &self,
+        store: &store::BearMemoryStore,
+        record: &store::MemoryRecordDetail,
+        limit: i64,
+    ) -> Result<Vec<MemoryRecordRow>, CustomError> {
+        Ok(match self {
+            Self::AdminInspection => match record.logical_path.as_deref() {
+                Some(path) => {
+                    store::list_record_history_for_logical_path(store, path, limit).await?
+                }
+                None => vec![],
+            },
+            Self::Curated(grant) => {
+                library::history(store, grant, &record.memory_id, limit).await?
+            }
+        })
     }
 }
 
@@ -1460,7 +1574,7 @@ async fn count_dashboard_proposals(
 
 fn record_list_item(row: MemoryRecordRow, score: Option<f32>) -> RecordListItem {
     RecordListItem {
-        scope_label: scope_label(row.scope_profile.as_deref()),
+        scope_label: scope_label(row.scope_type, row.scope_profile.as_deref()),
         snippet: snippet(&row.content_text, 240),
         memory_id: row.memory_id,
         kind: row.kind,
@@ -1735,8 +1849,33 @@ async fn dashboard_view(
         Err(r) => return Ok(r.into_response()),
     };
     let id = bear.id;
+    let viewer = MemoryLibraryViewer::resolve(&state, id, can_manage_bear).await?;
     let config = state.config.as_ref();
     let manager = state.memory_stores.clone();
+
+    if let MemoryLibraryViewer::Curated(ref grant) = viewer {
+        let recent: Vec<_> = viewer
+            .recent(&manager, id, 8)
+            .await?
+            .into_iter()
+            .map(|r| record_list_item(r, None))
+            .collect();
+        let head_count =
+            library::count_current_entries(&manager.store_for_bear(id).await?, grant).await?;
+        return web::render_template(
+            &state,
+            "bear/memory/member_dashboard.html",
+            auth_session,
+            context! {
+                recent,
+                head_count,
+                can_manage_bear,
+                native_runtime => true,
+                ..bear_nav_context(&bear, "memory"),
+            },
+        )
+        .await;
+    }
 
     let stats = bear_memory_admin_stats(&manager, config, id).await.ok();
     let legacy_import_locked = stats.as_ref().map(|s| s.record_count > 0).unwrap_or(true);
@@ -1904,9 +2043,10 @@ async fn recent_view(
         Err(r) => return Ok(r.into_response()),
     };
     let manager = state.memory_stores.clone();
-    let records: Vec<RecordListItem> = list_recent_memory_records(&manager, bear.id, 50)
-        .await
-        .unwrap_or_default()
+    let viewer = MemoryLibraryViewer::resolve(&state, bear.id, can_manage_bear).await?;
+    let records: Vec<RecordListItem> = viewer
+        .recent(&manager, bear.id, 50)
+        .await?
         .into_iter()
         .map(|r| record_list_item(r, None))
         .collect();
@@ -1940,12 +2080,17 @@ async fn search_view(
     };
     let config = state.config.as_ref();
     let manager = state.memory_stores.clone();
+    let viewer = MemoryLibraryViewer::resolve(&state, bear.id, can_manage_bear).await?;
     let q = query.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    let semantic_available = config.qdrant_url.is_some() && !config.llm_api_url.trim().is_empty();
+    // Qdrant stores broad, potentially stale passage text. Members must only search
+    // the curated canonical SQLite library until semantic candidates are rechecked.
+    let semantic_available =
+        can_manage_bear && config.qdrant_url.is_some() && !config.llm_api_url.trim().is_empty();
     let want_semantic = query.mode.as_deref() == Some("semantic") && semantic_available;
 
     let mut mode_used = "keyword";
-    let mut notice: Option<String> = None;
+    let mut notice: Option<String> = (query.mode.as_deref() == Some("semantic") && !can_manage_bear)
+        .then(|| "Semantic search is available only in Bear admin inspection; showing curated keyword results.".to_string());
     let mut results: Vec<RecordListItem> = Vec::new();
 
     if let Some(q) = q {
@@ -1982,9 +2127,9 @@ async fn search_view(
             }
         }
         if results.is_empty() {
-            results = search_memory_records(&manager, bear.id, q, 50)
-                .await
-                .unwrap_or_default()
+            results = viewer
+                .search(&manager, bear.id, q, 50)
+                .await?
                 .into_iter()
                 .map(|r| record_list_item(r, None))
                 .collect();
@@ -2026,9 +2171,8 @@ async fn browse_view(
         Err(r) => return Ok(r.into_response()),
     };
     let manager = state.memory_stores.clone();
-    let summaries = list_path_summaries(&manager, bear.id)
-        .await
-        .unwrap_or_default();
+    let viewer = MemoryLibraryViewer::resolve(&state, bear.id, can_manage_bear).await?;
+    let summaries = viewer.browse(&manager, bear.id).await?;
 
     // Group by first path segment, preserving a stable, meaningful order.
     let mut groups: Vec<PathGroup> = Vec::new();
@@ -2348,32 +2492,49 @@ async fn record_view(
     };
     let config = state.config.as_ref();
     let manager = state.memory_stores.clone();
-    let record = get_memory_record_detail(&manager, bear.id, &memory_id)
+    let viewer = MemoryLibraryViewer::resolve(&state, bear.id, can_manage_bear).await?;
+    let record = viewer
+        .detail(&manager, bear.id, &memory_id)
         .await?
         .ok_or_else(|| CustomError::NotFound("memory record not found".to_string()))?;
 
     let store = manager.store_for_bear(bear.id).await?;
 
-    // History: all versions at this logical path (newest first).
-    let mut history: Vec<HistoryItem> = Vec::new();
-    if let Some(path) = record.logical_path.as_deref() {
-        let versions = store::list_record_history_for_logical_path(&store, path, 50)
-            .await
-            .unwrap_or_default();
-        for (idx, v) in versions.iter().enumerate() {
-            history.push(HistoryItem {
-                is_current: idx == 0,
-                memory_id: v.memory_id.clone(),
-                sequence_no: v.sequence_no,
-                kind: v.kind.clone(),
-                created_at: v.created_at.clone(),
-            });
-        }
-    }
+    // For members, each version must share the authorized record's canonical scope;
+    // a colliding logical path cannot turn a private record into history.
+    let versions = viewer.history(&store, &record, 50).await?;
+    let history: Vec<HistoryItem> = versions
+        .iter()
+        .enumerate()
+        .map(|(idx, v)| HistoryItem {
+            is_current: idx == 0,
+            memory_id: v.memory_id.clone(),
+            sequence_no: v.sequence_no,
+            kind: v.kind.clone(),
+            created_at: v.created_at.clone(),
+        })
+        .collect();
     let is_head = history
         .first()
         .map(|h| h.memory_id == memory_id)
         .unwrap_or(true);
+
+    if !can_manage_bear {
+        return web::render_template(
+            &state,
+            "bear/memory/member_record.html",
+            auth_session,
+            context! {
+                record,
+                history,
+                is_head,
+                can_manage_bear,
+                native_runtime => true,
+                ..bear_nav_context(&bear, "memory"),
+            },
+        )
+        .await;
+    }
 
     // Referenced entities (descriptive + access-bearing) via the relation view.
     let mut entities: Vec<LinkedEntity> = Vec::new();
@@ -2445,6 +2606,9 @@ async fn entities_view(
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
+    MemoryLibraryViewer::resolve(&state, bear.id, can_manage_bear)
+        .await?
+        .require_admin_review()?;
     let manager = state.memory_stores.clone();
     let store = manager.store_for_bear(bear.id).await?;
     let type_filter = query
@@ -2503,6 +2667,9 @@ async fn entity_detail_view(
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
+    MemoryLibraryViewer::resolve(&state, bear.id, can_manage_bear)
+        .await?
+        .require_admin_review()?;
     let manager = state.memory_stores.clone();
     let store = manager.store_for_bear(bear.id).await?;
     let row = store::get_entity(&store, &entity_id)
@@ -2580,6 +2747,9 @@ async fn reflection_run_get(
     }
     let bear = load_bear_member(state.sqlx_pool(), user.id, &slug).await?;
     let can_manage_bear = viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await?;
+    MemoryLibraryViewer::resolve(&state, bear.id, can_manage_bear)
+        .await?
+        .require_admin_review()?;
     let manager = state.memory_stores.clone();
     let detail = get_reflection_run_detail(state.sqlx_pool(), &manager, bear.id, run_id)
         .await?
@@ -2611,6 +2781,9 @@ async fn reflection_evidence_get(
     }
     let bear = load_bear_member(state.sqlx_pool(), user.id, &slug).await?;
     let can_manage_bear = viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await?;
+    MemoryLibraryViewer::resolve(&state, bear.id, can_manage_bear)
+        .await?
+        .require_admin_review()?;
     let manager = state.memory_stores.clone();
     let evidence =
         get_reflection_evidence(state.sqlx_pool(), &manager, bear.id, &bear.slug, run_id)
@@ -2647,6 +2820,9 @@ async fn proposal_get(
     }
     let bear = load_bear_member(state.sqlx_pool(), user.id, &slug).await?;
     let can_manage_bear = viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await?;
+    MemoryLibraryViewer::resolve(&state, bear.id, can_manage_bear)
+        .await?
+        .require_admin_review()?;
     let proposal = if let Some(proposal) =
         memory_proposals::get_for_bear(state.sqlx_pool(), bear.id, proposal_id).await?
     {

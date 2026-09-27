@@ -8,7 +8,7 @@
 
 <div class="box">
   <h2>Memory library</h2>
-  <p class="form-hint">Every logical path the Bear has written, grouped by scope. Each path links to its current entry; the count shows how many versions exist.</p>
+  <p class="form-hint">{% if can_manage_bear %}All recorded logical paths for admin inspection.{% else %}Curated shared and hat entries only; session notes are not shown until promoted.{% endif %} Each path links to its current entry; the count shows visible versions.</p>
 
   {% if delete_notice %}<p class="success">Deleted memory at {{ delete_notice }} path(s).</p>{% endif %}
   {% if review_notice %}<p class="success">Review requested; a memory proposal was created for curate.</p>{% endif %}

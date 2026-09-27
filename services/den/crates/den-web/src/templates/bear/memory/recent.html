@@ -8,7 +8,7 @@
 
 <div class="box">
   <h2>Recent additions</h2>
-  <p class="form-hint">Newest memory records first (across every profile and scope).</p>
+  <p class="form-hint">{% if can_manage_bear %}Newest records across all scopes for admin inspection.{% else %}Newest curated shared and Bear-hat entries. Session notes stay private until reviewed.{% endif %}</p>
 
   {% if records %}
   <table>

@@ -258,8 +258,8 @@ pub async fn count_records_by_kind(
         .collect())
 }
 
-/// Record counts grouped by role/profile, highest first. Shared (`scope_profile IS NULL`)
-/// records are bucketed under `core` (canonical shared memory).
+/// Record counts grouped by canonical scope, highest first. A missing profile
+/// does not imply core: source-local and hat records also have no profile.
 pub async fn count_records_by_profile(
     manager: &MemoryStoreManager,
     bear_id: Uuid,
@@ -267,10 +267,15 @@ pub async fn count_records_by_profile(
     let store = manager.store_for_bear(bear_id).await?;
     let rows = sqlx::query(
         r"
-        SELECT COALESCE(scope_profile, 'core') AS label, COUNT(*) AS count
+        SELECT CASE scope_type
+                   WHEN 'shared' THEN 'core'
+                   WHEN 'hat' THEN 'hat'
+                   WHEN 'source_local' THEN 'session'
+                   ELSE COALESCE(scope_profile, 'legacy profile')
+               END AS label, COUNT(*) AS count
         FROM memory_records
         WHERE bear_id = ?
-        GROUP BY COALESCE(scope_profile, 'core')
+        GROUP BY label
         ORDER BY count DESC, label ASC
         ",
     )
@@ -541,8 +546,9 @@ mod tests {
     use crate::{
         append_memory_record, append_relation, create_entity, get_entity,
         list_record_history_for_logical_path, list_relations_for_source, EntityTrust,
-        LogicalMemoryPath, ResolutionState,
+        LogicalMemoryPath, MemorySource, ResolutionState,
     };
+    use den_core::ids::HatId;
     use serde_json::json;
 
     fn temp_config() -> Config {
@@ -627,6 +633,38 @@ mod tests {
         assert!(by_profile.iter().any(|b| b.label == "pair" && b.count == 2));
         assert!(by_profile.iter().any(|b| b.label == "core" && b.count == 1));
         assert_eq!(head_entry_count(&manager, bear_id).await.expect("heads"), 2);
+
+        append_memory_record(
+            &store,
+            &LogicalMemoryPath::hat(HatId::new(Uuid::new_v4()), "hat-note"),
+            "note",
+            "curate",
+            None,
+            "hat only",
+            &json!({}),
+        )
+        .await
+        .expect("append hat record");
+        append_memory_record(
+            &store,
+            &LogicalMemoryPath::source_local(
+                MemorySource::Conversation(Uuid::new_v4()),
+                "private-note",
+            ),
+            "note",
+            "pair",
+            None,
+            "session only",
+            &json!({}),
+        )
+        .await
+        .expect("append session record");
+        let counts = count_records_by_profile(&manager, bear_id)
+            .await
+            .expect("scope counts");
+        assert!(counts.iter().any(|b| b.label == "core" && b.count == 1));
+        assert!(counts.iter().any(|b| b.label == "hat" && b.count == 1));
+        assert!(counts.iter().any(|b| b.label == "session" && b.count == 1));
 
         // Path summaries: one head row per path, with the version count.
         let summaries = list_path_summaries(&manager, bear_id)

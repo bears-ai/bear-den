@@ -44,7 +44,7 @@ Canonical architecture: [Memory model](../architecture/memory-model.md), [Den ru
 ### Operator / admin surfaces
 
 - Admin hub memory stats; admin memory dashboard, search, browse, record detail (`/admin/bears/{id}/memory…`).
-- Member-facing memory + entity browse at `/bear/{slug}/memory…` and `/bear/{slug}/entities…` (read; delete/review gated to bear admins).
+- Ordinary Bear members see curated shared and Bear-hat records in `/bear/{slug}/memory…` (dashboard/recent/keyword search/browse/direct record and scoped history). Bear admins retain broad memory inspection and exclusive access to entity, proposal, and reflection-evidence pages; writes and review actions also require admin access. See the [active hats and session-memory plan](HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md) for incomplete source/hat promotion and remaining human UI audits.
 - Recall diagnostics in admin when Qdrant enabled.
 
 ### MemFS → SQLite ETL

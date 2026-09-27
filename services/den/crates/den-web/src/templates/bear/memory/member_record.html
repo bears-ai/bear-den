@@ -1,0 +1,22 @@
+{% extends "bear/_manage.html" %}
+{% set memory_subnav = "browse" %}
+{% block title %}Memory entry · {{ bear.slug }}{% endblock %}
+{% block manage %}
+{% include "bear/memory/_memory_nav.html" %}
+<div class="box">
+  <h2>Shared memory entry</h2>
+  <p><a href="/bear/{{ bear.slug | e }}/memory/browse">← Back to library</a></p>
+  <p><code>{{ record.logical_path or record.memory_id | e }}</code> · {{ record.scope_type | e }} · {{ record.kind | e }} · {{ record.created_at | e }}</p>
+  <pre style="white-space: pre-wrap; max-height: 32rem; overflow: auto;">{{ record.content_text | e }}</pre>
+</div>
+{% if history %}
+<div class="box">
+  <h3>Visible history</h3>
+  <ul>
+    {% for h in history %}
+    <li>{% if h.memory_id == record.memory_id %}<strong>#{{ h.sequence_no }}</strong> (this version){% else %}<a href="/bear/{{ bear.slug | e }}/memory/records/{{ h.memory_id | urlencode }}">#{{ h.sequence_no }}</a>{% endif %}{% if h.is_current %} · current{% endif %} · {{ h.created_at | e }}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+{% endblock %}

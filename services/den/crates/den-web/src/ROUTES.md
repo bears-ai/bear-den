@@ -51,17 +51,16 @@ Member-facing bear management at `/bear/{slug}/…` (read for members, write for
 - Internals (kept reachable): `GET /bear/{slug}/stances/{stance}` (stance detail + model POSTs; linked from identity/models), `GET|POST /bear/{slug}/models`, `GET /bear/{slug}/advanced` (diagnostics incl. stance-binding status, provision action)
 - Retired paths redirect: `/access` → `/people`, `/policy` → `/resources`, `/stances` (list) → `/advanced`, `/persona` → `/context`; `/conversations` remains as an alias of the activity stream
 
-## Bear memory & entities (`src/bear_memory.rs`)
+## Bear memory & entities (`src/bear/memory.rs`)
 
-- `GET /bear/{slug}/memory` — memory dashboard ("how much memory": counts by kind/role, recall coverage, entity summary, recent additions, governance)
-- `POST /bear/{slug}/memory/import-legacy` — legacy archived-bundle import route; stages a bundle at `<BEAR_SQLITE_DATA_DIR>/imports/{bear_id}/`, imports legacy memory heads into per-Bear SQLite, and redirects back to the memory dashboard with success/error notices
-- `GET /bear/{slug}/memory/recent` — recent additions feed (newest records across all roles)
-- `GET /bear/{slug}/memory/search?q=&mode=` — search (keyword always; `mode=semantic` uses the recall index when configured)
-- `GET|POST /bear/{slug}/memory/browse` — library of logical paths grouped by scope; POST deletes/requests review for selected paths (bear admins)
-- `GET /bear/{slug}/memory/records/{memory_id}` — single entry: content, history (versions at path), referenced entities, recall status
-- `GET|POST /bear/{slug}/memory/proposals/{proposal_id}` — memory review proposal detail and resolution
-- `GET /bear/{slug}/entities?type=` — entity library (ADR-0042), optionally filtered by type
-- `GET /bear/{slug}/entities/{entity_id}` — entity detail: handles, linked memory records, cross-links
+- `GET /bear/{slug}/memory` — ordinary members see only shared/hat-curated recent entries and their count; Bear admins see broad inspection stats, review queue, reflection, and derived-recall diagnostics.
+- `GET /bear/{slug}/memory/recent` — curated current shared and Bear-owned hat entries for members; all records for Bear admins.
+- `GET /bear/{slug}/memory/search?q=&mode=` — members use curated canonical keyword search, even if semantic mode is requested. Bear admins may use broad keyword and, when configured, broad semantic inspection; Qdrant payloads are not member-authorized.
+- `GET|POST /bear/{slug}/memory/browse` — curated paths for members; all paths for Bear admins. POST deletes/requests review (Bear admins only).
+- `GET /bear/{slug}/memory/records/{memory_id}` — direct ID lookup and history enforce curated eligibility for members, including canonical scope and access-bearing restrictions; Bear admins may inspect all versions, entity links, and recall status.
+- `GET /bear/{slug}/memory/proposals/{proposal_id}` and `GET /bear/{slug}/memory/reflection/{run_id}[/evidence]` — raw review/evidence reads for Bear admins only; proposal resolution POST is admin-only.
+- `GET /bear/{slug}/entities?type=` and `GET /bear/{slug}/entities/{entity_id}` — Bear-admin inspection only until entity provenance is scoped.
+- `POST /bear/{slug}/memory/import-legacy` and `POST /bear/{slug}/memory/review-queue/clear` — Bear-admin import and review actions.
 
 ## Member bear management (`src/web/bear_management.rs`)
 

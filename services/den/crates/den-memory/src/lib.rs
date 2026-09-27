@@ -11,6 +11,7 @@ pub mod descriptors;
 pub mod entity;
 pub mod harvest;
 pub mod import;
+pub mod library;
 mod logical_path;
 mod manager;
 mod migrate;

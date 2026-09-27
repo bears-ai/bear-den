@@ -2,6 +2,6 @@
   <a href="/bear/{{ bear.slug | e }}/memory"{% if memory_subnav == "dashboard" %} aria-current="page"{% endif %}>Dashboard</a> ·
   <a href="/bear/{{ bear.slug | e }}/memory/recent"{% if memory_subnav == "recent" %} aria-current="page"{% endif %}>Recent</a> ·
   <a href="/bear/{{ bear.slug | e }}/memory/search"{% if memory_subnav == "search" %} aria-current="page"{% endif %}>Search</a> ·
-  <a href="/bear/{{ bear.slug | e }}/memory/browse"{% if memory_subnav == "browse" %} aria-current="page"{% endif %}>Browse</a> ·
-  <a href="/bear/{{ bear.slug | e }}/entities"{% if memory_subnav == "entities" %} aria-current="page"{% endif %}>Entities</a>
+  <a href="/bear/{{ bear.slug | e }}/memory/browse"{% if memory_subnav == "browse" %} aria-current="page"{% endif %}>Browse</a>{% if can_manage_bear %} ·
+  <a href="/bear/{{ bear.slug | e }}/entities"{% if memory_subnav == "entities" %} aria-current="page"{% endif %}>Entities</a>{% endif %}
 </nav>

@@ -19,7 +19,7 @@
     <button type="submit">Search</button>
   </form>
   {% if not semantic_available %}
-  <p class="form-hint">Semantic search needs the recall index (Qdrant + embeddings). Keyword search is always available.</p>
+  <p class="form-hint">{% if can_manage_bear %}Semantic search needs the recall index (Qdrant + embeddings).{% else %}Shared and hat memory is searchable by keyword; semantic recall is not yet available for the curated library.{% endif %}</p>
   {% endif %}
   {% if notice %}<p class="form-hint">{{ notice | e }}</p>{% endif %}
 </div>
