@@ -7,15 +7,23 @@
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use den_core::tools::prompt_memory::{
-    PromptMemoryBlock, PromptMemoryBlockPatch, PromptMemoryBlockWrite, PromptMemoryStore,
+use den_core::tools::{
+    context::DenToolInvocationContext,
+    prompt_memory::{
+        PromptMemoryBlock, PromptMemoryBlockPatch, PromptMemoryBlockWrite, PromptMemoryStore,
+        PromptMemoryVisibility,
+    },
 };
+use den_core::{ids::BearId, BearProfile};
 
 use crate::errors::DenError;
-use den_service::prompt_memory_block_store::{
-    archive_conflicting_prompt_memory_blocks, archive_prompt_memory_blocks_superseded_by,
-    list_prompt_memory_blocks_for_bear_profile, patch_prompt_memory_block,
-    upsert_prompt_memory_block,
+use den_service::{
+    bears::hats::memory_binding::{self, ResolvedMemoryBinding},
+    prompt_memory_block_store::{
+        archive_conflicting_prompt_memory_blocks, archive_prompt_memory_blocks_superseded_by,
+        list_prompt_memory_blocks_for_bear_profile, patch_prompt_memory_block,
+        upsert_prompt_memory_block,
+    },
 };
 
 /// Postgres-backed [`PromptMemoryStore`] over a pool reference.
@@ -30,6 +38,30 @@ impl<'a> DenPromptMemoryStore<'a> {
 }
 
 impl PromptMemoryStore for DenPromptMemoryStore<'_> {
+    async fn visibility(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+    ) -> Result<PromptMemoryVisibility, DenError> {
+        if role != BearProfile::Pair {
+            return Err(DenError::Authorization(
+                "prompt memory tools require Pair".into(),
+            ));
+        }
+        Ok(
+            match memory_binding::for_external_conversation(
+                self.pool,
+                BearId::new(context.bear_id),
+                &context.conversation_id,
+            )
+            .await?
+            {
+                ResolvedMemoryBinding::Legacy => PromptMemoryVisibility::Legacy,
+                ResolvedMemoryBinding::Bound(_) => PromptMemoryVisibility::BoundSession,
+            },
+        )
+    }
+
     async fn list_blocks(
         &self,
         bear_id: Uuid,
@@ -44,10 +76,12 @@ impl PromptMemoryStore for DenPromptMemoryStore<'_> {
 
     async fn patch_block(
         &self,
+        bear_id: Uuid,
+        profile: BearProfile,
         block_id: &str,
         patch: &PromptMemoryBlockPatch,
     ) -> Result<(), DenError> {
-        patch_prompt_memory_block(self.pool, block_id, patch).await
+        patch_prompt_memory_block(self.pool, bear_id, profile, block_id, patch).await
     }
 
     async fn archive_conflicting(&self, write: &PromptMemoryBlockWrite) -> Result<u64, DenError> {

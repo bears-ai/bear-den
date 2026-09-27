@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use den_core::DenError;
+use den_core::{BearProfile, DenError};
 use sqlx::{PgPool, Row};
 
 use crate::prompt_memory_blocks::{
@@ -9,7 +9,9 @@ use crate::prompt_memory_blocks::{
 
 // Write/patch DTOs now live alongside the prompt-memory tool executors in
 // `den-tools`; re-exported here so the Postgres store keeps a stable path.
-pub use den_core::tools::prompt_memory::{PromptMemoryBlockPatch, PromptMemoryBlockWrite};
+pub use den_core::tools::prompt_memory::{
+    PromptMemoryBlockPatch, PromptMemoryBlockWrite, PromptMemoryVisibility,
+};
 
 #[derive(Debug, Clone)]
 pub struct PromptMemoryBlockQuery<'a> {
@@ -17,6 +19,7 @@ pub struct PromptMemoryBlockQuery<'a> {
     pub profile_slug: &'a str,
     pub session_id: &'a str,
     pub work_surfaces: &'a [String],
+    pub visibility: PromptMemoryVisibility,
 }
 
 #[derive(Debug, Clone)]
@@ -29,7 +32,7 @@ pub async fn upsert_prompt_memory_block(
     pool: &PgPool,
     write: &PromptMemoryBlockWrite,
 ) -> Result<(), DenError> {
-    sqlx::query(
+    let result = sqlx::query!(
         r"
         INSERT INTO prompt_memory_blocks (
             block_id,
@@ -64,34 +67,46 @@ pub async fn upsert_prompt_memory_block(
             supersedes_block_id = EXCLUDED.supersedes_block_id,
             metadata = EXCLUDED.metadata,
             updated_at = now()
+        WHERE prompt_memory_blocks.bear_id IS NOT DISTINCT FROM EXCLUDED.bear_id
+          AND prompt_memory_blocks.profile_slug IS NOT DISTINCT FROM EXCLUDED.profile_slug
+          AND prompt_memory_blocks.scope = EXCLUDED.scope
+          AND prompt_memory_blocks.session_id IS NOT DISTINCT FROM EXCLUDED.session_id
+          AND prompt_memory_blocks.work_surface IS NOT DISTINCT FROM EXCLUDED.work_surface
         ",
+        &write.block_id,
+        write.bear_id,
+        write.profile_slug.as_deref(),
+        scope_to_db(write.scope),
+        block_type_to_db(write.block_type),
+        state_to_db(write.state),
+        write.work_surface.as_deref(),
+        write.session_id.as_deref(),
+        &write.title,
+        &write.body,
+        write.priority,
+        write.created_by_user_id,
+        write.supersedes_block_id.as_deref(),
+        &write.metadata,
     )
-    .bind(&write.block_id)
-    .bind(write.bear_id)
-    .bind(write.profile_slug.as_deref())
-    .bind(scope_to_db(write.scope))
-    .bind(block_type_to_db(write.block_type))
-    .bind(state_to_db(write.state))
-    .bind(write.work_surface.as_deref())
-    .bind(write.session_id.as_deref())
-    .bind(&write.title)
-    .bind(&write.body)
-    .bind(write.priority)
-    .bind(write.created_by_user_id)
-    .bind(write.supersedes_block_id.as_deref())
-    .bind(&write.metadata)
     .execute(pool)
     .await
     .map_err(|err| DenError::Database(format!("upsert prompt_memory_blocks: {err}")))?;
+    if result.rows_affected() == 0 {
+        return Err(DenError::Authorization(
+            "prompt memory block ID belongs to a different Bear or scope".into(),
+        ));
+    }
     Ok(())
 }
 
 pub async fn patch_prompt_memory_block(
     pool: &PgPool,
+    bear_id: uuid::Uuid,
+    profile: BearProfile,
     block_id: &str,
     patch: &PromptMemoryBlockPatch,
 ) -> Result<(), DenError> {
-    let result = sqlx::query(
+    let result = sqlx::query!(
         r"
         UPDATE prompt_memory_blocks
         SET state = $2,
@@ -101,16 +116,18 @@ pub async fn patch_prompt_memory_block(
             supersedes_block_id = $6,
             metadata = $7,
             updated_at = now()
-        WHERE block_id = $1
+        WHERE block_id = $1 AND bear_id = $8 AND profile_slug = $9
         ",
+        block_id,
+        state_to_db(patch.state),
+        &patch.title,
+        &patch.body,
+        patch.priority,
+        patch.supersedes_block_id.as_deref(),
+        &patch.metadata,
+        bear_id,
+        profile.as_str(),
     )
-    .bind(block_id)
-    .bind(state_to_db(patch.state))
-    .bind(&patch.title)
-    .bind(&patch.body)
-    .bind(patch.priority)
-    .bind(patch.supersedes_block_id.as_deref())
-    .bind(&patch.metadata)
     .execute(pool)
     .await
     .map_err(|err| DenError::Database(format!("patch prompt_memory_blocks: {err}")))?;
@@ -149,7 +166,14 @@ pub async fn list_prompt_memory_blocks_for_runtime(
     .await
     .map_err(|err| DenError::Database(format!("select prompt_memory_blocks: {err}")))?;
 
-    rows.into_iter().map(row_to_block).collect()
+    rows.into_iter()
+        .map(row_to_block)
+        .filter_map(|result| match result {
+            Ok(block) if query.visibility.allows(&block, query.session_id) => Some(Ok(block)),
+            Ok(_) => None,
+            Err(error) => Some(Err(error)),
+        })
+        .collect()
 }
 
 pub async fn list_prompt_memory_blocks_for_bear_profile(
@@ -245,6 +269,7 @@ pub async fn select_prompt_memory_blocks_for_runtime(
         "profile_slug": query.profile_slug,
         "session_id": query.session_id,
         "work_surfaces": query.work_surfaces,
+        "visibility": format!("{:?}", query.visibility),
         "matched_block_ids": blocks.iter().map(|block| block.id.clone()).collect::<Vec<_>>(),
         "matched_count": blocks.len(),
     });

@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE prompt_memory_blocks\n        SET state = $2,\n            title = $3,\n            body = $4,\n            priority = $5,\n            supersedes_block_id = $6,\n            metadata = $7,\n            updated_at = now()\n        WHERE block_id = $1 AND bear_id = $8 AND profile_slug = $9\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Int4",
+        "Text",
+        "Jsonb",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "31357c3651dec43f1f2d582e8f15fa878aa53307abe6a6da86ee3bd47c7ea132"
+}

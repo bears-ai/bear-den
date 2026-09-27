@@ -1,6 +1,6 @@
 # Memory Model
 
-**Current architecture and partial cutover.** Profile-local and shared memory below still describe unbound legacy sessions. When a conversation or eligible Work run is bound to a hat, model-facing memory tools and turn-start context now use its own source-local notes, hat-curated records, and Bear `core/` instead; this does not yet imply that all Bears or UI views have session isolation. See the verified [Bear memory and hats topic](../topics/bear-memory-hats.md) and the remaining [active plan](../roadmap/HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md).
+**Current architecture and partial cutover.** Profile-local and shared memory below still describe unbound legacy sessions. When a conversation or eligible Work run is bound to a hat, model-facing memory tools and turn-start context now use its own source-local notes, hat-curated records, and Bear `core/` instead. Bound prompt-memory selection, prompt-block tools, and status diagnostics also exclude other profile/session context; prompt-memory remains a separate Den Postgres surface, not canonical cognition. This does not yet imply that all Bears or UI views have session isolation. See the verified [Bear memory and hats topic](../topics/bear-memory-hats.md) and the remaining [active plan](../roadmap/HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md).
 
 Bear memory is the durable knowledge a Bear can use across stances, work surfaces, channels, and time.
 

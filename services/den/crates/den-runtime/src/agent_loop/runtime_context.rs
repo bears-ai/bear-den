@@ -8,6 +8,7 @@ use den_service::bears::prompt_fragments::{
 };
 use den_service::prompt_memory_block_store::{
     select_prompt_memory_blocks_for_runtime, PromptMemoryBlockQuery, PromptMemoryRuntimeSelection,
+    PromptMemoryVisibility,
 };
 use den_service::prompt_memory_blocks::{
     compile_prompt_memory_blocks, render_prompt_memory_block_context, PromptMemoryCompilationInput,
@@ -138,6 +139,7 @@ async fn load_prompt_memory_runtime_text(
     profile_slug: &str,
     session_id: &str,
     workspace_roots: &[String],
+    visibility: PromptMemoryVisibility,
 ) -> Result<String, DenError> {
     let selection = match select_prompt_memory_blocks_for_runtime(
         pool,
@@ -146,6 +148,7 @@ async fn load_prompt_memory_runtime_text(
             profile_slug,
             session_id,
             work_surfaces: workspace_roots,
+            visibility,
         },
     )
     .await
@@ -187,15 +190,22 @@ pub async fn assemble_den_owned_runtime_supplement(
     session_id: &str,
     workspace_roots: &[String],
     objective_orientation: &ObjectiveOrientation,
+    memory_visibility: PromptMemoryVisibility,
 ) -> Result<String, DenError> {
     let mut parts = Vec::new();
     parts.push(render_objective_orientation_context(
         profile_slug,
         objective_orientation,
     )?);
-    let prompt_memory =
-        load_prompt_memory_runtime_text(pool, bear_id, profile_slug, session_id, workspace_roots)
-            .await?;
+    let prompt_memory = load_prompt_memory_runtime_text(
+        pool,
+        bear_id,
+        profile_slug,
+        session_id,
+        workspace_roots,
+        memory_visibility,
+    )
+    .await?;
     if !prompt_memory.trim().is_empty() {
         parts.push(prompt_memory);
     }

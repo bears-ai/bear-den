@@ -905,7 +905,7 @@ async fn build_session(
     let bear = den_service::bears::db::get_bear(deps.pool, bear_id)
         .await?
         .ok_or_else(|| DenError::NotFound("bear not found".to_string()))?;
-    let include_prompt_memory = profile.include_prompt_memory && runtime_context.is_none();
+    let include_prompt_memory = profile.include_prompt_memory;
     let assembled = assemble_native_turn_for_bear(
         AssembleTurnContext {
             pool: deps.pool,

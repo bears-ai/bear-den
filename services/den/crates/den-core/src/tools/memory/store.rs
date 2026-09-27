@@ -8,10 +8,9 @@
 
 use crate::{BearProfile, DenError};
 use serde_json::Value;
-use uuid::Uuid;
 
 use super::RoleMemoryEntryWrite;
-use crate::tools::context::DenToolInvocationContext;
+use crate::tools::{context::DenToolInvocationContext, prompt_memory::PromptMemoryVisibility};
 
 // Native async fn in trait: workspace-internal, consumed via generic bounds /
 // concrete impls only (never `dyn`), so Send flows through monomorphization.
@@ -43,7 +42,11 @@ pub trait RoleMemoryStore: Send + Sync {
 
     /// Base memory-status JSON **without** the prompt-memory diagnostic; the
     /// `memory_status` executor composes that diagnostic on top.
-    async fn status_base(&self, bear_id: Uuid, role: BearProfile) -> Result<Value, DenError>;
+    async fn status_base(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+    ) -> Result<(Value, PromptMemoryVisibility), DenError>;
 
     /// Persist a role-memory entry; returns tool-shaped JSON.
     async fn write_entry(

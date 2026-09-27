@@ -349,7 +349,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_MEMORY_WRITE_ENTRY,
             "Write memory entry",
-            "Write a role-local semantic memory entry such as a note, log, decision, reflection, scratch item, or summary. Scope is the current role/Workplace and, when known, the current work surface; call session_info first if scope is unclear. Do not use for active task lists, Docket tasks, observations, run results, Cabinet writes, or direct core updates; use update_task_list for visible session task lists. Does not write core, Cabinet, tasks, observations, or run results.",
+            "Write a semantic memory entry such as a note, log, decision, reflection, scratch item, or summary. Den scopes bound conversations to their own source; unbound sessions retain legacy role-local memory. Call session_info first if scope is unclear. Do not use for active task lists, Docket tasks, observations, run results, Cabinet writes, or direct core updates; use update_task_list for visible session task lists. Does not write core, Cabinet, tasks, observations, or run results.",
             "bear.memory",
             &["memory.entry.write"],
             CHAT_AND_PAIR_PROFILES,
@@ -358,7 +358,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_MEMORY_STATUS,
             "Memory status",
-            "Return SQLite memory health and entry counts for the current Bear role/Workplace, plus a `recall` object reporting the recall-index consistency watermark (indexed_seq, canonical_seq, lag_count, fully_recallable, last_success_at, failed_run_count; `available: false` when semantic recall is not configured). Use this to answer truthfully what memory is currently recallable. Use session_info first when current role, work surface, or memory scope is unclear.",
+            "Return SQLite memory health and counts for the current Den-enforced scope. Legacy sessions include the recall consistency watermark; bound sessions report scoped counts and mark Bear-wide recall status unavailable. Use this to answer truthfully what memory is currently recallable. Use session_info first when current role, work surface, or memory scope is unclear.",
             "bear.memory",
             &["memory.status.read"],
             MEMORY_READ_PROFILES,
@@ -367,7 +367,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_MEMORY_TREE,
             "Browse memory",
-            "Browse allowed Bear memory paths for the current role/Workplace. Prefer current work-surface anchors before broad Bear memory; call session_info first if current scope is unclear.",
+            "Browse Bear memory paths allowed by the current Den-enforced session or legacy profile scope. Prefer current work-surface anchors before broad Bear memory; call session_info first if current scope is unclear.",
             "bear.memory",
             &["memory.tree.read"],
             MEMORY_READ_PROFILES,
@@ -376,7 +376,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_MEMORY_READ,
             "Read memory file",
-            "Read an allowed Bear memory file for the current role/Workplace. Prefer current work-surface canonical anchors for local-understanding questions; call session_info first if current scope is unclear.",
+            "Read a Bear memory file only when its canonical scope is allowed for this session or legacy profile. Prefer current work-surface canonical anchors for local-understanding questions; call session_info first if current scope is unclear.",
             "bear.memory",
             &["memory.file.read"],
             MEMORY_READ_PROFILES,
@@ -385,7 +385,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_MEMORY_SEARCH,
             "Search memory",
-            "Search allowed Bear memory files for the current role/Workplace. For local project/repo/service questions, orient to the current work surface with session_info and memory_orient_work_surface before broad search.",
+            "Search Bear memory entries allowed for this session or legacy profile. For local project/repo/service questions, orient to the current work surface with session_info and memory_orient_work_surface before broad search.",
             "bear.memory",
             &["memory.search"],
             MEMORY_READ_PROFILES,
@@ -493,7 +493,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_PROMPT_MEMORY_UPSERT,
             "Upsert prompt memory block",
-            "Create or replace a Den-owned prompt memory block for the current bear role. Use this for editable runtime prompt memory, not semantic memory notes.",
+            "Create or replace editable runtime prompt memory. Bound sessions may change only blocks for their own client session; unbound sessions retain the legacy profile policy. This is not semantic memory for the Bear.",
             "bear.memory",
             &["memory.entry.write"],
             PAIR_PROFILES,
@@ -502,7 +502,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_PROMPT_MEMORY_LIST,
             "List prompt memory blocks",
-            "List Den-owned prompt memory blocks for the current bear role.",
+            "List Den-owned prompt blocks allowed in the current session; bound sessions see Bear-wide and their own client-session blocks, not other profile or surface blocks.",
             "bear.memory",
             &["memory.status.read"],
             PAIR_PROFILES,
@@ -511,7 +511,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_PROMPT_MEMORY_PATCH,
             "Patch prompt memory block",
-            "Update lifecycle/content fields for an existing Den-owned prompt memory block.",
+            "Update an existing prompt block only within the current Bear/profile; bound sessions may patch only their own client-session blocks.",
             "bear.memory",
             &["memory.entry.write"],
             PAIR_PROFILES,

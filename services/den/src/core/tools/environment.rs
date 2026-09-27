@@ -2,10 +2,14 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 
 use den_core::tools::environment::EnvironmentOps;
+use den_core::tools::prompt_memory::PromptMemoryVisibility;
 
 use crate::{
     config::Config,
-    core::tools::{memory_read::memory_status_value, session::DenToolInvocationContext},
+    core::tools::{
+        memory_read::{memory_status_value, DenRoleMemoryStore},
+        session::DenToolInvocationContext,
+    },
     errors::{CustomError, DenError},
 };
 use den_memory as memory_store;
@@ -33,6 +37,16 @@ impl EnvironmentOps for DenEnvironmentOps<'_> {
         memory_status_value(self.config, self.stores, context, role, self.pool)
             .await
             .map_err(CustomError::into_den)
+    }
+
+    async fn memory_visibility(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+    ) -> Result<PromptMemoryVisibility, DenError> {
+        DenRoleMemoryStore::new(self.pool, self.config, self.stores)
+            .prompt_visibility(context, role)
+            .await
     }
 
     async fn session_entities(

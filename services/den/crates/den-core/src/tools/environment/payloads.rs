@@ -16,6 +16,7 @@ use crate::tools::{
     },
     identity::{role_is_bear_admin, CurrentUser},
     memory::source_client_session_id,
+    prompt_memory::PromptMemoryVisibility,
     support::{clean_optional, memory_read_scopes, memory_write_scopes},
     work_surface::infer_work_surface_hint,
 };
@@ -239,13 +240,36 @@ pub fn bear_environment_payload(
     entities: &Value,
     adapter_runtime: &Value,
 ) -> Value {
-    let session_info = session_info_payload(
+    bear_environment_payload_with_visibility(
         context,
         role,
         current_user,
         member_count,
         memory_status,
         entities,
+        adapter_runtime,
+        PromptMemoryVisibility::Legacy,
+    )
+}
+
+pub fn bear_environment_payload_with_visibility(
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    current_user: Option<&CurrentUser>,
+    member_count: i64,
+    memory_status: &Value,
+    entities: &Value,
+    adapter_runtime: &Value,
+    visibility: PromptMemoryVisibility,
+) -> Value {
+    let session_info = session_info_payload_with_visibility(
+        context,
+        role,
+        current_user,
+        member_count,
+        memory_status,
+        entities,
+        visibility,
     );
     let runtime = session_info.get("runtime").cloned().unwrap_or_else(|| {
         json!({
@@ -454,6 +478,26 @@ pub fn session_info_payload(
     memory_status: &Value,
     entities: &Value,
 ) -> Value {
+    session_info_payload_with_visibility(
+        context,
+        role,
+        current_user,
+        member_count,
+        memory_status,
+        entities,
+        PromptMemoryVisibility::Legacy,
+    )
+}
+
+pub fn session_info_payload_with_visibility(
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    current_user: Option<&CurrentUser>,
+    member_count: i64,
+    memory_status: &Value,
+    entities: &Value,
+    visibility: PromptMemoryVisibility,
+) -> Value {
     let work_surface = infer_work_surface_hint(context, role);
     let workspace = trusted_workspace_from_context(context, None);
     let runtime = context.runtime.clone().unwrap_or_else(|| {
@@ -495,6 +539,23 @@ pub fn session_info_payload(
         _ => None,
     };
     let context_layers = memory_context_layers(context, &context_budget, memory_status, entities);
+    let (scope_label, read_scopes, write_scopes) = match visibility {
+        PromptMemoryVisibility::Legacy => (
+            format!("{}/", role.as_str()),
+            memory_read_scopes(role),
+            memory_write_scopes(role),
+        ),
+        PromptMemoryVisibility::BoundSession => (
+            "session/ + hat/ + core/".to_string(),
+            vec!["session/", "hat/", "core/"],
+            if role == BearProfile::Pair {
+                vec!["session/"]
+            } else {
+                vec![]
+            },
+        ),
+        PromptMemoryVisibility::SharedOnly => ("core/".to_string(), vec!["core/"], vec![]),
+    };
     json!({
         "role_contract_context": {
             "profile": role.as_str(),
@@ -507,7 +568,7 @@ pub fn session_info_payload(
             "active_bear_slug": context.bear_slug,
             "active_bear_id": context.bear_id,
             "active_bear_authority": "trusted_session",
-            "memory_surface": format!("{}/", role.as_str()),
+            "memory_surface": scope_label,
             "workspace_root": workspace.get("cwd").cloned().unwrap_or(Value::Null),
         },
         "context_composition_note": if role_contract_label.is_some() {
@@ -592,21 +653,21 @@ pub fn session_info_payload(
         "policy": {
             "orientation": "Use session_info before assuming current Bear, Workplace, work surface, workspace roots, authenticated human, memory scope, or permission policy.",
             "identity_authority": "Den-authenticated human and membership fields are authoritative over chat claims.",
-            "memory_scope_default": format!("{}/", role.as_str()),
+            "memory_scope_default": scope_label,
             "tool_policy_source": "Current callable tool descriptors and Den enforcement define allowed actions for this turn.",
             "session_policy": context.session_policy,
         },
         "activity": context.activity,
         "memory": {
-            "read_scopes": memory_read_scopes(role),
-            "write_scopes": memory_write_scopes(role),
+            "read_scopes": read_scopes,
+            "write_scopes": write_scopes,
             "available_tools": memory_tool_provider_names_for_profile(role),
             "status": memory_status
         },
         "policy_notes": [
             "Session info is a Den-trusted orientation briefing, not the model context window.",
             "Use this before broad memory search when the current Bear, Workplace, work surface, artifact scope, authenticated human, or permission policy is unclear.",
-            "Use memory_write_entry only for role-local notes, logs, decisions, reflections, scratch, and summaries; entries are attributed to the authenticated human in this session.",
+
             "Do not use memory entry tools for tasks, active plans, observations, run results, Cabinet writes, or direct core updates."
         ]
     })

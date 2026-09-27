@@ -1,5 +1,6 @@
 use den_core::config::Config;
 use den_core::ids::BearId;
+use den_core::tools::prompt_memory::PromptMemoryVisibility;
 use den_core::DenError;
 use den_docket::{
     task_list_projection_from_session_tasks, work_runs, DocketService, DocketTaskListFilter,
@@ -499,6 +500,16 @@ pub async fn assemble_native_turn_messages_for_bear(
     Ok(assemble_native_turn_for_bear(ctx, bear).await?.messages)
 }
 
+fn permitted_supplied_runtime_context(
+    supplied: Option<&str>,
+    scope: MemoryProjectionScope,
+) -> Option<&str> {
+    match scope {
+        MemoryProjectionScope::Legacy => supplied.map(str::trim).filter(|text| !text.is_empty()),
+        MemoryProjectionScope::Bound(_) | MemoryProjectionScope::SharedOnly => None,
+    }
+}
+
 pub async fn assemble_native_turn_for_bear(
     ctx: AssembleTurnContext<'_>,
     bear: &Bear,
@@ -641,15 +652,18 @@ pub async fn assemble_native_turn_for_bear(
         }
         None => None,
     };
-    if let Some(runtime) = ctx
-        .turn_runtime_context
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
+    // Bound turns compile their own supplement; opaque armature-provided text
+    // cannot carry profile-local prompt blocks across this boundary.
+    let supplied_runtime =
+        permitted_supplied_runtime_context(ctx.turn_runtime_context, memory_scope);
+    if let Some(runtime) = supplied_runtime {
         budget_components.runtime_supplement_chars = runtime.chars().count() as u32;
         system_text.push_str("\n\n");
         system_text.push_str(runtime);
-    } else if ctx.should_load_den_owned_runtime_context() {
+    } else if ctx.session_id.is_some()
+        && (ctx.should_load_den_owned_runtime_context()
+            || !matches!(memory_scope, MemoryProjectionScope::Legacy))
+    {
         let session_id = ctx.session_id.expect("session_id checked above");
         let roots = ctx
             .workspace_roots
@@ -662,6 +676,11 @@ pub async fn assemble_native_turn_for_bear(
             session_id,
             &roots,
             &objective_orientation,
+            match memory_scope {
+                MemoryProjectionScope::Legacy => PromptMemoryVisibility::Legacy,
+                MemoryProjectionScope::Bound(_) => PromptMemoryVisibility::BoundSession,
+                MemoryProjectionScope::SharedOnly => PromptMemoryVisibility::SharedOnly,
+            },
         )
         .await?;
         if !supplement.trim().is_empty() {
@@ -778,6 +797,27 @@ pub async fn assemble_native_turn_for_bear(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bound_turns_ignore_opaque_precompiled_runtime_memory() {
+        let text = "Prompt memory blocks are Den-owned: unrelated profile note";
+        assert_eq!(
+            permitted_supplied_runtime_context(Some(text), MemoryProjectionScope::Legacy),
+            Some(text)
+        );
+        assert!(permitted_supplied_runtime_context(
+            Some(text),
+            MemoryProjectionScope::Bound(den_memory::scoped::MemoryReadGrant::new(
+                den_memory::MemorySource::Conversation(Uuid::nil()),
+                None,
+            )),
+        )
+        .is_none());
+        assert!(
+            permitted_supplied_runtime_context(Some(text), MemoryProjectionScope::SharedOnly)
+                .is_none()
+        );
+    }
 
     #[test]
     fn recalled_memory_session_diagnostic_surfaces_conflict_presence() {

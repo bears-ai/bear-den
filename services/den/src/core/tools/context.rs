@@ -191,8 +191,18 @@ impl RoleMemoryStore for DenToolContext<'_> {
         self.memory().search(context, role, query, limit).await
     }
 
-    async fn status_base(&self, bear_id: Uuid, role: BearProfile) -> Result<Value, DenError> {
-        self.memory().status_base(bear_id, role).await
+    async fn status_base(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+    ) -> Result<
+        (
+            Value,
+            den_core::tools::prompt_memory::PromptMemoryVisibility,
+        ),
+        DenError,
+    > {
+        self.memory().status_base(context, role).await
     }
 
     async fn write_entry(
@@ -206,6 +216,14 @@ impl RoleMemoryStore for DenToolContext<'_> {
 }
 
 impl PromptMemoryStore for DenToolContext<'_> {
+    async fn visibility(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+    ) -> Result<den_core::tools::prompt_memory::PromptMemoryVisibility, DenError> {
+        self.prompt().visibility(context, role).await
+    }
+
     async fn list_blocks(
         &self,
         bear_id: Uuid,
@@ -220,10 +238,14 @@ impl PromptMemoryStore for DenToolContext<'_> {
 
     async fn patch_block(
         &self,
+        bear_id: Uuid,
+        profile: BearProfile,
         block_id: &str,
         patch: &PromptMemoryBlockPatch,
     ) -> Result<(), DenError> {
-        self.prompt().patch_block(block_id, patch).await
+        self.prompt()
+            .patch_block(bear_id, profile, block_id, patch)
+            .await
     }
 
     async fn archive_conflicting(&self, write: &PromptMemoryBlockWrite) -> Result<u64, DenError> {
@@ -487,6 +509,14 @@ impl EnvironmentOps for DenToolContext<'_> {
         role: BearProfile,
     ) -> Result<Value, DenError> {
         self.environment().memory_status_value(context, role).await
+    }
+
+    async fn memory_visibility(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+    ) -> Result<den_core::tools::prompt_memory::PromptMemoryVisibility, DenError> {
+        self.environment().memory_visibility(context, role).await
     }
 
     async fn session_entities(

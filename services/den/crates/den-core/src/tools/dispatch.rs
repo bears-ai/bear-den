@@ -236,7 +236,7 @@ pub async fn invoke_den_tool(
             )
             .await
         }
-        DEN_MEMORY_STATUS => memory::memory_status(ctx, ctx, context.bear_id, role).await,
+        DEN_MEMORY_STATUS => memory::memory_status(ctx, ctx, &context, role).await,
         DEN_MEMORY_TREE => memory::memory_browse(ctx, &context, role).await,
         DEN_MEMORY_READ => memory::memory_read(ctx, &context, role, arguments).await,
         DEN_MEMORY_SEARCH => memory::memory_search(ctx, &context, role, arguments).await,
@@ -268,13 +268,12 @@ pub async fn invoke_den_tool(
             work_surface::create_work_surface_scaffold(ctx, &context, role, arguments).await
         }
         DEN_PROMPT_MEMORY_UPSERT => {
-            prompt_memory::prompt_memory_upsert(ctx, context.bear_id, context.user_id, role, arguments)
-                .await
+            prompt_memory::prompt_memory_upsert(ctx, &context, role, arguments).await
         }
         DEN_PROMPT_MEMORY_LIST => {
-            prompt_memory::prompt_memory_list(ctx, context.bear_id, role, arguments).await
+            prompt_memory::prompt_memory_list(ctx, &context, role, arguments).await
         }
-        DEN_PROMPT_MEMORY_PATCH => prompt_memory::prompt_memory_patch(ctx, role, arguments).await,
+        DEN_PROMPT_MEMORY_PATCH => prompt_memory::prompt_memory_patch(ctx, &context, role, arguments).await,
         DEN_MEMORY_REQUEST_REVIEW => {
             review::request_memory_review(ctx, &context, role, arguments).await
         }

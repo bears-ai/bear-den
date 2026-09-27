@@ -207,4 +207,28 @@ async fn model_memory_read_cannot_use_another_profile_or_new_scope_path(pool: sq
     .await
     .expect("search B");
     assert!(hits["hits"].as_array().unwrap().is_empty());
+
+    let prompt = crate::core::tools::prompt_memory::DenPromptMemoryStore::new(&pool);
+    let status =
+        den_core::tools::memory::memory_status(&adapter, &prompt, &context, BearProfile::Pair)
+            .await
+            .expect("bound status");
+    assert_eq!(status["scope"], "bound");
+    assert_eq!(status["file_count"], 1);
+    assert_eq!(status["recall"]["reason"], "scope_limited");
+    let tool_context = crate::core::tools::context::DenToolContext::new(&pool, &config, &stores);
+    let info = den_core::tools::environment::session_info(
+        &tool_context,
+        &tool_context,
+        &context,
+        BearProfile::Pair,
+    )
+    .await
+    .expect("bound session_info");
+    assert_eq!(
+        info["memory"]["read_scopes"],
+        json!(["session/", "hat/", "core/"])
+    );
+    assert_eq!(info["memory"]["write_scopes"], json!(["session/"]));
+    assert_eq!(info["memory"]["status"]["file_count"], 1);
 }

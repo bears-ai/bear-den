@@ -7,9 +7,9 @@
 
 use serde_json::{json, Value};
 use sqlx::PgPool;
-use uuid::Uuid;
 
 use den_core::tools::memory::{RoleMemoryEntryWrite, RoleMemoryStore};
+use den_core::tools::prompt_memory::PromptMemoryVisibility;
 
 use crate::{
     config::Config,
@@ -18,12 +18,9 @@ use crate::{
 };
 use den_core::ids::BearId;
 use den_memory::{scoped, tools as sqlite_memory, AccessContext, MemoryStoreManager};
-use den_service::{
-    bears::{
-        hats::memory_binding::{self, ResolvedMemoryBinding},
-        BearProfile,
-    },
-    conversation::persistence::get_conversation_for_external_id,
+use den_service::bears::{
+    hats::memory_binding::{self, ResolvedMemoryBinding},
+    BearProfile,
 };
 
 /// Concrete [`RoleMemoryStore`] over the native SQLite memory runtime.
@@ -61,16 +58,25 @@ impl<'a> DenRoleMemoryStore<'a> {
                 memory_binding::for_work_run(self.pool, bear_id, run_id).await
             }
             BearProfile::Pair | BearProfile::Chat => {
-                let conversation = get_conversation_for_external_id(
+                memory_binding::for_external_conversation(
                     self.pool,
-                    context.bear_id,
+                    bear_id,
                     &context.conversation_id,
                 )
-                .await?
-                .ok_or_else(|| DenError::NotFound("canonical conversation not found".into()))?;
-                memory_binding::for_conversation(self.pool, bear_id, conversation.id).await
+                .await
             }
         }
+    }
+
+    pub(crate) async fn prompt_visibility(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+    ) -> Result<PromptMemoryVisibility, DenError> {
+        Ok(match self.binding(context, role).await? {
+            ResolvedMemoryBinding::Legacy => PromptMemoryVisibility::Legacy,
+            ResolvedMemoryBinding::Bound(_) => PromptMemoryVisibility::BoundSession,
+        })
     }
 }
 
@@ -178,21 +184,40 @@ impl RoleMemoryStore for DenRoleMemoryStore<'_> {
     /// / `last_success_at` / `failed_run_count`, or `{"available": false, ...}` when
     /// recall is not configured. Watermark errors degrade the `recall` object rather
     /// than failing the whole status.
-    async fn status_base(&self, bear_id: Uuid, role: BearProfile) -> Result<Value, DenError> {
-        let store = self.stores.store_for_bear(bear_id).await?;
-        let mut base = sqlite_memory::sqlite_memory_status(&store, role.as_str()).await?;
-        let recall = match den_runtime::recall::recall_watermark(self.pool, self.config, &store)
-            .await
-        {
-            Ok(watermark) => den_runtime::recall::recall_status_json(watermark.as_ref()),
-            Err(err) => {
-                serde_json::json!({ "available": false, "reason": format!("watermark unavailable: {err}") })
+    async fn status_base(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+    ) -> Result<(Value, PromptMemoryVisibility), DenError> {
+        let binding = self.binding(context, role).await?;
+        let store = self.stores.store_for_bear(context.bear_id).await?;
+        let (mut base, visibility) = match binding {
+            ResolvedMemoryBinding::Legacy => (
+                sqlite_memory::sqlite_memory_status(&store, role.as_str()).await?,
+                PromptMemoryVisibility::Legacy,
+            ),
+            ResolvedMemoryBinding::Bound(grant) => {
+                let paths = scoped::browse(&store, grant, &AccessContext::empty()).await?;
+                (
+                    json!({ "configured": true, "available": true, "storage": "sqlite", "scope": "bound", "file_count": paths.len() }),
+                    PromptMemoryVisibility::BoundSession,
+                )
             }
+        };
+        let recall = if visibility == PromptMemoryVisibility::Legacy {
+            match den_runtime::recall::recall_watermark(self.pool, self.config, &store).await {
+                Ok(watermark) => den_runtime::recall::recall_status_json(watermark.as_ref()),
+                Err(err) => {
+                    json!({ "available": false, "reason": format!("watermark unavailable: {err}") })
+                }
+            }
+        } else {
+            json!({ "available": false, "reason": "scope_limited" })
         };
         if let Some(obj) = base.as_object_mut() {
             obj.insert("recall".to_string(), recall);
         }
-        Ok(base)
+        Ok((base, visibility))
     }
 
     async fn write_entry(
@@ -260,7 +285,7 @@ pub(crate) async fn memory_status(
 ) -> Result<Value, CustomError> {
     let memory = DenRoleMemoryStore::new(pool, config, stores);
     let prompt = DenPromptMemoryStore::new(pool);
-    den_core::tools::memory::memory_status(&memory, &prompt, context.bear_id, role)
+    den_core::tools::memory::memory_status(&memory, &prompt, context, role)
         .await
         .map_err(CustomError::from)
 }

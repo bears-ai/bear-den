@@ -1,9 +1,11 @@
 use super::{
-    bear_environment_payload, session_info_payload, trusted_workspace_roots_from_adapter_runtime,
+    bear_environment_payload, session_info_payload, session_info_payload_with_visibility,
+    trusted_workspace_roots_from_adapter_runtime,
 };
 use crate::tools::arguments::DenToolChannelContext;
 use crate::tools::context::DenToolInvocationContext;
 use crate::tools::descriptor::builtin_den_tool_descriptors_for_profile;
+use crate::tools::prompt_memory::PromptMemoryVisibility;
 use crate::BearProfile;
 use serde_json::json;
 
@@ -33,6 +35,45 @@ fn pair_context() -> DenToolInvocationContext {
         request_id: None,
         channel: Default::default(),
     }
+}
+
+#[test]
+fn bound_session_info_does_not_claim_profile_memory_scopes() {
+    let context = pair_context();
+    let status = json!({ "scope": "bound", "file_count": 1 });
+    let payload = session_info_payload_with_visibility(
+        &context,
+        BearProfile::Pair,
+        None,
+        2,
+        &status,
+        &json!({}),
+        PromptMemoryVisibility::BoundSession,
+    );
+    assert_eq!(
+        payload["memory"]["read_scopes"],
+        json!(["session/", "hat/", "core/"])
+    );
+    assert_eq!(payload["memory"]["write_scopes"], json!(["session/"]));
+    assert_eq!(
+        payload["policy"]["memory_scope_default"],
+        "session/ + hat/ + core/"
+    );
+    assert_eq!(
+        payload["runtime_context"]["memory_surface"],
+        "session/ + hat/ + core/"
+    );
+    let unknown = session_info_payload_with_visibility(
+        &context,
+        BearProfile::Pair,
+        None,
+        2,
+        &status,
+        &json!({}),
+        PromptMemoryVisibility::SharedOnly,
+    );
+    assert_eq!(unknown["memory"]["read_scopes"], json!(["core/"]));
+    assert_eq!(unknown["memory"]["write_scopes"], json!([]));
 }
 
 #[test]

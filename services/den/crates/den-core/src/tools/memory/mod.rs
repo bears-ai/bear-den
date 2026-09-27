@@ -13,7 +13,6 @@ pub use store::RoleMemoryStore;
 use crate::{BearProfile, DenError};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use uuid::Uuid;
 
 use crate::tools::{
     context::DenToolInvocationContext,
@@ -238,15 +237,19 @@ pub fn prompt_memory_diagnostic_summary(blocks: &[PromptMemoryBlock]) -> Value {
 pub async fn memory_status(
     memory: &impl RoleMemoryStore,
     prompt: &impl PromptMemoryStore,
-    bear_id: Uuid,
+    context: &DenToolInvocationContext,
     role: BearProfile,
 ) -> Result<Value, DenError> {
-    let mut base = memory.status_base(bear_id, role).await?;
-    let blocks = prompt.list_blocks(bear_id, role.as_str()).await?;
+    let (mut base, visibility) = memory.status_base(context, role).await?;
+    let blocks = prompt.list_blocks(context.bear_id, role.as_str()).await?;
+    let blocks: Vec<_> = blocks
+        .into_iter()
+        .filter(|block| visibility.allows(block, &context.session_id))
+        .collect();
     let diagnostic = prompt_memory_diagnostic_summary(&blocks);
     if let Some(obj) = base.as_object_mut() {
         obj.insert("prompt_memory_diagnostic".to_string(), diagnostic);
-        obj.insert("bear_id".to_string(), json!(bear_id));
+        obj.insert("bear_id".to_string(), json!(context.bear_id));
     }
     Ok(base)
 }

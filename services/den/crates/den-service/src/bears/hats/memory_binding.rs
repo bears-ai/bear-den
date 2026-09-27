@@ -7,6 +7,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::bindings::eligible_job_hat;
+use crate::conversation::persistence::get_conversation_for_external_id;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResolvedMemoryBinding {
@@ -34,6 +35,18 @@ pub async fn for_conversation(
         )),
         None => ResolvedMemoryBinding::Legacy,
     })
+}
+
+pub async fn for_external_conversation(
+    pool: &PgPool,
+    bear_id: BearId,
+    external_conversation_id: &str,
+) -> Result<ResolvedMemoryBinding, DenError> {
+    let conversation =
+        get_conversation_for_external_id(pool, bear_id.as_uuid(), external_conversation_id)
+            .await?
+            .ok_or_else(|| DenError::NotFound("canonical conversation not found".into()))?;
+    for_conversation(pool, bear_id, conversation.id).await
 }
 
 pub async fn for_work_run(

@@ -114,7 +114,7 @@ Exit gate for the reduced authority model:
 | User membership/access | Den identity/RBAC | durable + request-scoped | Gates which conversations/surfaces a user can access. |
 | Conversation | Den Postgres | durable user-visible chat container | Owns transcript, archive state, title, model selection, and Pair's persisted current-task reference. |
 | Session/client binding | adapter/BearWire/web edge + Den session store | live client binding | Projects conversation/runtime state to a connected client; not the conversation. |
-| Hat binding | Den Postgres conversation or Docket Job | durable conversation/Job | Nullable for legacy work. Bound memory tools and turn assembly resolve this canonical binding, never a hat named in chat; ineligible Work bindings fail closed. No ordinary UI binding flow yet. |
+| Hat binding | Den Postgres conversation or Docket Job | durable conversation/Job | Nullable for legacy work. Bound memory tools and turn assembly resolve this canonical binding, never a hat named in chat; ineligible Work bindings fail closed. Bound prompt-memory selection, model-facing prompt-block tools, and diagnostics derive narrower access from it. No ordinary UI binding flow yet. |
 | Trust profile | Bear profile registry | per turn/template | `chat`, `pair`, `curate`, `work`, `watch`; memory/tool/default trust contract. |
 | Governance | runtime/workspace session | run-scoped mutable timeline | `interactive`, `grace`, `autonomous_continuation`, `observational`, `frozen`. |
 | Pair current task | conversation + client-session binding | durable conversation/session selection, resolved per run | A validated persisted `client_sessions.current_task_id` is Pair's optional objective; it may reference a session-local or Docket task. |

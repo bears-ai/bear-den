@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use crate::{BearProfile, DenError};
 
-use crate::tools::context::DenToolInvocationContext;
+use crate::tools::{context::DenToolInvocationContext, prompt_memory::PromptMemoryVisibility};
 
 // Native async fn in trait: workspace-internal, consumed via generic bounds /
 // concrete impls only (never `dyn`), so Send flows through monomorphization.
@@ -25,6 +25,12 @@ pub trait EnvironmentOps: Send + Sync {
         context: &DenToolInvocationContext,
         role: BearProfile,
     ) -> Result<Value, DenError>;
+
+    async fn memory_visibility(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+    ) -> Result<PromptMemoryVisibility, DenError>;
 
     async fn session_entities(
         &self,

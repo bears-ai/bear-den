@@ -10,15 +10,17 @@ pub mod types;
 pub use store::PromptMemoryStore;
 pub use types::{
     PromptMemoryBlock, PromptMemoryBlockPatch, PromptMemoryBlockScope, PromptMemoryBlockState,
-    PromptMemoryBlockType, PromptMemoryBlockWrite,
+    PromptMemoryBlockType, PromptMemoryBlockWrite, PromptMemoryVisibility,
 };
 
 use crate::{BearProfile, DenError};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use uuid::Uuid;
 
-use crate::tools::validation::{validate_bounded_text, validate_optional_object};
+use crate::tools::{
+    context::DenToolInvocationContext,
+    validation::{validate_bounded_text, validate_optional_object},
+};
 
 /// Validate that a prompt-memory scope carries the qualifier it requires.
 pub fn validate_prompt_memory_scope(
@@ -99,8 +101,7 @@ fn empty_json_object() -> Value {
 
 pub async fn prompt_memory_upsert(
     store: &impl PromptMemoryStore,
-    bear_id: Uuid,
-    user_id: i32,
+    context: &DenToolInvocationContext,
     role: BearProfile,
     arguments: Value,
 ) -> Result<Value, DenError> {
@@ -110,6 +111,39 @@ pub async fn prompt_memory_upsert(
         ));
     }
     let args: PromptMemoryUpsertArguments = serde_json::from_value(arguments)?;
+    let visibility = store.visibility(context, role).await?;
+    if visibility == PromptMemoryVisibility::SharedOnly {
+        return Err(DenError::Authorization(
+            "prompt memory scope is unresolved".into(),
+        ));
+    }
+    if visibility == PromptMemoryVisibility::BoundSession {
+        if args.scope != PromptMemoryBlockScope::Session
+            || args.session_id.as_deref() != Some(context.session_id.as_str())
+        {
+            return Err(DenError::Authorization(
+                "bound prompt memory may only write its own session blocks".into(),
+            ));
+        }
+        let existing = store.list_blocks(context.bear_id, role.as_str()).await?;
+        for id in [
+            Some(args.block_id.as_str()),
+            args.supersedes_block_id.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if let Some(block) = existing.iter().find(|block| block.id == id) {
+                if block.scope != PromptMemoryBlockScope::Session
+                    || block.session_id.as_deref() != Some(context.session_id.as_str())
+                {
+                    return Err(DenError::Authorization(
+                        "bound prompt memory cannot replace another scope's block".into(),
+                    ));
+                }
+            }
+        }
+    }
     let title = validate_bounded_text("title", &args.title, 1, 200)?;
     let body = validate_bounded_text("body", &args.body, 1, 50_000)?;
     let block_id = validate_bounded_text("block_id", &args.block_id, 1, 200)?;
@@ -122,7 +156,7 @@ pub async fn prompt_memory_upsert(
     validate_optional_object("metadata", &args.metadata)?;
     let write = PromptMemoryBlockWrite {
         block_id,
-        bear_id: Some(bear_id),
+        bear_id: Some(context.bear_id),
         profile_slug: Some(role.as_str().to_string()),
         scope: args.scope,
         block_type: args.block_type,
@@ -132,20 +166,21 @@ pub async fn prompt_memory_upsert(
         title,
         body,
         priority,
-        created_by_user_id: Some(user_id),
+        created_by_user_id: Some(context.user_id),
         supersedes_block_id: args.supersedes_block_id,
         metadata: args.metadata.unwrap_or_else(empty_json_object),
     };
+    // The immutable Bear/scope guard on upsert must run before any archival side effects.
+    store.upsert_block(&write).await?;
     let conflicting_archived = if write.state == PromptMemoryBlockState::Active {
         store.archive_conflicting(&write).await?
     } else {
         0
     };
-    store.upsert_block(&write).await?;
     let superseded_archived =
         if let Some(supersedes_block_id) = write.supersedes_block_id.as_deref() {
             store
-                .archive_superseded_by(bear_id, role.as_str(), supersedes_block_id)
+                .archive_superseded_by(context.bear_id, role.as_str(), supersedes_block_id)
                 .await?
         } else {
             0
@@ -165,7 +200,7 @@ pub async fn prompt_memory_upsert(
 
 pub async fn prompt_memory_list(
     store: &impl PromptMemoryStore,
-    bear_id: Uuid,
+    context: &DenToolInvocationContext,
     role: BearProfile,
     arguments: Value,
 ) -> Result<Value, DenError> {
@@ -175,7 +210,9 @@ pub async fn prompt_memory_list(
         ));
     }
     let args: PromptMemoryListArguments = serde_json::from_value(arguments)?;
-    let mut blocks = store.list_blocks(bear_id, role.as_str()).await?;
+    let visibility = store.visibility(context, role).await?;
+    let mut blocks = store.list_blocks(context.bear_id, role.as_str()).await?;
+    blocks.retain(|block| visibility.allows(block, &context.session_id));
     if !args.include_archived {
         blocks.retain(|block| block.state != PromptMemoryBlockState::Archived);
     }
@@ -210,6 +247,7 @@ pub async fn prompt_memory_list(
 
 pub async fn prompt_memory_patch(
     store: &impl PromptMemoryStore,
+    context: &DenToolInvocationContext,
     role: BearProfile,
     arguments: Value,
 ) -> Result<Value, DenError> {
@@ -219,6 +257,21 @@ pub async fn prompt_memory_patch(
         ));
     }
     let args: PromptMemoryPatchArguments = serde_json::from_value(arguments)?;
+    let visibility = store.visibility(context, role).await?;
+    if visibility != PromptMemoryVisibility::Legacy {
+        let blocks = store.list_blocks(context.bear_id, role.as_str()).await?;
+        if visibility != PromptMemoryVisibility::BoundSession
+            || !blocks.iter().any(|block| {
+                block.id == args.block_id
+                    && block.scope == PromptMemoryBlockScope::Session
+                    && block.visible_in_bound_session(&context.session_id)
+            })
+        {
+            return Err(DenError::Authorization(
+                "bound prompt memory can only patch its own session blocks".into(),
+            ));
+        }
+    }
     let title = validate_bounded_text("title", &args.title, 1, 200)?;
     let body = validate_bounded_text("body", &args.body, 1, 50_000)?;
     let block_id = validate_bounded_text("block_id", &args.block_id, 1, 200)?;
@@ -232,7 +285,9 @@ pub async fn prompt_memory_patch(
         supersedes_block_id: args.supersedes_block_id,
         metadata: args.metadata.unwrap_or_else(empty_json_object),
     };
-    store.patch_block(&block_id, &patch).await?;
+    store
+        .patch_block(context.bear_id, role, &block_id, &patch)
+        .await?;
     Ok(json!({
         "status": "ok",
         "block_id": block_id,

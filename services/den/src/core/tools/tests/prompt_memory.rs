@@ -27,8 +27,7 @@ async fn prompt_memory_upsert(
 ) -> Result<Value, CustomError> {
     den_core::tools::prompt_memory::prompt_memory_upsert(
         &DenPromptMemoryStore::new(pool),
-        context.bear_id,
-        context.user_id,
+        context,
         role,
         arguments,
     )
@@ -44,7 +43,7 @@ async fn prompt_memory_list(
 ) -> Result<Value, CustomError> {
     den_core::tools::prompt_memory::prompt_memory_list(
         &DenPromptMemoryStore::new(pool),
-        context.bear_id,
+        context,
         role,
         arguments,
     )
@@ -54,12 +53,13 @@ async fn prompt_memory_list(
 
 async fn prompt_memory_patch(
     pool: &PgPool,
-    _context: &DenToolInvocationContext,
+    context: &DenToolInvocationContext,
     role: BearProfile,
     arguments: Value,
 ) -> Result<Value, CustomError> {
     den_core::tools::prompt_memory::prompt_memory_patch(
         &DenPromptMemoryStore::new(pool),
+        context,
         role,
         arguments,
     )
@@ -70,16 +70,41 @@ async fn prompt_memory_patch(
 #[tokio::test]
 async fn prompt_memory_tools_round_trip_through_store() {
     let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1/postgres".to_string());
-    let pool = match PgPoolOptions::new().connect(&database_url).await {
-        Ok(pool) => pool,
-        Err(_) => return,
-    };
-    let migrate = sqlx::migrate!("./migrations").run(&pool).await;
-    if migrate.is_err() {
-        return;
-    }
-    let bear_id = Uuid::new_v4();
+        .or_else(|_| std::env::var("DATABASE_URL"))
+        .expect("Postgres URL for prompt-memory round trip");
+    let pool = PgPoolOptions::new()
+        .connect(&database_url)
+        .await
+        .expect("connect Postgres");
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("migrate Postgres");
+    let slug = format!("prompt-round-trip-{}", Uuid::new_v4().simple());
+    let bear_id = den_service::bears::db::create_bear(
+        &pool,
+        den_service::bears::db::BearParams {
+            slug: &slug,
+            name: "Prompt Round Trip Test",
+            description: "test",
+            system_prompt: "test",
+            default_model: None,
+            tools_enabled: None,
+            context_profile: None,
+        },
+    )
+    .await
+    .expect("create Bear");
+    den_service::conversation::persistence::ensure_conversation_for_external_id(
+        &pool,
+        bear_id,
+        None,
+        "conv-test",
+        None,
+        None,
+    )
+    .await
+    .expect("create canonical conversation");
     let context = DenToolInvocationContext {
         bear_id,
         bear_slug: "test-bear".to_string(),
@@ -176,15 +201,31 @@ async fn prompt_memory_tools_round_trip_through_store() {
 #[tokio::test]
 async fn prompt_memory_runtime_selection_prefers_session_then_surface_then_role_then_bear() {
     let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1/postgres".to_string());
-    let pool = match PgPoolOptions::new().connect(&database_url).await {
-        Ok(pool) => pool,
-        Err(_) => return,
-    };
-    if sqlx::migrate!("./migrations").run(&pool).await.is_err() {
-        return;
-    }
-    let bear_id = Uuid::new_v4();
+        .or_else(|_| std::env::var("DATABASE_URL"))
+        .expect("Postgres URL for prompt-memory selection test");
+    let pool = PgPoolOptions::new()
+        .connect(&database_url)
+        .await
+        .expect("connect Postgres");
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("migrate Postgres");
+    let slug = format!("prompt-selection-{}", Uuid::new_v4().simple());
+    let bear_id = den_service::bears::db::create_bear(
+        &pool,
+        den_service::bears::db::BearParams {
+            slug: &slug,
+            name: "Prompt Selection Test",
+            description: "test",
+            system_prompt: "test",
+            default_model: None,
+            tools_enabled: None,
+            context_profile: None,
+        },
+    )
+    .await
+    .expect("create Bear");
     let profile_slug = BearProfile::Pair.as_str();
     let session_id = format!("sess-{}", Uuid::new_v4());
     let work_surface = format!("ws-{}", Uuid::new_v4());
@@ -273,6 +314,7 @@ async fn prompt_memory_runtime_selection_prefers_session_then_surface_then_role_
                 profile_slug,
                 session_id: &session_id,
                 work_surfaces: std::slice::from_ref(&work_surface),
+                visibility: den_service::prompt_memory_block_store::PromptMemoryVisibility::Legacy,
             },
         )
         .await
@@ -301,6 +343,35 @@ async fn prompt_memory_runtime_selection_prefers_session_then_surface_then_role_
         ]
     );
     assert_eq!(selection.diagnostic["matched_count"], 4);
+    for (visibility, expected) in [
+        (
+            den_service::prompt_memory_block_store::PromptMemoryVisibility::BoundSession,
+            vec![ids[0].clone(), ids[3].clone()],
+        ),
+        (
+            den_service::prompt_memory_block_store::PromptMemoryVisibility::SharedOnly,
+            vec![ids[0].clone()],
+        ),
+    ] {
+        let selection =
+            den_service::prompt_memory_block_store::select_prompt_memory_blocks_for_runtime(
+                &pool,
+                den_service::prompt_memory_block_store::PromptMemoryBlockQuery {
+                    bear_id: Some(bear_id),
+                    profile_slug,
+                    session_id: &session_id,
+                    work_surfaces: std::slice::from_ref(&work_surface),
+                    visibility,
+                },
+            )
+            .await
+            .expect("bound prompt selection");
+        let chosen: Vec<String> = selection.blocks.into_iter().map(|block| block.id).collect();
+        assert_eq!(chosen.len(), expected.len());
+        for id in expected {
+            assert!(chosen.contains(&id), "missing {id}");
+        }
+    }
 }
 
 #[tokio::test]
@@ -488,7 +559,8 @@ async fn prompt_memory_upsert_archives_conflicting_active_block_in_same_scope() 
 #[tokio::test]
 async fn memory_status_includes_prompt_memory_diagnostic_summary() {
     let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1/postgres".to_string());
+        .or_else(|_| std::env::var("DATABASE_URL"))
+        .expect("Postgres URL for memory-status test");
     let pool = match PgPoolOptions::new().connect(&database_url).await {
         Ok(pool) => pool,
         Err(_) => return,
@@ -496,7 +568,31 @@ async fn memory_status_includes_prompt_memory_diagnostic_summary() {
     if sqlx::migrate!("./migrations").run(&pool).await.is_err() {
         return;
     }
-    let bear_id = Uuid::new_v4();
+    let slug = format!("memory-status-{}", Uuid::new_v4().simple());
+    let bear_id = den_service::bears::db::create_bear(
+        &pool,
+        den_service::bears::db::BearParams {
+            slug: &slug,
+            name: "Memory Status Test",
+            description: "test",
+            system_prompt: "test",
+            default_model: None,
+            tools_enabled: None,
+            context_profile: None,
+        },
+    )
+    .await
+    .expect("create Bear");
+    den_service::conversation::persistence::ensure_conversation_for_external_id(
+        &pool,
+        bear_id,
+        None,
+        "conv-test",
+        None,
+        None,
+    )
+    .await
+    .expect("create canonical conversation");
     let context = DenToolInvocationContext {
         bear_id,
         bear_slug: "test-bear".to_string(),

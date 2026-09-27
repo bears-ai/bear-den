@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO prompt_memory_blocks (\n            block_id,\n            bear_id,\n            profile_slug,\n            scope,\n            block_type,\n            state,\n            work_surface,\n            session_id,\n            title,\n            body,\n            priority,\n            created_by_user_id,\n            supersedes_block_id,\n            metadata\n        )\n        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)\n        ON CONFLICT (block_id)\n        DO UPDATE SET\n            bear_id = EXCLUDED.bear_id,\n            profile_slug = EXCLUDED.profile_slug,\n            scope = EXCLUDED.scope,\n            block_type = EXCLUDED.block_type,\n            state = EXCLUDED.state,\n            work_surface = EXCLUDED.work_surface,\n            session_id = EXCLUDED.session_id,\n            title = EXCLUDED.title,\n            body = EXCLUDED.body,\n            priority = EXCLUDED.priority,\n            created_by_user_id = EXCLUDED.created_by_user_id,\n            supersedes_block_id = EXCLUDED.supersedes_block_id,\n            metadata = EXCLUDED.metadata,\n            updated_at = now()\n        WHERE prompt_memory_blocks.bear_id IS NOT DISTINCT FROM EXCLUDED.bear_id\n          AND prompt_memory_blocks.profile_slug IS NOT DISTINCT FROM EXCLUDED.profile_slug\n          AND prompt_memory_blocks.scope = EXCLUDED.scope\n          AND prompt_memory_blocks.session_id IS NOT DISTINCT FROM EXCLUDED.session_id\n          AND prompt_memory_blocks.work_surface IS NOT DISTINCT FROM EXCLUDED.work_surface\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Int4",
+        "Int4",
+        "Text",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2622ec230657930c253588c4d1d6234d70e5caecaf6507e21583bf30ecf5752f"
+}

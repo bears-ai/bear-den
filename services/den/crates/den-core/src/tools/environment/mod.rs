@@ -8,12 +8,15 @@ mod payloads;
 mod store;
 
 use payloads::trusted_workspace_roots_from_adapter_runtime;
-pub use payloads::{bear_environment_payload, session_info_payload};
+pub use payloads::{
+    bear_environment_payload, bear_environment_payload_with_visibility, session_info_payload,
+    session_info_payload_with_visibility,
+};
 pub use store::EnvironmentOps;
 
 use serde_json::{json, Value};
 
-use crate::BearProfile;
+use crate::{tools::prompt_memory::PromptMemoryVisibility, BearProfile};
 
 use crate::tools::{
     context::DenToolInvocationContext, identity::BearDirectory, memory::source_client_session_id,
@@ -63,17 +66,22 @@ pub async fn session_info(
     let member_count = dir.member_count(context.bear_id).await.unwrap_or(0);
     let current_user = dir.current_user(context.user_id).await.ok();
     let memory_status = memory_status_for_environment(env, &context, role).await;
+    let visibility = env
+        .memory_visibility(&context, role)
+        .await
+        .unwrap_or(PromptMemoryVisibility::SharedOnly);
     let entities = env
         .session_entities(&context, role)
         .await
         .unwrap_or_else(|err| json!({ "status": "degraded", "error": err.to_string() }));
-    Ok(session_info_payload(
+    Ok(session_info_payload_with_visibility(
         &context,
         role,
         current_user.as_ref(),
         member_count,
         &memory_status,
         &entities,
+        visibility,
     ))
 }
 
@@ -86,6 +94,10 @@ pub async fn bear_environment(
     let member_count = dir.member_count(context.bear_id).await.unwrap_or(0);
     let current_user = dir.current_user(context.user_id).await.ok();
     let memory_status = memory_status_for_environment(env, context, role).await;
+    let visibility = env
+        .memory_visibility(context, role)
+        .await
+        .unwrap_or(PromptMemoryVisibility::SharedOnly);
     let entities = env
         .session_entities(context, role)
         .await
@@ -105,7 +117,7 @@ pub async fn bear_environment(
             "error": err.to_string(),
         }),
     };
-    Ok(bear_environment_payload(
+    Ok(bear_environment_payload_with_visibility(
         context,
         role,
         current_user.as_ref(),
@@ -113,5 +125,6 @@ pub async fn bear_environment(
         &memory_status,
         &entities,
         &adapter_runtime,
+        visibility,
     ))
 }
