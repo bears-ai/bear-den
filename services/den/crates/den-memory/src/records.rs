@@ -1182,7 +1182,7 @@ mod as_of_tests {
 }
 
 #[derive(sqlx::FromRow)]
-struct MemoryRecordSqlRow {
+pub(crate) struct MemoryRecordSqlRow {
     memory_id: String,
     sequence_no: i64,
     scope_type: String,
@@ -1199,7 +1199,7 @@ struct MemoryRecordSqlRow {
 }
 
 impl MemoryRecordSqlRow {
-    fn into_row(self) -> MemoryRecordRow {
+    pub(crate) fn into_row(self) -> MemoryRecordRow {
         let metadata_json: Value = serde_json::from_str(&self.metadata_json)
             .unwrap_or_else(|_| Value::Object(Default::default()));
         let lifecycle_status = lifecycle_status(
