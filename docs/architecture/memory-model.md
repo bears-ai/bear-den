@@ -1,6 +1,6 @@
 # Memory Model
 
-**Current architecture.** Profile-local and shared memory below describe the existing system, not the proposed session/hat boundary. For the proposed target and its validation gates, see [Bear memory and hats](../topics/bear-memory-hats.md) and the [active plan](../roadmap/HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md).
+**Current architecture and partial cutover.** Profile-local and shared memory below still describe unbound legacy sessions. When a conversation or eligible Work run is bound to a hat, model-facing memory tools and turn-start context now use its own source-local notes, hat-curated records, and Bear `core/` instead; this does not yet imply that all Bears or UI views have session isolation. See the verified [Bear memory and hats topic](../topics/bear-memory-hats.md) and the remaining [active plan](../roadmap/HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md).
 
 Bear memory is the durable knowledge a Bear can use across stances, work surfaces, channels, and time.
 
@@ -21,7 +21,7 @@ In the current architecture, canonical Bear cognition lives in **per-Bear SQLite
 
 Shared memory is durable Bear knowledge that should be usable across stances and surfaces.
 
-Stance-local memory is scoped knowledge that may remain local indefinitely or later be promoted.
+Stance-local memory is scoped knowledge that may remain local indefinitely or later be promoted in legacy unbound sessions. Bound conversations and Work runs instead write raw notes under their canonical source ID; promotion to a hat requires a separate review path, which is not yet wired.
 
 ### Bear-global vs work-surface-local memory
 

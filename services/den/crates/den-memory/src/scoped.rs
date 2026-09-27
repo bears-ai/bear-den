@@ -81,9 +81,14 @@ pub async fn read_path(
     push_scope(&mut builder, grant);
     builder
         .push(
-            " AND invalid_at IS NULL
+            " AND visibility = 'normal' AND invalid_at IS NULL
           AND COALESCE(json_extract(metadata_json, '$.lifecycle.status'), 'active')
               NOT IN ('archived', 'archive-candidate')
+          AND NOT EXISTS (
+              SELECT 1 FROM memory_records newer
+              WHERE newer.bear_id = memory_records.bear_id
+                AND newer.supersedes_memory_id = memory_records.memory_id
+          )
           ORDER BY sequence_no DESC LIMIT ",
         )
         .push_bind(limit);
@@ -117,9 +122,14 @@ pub async fn browse(
         .push(" AND logical_path IS NOT NULL");
     push_scope(&mut builder, grant);
     builder.push(
-        " AND invalid_at IS NULL
+        " AND visibility = 'normal' AND invalid_at IS NULL
           AND COALESCE(json_extract(metadata_json, '$.lifecycle.status'), 'active')
               NOT IN ('archived', 'archive-candidate')
+          AND NOT EXISTS (
+              SELECT 1 FROM memory_records newer
+              WHERE newer.bear_id = memory_records.bear_id
+                AND newer.supersedes_memory_id = memory_records.memory_id
+          )
           ORDER BY logical_path ASC, sequence_no DESC",
     );
     let rows = builder

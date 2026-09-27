@@ -2,9 +2,16 @@ use den_core::config::Config;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use crate::agent_loop::key_memory_projection::{project_key_memory, KeyMemoryProjectionInput};
+use crate::agent_loop::key_memory_projection::{
+    project_key_memory, project_key_memory_with_scope, KeyMemoryProjectionInput,
+    MemoryProjectionScope,
+};
+use den_core::ids::HatId;
 use den_core::tools::work_surface::WorkSurfaceSessionHints;
-use den_memory::{append_memory_record, AccessContext, LogicalMemoryPath, MemoryStoreManager};
+use den_memory::{
+    append_memory_record, scoped::MemoryReadGrant, AccessContext, LogicalMemoryPath, MemorySource,
+    MemoryStoreManager,
+};
 use den_service::bears::{model::BearProfile, Bear};
 
 fn legacy_test_bear(bear_id: Uuid) -> Bear {
@@ -77,6 +84,123 @@ async fn projects_shared_identity_anchors_without_work_surface() {
     assert!(result.rendered_text.contains("Charter summary"));
     assert!(result.rendered_text.contains("## Shared anchors"));
     assert!(!result.rendered_text.contains("## Work surface:"));
+}
+
+#[tokio::test]
+async fn bound_turn_projection_excludes_other_sessions_and_legacy_profile_notes() {
+    let bear_id = Uuid::new_v4();
+    let bear = legacy_test_bear(bear_id);
+    let mut config = Config::test_stub();
+    config.bear_sqlite_data_dir = format!("/tmp/bears-bound-kmp-{}", Uuid::new_v4());
+    let stores = MemoryStoreManager::new(&config);
+    let store = stores.store_for_bear(bear_id).await.expect("store");
+    let a = MemorySource::Conversation(Uuid::new_v4());
+    let b = MemorySource::Conversation(Uuid::new_v4());
+    let hat = HatId::new(Uuid::new_v4());
+    for (path, content) in [
+        (
+            LogicalMemoryPath::source_local(a, "note"),
+            "session A secret",
+        ),
+        (
+            LogicalMemoryPath::source_local(b, "note"),
+            "session B secret",
+        ),
+        (LogicalMemoryPath::hat(hat, "note"), "reviewed hat fact"),
+        (
+            LogicalMemoryPath::profile_local("pair", "note"),
+            "legacy profile secret",
+        ),
+        (
+            LogicalMemoryPath::from_logical_path("core/bear-glossary.md"),
+            "shared core fact",
+        ),
+    ] {
+        append_memory_record(
+            &store,
+            &path,
+            "note",
+            "pair",
+            None,
+            content,
+            &serde_json::json!({}),
+        )
+        .await
+        .expect("append memory");
+    }
+    // A forged legacy row under a core locator must not become a shared anchor.
+    sqlx::query(
+        "INSERT INTO memory_records (memory_id, bear_id, sequence_no, scope_type,
+            scope_profile, kind, author_profile, created_at, content_text, logical_path)
+         VALUES (?, ?, 900, 'profile_local', 'pair', 'note', 'pair',
+                 '2026-01-01T00:00:00Z', 'forged core-path secret', 'core/bear-overview.md')",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(bear_id.to_string())
+    .execute(store.pool())
+    .await
+    .expect("insert colliding scope");
+    let pool = noop_pg_pool();
+    for (scope, visible, hidden) in [
+        (
+            MemoryProjectionScope::Bound(MemoryReadGrant::new(a, Some(hat))),
+            "session A secret",
+            "session B secret",
+        ),
+        (
+            MemoryProjectionScope::Bound(MemoryReadGrant::new(b, Some(hat))),
+            "session B secret",
+            "session A secret",
+        ),
+    ] {
+        let result = project_key_memory_with_scope(
+            KeyMemoryProjectionInput {
+                pool: &pool,
+                stores: &stores,
+                bear: &bear,
+                profile: BearProfile::Pair,
+                conversation_id: "bound-conversation",
+                session_hints: WorkSurfaceSessionHints::default(),
+                work_surface_status_override: None,
+                native_runtime: true,
+                model_for_budget: None,
+                access: AccessContext::empty(),
+            },
+            scope,
+        )
+        .await
+        .expect("project scoped memory");
+        assert!(result.rendered_text.contains(visible));
+        assert!(result.rendered_text.contains("reviewed hat fact"));
+        assert!(result.rendered_text.contains("shared core fact"));
+        assert!(!result.rendered_text.contains(hidden));
+        assert!(!result.rendered_text.contains("legacy profile secret"));
+        assert!(!result.rendered_text.contains("forged core-path secret"));
+    }
+    let shared_only = project_key_memory_with_scope(
+        KeyMemoryProjectionInput {
+            pool: &pool,
+            stores: &stores,
+            bear: &bear,
+            profile: BearProfile::Pair,
+            conversation_id: "unresolved-conversation",
+            session_hints: WorkSurfaceSessionHints::default(),
+            work_surface_status_override: None,
+            native_runtime: true,
+            model_for_budget: None,
+            access: AccessContext::empty(),
+        },
+        MemoryProjectionScope::SharedOnly,
+    )
+    .await
+    .expect("project shared only");
+    assert!(shared_only.rendered_text.contains("shared core fact"));
+    assert!(!shared_only.rendered_text.contains("session A secret"));
+    assert!(!shared_only.rendered_text.contains("reviewed hat fact"));
+    assert!(!shared_only.rendered_text.contains("legacy profile secret"));
+    assert!(!shared_only
+        .rendered_text
+        .contains("forged core-path secret"));
 }
 
 #[tokio::test]

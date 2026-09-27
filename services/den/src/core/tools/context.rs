@@ -164,22 +164,31 @@ impl WebFetcher for DenToolContext<'_> {
 }
 
 impl RoleMemoryStore for DenToolContext<'_> {
-    async fn read(&self, bear_id: Uuid, role: BearProfile, path: &str) -> Result<Value, DenError> {
-        self.memory().read(bear_id, role, path).await
+    async fn read(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        path: &str,
+    ) -> Result<Value, DenError> {
+        self.memory().read(context, role, path).await
     }
 
-    async fn browse(&self, bear_id: Uuid, role: BearProfile) -> Result<Value, DenError> {
-        self.memory().browse(bear_id, role).await
+    async fn browse(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+    ) -> Result<Value, DenError> {
+        self.memory().browse(context, role).await
     }
 
     async fn search(
         &self,
-        bear_id: Uuid,
+        context: &DenToolInvocationContext,
         role: BearProfile,
         query: &str,
         limit: i64,
     ) -> Result<Value, DenError> {
-        self.memory().search(bear_id, role, query, limit).await
+        self.memory().search(context, role, query, limit).await
     }
 
     async fn status_base(&self, bear_id: Uuid, role: BearProfile) -> Result<Value, DenError> {
@@ -188,11 +197,11 @@ impl RoleMemoryStore for DenToolContext<'_> {
 
     async fn write_entry(
         &self,
-        bear_id: Uuid,
+        context: &DenToolInvocationContext,
         role: BearProfile,
         entry: RoleMemoryEntryWrite,
     ) -> Result<Value, DenError> {
-        self.memory().write_entry(bear_id, role, entry).await
+        self.memory().write_entry(context, role, entry).await
     }
 }
 

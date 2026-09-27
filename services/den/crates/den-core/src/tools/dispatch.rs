@@ -237,9 +237,9 @@ pub async fn invoke_den_tool(
             .await
         }
         DEN_MEMORY_STATUS => memory::memory_status(ctx, ctx, context.bear_id, role).await,
-        DEN_MEMORY_TREE => memory::memory_browse(ctx, context.bear_id, role).await,
-        DEN_MEMORY_READ => memory::memory_read(ctx, context.bear_id, role, arguments).await,
-        DEN_MEMORY_SEARCH => memory::memory_search(ctx, context.bear_id, role, arguments).await,
+        DEN_MEMORY_TREE => memory::memory_browse(ctx, &context, role).await,
+        DEN_MEMORY_READ => memory::memory_read(ctx, &context, role, arguments).await,
+        DEN_MEMORY_SEARCH => memory::memory_search(ctx, &context, role, arguments).await,
         DEN_ENTITY_BROWSE | DEN_ENTITY_BROWSE_PROVIDER => {
             entity::entity_browse(ctx, &context, role, arguments).await
         }

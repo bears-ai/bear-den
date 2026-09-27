@@ -1,13 +1,21 @@
 use den_core::config::Config;
+use den_core::ids::BearId;
 use den_core::DenError;
 use den_docket::{
-    task_list_projection_from_session_tasks, DocketService, DocketTaskListFilter, PgDocketService,
-    TaskListProjection,
+    task_list_projection_from_session_tasks, work_runs, DocketService, DocketTaskListFilter,
+    PgDocketService, TaskListProjection,
 };
 use den_memory::MemoryStoreManager;
 use den_service::{
-    bears::{db as bears_db, model::BearProfile, provision::profile_prompt_text, Bear},
+    bears::{
+        db as bears_db,
+        hats::memory_binding::{self, ResolvedMemoryBinding},
+        model::BearProfile,
+        provision::profile_prompt_text,
+        Bear,
+    },
     client_sessions,
+    conversation::persistence::get_conversation_for_external_id,
 };
 use serde_json::{json, Value};
 use sqlx::PgPool;
@@ -23,8 +31,9 @@ use super::{
         prune_messages_for_native_conversation_with_diagnostics, repair_tool_call_message_chain,
     },
     key_memory_projection::{
-        project_key_memory, render_key_memory_projection_block, KeyMemoryProjectionCacheKey,
-        KeyMemoryProjectionInput, KeyMemoryProjectionResult,
+        project_key_memory_with_scope, render_key_memory_projection_block,
+        KeyMemoryProjectionCacheKey, KeyMemoryProjectionInput, KeyMemoryProjectionResult,
+        MemoryProjectionScope,
     },
     runtime_context::{
         assemble_den_owned_runtime_supplement, render_capability_discovery_guidance,
@@ -321,11 +330,44 @@ fn active_orientation_task_ref(plan: &TaskListProjection) -> Option<OrientationT
     Some(orientation_task_ref_from_item(plan, item))
 }
 
+async fn resolve_memory_projection_scope(
+    ctx: &AssembleTurnContext<'_>,
+) -> Result<MemoryProjectionScope, DenError> {
+    let bear_id = BearId::new(ctx.bear_id);
+    let binding = match ctx.profile {
+        BearProfile::Pair | BearProfile::Chat => {
+            let Some(conversation) =
+                get_conversation_for_external_id(ctx.pool, ctx.bear_id, ctx.conversation_id)
+                    .await?
+            else {
+                return Ok(MemoryProjectionScope::SharedOnly);
+            };
+            memory_binding::for_conversation(ctx.pool, bear_id, conversation.id).await?
+        }
+        BearProfile::Work => {
+            let Some(session_id) = ctx.session_id else {
+                return Ok(MemoryProjectionScope::SharedOnly);
+            };
+            let Some(run) = work_runs::get_live_work_run_by_session(ctx.pool, session_id).await?
+            else {
+                return Ok(MemoryProjectionScope::SharedOnly);
+            };
+            memory_binding::for_work_run(ctx.pool, bear_id, run.id).await?
+        }
+        BearProfile::Curate | BearProfile::Watch => return Ok(MemoryProjectionScope::Legacy),
+    };
+    Ok(match binding {
+        ResolvedMemoryBinding::Legacy => MemoryProjectionScope::Legacy,
+        ResolvedMemoryBinding::Bound(grant) => MemoryProjectionScope::Bound(grant),
+    })
+}
+
 /// Best-effort `## Recalled memory` section (ADR-0038 Phase 2). Returns the rendered block and
 /// its diagnostic, or `None` when recall is disabled/empty/failed — recall must never fail a turn.
 async fn build_recall_section(
     ctx: &AssembleTurnContext<'_>,
     anchor_text: &str,
+    scope: MemoryProjectionScope,
 ) -> Option<(String, Value)> {
     // TODO(ADR-0038 Phase 2 follow-up): enrich the recall query beyond the raw human message
     // with session focus + the primary work-surface context (see DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md).
@@ -335,17 +377,34 @@ async fn build_recall_section(
     if !embedder.is_enabled() {
         return None;
     }
-    let mut projection = match crate::recall::recall_for_turn_scoped(
-        &qdrant,
-        &embedder,
-        &ctx.config.embedding_standard,
-        ctx.bear_id,
-        ctx.profile.as_str(),
-        query_text,
-        5,
-    )
-    .await
-    {
+    let recall = match scope {
+        MemoryProjectionScope::Legacy => {
+            crate::recall::recall_for_turn_scoped(
+                &qdrant,
+                &embedder,
+                &ctx.config.embedding_standard,
+                ctx.bear_id,
+                ctx.profile.as_str(),
+                query_text,
+                5,
+            )
+            .await
+        }
+        MemoryProjectionScope::Bound(grant) => {
+            den_service::recall::query::recall_for_turn_with_grant(
+                &qdrant,
+                &embedder,
+                &ctx.config.embedding_standard,
+                ctx.bear_id,
+                grant,
+                query_text,
+                5,
+            )
+            .await
+        }
+        MemoryProjectionScope::SharedOnly => return None,
+    };
+    let mut projection = match recall {
         Ok(projection) => projection,
         Err(err) => {
             tracing::warn!(
@@ -356,6 +415,17 @@ async fn build_recall_section(
             return None;
         }
     };
+    if let MemoryProjectionScope::Bound(grant) = scope {
+        // Qdrant payloads can outlive a canonical revocation or supersession.
+        // A derived hit never overrides the current SQLite visibility decision.
+        let store = ctx.stores.store_for_bear(ctx.bear_id).await.ok()?;
+        if let Err(error) =
+            super::recall_scope::retain_canonical_passages(&store, grant, &mut projection).await
+        {
+            tracing::warn!(bear_id = %ctx.bear_id, %error, "canonical recall recheck failed");
+            return None;
+        }
+    }
     // Read-time contradiction surfacing (ADR-0041 §8): detect over the retrieved passages,
     // mark counterparts, and emit best-effort `memory_conflict` observations.
     let memory_ids: Vec<String> = projection
@@ -433,6 +503,13 @@ pub async fn assemble_native_turn_for_bear(
     ctx: AssembleTurnContext<'_>,
     bear: &Bear,
 ) -> Result<AssembledNativeTurn, DenError> {
+    let memory_scope = match resolve_memory_projection_scope(&ctx).await {
+        Ok(scope) => scope,
+        Err(error) => {
+            tracing::warn!(bear_id = %ctx.bear_id, %error, "memory binding unavailable; suppressing local memory and recall");
+            MemoryProjectionScope::SharedOnly
+        }
+    };
     let compiled_prompt = profile_prompt_text(ctx.pool, bear, ctx.profile).await?;
     let mut budget_components = AssembledTurnBudgetComponents {
         compiled_prompt_chars: compiled_prompt.chars().count() as u32,
@@ -446,20 +523,23 @@ pub async fn assemble_native_turn_for_bear(
     )
     .await
     .ok();
-    let projection = match project_key_memory(KeyMemoryProjectionInput {
-        pool: ctx.pool,
-        stores: ctx.stores,
-        bear,
-        profile: ctx.profile,
-        conversation_id: ctx.conversation_id,
-        session_hints: ctx.session_hints(),
-        work_surface_status_override: ctx.work_surface_status_override(),
-        native_runtime: ctx.native_runtime,
-        model_for_budget: model_for_profile.as_deref(),
-        // Fail-closed default: until session identity is resolved to entities (Phase 6),
-        // any access-gated record is hidden. No-op today (no access rules exist yet).
-        access: den_memory::AccessContext::empty(),
-    })
+    let projection = match project_key_memory_with_scope(
+        KeyMemoryProjectionInput {
+            pool: ctx.pool,
+            stores: ctx.stores,
+            bear,
+            profile: ctx.profile,
+            conversation_id: ctx.conversation_id,
+            session_hints: ctx.session_hints(),
+            work_surface_status_override: ctx.work_surface_status_override(),
+            native_runtime: ctx.native_runtime,
+            model_for_budget: model_for_profile.as_deref(),
+            // Fail-closed default: until session identity is resolved to entities (Phase 6),
+            // any access-gated record is hidden. No-op today (no access rules exist yet).
+            access: den_memory::AccessContext::empty(),
+        },
+        memory_scope,
+    )
     .await
     {
         Ok(projection) => projection,
@@ -552,7 +632,7 @@ pub async fn assemble_native_turn_for_bear(
         system_text.push_str("\n\n");
         system_text.push_str(&block);
     }
-    let recall_diagnostic = match build_recall_section(&ctx, &system_text).await {
+    let recall_diagnostic = match build_recall_section(&ctx, &system_text, memory_scope).await {
         Some((recall_block, diagnostic)) => {
             budget_components.recall_chars = recall_block.chars().count() as u32;
             system_text.push_str("\n\n");

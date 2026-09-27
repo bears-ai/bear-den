@@ -2069,7 +2069,7 @@ async fn execute_approved_den_tool_for_session(
         membership_role: None,
         conversation_id: session.conversation_id.clone(),
         session_id: session.client_session_id.clone(),
-        work_run_id: None,
+        work_run_id: session.work_run_id,
         client_session_id: Some(session.client_session_id.clone()),
         conversation_selection: Some(session.conversation_id.clone()),
         runtime_target: Some(session.conversation_id.clone()),

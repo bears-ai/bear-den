@@ -11,21 +11,31 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use super::RoleMemoryEntryWrite;
+use crate::tools::context::DenToolInvocationContext;
 
 // Native async fn in trait: workspace-internal, consumed via generic bounds /
 // concrete impls only (never `dyn`), so Send flows through monomorphization.
 #[allow(async_fn_in_trait)]
 pub trait RoleMemoryStore: Send + Sync {
     /// Read records at a logical path (tool-shaped JSON).
-    async fn read(&self, bear_id: Uuid, role: BearProfile, path: &str) -> Result<Value, DenError>;
+    async fn read(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        path: &str,
+    ) -> Result<Value, DenError>;
 
     /// Browse the role memory tree (tool-shaped JSON).
-    async fn browse(&self, bear_id: Uuid, role: BearProfile) -> Result<Value, DenError>;
+    async fn browse(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+    ) -> Result<Value, DenError>;
 
     /// Search role memory (tool-shaped JSON). `limit` is already clamped.
     async fn search(
         &self,
-        bear_id: Uuid,
+        context: &DenToolInvocationContext,
         role: BearProfile,
         query: &str,
         limit: i64,
@@ -38,7 +48,7 @@ pub trait RoleMemoryStore: Send + Sync {
     /// Persist a role-memory entry; returns tool-shaped JSON.
     async fn write_entry(
         &self,
-        bear_id: Uuid,
+        context: &DenToolInvocationContext,
         role: BearProfile,
         entry: RoleMemoryEntryWrite,
     ) -> Result<Value, DenError>;

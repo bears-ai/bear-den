@@ -227,7 +227,7 @@ pub async fn sqlite_memory_read(
     Ok(render_memory_read(logical_path, rows))
 }
 
-fn render_memory_read(logical_path: &str, rows: Vec<MemoryRecordRow>) -> Value {
+pub fn render_memory_read(logical_path: &str, rows: Vec<MemoryRecordRow>) -> Value {
     if rows.is_empty() {
         return json!({
             "ok": false,

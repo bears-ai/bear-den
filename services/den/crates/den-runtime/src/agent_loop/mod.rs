@@ -12,6 +12,7 @@ mod key_memory_projection_tests;
 mod overflow_retry;
 mod pending_tools;
 mod policy;
+mod recall_scope;
 mod runtime_context;
 mod session_store;
 mod session_stream;

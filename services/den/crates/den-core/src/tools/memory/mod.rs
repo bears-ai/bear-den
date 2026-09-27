@@ -184,7 +184,7 @@ pub async fn write_memory_entry(
         profile: context.profile.map(|role| role.as_str().to_string()),
         request_id: context.request_id.clone(),
     };
-    memory.write_entry(context.bear_id, role, entry).await
+    memory.write_entry(context, role, entry).await
 }
 
 /// Summarize active prompt-memory blocks for the `memory_status` diagnostic.
@@ -253,15 +253,15 @@ pub async fn memory_status(
 
 pub async fn memory_browse(
     memory: &impl RoleMemoryStore,
-    bear_id: Uuid,
+    context: &DenToolInvocationContext,
     role: BearProfile,
 ) -> Result<Value, DenError> {
-    memory.browse(bear_id, role).await
+    memory.browse(context, role).await
 }
 
 pub async fn memory_read(
     memory: &impl RoleMemoryStore,
-    bear_id: Uuid,
+    context: &DenToolInvocationContext,
     role: BearProfile,
     arguments: Value,
 ) -> Result<Value, DenError> {
@@ -272,12 +272,12 @@ pub async fn memory_read(
             "path must not be empty".to_string(),
         ));
     }
-    memory.read(bear_id, role, path).await
+    memory.read(context, role, path).await
 }
 
 pub async fn memory_search(
     memory: &impl RoleMemoryStore,
-    bear_id: Uuid,
+    context: &DenToolInvocationContext,
     role: BearProfile,
     arguments: Value,
 ) -> Result<Value, DenError> {
@@ -289,7 +289,7 @@ pub async fn memory_search(
         ));
     }
     let limit = args.limit.map(|n| n.clamp(1, 50) as i64).unwrap_or(10);
-    memory.search(bear_id, role, query, limit).await
+    memory.search(context, role, query, limit).await
 }
 
 #[cfg(test)]

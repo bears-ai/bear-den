@@ -75,13 +75,58 @@ fn privileged_descriptors_are_role_scoped() {
     assert!(!work.contains(DEN_OBSERVATION_WRITE));
 }
 
-#[tokio::test]
-async fn model_memory_read_cannot_use_another_profile_or_new_scope_path() {
+#[sqlx::test]
+async fn model_memory_read_cannot_use_another_profile_or_new_scope_path(pool: sqlx::PgPool) {
+    use den_core::{
+        ids::{BearId, UserId},
+        tools::context::DenToolInvocationContext,
+    };
+    use den_memory::{append_memory_record, LogicalMemoryPath, MemoryStoreManager};
+    use den_service::{
+        bears::hats::{bindings::bind_conversation_hat, create_hat},
+        conversation::persistence::ensure_conversation_for_external_id,
+    };
     use serde_json::json;
     use uuid::Uuid;
 
     use crate::{config::Config, core::tools::memory_read::DenRoleMemoryStore};
-    use den_memory::{append_memory_record, LogicalMemoryPath, MemorySource, MemoryStoreManager};
+
+    let suffix = Uuid::new_v4().simple().to_string();
+    let bear_id = sqlx::query_scalar!(
+        "INSERT INTO bears (slug, name) VALUES ($1, 'Memory Test Bear') RETURNING id",
+        format!("memory-test-{}", &suffix[..12]),
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("create Bear");
+    let conversation =
+        ensure_conversation_for_external_id(&pool, bear_id, None, "hat-memory-a", None, None)
+            .await
+            .expect("create conversation A");
+    let second =
+        ensure_conversation_for_external_id(&pool, bear_id, None, "hat-memory-b", None, None)
+            .await
+            .expect("create conversation B");
+    let user_id = sqlx::query_scalar!(
+        "INSERT INTO users (email, username, display_name, passhash) VALUES ($1, $2, 'Test', 'x') RETURNING id",
+        format!("memory-{suffix}@example.invalid"),
+        format!("memory{}", &suffix[..12]),
+    ).fetch_one(&pool).await.expect("create user");
+    let hat = create_hat(
+        &pool,
+        BearId::new(bear_id),
+        UserId::new(user_id),
+        "Security review",
+        "Read scope test",
+    )
+    .await
+    .expect("create hat");
+    bind_conversation_hat(&pool, BearId::new(bear_id), conversation.id, hat.id)
+        .await
+        .expect("bind A");
+    bind_conversation_hat(&pool, BearId::new(bear_id), second.id, hat.id)
+        .await
+        .expect("bind B");
 
     let mut config = Config::test_stub();
     config.bear_sqlite_data_dir = std::env::temp_dir()
@@ -89,11 +134,8 @@ async fn model_memory_read_cannot_use_another_profile_or_new_scope_path() {
         .display()
         .to_string();
     let stores = MemoryStoreManager::new(&config);
-    let bear_id = Uuid::new_v4();
     let store = stores.store_for_bear(bear_id).await.expect("memory store");
     let pair = LogicalMemoryPath::profile_local("pair", "note");
-    let source =
-        LogicalMemoryPath::source_local(MemorySource::Conversation(Uuid::new_v4()), "note");
     append_memory_record(
         &store,
         &pair,
@@ -104,40 +146,65 @@ async fn model_memory_read_cannot_use_another_profile_or_new_scope_path() {
         &json!({}),
     )
     .await
-    .expect("write pair note");
-    append_memory_record(
-        &store,
-        &source,
-        "note",
-        "pair",
+    .expect("write legacy pair note");
+    let adapter = DenRoleMemoryStore::new(&pool, &config, &stores);
+    let context: DenToolInvocationContext = serde_json::from_value(json!({
+        "bear_id": bear_id, "bear_slug": "memory-test", "binding_id": "test-binding",
+        "profile": "pair", "user_id": user_id, "username": null,
+        "membership_role": null, "conversation_id": "hat-memory-a",
+        "session_id": "test-session", "request_id": null, "channel": {}
+    }))
+    .expect("tool context");
+    let written = den_core::tools::memory::write_memory_entry(
+        &adapter,
+        &context,
+        BearProfile::Pair,
+        json!({"kind": "note", "title": "A finding", "body": "private-source-a-token"}),
         None,
-        "session secret",
-        &json!({}),
+        None,
     )
     .await
-    .expect("write source note");
-    let pool = sqlx::PgPool::connect_lazy("postgres://unused:unused@localhost/unused")
-        .expect("lazy Postgres pool");
-    let adapter = DenRoleMemoryStore::new(&pool, &config, &stores);
-    for path in [pair.to_logical_path(), source.to_logical_path()] {
-        let result = den_core::tools::memory::memory_read(
-            &adapter,
-            bear_id,
-            BearProfile::Work,
-            json!({ "path": path }),
-        )
-        .await
-        .expect("memory_read result");
-        assert_eq!(result["ok"], false, "Work read a forbidden path: {path}");
-        assert!(result.get("content").is_none());
-    }
+    .expect("write scoped note");
+    let source_path = written["path"].as_str().expect("source path").to_string();
     let own = den_core::tools::memory::memory_read(
         &adapter,
-        bear_id,
+        &context,
+        BearProfile::Pair,
+        json!({ "path": source_path }),
+    )
+    .await
+    .expect("read own note");
+    assert!(own["content"]
+        .as_str()
+        .unwrap()
+        .contains("private-source-a-token"));
+    let legacy = den_core::tools::memory::memory_read(
+        &adapter,
+        &context,
         BearProfile::Pair,
         json!({ "path": pair.to_logical_path() }),
     )
     .await
-    .expect("Pair read");
-    assert_eq!(own["content"], "pair secret");
+    .expect("read legacy note");
+    assert_eq!(legacy["ok"], false);
+    let mut other_context = context.clone();
+    other_context.conversation_id = "hat-memory-b".to_string();
+    let other = den_core::tools::memory::memory_read(
+        &adapter,
+        &other_context,
+        BearProfile::Pair,
+        json!({ "path": source_path }),
+    )
+    .await
+    .expect("read from B");
+    assert_eq!(other["ok"], false);
+    let hits = den_core::tools::memory::memory_search(
+        &adapter,
+        &other_context,
+        BearProfile::Pair,
+        json!({"query": "private-source-a-token"}),
+    )
+    .await
+    .expect("search B");
+    assert!(hits["hits"].as_array().unwrap().is_empty());
 }
