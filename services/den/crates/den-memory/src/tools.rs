@@ -1,10 +1,10 @@
-use den_core::DenError;
+use den_core::{BearProfile, DenError};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::{
     append_memory_record, list_records_for_logical_path, records::normalize_lifecycle_status,
-    BearMemoryStore, LogicalMemoryPath, MemoryStoreManager,
+    BearMemoryStore, LogicalMemoryPath, MemoryRecordRow, MemoryScopeType, MemoryStoreManager,
 };
 
 pub async fn sqlite_write_at_path(
@@ -139,19 +139,44 @@ pub async fn sqlite_memory_browse(store: &BearMemoryStore, role: &str) -> Result
     }))
 }
 
+/// Model-facing legacy read: enforce the same profile-local/core boundary as
+/// keyword and vector search. A path is a locator, never an access grant.
+pub async fn sqlite_memory_read_for_profile(
+    store: &BearMemoryStore,
+    profile: BearProfile,
+    logical_path: &str,
+) -> Result<Value, DenError> {
+    let rows = list_records_for_logical_path(store, logical_path, 20)
+        .await?
+        .into_iter()
+        .filter(|row| {
+            row.scope_type == MemoryScopeType::Shared
+                || (row.scope_type == MemoryScopeType::ProfileLocal
+                    && (profile == BearProfile::Curate
+                        || row.scope_profile.as_deref() == Some(profile.as_str())))
+        })
+        .collect();
+    Ok(render_memory_read(logical_path, rows))
+}
+
+/// Privileged/admin read; ordinary model tools must use a scope-enforcing API.
 pub async fn sqlite_memory_read(
     store: &BearMemoryStore,
     logical_path: &str,
 ) -> Result<Value, DenError> {
     let rows = list_records_for_logical_path(store, logical_path, 20).await?;
+    Ok(render_memory_read(logical_path, rows))
+}
+
+fn render_memory_read(logical_path: &str, rows: Vec<MemoryRecordRow>) -> Value {
     if rows.is_empty() {
-        return Ok(json!({
+        return json!({
             "ok": false,
             "configured": true,
             "storage": "sqlite",
             "path": logical_path,
             "message": "no records at path",
-        }));
+        });
     }
     let body: String = rows
         .iter()
@@ -175,7 +200,7 @@ pub async fn sqlite_memory_read(
             })
         })
         .collect();
-    Ok(json!({
+    json!({
         "ok": true,
         "configured": true,
         "storage": "sqlite",
@@ -186,7 +211,7 @@ pub async fn sqlite_memory_read(
         "latest_lifecycle_status": rows.first().map(|r| r.lifecycle_status.as_str()),
         "latest_freshness_trend": rows.first().map(|r| r.freshness_trend.as_str()),
         "records": records,
-    }))
+    })
 }
 
 /// Keyword (`LIKE`) memory search — the fallback path for `memory_search` when the derived
@@ -368,3 +393,6 @@ pub async fn sqlite_memory_status(store: &BearMemoryStore, role: &str) -> Result
         "file_count": file_count,
     }))
 }
+
+#[cfg(test)]
+mod tests;

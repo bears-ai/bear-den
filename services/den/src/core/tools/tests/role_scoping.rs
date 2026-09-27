@@ -74,3 +74,70 @@ fn privileged_descriptors_are_role_scoped() {
     assert!(!work.contains(DEN_TASK_WRITE_INTENT));
     assert!(!work.contains(DEN_OBSERVATION_WRITE));
 }
+
+#[tokio::test]
+async fn model_memory_read_cannot_use_another_profile_or_new_scope_path() {
+    use serde_json::json;
+    use uuid::Uuid;
+
+    use crate::{config::Config, core::tools::memory_read::DenRoleMemoryStore};
+    use den_memory::{append_memory_record, LogicalMemoryPath, MemorySource, MemoryStoreManager};
+
+    let mut config = Config::test_stub();
+    config.bear_sqlite_data_dir = std::env::temp_dir()
+        .join(format!("den-model-memory-read-{}", Uuid::new_v4()))
+        .display()
+        .to_string();
+    let stores = MemoryStoreManager::new(&config);
+    let bear_id = Uuid::new_v4();
+    let store = stores.store_for_bear(bear_id).await.expect("memory store");
+    let pair = LogicalMemoryPath::profile_local("pair", "note");
+    let source =
+        LogicalMemoryPath::source_local(MemorySource::Conversation(Uuid::new_v4()), "note");
+    append_memory_record(
+        &store,
+        &pair,
+        "note",
+        "pair",
+        None,
+        "pair secret",
+        &json!({}),
+    )
+    .await
+    .expect("write pair note");
+    append_memory_record(
+        &store,
+        &source,
+        "note",
+        "pair",
+        None,
+        "session secret",
+        &json!({}),
+    )
+    .await
+    .expect("write source note");
+    let pool = sqlx::PgPool::connect_lazy("postgres://unused:unused@localhost/unused")
+        .expect("lazy Postgres pool");
+    let adapter = DenRoleMemoryStore::new(&pool, &config, &stores);
+    for path in [pair.to_logical_path(), source.to_logical_path()] {
+        let result = den_core::tools::memory::memory_read(
+            &adapter,
+            bear_id,
+            BearProfile::Work,
+            json!({ "path": path }),
+        )
+        .await
+        .expect("memory_read result");
+        assert_eq!(result["ok"], false, "Work read a forbidden path: {path}");
+        assert!(result.get("content").is_none());
+    }
+    let own = den_core::tools::memory::memory_read(
+        &adapter,
+        bear_id,
+        BearProfile::Pair,
+        json!({ "path": pair.to_logical_path() }),
+    )
+    .await
+    .expect("Pair read");
+    assert_eq!(own["content"], "pair secret");
+}

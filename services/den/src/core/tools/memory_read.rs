@@ -41,9 +41,9 @@ impl<'a> DenRoleMemoryStore<'a> {
 }
 
 impl RoleMemoryStore for DenRoleMemoryStore<'_> {
-    async fn read(&self, bear_id: Uuid, _role: BearProfile, path: &str) -> Result<Value, DenError> {
+    async fn read(&self, bear_id: Uuid, role: BearProfile, path: &str) -> Result<Value, DenError> {
         let store = self.stores.store_for_bear(bear_id).await?;
-        sqlite_memory::sqlite_memory_read(&store, path).await
+        sqlite_memory::sqlite_memory_read_for_profile(&store, role, path).await
     }
 
     async fn browse(&self, bear_id: Uuid, role: BearProfile) -> Result<Value, DenError> {
