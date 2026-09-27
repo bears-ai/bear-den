@@ -1,6 +1,9 @@
 use std::{fmt, str::FromStr};
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+use den_core::ids::HatId;
 
 use crate::descriptors;
 
@@ -8,6 +11,8 @@ use crate::descriptors;
 #[serde(rename_all = "snake_case")]
 pub enum MemoryScopeType {
     ProfileLocal,
+    SourceLocal,
+    Hat,
     Shared,
 }
 
@@ -15,6 +20,8 @@ impl MemoryScopeType {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::ProfileLocal => "profile_local",
+            Self::SourceLocal => "source_local",
+            Self::Hat => "hat",
             Self::Shared => "shared",
         }
     }
@@ -36,8 +43,35 @@ impl FromStr for MemoryScopeType {
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
         match raw {
             "profile_local" | "role_local" => Ok(Self::ProfileLocal),
+            "source_local" => Ok(Self::SourceLocal),
+            "hat" => Ok(Self::Hat),
             "shared" => Ok(Self::Shared),
             _ => Err(()),
+        }
+    }
+}
+
+/// A durable producer of uncurated notes, never a transient client connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemorySource {
+    Conversation(Uuid),
+    WorkRun(Uuid),
+    Intake(Uuid),
+}
+
+impl MemorySource {
+    pub fn kind(self) -> &'static str {
+        match self {
+            Self::Conversation(_) => "conversation",
+            Self::WorkRun(_) => "work_run",
+            Self::Intake(_) => "intake",
+        }
+    }
+
+    pub fn id(self) -> Uuid {
+        match self {
+            Self::Conversation(id) | Self::WorkRun(id) | Self::Intake(id) => id,
         }
     }
 }
@@ -47,6 +81,10 @@ impl FromStr for MemoryScopeType {
 pub struct LogicalMemoryPath {
     pub scope_type: MemoryScopeType,
     pub scope_profile: Option<String>,
+    #[serde(default)]
+    pub source: Option<MemorySource>,
+    #[serde(default)]
+    pub hat_id: Option<HatId>,
     pub work_surface_ref: Option<String>,
     pub kind: String,
 }
@@ -56,6 +94,8 @@ impl LogicalMemoryPath {
         Self {
             scope_type: MemoryScopeType::ProfileLocal,
             scope_profile: Some(profile.to_string()),
+            source: None,
+            hat_id: None,
             work_surface_ref: None,
             kind: kind.to_string(),
         }
@@ -65,13 +105,48 @@ impl LogicalMemoryPath {
         Self {
             scope_type: MemoryScopeType::Shared,
             scope_profile: None,
+            source: None,
+            hat_id: None,
             work_surface_ref: None,
             kind: kind.to_string(),
         }
     }
 
-    /// Encode to the legacy logical path string used by memory tools.
+    pub fn source_local(source: MemorySource, kind: &str) -> Self {
+        Self {
+            scope_type: MemoryScopeType::SourceLocal,
+            scope_profile: None,
+            source: Some(source),
+            hat_id: None,
+            work_surface_ref: None,
+            kind: kind.to_string(),
+        }
+    }
+
+    pub fn hat(hat_id: HatId, kind: &str) -> Self {
+        Self {
+            scope_type: MemoryScopeType::Hat,
+            scope_profile: None,
+            source: None,
+            hat_id: Some(hat_id),
+            work_surface_ref: None,
+            kind: kind.to_string(),
+        }
+    }
+
+    /// Logical paths are locators, not access grants; canonical scope is stored in SQLite columns.
     pub fn to_logical_path(&self) -> String {
+        if let (MemoryScopeType::SourceLocal, Some(source)) = (self.scope_type, self.source) {
+            return format!(
+                "source_memory/{}/{}/{}.md",
+                source.kind(),
+                source.id(),
+                self.kind
+            );
+        }
+        if let (MemoryScopeType::Hat, Some(hat_id)) = (self.scope_type, self.hat_id) {
+            return format!("hat_memory/{hat_id}/{}.md", self.kind);
+        }
         match (
             &self.scope_type,
             &self.scope_profile,
@@ -101,6 +176,8 @@ impl LogicalMemoryPath {
             return Self {
                 scope_type: MemoryScopeType::Shared,
                 scope_profile: None,
+                source: None,
+                hat_id: None,
                 work_surface_ref: Some(ws),
                 kind,
             };
@@ -118,6 +195,8 @@ impl LogicalMemoryPath {
                 return Self {
                     scope_type: MemoryScopeType::ProfileLocal,
                     scope_profile: Some(profile.to_string()),
+                    source: None,
+                    hat_id: None,
                     work_surface_ref: Some(ws),
                     kind,
                 };

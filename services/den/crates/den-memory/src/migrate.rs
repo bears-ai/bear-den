@@ -2,7 +2,7 @@ use sqlx::SqlitePool;
 
 use den_core::DenError;
 
-/// Upgrade per-Bear SQLite files created before profile vocabulary cleanup (ADR-0036).
+/// Upgrade per-Bear SQLite files created before profile and source/hat scope changes.
 pub async fn migrate_bear_sqlite_schema(pool: &SqlitePool) -> Result<(), DenError> {
     let columns =
         sqlx::query_scalar::<_, String>("SELECT name FROM pragma_table_info('memory_records')")
@@ -40,7 +40,7 @@ pub async fn migrate_bear_sqlite_schema(pool: &SqlitePool) -> Result<(), DenErro
 
     let needs_scope_vocab_rebuild = table_sql
         .as_deref()
-        .map(|sql| sql.contains("'role_local'"))
+        .map(|sql| sql.contains("'role_local'") || !sql.contains("'source_local'"))
         .unwrap_or(false);
 
     if needs_scope_vocab_rebuild {
@@ -203,8 +203,11 @@ async fn rebuild_memory_records_scope_vocab(pool: &SqlitePool) -> Result<(), Den
                 memory_id TEXT PRIMARY KEY,
                 bear_id TEXT NOT NULL,
                 sequence_no INTEGER NOT NULL,
-                scope_type TEXT NOT NULL CHECK (scope_type IN ('profile_local', 'shared')),
+                scope_type TEXT NOT NULL CHECK (scope_type IN ('profile_local', 'source_local', 'hat', 'shared')),
                 scope_profile TEXT NULL,
+                scope_source_kind TEXT NULL,
+                scope_source_id TEXT NULL,
+                scope_hat_id TEXT NULL,
                 kind TEXT NOT NULL,
                 author_profile TEXT NOT NULL,
                 author_agent_id TEXT NULL,
@@ -217,7 +220,15 @@ async fn rebuild_memory_records_scope_vocab(pool: &SqlitePool) -> Result<(), Den
                 work_surface_ref TEXT NULL,
                 valid_from TEXT NULL,
                 invalid_at TEXT NULL,
-                salience TEXT NOT NULL DEFAULT 'normal'
+                salience TEXT NOT NULL DEFAULT 'normal',
+                CHECK (
+                    (scope_type = 'source_local' AND scope_source_kind IN ('conversation', 'work_run', 'intake')
+                     AND scope_source_id IS NOT NULL AND scope_hat_id IS NULL AND scope_profile IS NULL)
+                    OR (scope_type = 'hat' AND scope_hat_id IS NOT NULL AND scope_source_kind IS NULL
+                        AND scope_source_id IS NULL AND scope_profile IS NULL)
+                    OR (scope_type IN ('profile_local', 'shared') AND scope_source_kind IS NULL
+                        AND scope_source_id IS NULL AND scope_hat_id IS NULL)
+                )
             )
             ",
         )

@@ -24,6 +24,8 @@ pub mod resolver;
 pub mod tools;
 
 #[cfg(test)]
+mod memory_scope_tests;
+#[cfg(test)]
 mod test_support;
 
 pub use access::{record_visible, AccessContext};
@@ -51,7 +53,7 @@ pub use import::{
     import_legacy_memory_bundle, import_legacy_memory_git_dir, LegacyMemoryBranchReport,
     LegacyMemoryImportOptions, LegacyMemoryImportReport, LegacyMemoryImportSource,
 };
-pub use logical_path::{entity_anchor_path, LogicalMemoryPath, MemoryScopeType};
+pub use logical_path::{entity_anchor_path, LogicalMemoryPath, MemoryScopeType, MemorySource};
 pub use manager::MemoryStoreManager;
 pub use observations::{
     create_memory_observation, get_memory_observation, mark_observation_review_queued,

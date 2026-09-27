@@ -12,8 +12,11 @@ CREATE TABLE IF NOT EXISTS memory_records (
     memory_id TEXT PRIMARY KEY,
     bear_id TEXT NOT NULL,
     sequence_no INTEGER NOT NULL,
-    scope_type TEXT NOT NULL CHECK (scope_type IN ('profile_local', 'shared')),
+    scope_type TEXT NOT NULL CHECK (scope_type IN ('profile_local', 'source_local', 'hat', 'shared')),
     scope_profile TEXT NULL,
+    scope_source_kind TEXT NULL,
+    scope_source_id TEXT NULL,
+    scope_hat_id TEXT NULL,
     kind TEXT NOT NULL,
     author_profile TEXT NOT NULL,
     author_agent_id TEXT NULL,
@@ -29,7 +32,15 @@ CREATE TABLE IF NOT EXISTS memory_records (
     -- COALESCE(valid_from, created_at). invalid_at is forward-looking (set on supersession).
     valid_from TEXT NULL,
     invalid_at TEXT NULL,
-    salience TEXT NOT NULL DEFAULT 'normal' CHECK (salience IN ('low', 'normal', 'high', 'critical'))
+    salience TEXT NOT NULL DEFAULT 'normal' CHECK (salience IN ('low', 'normal', 'high', 'critical')),
+    CHECK (
+        (scope_type = 'source_local' AND scope_source_kind IN ('conversation', 'work_run', 'intake')
+         AND scope_source_id IS NOT NULL AND scope_hat_id IS NULL AND scope_profile IS NULL)
+        OR (scope_type = 'hat' AND scope_hat_id IS NOT NULL AND scope_source_kind IS NULL
+            AND scope_source_id IS NULL AND scope_profile IS NULL)
+        OR (scope_type IN ('profile_local', 'shared') AND scope_source_kind IS NULL
+            AND scope_source_id IS NULL AND scope_hat_id IS NULL)
+    )
 );
 CREATE INDEX IF NOT EXISTS idx_memory_records_bear_sequence
     ON memory_records (bear_id, sequence_no);

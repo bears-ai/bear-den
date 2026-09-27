@@ -108,13 +108,17 @@ impl BearMemoryStore {
         let sequence_no = self.next_sequence().await?;
         let created_at = now_rfc3339()?;
         let logical_path = logical.to_logical_path();
+        let source_kind = logical.source.map(|source| source.kind());
+        let source_id = logical.source.map(|source| source.id().to_string());
+        let hat_id = logical.hat_id.map(|id| id.to_string());
         sqlx::query(
             r"
             INSERT INTO memory_records (
-                memory_id, bear_id, sequence_no, scope_type, scope_profile, kind,
+                memory_id, bear_id, sequence_no, scope_type, scope_profile,
+                scope_source_kind, scope_source_id, scope_hat_id, kind,
                 author_profile, author_agent_id, created_at, content_text, metadata_json,
                 visibility, logical_path, work_surface_ref, valid_from, salience, supersedes_memory_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ",
         )
         .bind(&memory_id)
@@ -122,6 +126,9 @@ impl BearMemoryStore {
         .bind(sequence_no)
         .bind(logical.scope_type.as_str())
         .bind(&logical.scope_profile)
+        .bind(source_kind)
+        .bind(source_id)
+        .bind(hat_id)
         .bind(kind)
         .bind(author_profile)
         .bind(author_agent_id)
