@@ -383,7 +383,7 @@ async fn invoke_workflow_tool(
             workflow::promote_docket_entry(pool, context, role, arguments).await?
         }
         DEN_DOCKET_ENTRY_LIST => workflow::list_docket_entries(pool, context, arguments).await?,
-        DEN_TASK_LIST_SYNC => workflow::sync_task_list(pool, arguments).await?,
+        DEN_TASK_LIST_SYNC => workflow::sync_task_list(pool, context, arguments).await?,
         DEN_TASK_LIST_CHECKOUT => {
             workflow::checkout_task_list(pool, context, role, arguments).await?
         }

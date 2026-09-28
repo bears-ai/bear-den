@@ -28,13 +28,18 @@ use crate::{
     web::AppState,
     web_chat_runtime::WebChatRuntimeRequest,
 };
-use den_core::ids::{BearId, UserId};
+use den_core::{
+    ids::{BearId, UserId},
+    DenError,
+};
 use den_docket::{
     DocketEffortHint, DocketService, DocketTaskCreate, DocketTaskDifficulty, DocketTaskKind,
     DocketTaskListFilter, DocketTaskScope, PgDocketService, RoutingStrategy,
 };
 use den_llm::ModelOption;
-use den_protocol::{ContextBudgetReport, RuntimeSemanticEvent, RuntimeStreamEvent};
+use den_protocol::{
+    ContextBudgetReport, RuntimeConversationRef, RuntimeSemanticEvent, RuntimeStreamEvent,
+};
 use den_runtime::current_task::{
     preview_session_current_task_selection, select_session_current_task,
 };
@@ -902,29 +907,43 @@ async fn chat_history(
         )
         .await?
         {
-            let is_work_session = den_docket::work_runs::get_work_run_by_session(
-                state.sqlx_pool(),
-                &session.client_session_id,
-            )
-            .await?
-            .is_some();
-            if is_work_session && session.user_id == user_id {
-                // ponytail: conversation rows and BearWire events have independent cursors. Keep
-                // the bounded activity record on the newest page; use a unified cursor if a run
-                // can exceed the store's 501-event replay ceiling.
-                let event_rows = den_runtime::bearwire_events::list_bearwire_events_after(
+            if session.user_id == user_id {
+                if let Some(work_run) = den_docket::work_runs::get_work_run_by_session(
                     state.sqlx_pool(),
                     &session.client_session_id,
-                    None,
-                    501,
                 )
-                .await?;
-                messages.extend(
-                    den_runtime::work_activity::project_work_activity(event_rows)
-                        .into_iter()
-                        .filter_map(chat_history_work_activity),
-                );
-                messages.sort_by(|left, right| left.created_at.cmp(&right.created_at));
+                .await?
+                {
+                    if work_run.bear_id == bear.id {
+                        match PgDocketService::from_pool(state.sqlx_pool())
+                            .authorize_job_for_human(bear.id, work_run.job_id, user_id)
+                            .await
+                        {
+                            Ok(()) => {
+                                // ponytail: conversation rows and BearWire events have independent
+                                // cursors. Keep the bounded activity record on the newest page.
+                                let event_rows = den_runtime::bearwire_events::list_bearwire_events_after_for_user(
+                                    state.sqlx_pool(),
+                                    bear.id,
+                                    user_id,
+                                    &session.client_session_id,
+                                    None,
+                                    501,
+                                )
+                                .await?;
+                                messages.extend(
+                                    den_runtime::work_activity::project_work_activity(event_rows)
+                                        .into_iter()
+                                        .filter_map(chat_history_work_activity),
+                                );
+                                messages
+                                    .sort_by(|left, right| left.created_at.cmp(&right.created_at));
+                            }
+                            Err(DenError::NotFound(_)) => {}
+                            Err(err) => return Err(err.into()),
+                        }
+                    }
+                }
             }
         }
     }
@@ -1422,6 +1441,7 @@ struct ConversationTitleRequest<'a> {
     conv_id: &'a str,
     message: &'a str,
     request_id: Uuid,
+    resolved_id: Option<&'a str>,
 }
 
 async fn maybe_handle_direct_set_conversation_title(
@@ -1434,6 +1454,7 @@ async fn maybe_handle_direct_set_conversation_title(
         conv_id,
         message,
         request_id,
+        resolved_id,
     } = request;
     let Some(title) = parse_set_conversation_title_request(message) else {
         return Ok(None);
@@ -1448,9 +1469,11 @@ async fn maybe_handle_direct_set_conversation_title(
         &title,
     )
     .await?;
-    let text = "Conversation title updated.";
-    let body = deep_chat_sse_body_for_assistant_text(text);
-    Ok(Some(chat_sse_body_response(Body::from(body), request_id)?))
+    Ok(Some(direct_chat_sse_response(
+        "Conversation title updated.",
+        request_id,
+        resolved_id,
+    )?))
 }
 
 fn chat_sse_body_response(body: Body, request_id: Uuid) -> Result<Response, CustomError> {
@@ -1466,8 +1489,19 @@ fn chat_sse_body_response(body: Body, request_id: Uuid) -> Result<Response, Cust
         .map_err(|err| CustomError::System(format!("response build: {err}")))
 }
 
-fn direct_chat_sse_response(text: &str, request_id: Uuid) -> Result<Response, CustomError> {
-    let body = deep_chat_sse_body_for_assistant_text(text);
+fn direct_chat_sse_response(
+    text: &str,
+    request_id: Uuid,
+    resolved_id: Option<&str>,
+) -> Result<Response, CustomError> {
+    let mut body = String::new();
+    if let Some(id) = resolved_id {
+        body.push_str(&format!(
+            "data: {}\n\n",
+            json!({ "message_type": "conversation_resolved", "conversation_id": id })
+        ));
+    }
+    body.push_str(&deep_chat_sse_body_for_assistant_text(text));
     chat_sse_body_response(Body::from(body), request_id)
 }
 
@@ -1491,6 +1525,7 @@ async fn maybe_handle_direct_capabilities_list(
     canonical_conversation_id: Uuid,
     message: &str,
     request_id: Uuid,
+    resolved_id: Option<&str>,
 ) -> Result<Option<Response>, CustomError> {
     if !chat_turn_is_capabilities_meta_query(message.trim()) {
         return Ok(None);
@@ -1515,7 +1550,11 @@ async fn maybe_handle_direct_capabilities_list(
         conversation_id = %canonical_conversation_id,
         "web chat capabilities list answered without LLM round-trip"
     );
-    Ok(Some(direct_chat_sse_response(&text, request_id)?))
+    Ok(Some(direct_chat_sse_response(
+        &text,
+        request_id,
+        resolved_id,
+    )?))
 }
 
 async fn resolve_chat_profile_binding_id(
@@ -1554,7 +1593,12 @@ async fn chat_send_native_inner(
     chat_binding_id: &str,
     conv_id: String,
 ) -> Result<Response, CustomError> {
-    let (viewer, conv_id) = checked_chat_id(state.sqlx_pool(), bear.id, user_id, &conv_id).await?;
+    let (viewer, requested_id) =
+        checked_chat_id(state.sqlx_pool(), bear.id, user_id, &conv_id).await?;
+    let resolved_id = requested_id
+        .starts_with("new-")
+        .then(|| format!("conv-{}", Uuid::new_v4()));
+    let conv_id = resolved_id.clone().unwrap_or(requested_id);
     if state.config.llm_api_url.trim().is_empty() {
         return Err(CustomError::System(
             "Chat is unavailable: LLM_API_URL is not set (required when AGENT_RUNTIME=native)."
@@ -1566,7 +1610,7 @@ async fn chat_send_native_inner(
         bears_db::membership_role_for_user(state.sqlx_pool(), user_id, body.bear_id)
             .await?
             .flatten();
-    let session_id = format!("den-web:{}:{}", body.bear_id, conv_id);
+    let session_id = browser_client_session_id(user_id, bear.id, &conv_id);
     let canonical_conversation =
         ensure_chat_conversation(state.sqlx_pool(), bear.id, user_id, &viewer, &conv_id).await?;
     if let Some(response) = maybe_handle_direct_set_conversation_title(
@@ -1577,6 +1621,7 @@ async fn chat_send_native_inner(
             conv_id: &conv_id,
             message: body.message.trim(),
             request_id,
+            resolved_id: resolved_id.as_deref(),
         },
     )
     .await?
@@ -1615,6 +1660,7 @@ async fn chat_send_native_inner(
         canonical_conversation.id,
         body.message.trim(),
         request_id,
+        resolved_id.as_deref(),
     )
     .await?
     {
@@ -1674,7 +1720,15 @@ async fn chat_send_native_inner(
             }
         }
     });
-    let upstream = NativeWebChatUpstreamStream::new(resolved_stream, request_id);
+    let outgoing_stream = futures::stream::iter(resolved_id.into_iter().map(|id| {
+        Ok::<_, CustomError>(RuntimeStreamEvent::Semantic(
+            RuntimeSemanticEvent::ConversationResolved {
+                conversation: RuntimeConversationRef { id },
+            },
+        ))
+    }))
+    .chain(resolved_stream);
+    let upstream = NativeWebChatUpstreamStream::new(outgoing_stream, request_id);
     let stream = BearChannelSseProxyStream::new(
         upstream,
         request_id,

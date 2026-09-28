@@ -1,5 +1,8 @@
 use axum::http::HeaderMap;
-use den_core::DenError;
+use den_core::{
+    ids::{BearId, UserId},
+    DenError,
+};
 
 use serde_json::{json, Value};
 use sqlx::PgPool;
@@ -23,6 +26,7 @@ use den_runtime::{
     pair_reflection::create_pair_reflection_proposals_from_latest_summary,
     runtime::compaction::{prepare_turn_compaction, TurnCompactionState, TurnCompactionTrigger},
     runtime::task_context::{resolve_runtime_task_context, RuntimeTaskResolveRequest},
+    turn_ids::ClientSessionId,
 };
 use den_service::{
     bears::{db as bears_db, BearProfile},
@@ -36,6 +40,34 @@ use crate::methods::{
     },
     parse_params, DEFAULT_CLIENT,
 };
+
+/// Client session IDs are used as unscoped keys by Work bindings and turn runs.
+/// A scoped client_sessions lookup is not enough to authorize those operations.
+pub(super) async fn require_exclusive_client_session_id(
+    pool: &PgPool,
+    session_id: &ClientSessionId,
+    user_id: UserId,
+    bear_id: BearId,
+) -> Result<(), CustomError> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT user_id, bear_id
+        FROM client_sessions
+        WHERE client_session_id = $1
+        LIMIT 2
+        "#,
+        session_id.as_str(),
+    )
+    .fetch_all(pool)
+    .await?;
+    match rows.as_slice() {
+        [] => Ok(()),
+        [row] if row.user_id == user_id.get() && row.bear_id == bear_id.as_uuid() => Ok(()),
+        _ => Err(CustomError::NotFound(
+            "BearWire session not found".to_string(),
+        )),
+    }
+}
 
 fn interactive_session_policy() -> den_core::EffectivePolicy {
     den_core::EffectivePolicy::compile(
@@ -229,6 +261,14 @@ pub(super) async fn require_session_conversation_access(
     state: &DenState,
     session: &client_sessions::ClientSessionRow,
 ) -> Result<(), CustomError> {
+    let session_id = ClientSessionId::new(session.client_session_id.clone())?;
+    require_exclusive_client_session_id(
+        &state.sqlx_pool,
+        &session_id,
+        UserId::new(session.user_id),
+        BearId::new(session.bear_id),
+    )
+    .await?;
     let viewer = conversation_viewer(state, session.bear_id, session.user_id).await?;
     authorize_existing_conversation(
         &viewer,
@@ -412,6 +452,13 @@ pub(crate) async fn session_open_result(
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
     let request: SessionOpenRequest = parse_params(params)?;
     let session_id = request.session_id;
+    require_exclusive_client_session_id(
+        &state.sqlx_pool,
+        &ClientSessionId::new(session_id.clone())?,
+        UserId::new(user_id),
+        BearId::new(bear.id),
+    )
+    .await?;
     let existing = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
         user_id,
@@ -479,6 +526,13 @@ pub(crate) async fn session_open_result(
             cwd,
             current_mode,
         },
+    )
+    .await?;
+    require_exclusive_client_session_id(
+        &state.sqlx_pool,
+        &ClientSessionId::new(session_id.clone())?,
+        UserId::new(user_id),
+        BearId::new(bear.id),
     )
     .await?;
     let reconnected =
@@ -596,6 +650,13 @@ pub(crate) async fn session_close_result(
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
     let request: SessionIdRequest = parse_params(params)?;
     let session_id = request.session_id;
+    require_exclusive_client_session_id(
+        &state.sqlx_pool,
+        &ClientSessionId::new(session_id.clone())?,
+        UserId::new(user_id),
+        BearId::new(bear.id),
+    )
+    .await?;
     let Some(session) = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
         user_id,
@@ -772,6 +833,13 @@ pub(crate) async fn session_current_task_selection_request_result(
     let request: SessionCurrentTaskSelectionRequest = parse_params(params)?;
     let task_id = uuid::Uuid::parse_str(&request.task_id)
         .map_err(|_| CustomError::ValidationError("task_id must be a UUID".to_string()))?;
+    require_exclusive_client_session_id(
+        &state.sqlx_pool,
+        &ClientSessionId::new(request.session_id.clone())?,
+        UserId::new(user_id),
+        BearId::new(bear.id),
+    )
+    .await?;
     let title = preview_session_current_task_selection(
         &state.sqlx_pool,
         user_id,
@@ -799,6 +867,13 @@ pub(crate) async fn session_current_task_select_result(
             "focused task controls are disabled".to_string(),
         ));
     }
+    require_exclusive_client_session_id(
+        &state.sqlx_pool,
+        &ClientSessionId::new(request.session_id.clone())?,
+        UserId::new(user_id),
+        BearId::new(bear.id),
+    )
+    .await?;
     let policy = interactive_session_policy();
     let result = select_session_current_task(
         &state.sqlx_pool,
@@ -826,6 +901,13 @@ pub(crate) async fn session_current_task_start_result(
             "focused task controls are disabled".to_string(),
         ));
     }
+    require_exclusive_client_session_id(
+        &state.sqlx_pool,
+        &ClientSessionId::new(request.session_id.clone())?,
+        UserId::new(user_id),
+        BearId::new(bear.id),
+    )
+    .await?;
     if let Some(session) = client_sessions::find_for_user_bear_session_id(
         &state.sqlx_pool,
         user_id,
@@ -1019,6 +1101,13 @@ pub(crate) async fn session_current_task_clear_result(
             "focused task controls are disabled".to_string(),
         ));
     }
+    require_exclusive_client_session_id(
+        &state.sqlx_pool,
+        &ClientSessionId::new(request.session_id.clone())?,
+        UserId::new(user_id),
+        BearId::new(bear.id),
+    )
+    .await?;
     let policy = interactive_session_policy();
     let result = select_session_current_task(
         &state.sqlx_pool,

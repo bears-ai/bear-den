@@ -20,6 +20,7 @@ use den_docket::{
     DocketWorkBoundarySignal, PgDocketService, TaskListVisibility,
 };
 use den_http::{armature_tokens, errors::CustomError};
+use den_service::client_sessions;
 use den_service::{
     artifacts::{
         self, ArtifactStorageKind, ArtifactVisibility, AttachArtifactInput,
@@ -47,36 +48,26 @@ async fn require_work_run_access(
     run_id: Uuid,
     checkout_session_id: Option<&str>,
 ) -> Result<AuthorizedWorkRun, CustomError> {
-    let run = sqlx::query!(
-        "SELECT r.bearwire_session_id, r.execution_target, r.attached_client_session_id, \
-                r.result_refs, j.created_by_user_id, j.visibility \
-         FROM bear_work_runs r JOIN bear_jobs j ON j.id = r.job_id AND j.bear_id = r.bear_id \
-         WHERE r.id = $1 AND r.bear_id = $2",
-        run_id,
-        bear_id,
-    )
-    .fetch_optional(&state.sqlx_pool)
-    .await?
-    .ok_or_else(|| CustomError::NotFound("work run not found".to_string()))?;
+    let run = work_runs::get_work_run(&state.sqlx_pool, run_id)
+        .await?
+        .filter(|run| run.bear_id == bear_id)
+        .ok_or_else(|| CustomError::NotFound("work run not found".to_string()))?;
+    let job = PgDocketService::from_pool(&state.sqlx_pool)
+        .get_job(bear_id, run.job_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("work run not found".to_string()))?;
     let role = bears_db::membership_role_for_user(&state.sqlx_pool, user_id, bear_id)
         .await?
         .ok_or_else(|| CustomError::NotFound("work run not found".to_string()))?;
-    let visibility = TaskListVisibility::parse(&run.visibility)
+    // The enqueue requester's ID is not persisted on bear_work_runs. Only a
+    // token explicitly dispatched for this run can act for a different member
+    // on a shared job; job visibility or membership alone cannot bind work.
+    let visibility = TaskListVisibility::parse(&job.job.visibility)
         .map_err(|_| CustomError::NotFound("work run not found".to_string()))?;
-    let owner_or_admin =
-        run.created_by_user_id == user_id || bears_db::role_is_bear_admin(role.as_deref());
-    if !owner_or_admin && visibility != TaskListVisibility::BearVisible {
-        return Err(CustomError::NotFound("work run not found".to_string()));
-    }
-
-    // A shared job is visible to Bear members, but visibility alone does not
-    // confer authority to bind its sandbox. The dispatcher's token is recorded
-    // on the run; attached armatures instead have a persisted session assignment.
-    if !owner_or_admin {
-        let assigned_armature = run.execution_target == "attached_armature"
-            && run.attached_client_session_id.as_deref()
-                == checkout_session_id.or(run.bearwire_session_id.as_deref())
-            && run.attached_client_session_id.is_some();
+    if job.job.created_by_user_id != user_id && !bears_db::role_is_bear_admin(role.as_deref()) {
+        if visibility != TaskListVisibility::BearVisible {
+            return Err(CustomError::NotFound("work run not found".to_string()));
+        }
         let token_hash = headers
             .get(header::AUTHORIZATION)
             .and_then(|value| value.to_str().ok())
@@ -99,7 +90,7 @@ async fn require_work_run_access(
         } else {
             false
         };
-        if !dispatched_token && !assigned_armature {
+        if !dispatched_token {
             return Err(CustomError::NotFound("work run not found".to_string()));
         }
     }
@@ -118,7 +109,17 @@ async fn require_work_run_access(
         )
         .fetch_optional(&state.sqlx_pool)
         .await?;
-        if session_owner.is_some_and(|owner| owner != user_id) {
+        if session_owner.is_some_and(|owner| owner != user_id)
+            || (session_owner.is_some()
+                && client_sessions::find_for_user_bear_session_id(
+                    &state.sqlx_pool,
+                    user_id,
+                    bear_id,
+                    session_id,
+                )
+                .await?
+                .is_none())
+        {
             return Err(CustomError::NotFound("work run not found".to_string()));
         }
     }
@@ -131,9 +132,8 @@ async fn require_work_run_access(
         .fetch_optional(&state.sqlx_pool)
         .await?;
         if assigned_owner.is_some_and(|owner| owner != user_id)
-            || (!owner_or_admin
-                && run.execution_target == "attached_armature"
-                && assigned_owner != Some(user_id))
+            || (run.execution_target == "attached_armature" && assigned_owner != Some(user_id))
+            || checkout_session_id.is_some_and(|session| session != assigned)
         {
             return Err(CustomError::NotFound("work run not found".to_string()));
         }
@@ -163,6 +163,7 @@ async fn require_work_attempt_access(
     user_id: i32,
     attempt_id: Uuid,
     fence_epoch: i64,
+    require_bound_session: bool,
 ) -> Result<Uuid, CustomError> {
     let run_id = sqlx::query_scalar!(
         "SELECT r.id FROM docket_execution_attempts a \
@@ -177,7 +178,10 @@ async fn require_work_attempt_access(
     .await?
     .ok_or_else(|| CustomError::NotFound("work execution attempt not found".to_string()))?;
     let access = require_work_run_access(state, headers, bear_id, user_id, run_id, None).await?;
-    if access.session_id.is_none() {
+    // A rejected re-checkout clears the run session while a checkpoint is
+    // pending. Evidence/acknowledgement still requires the exact attempt and
+    // authorized run caller, but boundary checks need an active session binding.
+    if require_bound_session && access.session_id.is_none() {
         return Err(CustomError::NotFound(
             "work execution attempt not found".to_string(),
         ));
@@ -284,6 +288,7 @@ pub(crate) async fn work_boundary_result(
         user_id,
         request.execution_attempt_id,
         request.fence_epoch,
+        true,
     )
     .await?;
     let gate = PgDocketService::from_pool(&state.sqlx_pool)
@@ -337,6 +342,7 @@ pub(crate) async fn work_checkpoint_evidence_result(
         user_id,
         request.execution_attempt_id,
         request.fence_epoch,
+        false,
     )
     .await?;
     // The directive, evidence artifact, link, and released fence form one
@@ -471,6 +477,7 @@ pub(crate) async fn work_acknowledge_checkpoint_result(
         user_id,
         request.execution_attempt_id,
         request.fence_epoch,
+        false,
     )
     .await?;
     let directive = PgDocketService::from_pool(&state.sqlx_pool)

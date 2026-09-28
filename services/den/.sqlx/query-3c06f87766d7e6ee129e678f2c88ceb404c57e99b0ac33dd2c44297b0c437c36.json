@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO bear_tasks (\n            bear_id, job_id, sibling_order, title, body, completion_criteria,\n            created_by_role, created_by_user_id\n        )\n        SELECT $1, $2, n - 1000, 'private filler ' || n, 'private body',\n               '[\"done\"]'::jsonb, 'pair', $3\n        FROM generate_series(1, 510) AS n\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3c06f87766d7e6ee129e678f2c88ceb404c57e99b0ac33dd2c44297b0c437c36"
+}

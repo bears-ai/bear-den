@@ -4,7 +4,7 @@
 
 This document inventories the state dimensions that apply to a Den conversation, session, turn, run, and Docket task unit of work. It is intentionally a matrix of orthogonal axes, not a proposal for one giant enum.
 
-Use this document when adding or changing runtime state, mode labels, continuation policy, approvals, current-task selection, model selection, or client projection. If a new state dimension can affect what the model may do, whether a turn may stop, what a client shows, or how a run resumes, update this inventory in the same change. The proposed [session memory and hats contract](../topics/bear-memory-hats.md) is not yet part of this current-state inventory; [its plan](../roadmap/HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md) requires updating these axes when code changes.
+Use this document when adding or changing runtime state, mode labels, continuation policy, approvals, current-task selection, model selection, or client projection. If a new state dimension can affect what the model may do, whether a turn may stop, what a client shows, or how a run resumes, update this inventory in the same change. The [session memory and hats contract](../topics/bear-memory-hats.md) is a partial branch cutover, not a fully deployed ownership model; [its plan](../roadmap/HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md) tracks the remaining axes and migration.
 
 ## Maintenance rule
 
@@ -112,15 +112,15 @@ Exit gate for the reduced authority model:
 | --- | --- | --- | --- |
 | Bear identity/profile binding | Den registry/control plane | durable Bear | Identifies the Bear and stance template, not the current run's supervision. |
 | User membership/access | Den identity/RBAC | durable + request-scoped | Gates which conversations/surfaces a user can access. |
-| Conversation | Den Postgres | durable user-visible chat container | Owns transcript, archive state, title, model selection, and Pair's persisted current-task reference. |
-| Session/client binding | adapter/BearWire/web edge + Den session store | live client binding | Projects conversation/runtime state to a connected client; not the conversation. |
+| Conversation | Den Postgres | durable user-visible chat container | Owns transcript, archive state, title, model selection, and Pair's persisted current-task reference. Authenticated human viewers use immutable `created_by_user_id` plus current Bear membership; Bear admins may inspect ownerless legacy rows. |
+| Session/client binding | adapter/BearWire/web edge + Den session store | live client binding | Projects conversation/runtime state to a connected client; not the conversation. BearWire event reads check Bear and human owner, but historical session IDs are not globally unique. |
 | Hat binding | Den Postgres conversation or Docket Job | durable conversation/Job | Nullable for legacy work. Bound memory tools and turn assembly resolve this canonical binding, never a hat named in chat; ineligible Work bindings fail closed. Bound prompt-memory selection, model-facing prompt-block tools, and diagnostics derive narrower access from it. No ordinary UI binding flow yet. |
 | Trust profile | Bear profile registry | per turn/template | `chat`, `pair`, `curate`, `work`, `watch`; memory/tool/default trust contract. |
 | Governance | runtime/workspace session | run-scoped mutable timeline | `interactive`, `grace`, `autonomous_continuation`, `observational`, `frozen`. |
 | Pair current task | conversation + client-session binding | durable conversation/session selection, resolved per run | A validated persisted `client_sessions.current_task_id` is Pair's optional objective; it may reference a session-local or Docket task. |
 | Pair task settlement | Docket task settlement | durable task outcome | A terminal user/model declaration appends the canonical outcome and task link. In Pair it is not gated on commit creation, publication, or artifact finalization. |
 | Delivery | runtime delivery coordinator + work surface | task/job delivery attempt and evidence | `commit_policy` schedules delivery after Pair settlement (`none`, `per_task`, `per_job`). Delivery can be pending, committed/finalized, skipped, or failed; it is retryable and cannot reopen the settled Pair task. Explicit Work/release policy may gate a job delivery projection. |
-| Work assignment | WorkRun + Docket | durable Work-run Job boundary, resolved per run | An explicit assigned Job is Work's execution boundary; optional in-run task progress remains constrained to that Job. |
+| Work assignment | WorkRun + Docket | durable Work-run Job boundary, resolved per run | An explicit assigned Job is Work's execution boundary. Human job/task reads, checkout and task activation recheck owner/admin/`BearVisible` access; Work checkout of a shared Job needs its exact run-minted token. Optional in-run task progress remains constrained to that Job. |
 | Workflow state | current-turn state compiler | current turn | Inputs compiled into `TurnAuthority`; derived operational context is advisory. |
 | Permission policy | Den policy resolver + descriptors | current turn/tool call | Resolves Ask/Plan/Write, tool classes, approvals, and armature routes before `TurnAuthority`/routing consume them. |
 | Turn/run lifecycle | runtime turn controller + atomic run finisher | run/turn | Accepted/running/waiting states use ordinary transitions. Completed/failed/cancelled state, obligation/step settlement, and the terminal BearWire event are one atomic finish operation. |
@@ -166,10 +166,10 @@ Representative state:
 
 Invariants:
 
-- A conversation is the durable user-visible chat container. A session is only a live binding to it.
+- A conversation is the durable user-visible chat container. A session is only a live binding to it. Human conversation access is checked against the canonical created-by human; ownerless historical conversations remain admin-only. Browser default chats have per-user canonical IDs and newly selected conversations materialize a durable owner-scoped ID before transcript persistence.
 - Archived conversations should not accept ordinary new turns unless explicitly restored or unarchived.
 - Title updates are non-blocking structured updates; they must not create model-visible obligations or force continuation.
-- Conversation task selection must be changed through the canonical persisted current-task reference, not stale prompt text or session cache.
+- Conversation task selection must be changed through the canonical persisted current-task reference, not stale prompt text or session cache. A job task's visibility is independently rechecked for the authenticated human before checkout, selection, or focused execution; session attachment by itself is not authority.
 
 ### Session and client binding
 

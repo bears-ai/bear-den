@@ -46,7 +46,7 @@ use den_runtime::{
     agent_loop::{LedgerEvidenceRef, LoopControlDecisionKind, LoopControlLedgerInput},
     current_task::select_session_current_task,
 };
-use den_service::bears::db::get_bear;
+use den_service::bears::db::{get_bear, membership_role_for_user, role_is_bear_admin};
 use den_service::{
     bears::BearProfile, client_sessions, conversation::persistence as conversation_persistence,
 };
@@ -182,6 +182,9 @@ pub(crate) fn is_workflow_tool(tool_name: &str) -> bool {
             | DEN_WORK_SURFACE_CONFIRM
     )
 }
+
+#[cfg(test)]
+mod access_tests;
 
 #[cfg(test)]
 mod workflow_tool_tests {
@@ -560,6 +563,18 @@ pub(crate) async fn list_runtime_diagnostics(
             )))
         }
     };
+    let docket_job_id = parse_optional_uuid("docket_job_id", arguments.docket_job_id)?;
+    if let Some(job_id) = docket_job_id {
+        authorize_job(pool, context, job_id).await?;
+    } else {
+        // Unscoped diagnostics can include evidence from other members' private jobs.
+        let role = viewer_membership_role(pool, context).await?;
+        if !role_is_bear_admin(role.as_deref()) {
+            return Err(CustomError::Authorization(
+                "Unscoped runtime diagnostics require Bear admin access".to_string(),
+            ));
+        }
+    }
     let events = runtime_exception_events::list(
         pool,
         RuntimeExceptionEventFilter {
@@ -567,7 +582,7 @@ pub(crate) async fn list_runtime_diagnostics(
             work_run_id: parse_optional_uuid("work_run_id", arguments.work_run_id)?,
             runtime_run_id: arguments.runtime_run_id,
             session_id: arguments.session_id,
-            docket_job_id: parse_optional_uuid("docket_job_id", arguments.docket_job_id)?,
+            docket_job_id,
             event_code: arguments.event_code,
             severity,
             limit: arguments.limit,
@@ -675,7 +690,7 @@ pub(crate) async fn get_task_list_status(
     // generic task list defaults to root tasks and hides an attached child task.
     let tasks = if let Some(session_anchor_id) = session_anchor_id {
         PgDocketService::from_pool(pool)
-            .list_session_tasks(context.bear_id, session_anchor_id)
+            .list_session_tasks_for_human(context.bear_id, session_anchor_id, context.user_id)
             .await?
     } else {
         Vec::new()
@@ -763,6 +778,7 @@ pub(crate) async fn update_task_list(
     let client_session_id = context.client_session_id.as_deref().ok_or_else(|| {
         DenError::ValidationError("update_task_list needs the current client session".to_string())
     })?;
+    authorize_task(pool, context, task_id).await?;
     let selection = select_session_current_task(
         pool,
         context.user_id,
@@ -1244,7 +1260,7 @@ pub(crate) async fn session_anchored_task_list_projection(
 ) -> Result<Option<TaskListProjection>, CustomError> {
     // Keep cached activity plans consistent with current-task selection.
     let tasks = PgDocketService::from_pool(pool)
-        .list_session_tasks(context.bear_id, session_anchor_id)
+        .list_session_tasks_for_human(context.bear_id, session_anchor_id, context.user_id)
         .await?;
     let selected_task_id = if let Some(client_session_id) = context.client_session_id.as_deref() {
         client_sessions::find_for_user_bear_session_id(
@@ -1430,6 +1446,9 @@ pub(crate) async fn create_job(
             })
         })?;
     let args: DocketJobCreateArguments = serde_json::from_value(arguments)?;
+    if let Some(supersedes_job_id) = args.supersedes_job_id {
+        authorize_job(pool, context, supersedes_job_id).await?;
+    }
     let (work_surface_id, surface_auto_bound) = if args.work_surface_assignments.is_empty() {
         resolve_surface_id_for_create(pool, stores, context, role, args.work_surface_id).await?
     } else {
@@ -1513,6 +1532,77 @@ pub(crate) async fn create_job(
     }))
 }
 
+async fn authorize_job(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    job_id: Uuid,
+) -> Result<(), CustomError> {
+    PgDocketService::from_pool(pool)
+        .authorize_job_for_human(context.bear_id, job_id, context.user_id)
+        .await?;
+    Ok(())
+}
+
+async fn authorize_task(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    task_id: Uuid,
+) -> Result<(), CustomError> {
+    PgDocketService::from_pool(pool)
+        .authorize_task_for_human(context.bear_id, task_id, context.user_id)
+        .await?;
+    Ok(())
+}
+
+async fn viewer_membership_role(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+) -> Result<Option<String>, CustomError> {
+    Ok(
+        membership_role_for_user(pool, context.user_id, context.bear_id)
+            .await?
+            .ok_or_else(|| {
+                CustomError::NotFound("Bear not found or token lacks access".to_string())
+            })?,
+    )
+}
+
+async fn visible_jobs(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    filter: DocketJobListFilter,
+) -> Result<Vec<docket::DocketJobRow>, CustomError> {
+    let role = viewer_membership_role(pool, context).await?;
+    Ok(PgDocketService::from_pool(pool)
+        .list_jobs_for_viewer(
+            context.bear_id,
+            context.user_id,
+            role_is_bear_admin(role.as_deref()),
+            filter,
+        )
+        .await?)
+}
+
+async fn filter_visible_tasks(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    tasks: Vec<docket::DocketTaskProjection>,
+) -> Result<Vec<docket::DocketTaskProjection>, CustomError> {
+    let service = PgDocketService::from_pool(pool);
+    let mut visible = Vec::with_capacity(tasks.len());
+    for task in tasks {
+        match service
+            .authorize_task_for_human(context.bear_id, task.task.id, context.user_id)
+            .await
+        {
+            Ok(()) => visible.push(task),
+            Err(DenError::NotFound(_)) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(visible)
+}
+
 pub(crate) async fn list_jobs(
     pool: &PgPool,
     config: &Config,
@@ -1520,17 +1610,17 @@ pub(crate) async fn list_jobs(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketJobListArguments = serde_json::from_value(arguments)?;
-    let jobs = PgDocketService::from_pool(pool)
-        .list_jobs(
-            context.bear_id,
-            DocketJobListFilter {
-                statuses: args.statuses,
-                include_cancelled: args.include_cancelled,
-                limit: args.limit,
-                ..DocketJobListFilter::default()
-            },
-        )
-        .await?;
+    let jobs = visible_jobs(
+        pool,
+        context,
+        DocketJobListFilter {
+            statuses: args.statuses,
+            include_cancelled: args.include_cancelled,
+            limit: args.limit,
+            ..DocketJobListFilter::default()
+        },
+    )
+    .await?;
     let web_base = docket_web_base(pool, config, context.bear_id).await?;
     Ok(json!({
         "domain": "docket",
@@ -1553,18 +1643,18 @@ pub(crate) async fn find_job(
     let job_id = resolve_reference(
         &args.job_ref,
         "job",
-        PgDocketService::from_pool(pool)
-            .list_jobs(
-                context.bear_id,
-                DocketJobListFilter {
-                    include_cancelled: true,
-                    limit: 200,
-                    ..DocketJobListFilter::default()
-                },
-            )
-            .await?
-            .into_iter()
-            .map(|job| job.id),
+        visible_jobs(
+            pool,
+            context,
+            DocketJobListFilter {
+                include_cancelled: true,
+                limit: 200,
+                ..DocketJobListFilter::default()
+            },
+        )
+        .await?
+        .into_iter()
+        .map(|job| job.id),
     )?;
     get_job(pool, context, json!({ "job_id": job_id })).await
 }
@@ -1575,6 +1665,7 @@ pub(crate) async fn get_job(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketJobGetArguments = serde_json::from_value(arguments)?;
+    authorize_job(pool, context, args.job_id).await?;
     let job = PgDocketService::from_pool(pool)
         .get_job(context.bear_id, args.job_id)
         .await?;
@@ -1665,6 +1756,7 @@ pub(crate) async fn update_job(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketJobUpdateArguments = serde_json::from_value(arguments)?;
+    authorize_job(pool, context, args.job_id).await?;
     let work_surface_id = if let Some(surface_id) = args.work_surface_id {
         validate_assigned_surface(pool, context, surface_id).await?;
         Some(Some(surface_id))
@@ -1706,6 +1798,7 @@ pub(crate) async fn set_job_lifecycle(
     status: DocketJobStatus,
 ) -> Result<Value, CustomError> {
     let args: DocketJobLifecycleArguments = serde_json::from_value(arguments)?;
+    authorize_job(pool, context, args.job_id).await?;
     let job = PgDocketService::from_pool(pool)
         .update_job(DocketJobUpdate {
             bear_id: context.bear_id,
@@ -1740,6 +1833,7 @@ pub(crate) async fn cancel_job_run(
         .capabilities
         .require(den_core::BearCapability::DispatchWork)?;
     let args: DocketJobLifecycleArguments = serde_json::from_value(arguments)?;
+    authorize_job(pool, context, args.job_id).await?;
     let job = PgDocketService::from_pool(pool)
         .cancel_job_run(context.bear_id, args.job_id)
         .await?;
@@ -1775,6 +1869,7 @@ pub(crate) async fn execute_job(
             .into());
         }
     }
+    authorize_job(pool, context, args.job_id).await?;
     let outcome = PgDocketService::from_pool(pool)
         .execute_job(DocketJobExecuteRequest {
             bear_id: context.bear_id,
@@ -1824,6 +1919,7 @@ pub(crate) async fn reconcile_job_execution(
     policy
         .capabilities
         .require(den_core::BearCapability::ExecuteJob)?;
+    authorize_job(pool, context, args.job_id).await?;
     let outcome = PgDocketService::from_pool(pool)
         .reconcile_execution(DocketJobExecuteRequest {
             bear_id: context.bear_id,
@@ -1897,6 +1993,7 @@ async fn bind_selected_task_to_current_session(
     )
     .await?
     .ok_or_else(|| CustomError::NotFound("client session not found".to_string()))?;
+    authorize_task(pool, context, task_id).await?;
     PgDocketService::from_pool(pool)
         .attach_task_to_session(context.bear_id, task_id, session.id)
         .await?;
@@ -1924,6 +2021,7 @@ pub(crate) async fn evaluate_criterion(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketCriterionEvaluateArguments = serde_json::from_value(arguments)?;
+    authorize_job(pool, context, args.job_id).await?;
     let job = PgDocketService::from_pool(pool)
         .evaluate_criterion(DocketCriterionStateUpdate {
             bear_id: context.bear_id,
@@ -2001,6 +2099,12 @@ pub(crate) async fn create_task(
     // ponytail: jobless tasks belong only to the authenticated current session;
     // delegated work must first become a Job-owned task.
     let session_anchor_id = resolve_task_session_anchor_id(pool, context, job_id).await?;
+    if let Some(job_id) = job_id {
+        authorize_job(pool, context, job_id).await?;
+    }
+    if let Some(parent_task_id) = args.parent_task_id {
+        authorize_task(pool, context, parent_task_id).await?;
+    }
     enforce_oriented_task_create_policy(pool, context, &args).await?;
     let session_attachment_id =
         if capabilities.contains(den_core::BearCapability::OwnSessionTasks) && job_id.is_some() {
@@ -2129,6 +2233,9 @@ pub(crate) async fn select_current_task(
             "select_current_task needs the current client session".to_string(),
         )
     })?;
+    if let Some(task_id) = args.task_id {
+        authorize_task(pool, context, task_id).await?;
+    }
     match den_runtime::current_task::select_session_current_task(
         pool,
         context.user_id,
@@ -2173,6 +2280,12 @@ pub(crate) async fn list_tasks(
     let defaulted_to_session_task_tree =
         should_default_session_task_tree(&capabilities, args.job_id);
     let job_id = args.job_id;
+    if let Some(job_id) = job_id {
+        authorize_job(pool, context, job_id).await?;
+    }
+    if let Some(parent_task_id) = args.parent_task_id {
+        authorize_task(pool, context, parent_task_id).await?;
+    }
     let session_anchor_id = if capabilities.contains(den_core::BearCapability::OwnSessionTasks) {
         resolve_task_session_anchor_id(pool, context, args.job_id).await?
     } else {
@@ -2190,6 +2303,7 @@ pub(crate) async fn list_tasks(
             },
         )
         .await?;
+    let tasks = filter_visible_tasks(pool, context, tasks).await?;
     let content = docket_tasks_card_content(&tasks);
     let summary = docket_tasks_summary_for_scope(&tasks, job_id, defaulted_to_session_task_tree);
     let web_base = docket_web_base(pool, config, context.bear_id).await?;
@@ -2222,16 +2336,16 @@ pub(crate) async fn find_task(
     let args: DocketTaskFindArguments = serde_json::from_value(arguments)?;
     let service = PgDocketService::from_pool(pool);
     let job_id = if let Some(reference) = args.job_ref.as_deref() {
-        let jobs = service
-            .list_jobs(
-                context.bear_id,
-                DocketJobListFilter {
-                    include_cancelled: true,
-                    limit: 200,
-                    ..DocketJobListFilter::default()
-                },
-            )
-            .await?;
+        let jobs = visible_jobs(
+            pool,
+            context,
+            DocketJobListFilter {
+                include_cancelled: true,
+                limit: 200,
+                ..DocketJobListFilter::default()
+            },
+        )
+        .await?;
         Some(resolve_reference(
             reference,
             "job",
@@ -2251,12 +2365,13 @@ pub(crate) async fn find_task(
             },
         )
         .await?;
+    let visible_tasks = filter_visible_tasks(pool, context, tasks).await?;
     let task_id = resolve_reference(
         &args.task_ref,
         "task",
-        tasks.iter().map(|task| task.task.id),
+        visible_tasks.iter().map(|task| task.task.id),
     )?;
-    let task = tasks
+    let task = visible_tasks
         .into_iter()
         .find(|task| task.task.id == task_id)
         .expect("resolved task is listed");
@@ -2279,6 +2394,10 @@ pub(crate) async fn update_task(
             "update_task only edits durable task definition fields; use update_current_task_status for run-scoped status/results in the active run".to_string(),
         )
         .into());
+    }
+    authorize_task(pool, context, args.task_id).await?;
+    if let Some(parent_task_id) = args.parent_task_id {
+        authorize_task(pool, context, parent_task_id).await?;
     }
     let task = PgDocketService::from_pool(pool)
         .update_task(DocketTaskUpdate {
@@ -2336,6 +2455,8 @@ pub(crate) async fn settle_execution_task(
         )
         .into());
     }
+    authorize_job(pool, context, job_id).await?;
+    authorize_task(pool, context, args.task_id).await?;
     let outcome = PgDocketService::from_pool(pool)
         .settle_execution_task(DocketExecutionTaskSettlement {
             execution: DocketJobExecuteRequest {
@@ -2372,13 +2493,10 @@ pub(crate) async fn update_current_task_status(
     if args.job_id.is_none() && args.run_id.is_none() {
         let session_anchor_id = resolve_task_session_anchor_id(pool, context, None).await?;
         let session_tasks = PgDocketService::from_pool(pool)
-            .list_tasks(
+            .list_session_tasks_for_human(
                 context.bear_id,
-                DocketTaskListFilter {
-                    session_anchor_id,
-                    limit: 500,
-                    ..DocketTaskListFilter::default()
-                },
+                session_anchor_id.expect("jobless task scope resolves session"),
+                context.user_id,
             )
             .await?;
         if session_tasks
@@ -2473,6 +2591,8 @@ pub(crate) async fn update_current_task_status(
                 .to_string(),
         )
     })?;
+    authorize_job(pool, context, job_id).await?;
+    authorize_task(pool, context, args.task_id).await?;
     let task = PgDocketService::from_pool(pool)
         .update_task(DocketTaskUpdate {
             bear_id: context.bear_id,
@@ -2553,6 +2673,9 @@ pub(crate) async fn append_docket_entry(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketEntryAppendArguments = serde_json::from_value(arguments)?;
+    if let Some(job_id) = args.job_id {
+        authorize_job(pool, context, job_id).await?;
+    }
     let task_id = match (args.scope, args.task_id) {
         (DocketEntryScope::TaskJournal, Some(task_id)) => Some(task_id),
         (DocketEntryScope::TaskJournal, None) => current_client_session_task_id(pool, context)
@@ -2566,6 +2689,12 @@ pub(crate) async fn append_docket_entry(
             .map(Some)?,
         (DocketEntryScope::JobNotebook, task_id) => task_id,
     };
+    if let Some(task_id) = task_id {
+        authorize_task(pool, context, task_id).await?;
+    }
+    for task_id in &args.related_task_ids {
+        authorize_task(pool, context, *task_id).await?;
+    }
     let entry = PgDocketService::from_pool(pool)
         .append_entry(DocketEntryCreate {
             bear_id: context.bear_id,
@@ -2594,6 +2723,29 @@ pub(crate) async fn promote_docket_entry(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketEntryPromoteArguments = serde_json::from_value(arguments)?;
+    viewer_membership_role(pool, context).await?;
+    // Docket has no entry-by-ID read; fail closed if it is not in the bounded list.
+    let source = PgDocketService::from_pool(pool)
+        .list_entries(
+            context.bear_id,
+            DocketEntryListFilter {
+                job_id: None,
+                task_id: None,
+                limit: 500,
+            },
+        )
+        .await?
+        .into_iter()
+        .find(|entry| entry.id == args.entry_id)
+        .ok_or_else(|| {
+            CustomError::NotFound(format!("Docket entry {} not found", args.entry_id))
+        })?;
+    if let Some(job_id) = source.job_id {
+        authorize_job(pool, context, job_id).await?;
+    }
+    if let Some(task_id) = source.task_id {
+        authorize_task(pool, context, task_id).await?;
+    }
     let entry = PgDocketService::from_pool(pool)
         .promote_entry(DocketEntryPromotion {
             bear_id: context.bear_id,
@@ -2612,6 +2764,13 @@ pub(crate) async fn list_docket_entries(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketEntryListArguments = serde_json::from_value(arguments)?;
+    viewer_membership_role(pool, context).await?;
+    if let Some(job_id) = args.job_id {
+        authorize_job(pool, context, job_id).await?;
+    }
+    if let Some(task_id) = args.task_id {
+        authorize_task(pool, context, task_id).await?;
+    }
     let entries = PgDocketService::from_pool(pool)
         .list_entries(
             context.bear_id,
@@ -2622,15 +2781,41 @@ pub(crate) async fn list_docket_entries(
             },
         )
         .await?;
-    Ok(json!({ "domain": "docket", "entries": entries }))
+    let mut visible = Vec::with_capacity(entries.len());
+    for entry in entries {
+        if let Some(job_id) = entry.job_id {
+            match authorize_job(pool, context, job_id).await {
+                Ok(()) => {}
+                Err(CustomError::NotFound(_)) => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        if let Some(task_id) = entry.task_id {
+            match authorize_task(pool, context, task_id).await {
+                Ok(()) => {}
+                Err(CustomError::NotFound(_)) => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        visible.push(entry);
+    }
+    Ok(json!({ "domain": "docket", "entries": visible }))
 }
 
-pub(crate) async fn sync_task_list(pool: &PgPool, arguments: Value) -> Result<Value, CustomError> {
+pub(crate) async fn sync_task_list(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    arguments: Value,
+) -> Result<Value, CustomError> {
     let args: TaskListSyncArguments = serde_json::from_value(arguments)?;
     let outcome = PgDocketService::from_pool(pool)
-        .sync_task_list(TaskListSyncRequest {
-            task_list: args.task_list,
-        })
+        .sync_task_list_for_human(
+            context.bear_id,
+            context.user_id,
+            TaskListSyncRequest {
+                task_list: args.task_list,
+            },
+        )
         .await?;
     let summary = if outcome.applied {
         format!("Synced {}", task_list_summary(&outcome.task_list))
@@ -2664,6 +2849,7 @@ pub(crate) async fn checkout_task_list(
 ) -> Result<Value, CustomError> {
     let args: TaskListCheckoutArguments = serde_json::from_value(arguments)?;
     let (source, checkout_job_id) = if let Some(job_id) = args.job_id {
+        authorize_job(pool, context, job_id).await?;
         (
             TaskListCheckoutSource::DocketJob {
                 job_id,
@@ -3055,6 +3241,7 @@ pub(crate) async fn dispatch_work(
         .capabilities
         .require(den_core::BearCapability::DispatchWork)?;
     let args: WorkDispatchArguments = serde_json::from_value(arguments)?;
+    authorize_job(pool, context, args.job_id).await?;
     PgDocketService::from_pool(pool)
         .get_job(context.bear_id, args.job_id)
         .await?
@@ -3114,6 +3301,9 @@ pub(crate) async fn list_work_runs(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: WorkRunListArguments = serde_json::from_value(arguments)?;
+    if let Some(job_id) = args.job_id {
+        authorize_job(pool, context, job_id).await?;
+    }
     let runs = den_docket::work_runs::list_work_runs(
         pool,
         den_docket::work_runs::WorkRunListFilter {
@@ -3124,6 +3314,7 @@ pub(crate) async fn list_work_runs(
         },
     )
     .await?;
+    let runs = filter_visible_work_runs(pool, context, runs).await?;
     let web_base = docket_web_base(pool, config, context.bear_id).await?;
     let queue_by_run = work_run_queue_map(pool, &runs).await?;
     let items: Vec<Value> = runs
@@ -3144,6 +3335,26 @@ pub(crate) async fn list_work_runs(
         }),
         "work_runs": items,
     }))
+}
+
+async fn filter_visible_work_runs(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    runs: Vec<den_docket::work_runs::WorkRunRow>,
+) -> Result<Vec<den_docket::work_runs::WorkRunRow>, CustomError> {
+    let service = PgDocketService::from_pool(pool);
+    let mut visible = Vec::with_capacity(runs.len());
+    for run in runs {
+        match service
+            .authorize_job_for_human(context.bear_id, run.job_id, context.user_id)
+            .await
+        {
+            Ok(()) => visible.push(run),
+            Err(DenError::NotFound(_)) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(visible)
 }
 
 /// Queue placement for the queued runs in `runs`, keyed by run id (runs
@@ -3199,6 +3410,7 @@ pub(crate) async fn get_work_run(
         .ok_or_else(|| {
             CustomError::NotFound(format!("work run not found: {}", args.work_run_id))
         })?;
+    authorize_job(pool, context, run.job_id).await?;
     let mut value = work_run_summary_json(&run, None);
     value["work_surface"] = run.work_surface.clone().unwrap_or(Value::Null);
     // Result refs already carry the bounded log tail / diff captured at
@@ -3235,20 +3447,21 @@ pub(crate) async fn find_work_run(
                 },
             )
             .await?;
+            let runs = filter_visible_work_runs(pool, context, runs).await?;
             let run_id = resolve_reference(reference, "work run", runs.iter().map(|run| run.id))?;
             get_work_run(pool, context, json!({ "work_run_id": run_id })).await
         }
         (None, Some(reference)) => {
-            let jobs = PgDocketService::from_pool(pool)
-                .list_jobs(
-                    context.bear_id,
-                    DocketJobListFilter {
-                        include_cancelled: true,
-                        limit: 200,
-                        ..DocketJobListFilter::default()
-                    },
-                )
-                .await?;
+            let jobs = visible_jobs(
+                pool,
+                context,
+                DocketJobListFilter {
+                    include_cancelled: true,
+                    limit: 200,
+                    ..DocketJobListFilter::default()
+                },
+            )
+            .await?;
             let job_id = resolve_reference(reference, "job", jobs.into_iter().map(|job| job.id))?;
             list_work_runs(
                 pool,
@@ -3276,6 +3489,13 @@ pub(crate) async fn cancel_work_run(
         .capabilities
         .require(den_core::BearCapability::DispatchWork)?;
     let args: WorkRunCancelArguments = serde_json::from_value(arguments)?;
+    let run = den_docket::work_runs::get_work_run(pool, args.work_run_id)
+        .await?
+        .filter(|run| run.bear_id == context.bear_id)
+        .ok_or_else(|| {
+            CustomError::NotFound(format!("work run not found: {}", args.work_run_id))
+        })?;
+    authorize_job(pool, context, run.job_id).await?;
     let requested = den_docket::work_runs::request_work_run_cancel_with_provenance(
         pool,
         args.work_run_id,
@@ -3318,6 +3538,13 @@ pub(crate) async fn resolve_stalled_work_run(
         .capabilities
         .require(den_core::BearCapability::DispatchWork)?;
     let args: WorkRunResolveStalledArguments = serde_json::from_value(arguments)?;
+    let run = den_docket::work_runs::get_work_run(pool, args.work_run_id)
+        .await?
+        .filter(|run| run.bear_id == context.bear_id)
+        .ok_or_else(|| {
+            CustomError::NotFound(format!("work run not found: {}", args.work_run_id))
+        })?;
+    authorize_job(pool, context, run.job_id).await?;
     let resolved = den_docket::work_runs::resolve_stalled_work_run(
         pool,
         args.work_run_id,

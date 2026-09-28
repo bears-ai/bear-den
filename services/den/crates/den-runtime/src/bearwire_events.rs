@@ -208,12 +208,47 @@ pub async fn list_focused_execution_transition_records(
     )
     .fetch_all(pool)
     .await?;
-    let history_truncated = rows.len() > limit as usize;
-    let mut records = rows
+    decode_focused_execution_transition_records(rows.into_iter().map(|row| row.event_json), limit)
+}
+
+pub async fn list_focused_execution_transition_records_for_viewer(
+    pool: &PgPool,
+    bear_id: Uuid,
+    user_id: i32,
+    session_id: &str,
+    limit: i64,
+) -> Result<(Vec<FocusedExecutionTransitionRecord>, bool), DenError> {
+    let limit = limit.clamp(1, 100);
+    let rows = sqlx::query!(
+        r#"
+        SELECT event_json AS "event_json: serde_json::Value"
+        FROM bearwire_events
+        WHERE bear_id = $1 AND user_id = $2 AND session_id = $3 AND event_type = $4
+        ORDER BY sequence_no DESC
+        LIMIT $5
+        "#,
+        bear_id,
+        user_id,
+        session_id,
+        FOCUSED_EXECUTION_TRANSITION_EVENT_TYPE,
+        limit + 1,
+    )
+    .fetch_all(pool)
+    .await?;
+    decode_focused_execution_transition_records(rows.into_iter().map(|row| row.event_json), limit)
+}
+
+fn decode_focused_execution_transition_records(
+    event_jsons: impl IntoIterator<Item = serde_json::Value>,
+    limit: i64,
+) -> Result<(Vec<FocusedExecutionTransitionRecord>, bool), DenError> {
+    let event_jsons = event_jsons.into_iter().collect::<Vec<_>>();
+    let history_truncated = event_jsons.len() > limit as usize;
+    let mut records = event_jsons
         .into_iter()
         .take(limit as usize)
-        .map(|row| {
-            let event: BearWireEvent = serde_json::from_value(row.event_json).map_err(|error| {
+        .map(|event_json| {
+            let event: BearWireEvent = serde_json::from_value(event_json).map_err(|error| {
                 DenError::System(format!(
                     "decode focused-execution diagnostic event failed: {error}"
                 ))
@@ -395,6 +430,49 @@ pub async fn list_bearwire_events_for_run(
         .collect()
 }
 
+pub async fn list_bearwire_events_after_for_user(
+    pool: &PgPool,
+    bear_id: Uuid,
+    user_id: i32,
+    session_id: &str,
+    after_sequence: Option<i64>,
+    limit: i64,
+) -> Result<Vec<BearWireEventRow>, DenError> {
+    let limit = limit.clamp(1, 501);
+    let rows = sqlx::query!(
+        r#"
+        SELECT id, sequence_no, session_id, event_type, event_json, created_at
+        FROM bearwire_events
+        WHERE bear_id = $1 AND user_id = $2 AND session_id = $3
+          AND ($4::bigint IS NULL OR sequence_no > $4)
+        ORDER BY sequence_no ASC
+        LIMIT $5
+        "#,
+        bear_id,
+        user_id,
+        session_id,
+        after_sequence,
+        limit
+    )
+    .fetch_all(pool)
+    .await?;
+
+    rows.into_iter()
+        .map(|row| {
+            let event: BearWireEvent = serde_json::from_value(row.event_json)
+                .map_err(|err| DenError::System(format!("decode BearWire event failed: {err}")))?;
+            Ok(BearWireEventRow {
+                id: row.id,
+                sequence_no: row.sequence_no,
+                session_id: row.session_id,
+                event_type: row.event_type,
+                event,
+                created_at: row.created_at,
+            })
+        })
+        .collect()
+}
+
 pub async fn list_bearwire_events_after(
     pool: &PgPool,
     session_id: &str,
@@ -437,6 +515,326 @@ pub async fn list_bearwire_events_after(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn scoped_event_page_filters_identity_before_limit_and_cursor(pool: PgPool) {
+        use den_service::bears::db::{self, BearParams};
+
+        let suffix = Uuid::new_v4().simple().to_string();
+        let owner = sqlx::query_scalar!(
+            "INSERT INTO users (email, username, display_name, passhash) VALUES ($1, $2, $3, $4) RETURNING id",
+            format!("owner-{suffix}@example.test"),
+            format!("o{}", &suffix[..16]),
+            "Owner",
+            "unused",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let other = sqlx::query_scalar!(
+            "INSERT INTO users (email, username, display_name, passhash) VALUES ($1, $2, $3, $4) RETURNING id",
+            format!("other-{suffix}@example.test"),
+            format!("x{}", &suffix[..16]),
+            "Other",
+            "unused",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        async fn create_bear(pool: &PgPool, slug: &str) -> Uuid {
+            db::create_bear(
+                pool,
+                BearParams {
+                    slug,
+                    name: "Event page test Bear",
+                    description: "test",
+                    system_prompt: "test",
+                    default_model: None,
+                    tools_enabled: None,
+                    context_profile: None,
+                },
+            )
+            .await
+            .unwrap()
+        }
+        let bear_id = create_bear(&pool, &format!("events-{suffix}")).await;
+        let other_bear_id = create_bear(&pool, &format!("other-events-{suffix}")).await;
+        let session = format!("shared-{suffix}");
+        let owner_first = append_ephemeral_bearwire_event(
+            &pool,
+            &session,
+            Some(bear_id),
+            Some(owner),
+            "owner.first",
+            serde_json::json!({"private": "owner"}),
+        )
+        .await
+        .unwrap();
+        append_ephemeral_bearwire_event(
+            &pool,
+            &session,
+            Some(bear_id),
+            Some(other),
+            "other.first",
+            serde_json::json!({"private": "other"}),
+        )
+        .await
+        .unwrap();
+        append_ephemeral_bearwire_event(
+            &pool,
+            &session,
+            Some(other_bear_id),
+            Some(owner),
+            "other_bear.first",
+            serde_json::json!({"private": "other bear"}),
+        )
+        .await
+        .unwrap();
+        append_ephemeral_bearwire_event(
+            &pool,
+            &session,
+            Some(bear_id),
+            None,
+            "legacy.first",
+            serde_json::json!({"private": "legacy"}),
+        )
+        .await
+        .unwrap();
+        let owner_second = append_ephemeral_bearwire_event(
+            &pool,
+            &session,
+            Some(bear_id),
+            Some(owner),
+            "owner.second",
+            serde_json::json!({"private": "owner second"}),
+        )
+        .await
+        .unwrap();
+
+        let first = list_bearwire_events_after_for_user(&pool, bear_id, owner, &session, None, 1)
+            .await
+            .unwrap();
+        assert_eq!(
+            first.iter().map(|row| row.sequence_no).collect::<Vec<_>>(),
+            vec![owner_first.sequence_no]
+        );
+        let second = list_bearwire_events_after_for_user(
+            &pool,
+            bear_id,
+            owner,
+            &session,
+            Some(owner_first.sequence_no),
+            1,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            second.iter().map(|row| row.sequence_no).collect::<Vec<_>>(),
+            vec![owner_second.sequence_no]
+        );
+        assert!(list_bearwire_events_after_for_user(
+            &pool,
+            bear_id,
+            owner,
+            &session,
+            Some(owner_second.sequence_no),
+            1,
+        )
+        .await
+        .unwrap()
+        .is_empty());
+        assert_eq!(
+            list_bearwire_events_after_for_user(&pool, bear_id, other, &session, None, 10)
+                .await
+                .unwrap()
+                .iter()
+                .map(|row| row.event_type.as_str())
+                .collect::<Vec<_>>(),
+            vec!["other.first"]
+        );
+        assert_eq!(
+            list_bearwire_events_after_for_user(&pool, other_bear_id, owner, &session, None, 10)
+                .await
+                .unwrap()
+                .iter()
+                .map(|row| row.event_type.as_str())
+                .collect::<Vec<_>>(),
+            vec!["other_bear.first"]
+        );
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn focused_execution_diagnostics_filter_viewer_before_pagination(pool: PgPool) {
+        use den_service::bears::db::{self, BearParams, BEAR_ROLE_MEMBER};
+
+        let suffix = Uuid::new_v4().simple().to_string();
+        async fn user(pool: &PgPool, name: &str) -> i32 {
+            sqlx::query_scalar!(
+                "INSERT INTO users (email, username, display_name, passhash) VALUES ($1, $2, $3, $4) RETURNING id",
+                format!("{name}@example.test"),
+                name,
+                name,
+                "unused",
+            )
+            .fetch_one(pool)
+            .await
+            .unwrap()
+        }
+        async fn bear(pool: &PgPool, slug: &str) -> Uuid {
+            db::create_bear(
+                pool,
+                BearParams {
+                    slug,
+                    name: "Diagnostics test Bear",
+                    description: "test",
+                    system_prompt: "test",
+                    default_model: None,
+                    tools_enabled: None,
+                    context_profile: None,
+                },
+            )
+            .await
+            .unwrap()
+        }
+        async fn transition(
+            pool: &PgPool,
+            bear_id: Option<Uuid>,
+            user_id: Option<i32>,
+            session_id: &str,
+            label: &str,
+        ) -> u64 {
+            let event = BearWireEvent::persistent_typed(
+                FOCUSED_EXECUTION_TRANSITION_EVENT_TYPE,
+                FocusedExecutionTransition {
+                    state_version: 1,
+                    from: None,
+                    to: bearwire_protocol::lifecycle::FocusedExecutionState::Selected,
+                    reason:
+                        bearwire_protocol::lifecycle::FocusedExecutionTransitionReason::Reconciled,
+                    correlation_id: label.to_string(),
+                    causation_id: None,
+                    session_id: session_id.to_string(),
+                    task_id: None,
+                    run_id: None,
+                    attempt_id: None,
+                    fence_epoch: None,
+                    open_obligations: 0,
+                    task_selection_preserved: true,
+                },
+            );
+            append_bearwire_event(pool, session_id, bear_id, user_id, event)
+                .await
+                .unwrap()
+                .sequence_no as u64
+        }
+
+        let owner = user(&pool, &format!("o{}", &suffix[..16])).await;
+        let other = user(&pool, &format!("x{}", &suffix[..16])).await;
+        let bear_id = bear(&pool, &format!("diagnostics-{suffix}")).await;
+        let other_bear_id = bear(&pool, &format!("other-diagnostics-{suffix}")).await;
+        for (user_id, bear_id) in [(owner, bear_id), (other, bear_id), (owner, other_bear_id)] {
+            db::grant_membership(&pool, user_id, bear_id, Some(BEAR_ROLE_MEMBER))
+                .await
+                .unwrap();
+        }
+        let session = format!("shared-{suffix}");
+        let first = transition(&pool, Some(bear_id), Some(owner), &session, "owner.first").await;
+        transition(&pool, Some(bear_id), Some(other), &session, "other").await;
+        transition(
+            &pool,
+            Some(other_bear_id),
+            Some(owner),
+            &session,
+            "other.bear",
+        )
+        .await;
+        transition(&pool, Some(bear_id), None, &session, "no.user").await;
+        transition(&pool, None, Some(owner), &session, "no.bear").await;
+        let second = transition(&pool, Some(bear_id), Some(owner), &session, "owner.second").await;
+        transition(&pool, Some(bear_id), Some(other), &session, "other.latest").await;
+        let third = transition(&pool, Some(bear_id), Some(owner), &session, "owner.third").await;
+        transition(
+            &pool,
+            Some(bear_id),
+            Some(owner),
+            "different-session",
+            "different.session",
+        )
+        .await;
+
+        let (records, truncated) = list_focused_execution_transition_records_for_viewer(
+            &pool, bear_id, owner, &session, 1,
+        )
+        .await
+        .unwrap();
+        assert!(truncated);
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| record.sequence)
+                .collect::<Vec<_>>(),
+            vec![third]
+        );
+        let (records, truncated) = list_focused_execution_transition_records_for_viewer(
+            &pool, bear_id, owner, &session, 2,
+        )
+        .await
+        .unwrap();
+        assert!(truncated);
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| record.sequence)
+                .collect::<Vec<_>>(),
+            vec![second, third]
+        );
+        let (records, truncated) = list_focused_execution_transition_records_for_viewer(
+            &pool, bear_id, owner, &session, 3,
+        )
+        .await
+        .unwrap();
+        assert!(!truncated);
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| record.sequence)
+                .collect::<Vec<_>>(),
+            vec![first, second, third]
+        );
+        for (viewer_bear, viewer_user, expected) in [
+            (bear_id, other, vec!["other", "other.latest"]),
+            (other_bear_id, owner, vec!["other.bear"]),
+        ] {
+            let (records, truncated) = list_focused_execution_transition_records_for_viewer(
+                &pool,
+                viewer_bear,
+                viewer_user,
+                &session,
+                10,
+            )
+            .await
+            .unwrap();
+            assert!(!truncated);
+            assert_eq!(
+                records
+                    .iter()
+                    .map(|record| record.transition.correlation_id.as_str())
+                    .collect::<Vec<_>>(),
+                expected
+            );
+        }
+        let (records, truncated) = list_focused_execution_transition_records_for_viewer(
+            &pool,
+            other_bear_id,
+            other,
+            &session,
+            10,
+        )
+        .await
+        .unwrap();
+        assert!(records.is_empty());
+        assert!(!truncated);
+    }
 
     #[test]
     fn bearwire_event_id_preserves_wire_string() {

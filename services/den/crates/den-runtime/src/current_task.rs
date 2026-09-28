@@ -1,7 +1,7 @@
 use den_core::{BearCapability, CapabilitySet};
 use den_docket::{
-    task_list_projection_from_session_tasks_with_current_task, DocketService, PgDocketService,
-    TaskListItemStatus, TaskListProjection,
+    task_list_projection_from_session_tasks_with_current_task, PgDocketService, TaskListItemStatus,
+    TaskListProjection,
 };
 use den_http::errors::CustomError;
 use den_service::{
@@ -27,8 +27,12 @@ pub async fn preview_session_current_task_selection(
         client_sessions::find_for_user_bear_session_id(pool, user_id, bear_id, client_session_id)
             .await?
             .ok_or_else(|| CustomError::NotFound("client session not found".to_string()))?;
-    let tasks = PgDocketService::from_pool(pool)
-        .list_session_tasks(bear_id, session.id)
+    let docket = PgDocketService::from_pool(pool);
+    docket
+        .authorize_task_for_human(bear_id, task_id, user_id)
+        .await?;
+    let tasks = docket
+        .list_session_tasks_for_human(bear_id, session.id, user_id)
         .await?;
     actionable_task_title(
         bear_id,
@@ -114,8 +118,14 @@ pub async fn select_session_current_task(
         client_sessions::find_for_user_bear_session_id(pool, user_id, bear_id, client_session_id)
             .await?
             .ok_or_else(|| CustomError::NotFound("client session not found".to_string()))?;
-    let tasks = PgDocketService::from_pool(pool)
-        .list_session_tasks(bear_id, session.id)
+    let docket = PgDocketService::from_pool(pool);
+    if let Some(task_id) = task_id {
+        docket
+            .authorize_task_for_human(bear_id, task_id, user_id)
+            .await?;
+    }
+    let tasks = docket
+        .list_session_tasks_for_human(bear_id, session.id, user_id)
         .await?;
     let selected_title = task_id
         .map(|task_id| {

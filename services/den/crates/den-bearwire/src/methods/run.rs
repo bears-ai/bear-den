@@ -12,6 +12,7 @@ use bearwire_protocol::{
     methods::{RunCancelRequest, RunRecoverRequest, RunStartRequest, RunStateRequest},
     wire::BearWireEvent,
 };
+use den_core::ids::{BearId, UserId};
 use den_docket::{
     DocketExecutionAttemptRelease, DocketExecutionAttemptStart, DocketExecutionBindingKind,
     DocketExecutionHost, DocketExecutionHostKind, DocketFocusedContinuationDecision,
@@ -1506,6 +1507,13 @@ pub(crate) async fn settle_active_run_for_session(
     expected_run_id: Option<&str>,
     superseded_by_run_id: Option<&str>,
 ) -> Result<SettledRunLifecycle, CustomError> {
+    super::session::require_exclusive_client_session_id(
+        &state.sqlx_pool,
+        &ClientSessionId::new(session_id.to_string())?,
+        UserId::new(user_id),
+        BearId::new(bear_id),
+    )
+    .await?;
     let active_run = turn_runs::active_run_for_session(&state.sqlx_pool, session_id).await?;
     if expected_run_id.is_some()
         && active_run.as_ref().map(|run| run.run_id.as_str()) != expected_run_id
@@ -2053,6 +2061,13 @@ pub(crate) async fn run_recover_result(
             "recoverable technical-budget run not found".to_string(),
         ));
     }
+    super::session::require_exclusive_client_session_id(
+        &state.sqlx_pool,
+        &ClientSessionId::new(snapshot.session_id.clone())?,
+        UserId::new(user_id),
+        BearId::new(bear.id),
+    )
+    .await?;
     let payload: TechnicalBudgetRecoveryStartPayload =
         serde_json::from_value(snapshot.start_request).map_err(|_| {
             CustomError::ValidationError("recovery start payload is invalid".to_string())
@@ -2267,6 +2282,14 @@ async fn run_start_with_recovery_source(
     focused_task_id: Option<Uuid>,
 ) -> Result<Value, CustomError> {
     let session_id = request.session_id;
+    let validated_session_id = ClientSessionId::new(session_id.clone())?;
+    super::session::require_exclusive_client_session_id(
+        &state.sqlx_pool,
+        &validated_session_id,
+        UserId::new(user_id),
+        BearId::new(bear.id),
+    )
+    .await?;
     let prompt = request.prompt;
     let prompt_context = request.prompt_context;
     let client = request.client.unwrap_or_else(|| DEFAULT_CLIENT.to_string());
@@ -2404,6 +2427,13 @@ async fn run_start_with_recovery_source(
         },
     )
     .await?;
+    super::session::require_exclusive_client_session_id(
+        &state.sqlx_pool,
+        &validated_session_id,
+        UserId::new(user_id),
+        BearId::new(bear.id),
+    )
+    .await?;
     if let Some(client_context) = client_context.as_ref() {
         client_sessions::update_adapter_environment(
             &state.sqlx_pool,
@@ -2426,7 +2456,7 @@ async fn run_start_with_recovery_source(
         None
     };
     let focused_task_id = focused_task_id.or(inherited_focused_task_id);
-    let session_id = ClientSessionId::new(session_id.clone())?;
+    let session_id = validated_session_id;
     let session_id_string = session_id.to_string();
     // `run.start` only replaces an active turn when the caller explicitly
     // identifies this as a new user action, not a retry or reconnect.
@@ -3440,6 +3470,13 @@ pub(crate) async fn run_cancel_result(
     let request: RunCancelRequest = parse_params(params)?;
     let session_id = request.session_id;
     let requested_run_id = request.run_id;
+    super::session::require_exclusive_client_session_id(
+        &state.sqlx_pool,
+        &ClientSessionId::new(session_id.clone())?,
+        UserId::new(user_id),
+        BearId::new(bear.id),
+    )
+    .await?;
     let Some(session) = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
         user_id,

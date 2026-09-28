@@ -10,7 +10,10 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use den_core::DenError;
+use den_core::{
+    tools::identity::{role_is_bear_admin, BEAR_ROLE_ADMIN},
+    DenError,
+};
 
 struct ActiveTaskIdRow {
     executing_task_id: Uuid,
@@ -616,6 +619,18 @@ async fn insert_task(
     .map_err(Into::into)
 }
 
+fn known_task_list_visibilities() -> Vec<String> {
+    [
+        TaskListVisibility::PrivateToProfile,
+        TaskListVisibility::SameUser,
+        TaskListVisibility::BearVisible,
+        TaskListVisibility::HandoffRequested,
+    ]
+    .into_iter()
+    .map(|visibility| visibility.as_str().to_string())
+    .collect()
+}
+
 pub(super) async fn list_jobs(
     pool: &PgPool,
     bear_id: Uuid,
@@ -627,15 +642,7 @@ pub(super) async fn list_jobs(
     } else {
         filter.limit.min(200)
     };
-    let known_visibility: Vec<String> = [
-        TaskListVisibility::PrivateToProfile,
-        TaskListVisibility::SameUser,
-        TaskListVisibility::BearVisible,
-        TaskListVisibility::HandoffRequested,
-    ]
-    .into_iter()
-    .map(|visibility| visibility.as_str().to_string())
-    .collect();
+    let known_visibility = known_task_list_visibilities();
     let rows = sqlx::query_as!(
         DocketJobRow,
         r#"
@@ -695,6 +702,99 @@ pub(super) async fn list_jobs(
         jobs.push(job);
     }
     Ok(jobs)
+}
+
+pub(super) fn job_visible_to_human(
+    visibility: &str,
+    owner_id: i32,
+    user_id: i32,
+    membership_role: Option<&str>,
+) -> bool {
+    TaskListVisibility::parse(visibility).is_ok_and(|visibility| {
+        owner_id == user_id
+            || role_is_bear_admin(membership_role)
+            || visibility == TaskListVisibility::BearVisible
+    })
+}
+
+pub(super) async fn authorize_job_for_human(
+    pool: &PgPool,
+    bear_id: Uuid,
+    job_id: Uuid,
+    user_id: i32,
+) -> Result<(), DenError> {
+    let access = sqlx::query!(
+        r#"
+        SELECT j.created_by_user_id, j.visibility, membership.role
+        FROM bear_jobs j
+        JOIN user_bear membership ON membership.bear_id = j.bear_id
+        WHERE j.bear_id = $1 AND j.id = $2 AND membership.user_id = $3
+        "#,
+        bear_id,
+        job_id,
+        user_id,
+    )
+    .fetch_optional(pool)
+    .await?;
+    let allowed = access.is_some_and(|row| {
+        job_visible_to_human(
+            &row.visibility,
+            row.created_by_user_id,
+            user_id,
+            row.role.as_deref(),
+        )
+    });
+    if !allowed {
+        return Err(DenError::NotFound(format!("Docket job {job_id} not found")));
+    }
+    Ok(())
+}
+
+pub(super) async fn authorize_task_for_human(
+    pool: &PgPool,
+    bear_id: Uuid,
+    task_id: Uuid,
+    user_id: i32,
+) -> Result<(), DenError> {
+    let access = sqlx::query!(
+        r#"
+        SELECT t.job_id, t.created_by_user_id AS task_creator_id,
+               j.created_by_user_id AS "job_owner_id?: i32",
+               j.visibility AS "visibility?: String", membership.role,
+               EXISTS (
+                   SELECT 1 FROM bear_session_task_attachments a
+                   JOIN client_sessions s ON s.id = a.session_id
+                   WHERE a.task_id = t.id
+                     AND s.bear_id = $1 AND s.user_id = $3
+               ) AS "session_owned!: bool"
+        FROM bear_tasks t
+        JOIN user_bear membership ON membership.bear_id = t.bear_id AND membership.user_id = $3
+        LEFT JOIN bear_jobs j ON j.id = t.job_id AND j.bear_id = t.bear_id
+        WHERE t.bear_id = $1 AND t.id = $2
+        "#,
+        bear_id,
+        task_id,
+        user_id,
+    )
+    .fetch_optional(pool)
+    .await?;
+    let allowed = access.is_some_and(|row| match row.job_id {
+        Some(_) => row
+            .job_owner_id
+            .zip(row.visibility)
+            .is_some_and(|(owner, visibility)| {
+                job_visible_to_human(&visibility, owner, user_id, row.role.as_deref())
+            }),
+        // The attachment replaced bear_tasks.session_anchor_id. A released
+        // attachment still proves read provenance, never execution authority.
+        None => row.task_creator_id == Some(user_id) && row.session_owned,
+    });
+    if !allowed {
+        return Err(DenError::NotFound(format!(
+            "Docket task {task_id} not found"
+        )));
+    }
+    Ok(())
 }
 
 pub(super) async fn get_job(
@@ -2885,6 +2985,55 @@ pub(super) async fn list_session_tasks(
         .collect())
 }
 
+pub(super) async fn list_session_tasks_for_human(
+    pool: &PgPool,
+    bear_id: Uuid,
+    session_anchor_id: Uuid,
+    user_id: i32,
+) -> Result<Vec<DocketTaskProjection>, DenError> {
+    const LIMIT: i64 = 500;
+    let known_visibility = known_task_list_visibilities();
+    let tasks = sqlx::query_as!(
+        DocketTaskRow,
+        r#"
+        SELECT t.id, t.bear_id, t.job_id, t.parent_task_id, t.sibling_order,
+               t.kind, t.scope, t.title, t.body, t.completion_criteria AS "completion_criteria: _",
+               t.difficulty, t.effort_hint, t.routing_strategy, t.expected_context_size,
+               t.result_rollup_policy, t.created_by_role, t.created_by_user_id, t.created_by_agent_id,
+               t.created_in_run_id, t.settled_by_entry_id, t.created_at, t.updated_at
+        FROM bear_session_task_attachments a
+        JOIN bear_tasks t ON t.id = a.task_id AND t.bear_id = $1
+        JOIN client_sessions s ON s.id = a.session_id AND s.bear_id = $1 AND s.user_id = $3
+        JOIN user_bear membership ON membership.bear_id = $1 AND membership.user_id = $3
+        LEFT JOIN bear_jobs j ON j.id = t.job_id AND j.bear_id = t.bear_id
+        WHERE a.released_at IS NULL AND t.settled_by_entry_id IS NULL AND a.session_id = $2
+          AND (
+              (t.job_id IS NOT NULL AND j.id IS NOT NULL
+               AND j.visibility = ANY($4)
+               AND (j.created_by_user_id = $3 OR lower(btrim(membership.role)) = $5
+                    OR j.visibility = $6))
+              OR (t.job_id IS NULL AND t.created_by_user_id = $3)
+          )
+        ORDER BY t.sibling_order, t.created_at, t.id
+        LIMIT $7
+        "#,
+        bear_id,
+        session_anchor_id,
+        user_id,
+        &known_visibility,
+        BEAR_ROLE_ADMIN,
+        TaskListVisibility::BearVisible.as_str(),
+        LIMIT,
+    )
+    .fetch_all(pool)
+    .await?;
+    let states = current_run_states_for_tasks(pool, None, &tasks).await?;
+    Ok(tasks
+        .into_iter()
+        .map(|task| DocketTaskProjection::new(task.clone(), states.get(&task.id).cloned()))
+        .collect())
+}
+
 pub(super) async fn attach_job_tasks_to_session(
     pool: &PgPool,
     bear_id: Uuid,
@@ -4331,7 +4480,7 @@ pub(super) async fn sync_task_list(
     ))
 }
 
-fn task_list_job_id(task_list: &TaskListProjection) -> Option<Uuid> {
+pub(super) fn task_list_job_id(task_list: &TaskListProjection) -> Option<Uuid> {
     task_list
         .source_ref
         .docket_job_id

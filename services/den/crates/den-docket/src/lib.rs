@@ -21,6 +21,8 @@ mod execution_control_tests;
 pub mod execution_profiles;
 #[cfg(test)]
 mod integration_tests;
+#[cfg(test)]
+mod job_access_tests;
 pub mod model;
 #[cfg(test)]
 mod primary_output_tests;
@@ -28,6 +30,10 @@ pub mod recovery;
 pub mod routing;
 pub mod service;
 pub mod supervisor;
+#[cfg(test)]
+mod sync_access_tests;
+#[cfg(test)]
+mod task_access_tests;
 pub mod work_runs;
 #[cfg(test)]
 mod work_runs_tests;

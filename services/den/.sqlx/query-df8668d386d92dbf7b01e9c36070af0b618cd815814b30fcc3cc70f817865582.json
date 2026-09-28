@@ -1,0 +1,54 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT t.job_id, t.created_by_user_id AS task_creator_id,\n               j.created_by_user_id AS \"job_owner_id?: i32\",\n               j.visibility AS \"visibility?: String\", membership.role,\n               EXISTS (\n                   SELECT 1 FROM bear_session_task_attachments a\n                   JOIN client_sessions s ON s.id = a.session_id\n                   WHERE a.task_id = t.id AND a.released_at IS NULL\n                     AND s.bear_id = $1 AND s.user_id = $3\n               ) AS \"session_owned!: bool\"\n        FROM bear_tasks t\n        JOIN user_bear membership ON membership.bear_id = t.bear_id AND membership.user_id = $3\n        LEFT JOIN bear_jobs j ON j.id = t.job_id AND j.bear_id = t.bear_id\n        WHERE t.bear_id = $1 AND t.id = $2\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "job_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "task_creator_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "job_owner_id?: i32",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 3,
+        "name": "visibility?: String",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "role",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "session_owned!: bool",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      true,
+      true,
+      false,
+      false,
+      true,
+      null
+    ]
+  },
+  "hash": "df8668d386d92dbf7b01e9c36070af0b618cd815814b30fcc3cc70f817865582"
+}

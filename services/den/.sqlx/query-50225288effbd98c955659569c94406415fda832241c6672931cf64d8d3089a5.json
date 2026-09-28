@@ -1,0 +1,154 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT t.id, t.bear_id, t.job_id, t.parent_task_id, t.sibling_order,\n               t.kind, t.scope, t.title, t.body, t.completion_criteria AS \"completion_criteria: _\",\n               t.difficulty, t.effort_hint, t.routing_strategy, t.expected_context_size,\n               t.result_rollup_policy, t.created_by_role, t.created_by_user_id, t.created_by_agent_id,\n               t.created_in_run_id, t.settled_by_entry_id, t.created_at, t.updated_at\n        FROM bear_session_task_attachments a\n        JOIN bear_tasks t ON t.id = a.task_id AND t.bear_id = $1\n        JOIN client_sessions s ON s.id = a.session_id AND s.bear_id = $1 AND s.user_id = $3\n        JOIN user_bear membership ON membership.bear_id = $1 AND membership.user_id = $3\n        LEFT JOIN bear_jobs j ON j.id = t.job_id AND j.bear_id = t.bear_id\n        WHERE a.released_at IS NULL AND t.settled_by_entry_id IS NULL AND a.session_id = $2\n          AND (\n              (t.job_id IS NOT NULL AND j.id IS NOT NULL\n               AND j.visibility = ANY($4)\n               AND (j.created_by_user_id = $3 OR lower(btrim(membership.role)) = $5\n                    OR j.visibility = $6))\n              OR (t.job_id IS NULL AND t.created_by_user_id = $3)\n          )\n        ORDER BY t.sibling_order, t.created_at, t.id\n        LIMIT $7\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "bear_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "job_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "parent_task_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "sibling_order",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 5,
+        "name": "kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "scope",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "body",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "completion_criteria: _",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 10,
+        "name": "difficulty",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "effort_hint",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "routing_strategy",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
+        "name": "expected_context_size",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 14,
+        "name": "result_rollup_policy",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 15,
+        "name": "created_by_role",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 16,
+        "name": "created_by_user_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 17,
+        "name": "created_by_agent_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 18,
+        "name": "created_in_run_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 19,
+        "name": "settled_by_entry_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 20,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 21,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int4",
+        "TextArray",
+        "Text",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "50225288effbd98c955659569c94406415fda832241c6672931cf64d8d3089a5"
+}

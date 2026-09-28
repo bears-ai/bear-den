@@ -243,6 +243,65 @@ impl PgDocketService {
         Self { pool: pool.clone() }
     }
 
+    /// Recheck current Bear membership and access to an exact Docket job ID without
+    /// loading its private projection. Missing, inaccessible, or unknown-visibility
+    /// jobs all return `NotFound` so callers do not disclose their existence.
+    pub async fn authorize_job_for_human(
+        &self,
+        bear_id: Uuid,
+        job_id: Uuid,
+        user_id: i32,
+    ) -> Result<(), DenError> {
+        db::authorize_job_for_human(&self.pool, bear_id, job_id, user_id).await
+    }
+
+    /// Authorize reading an exact Docket task without loading its title or body.
+    /// Job tasks use current job visibility; standalone tasks require the viewer
+    /// to be its creator and have a historical attachment to their own Bear session
+    /// (released attachments count). Denials are `NotFound`. This does not grant
+    /// execution: selection/attachment must check active, unsettled task state.
+    pub async fn authorize_task_for_human(
+        &self,
+        bear_id: Uuid,
+        task_id: Uuid,
+        user_id: i32,
+    ) -> Result<(), DenError> {
+        db::authorize_task_for_human(&self.pool, bear_id, task_id, user_id).await
+    }
+
+    /// List at most 500 visible, unsettled tasks actively attached to this human's
+    /// client session. Membership, job visibility, and standalone ownership are checked in SQL
+    /// before loading task details or applying the limit. Trusted Docket callers
+    /// should continue to use `list_session_tasks` instead.
+    pub async fn list_session_tasks_for_human(
+        &self,
+        bear_id: Uuid,
+        session_anchor_id: Uuid,
+        user_id: i32,
+    ) -> Result<Vec<DocketTaskProjection>, DenError> {
+        db::list_session_tasks_for_human(&self.pool, bear_id, session_anchor_id, user_id).await
+    }
+
+    /// Sync a human-provided task list only after verifying its Bear and any
+    /// Docket job referenced by its typed source fields. Non-Docket lists retain
+    /// the trusted sync path's review-required result without reading a job.
+    /// Workers should continue using `DocketService::sync_task_list` directly.
+    pub async fn sync_task_list_for_human(
+        &self,
+        bear_id: Uuid,
+        user_id: i32,
+        request: TaskListSyncRequest,
+    ) -> Result<TaskListSyncOutcome, DenError> {
+        if request.task_list.bear_id != bear_id {
+            return Err(DenError::NotFound("Docket task list not found".to_string()));
+        }
+        if let Some(job_id) = db::task_list_job_id(&request.task_list) {
+            self.authorize_job_for_human(bear_id, job_id, user_id)
+                .await?;
+        }
+        self.sync_task_list(request).await
+    }
+
     /// Web viewer-scoped listing; visibility is applied in SQL before LIMIT.
     /// The unscoped trait method remains available to trusted Docket callers.
     pub async fn list_jobs_for_viewer(
@@ -481,7 +540,7 @@ impl DocketService for PgDocketService {
         &self,
         bear_id: Uuid,
         viewer_role: BearProfile,
-        _user_id: i32,
+        user_id: i32,
         request: TaskListCheckoutRequest,
     ) -> Result<Option<TaskListProjection>, DenError> {
         match request.source {
@@ -489,10 +548,14 @@ impl DocketService for PgDocketService {
                 job_id,
                 parent_task_id,
             } => {
+                self.authorize_job_for_human(bear_id, job_id, user_id)
+                    .await?;
                 if let Some(session_id) = request.session_anchor_id {
                     db::attach_job_tasks_to_session(&self.pool, bear_id, job_id, session_id)
                         .await?;
-                    let tasks = self.list_session_tasks(bear_id, session_id).await?;
+                    let tasks = self
+                        .list_session_tasks_for_human(bear_id, session_id, user_id)
+                        .await?;
                     Ok(task_list_projection_from_session_tasks(
                         bear_id,
                         viewer_role,

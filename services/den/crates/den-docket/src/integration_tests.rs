@@ -65,7 +65,7 @@ pub(super) async fn test_pool() -> Option<PgPool> {
     Some(pool)
 }
 
-async fn seed_client_session(pool: &PgPool, user_id: i32, bear_id: Uuid) -> Uuid {
+pub(super) async fn seed_client_session(pool: &PgPool, user_id: i32, bear_id: Uuid) -> Uuid {
     let id = Uuid::new_v4();
     let suffix = Uuid::new_v4().simple().to_string();
     sqlx::query!(
@@ -449,6 +449,15 @@ async fn session_task_attachment_reassignment_fences_stale_owner_and_releases_on
         return;
     };
     let (user_id, bear_id) = seed_user_and_bear(&pool, "pair-attachment").await;
+    sqlx::query!(
+        "INSERT INTO user_bear (user_id, bear_id, role) VALUES ($1, $2, $3)",
+        user_id,
+        bear_id,
+        "member",
+    )
+    .execute(&pool)
+    .await
+    .expect("grant checkout membership");
     let first_session = seed_client_session(&pool, user_id, bear_id).await;
     let second_session = seed_client_session(&pool, user_id, bear_id).await;
     let service = PgDocketService::from_pool(&pool);

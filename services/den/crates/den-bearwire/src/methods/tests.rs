@@ -353,6 +353,16 @@ async fn create_checkoutable_work_run(
     user_id: i32,
     bear_id: uuid::Uuid,
 ) -> uuid::Uuid {
+    create_checkoutable_work_run_for_target(pool, user_id, bear_id, WorkExecutionTarget::Sandbox)
+        .await
+}
+
+async fn create_checkoutable_work_run_for_target(
+    pool: &sqlx::PgPool,
+    user_id: i32,
+    bear_id: uuid::Uuid,
+    execution_target: WorkExecutionTarget,
+) -> uuid::Uuid {
     let surface_id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO work_surfaces (id, name, kind, created_by_user_id, created_at, updated_at)
@@ -417,6 +427,10 @@ async fn create_checkoutable_work_run(
         })
         .await
         .expect("create work job");
+    let attached_target = matches!(
+        execution_target,
+        WorkExecutionTarget::AttachedArmature { .. }
+    );
     let runs = enqueue_work_job(
         pool,
         WorkJobEnqueue {
@@ -426,7 +440,7 @@ async fn create_checkoutable_work_run(
             git_ref: None,
             image_name: None,
             requested_by_user_id: Some(user_id),
-            execution_target: WorkExecutionTarget::Sandbox,
+            execution_target,
             attachment_warning: None,
         },
     )
@@ -434,6 +448,9 @@ async fn create_checkoutable_work_run(
     .expect("enqueue work job");
     assert_eq!(runs.len(), 1, "one work run for the test job");
     let run = runs.into_iter().next().expect("work run exists");
+    if attached_target {
+        return run.id;
+    }
     let claimed = claim_next_work_run(
         pool,
         "bearwire-test-runner",
@@ -4617,7 +4634,7 @@ async fn focused_pair_git_commit_creates_candidate_task_artifact(pool: sqlx::PgP
 async fn model_focus_promotes_the_origin_run_idempotently(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;
-    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let token = create_member_token(&pool, user_id, bear_id).await;
     let session_id = format!("session-{}", Uuid::new_v4().simple());
     upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
     let task_id = create_session_task(
@@ -4730,6 +4747,53 @@ async fn model_focus_promotes_the_origin_run_idempotently(pool: sqlx::PgPool) {
         replay.launch_state,
         crate::methods::focused_execution::FocusedExecutionLaunchState::AlreadyRunning
     );
+
+    let foreign_owner = create_test_user(&pool).await;
+    create_member_token(&pool, foreign_owner, bear_id).await;
+    seed_docket_visibility_surface(&pool, bear_id, foreign_owner).await;
+    let private = visibility_job(
+        &pool,
+        bear_id,
+        foreign_owner,
+        TaskListVisibility::SameUser,
+        None,
+    )
+    .await;
+    sqlx::query("UPDATE client_sessions SET current_task_id = $2 WHERE client_session_id = $1")
+        .bind(&session_id)
+        .bind(private.tasks[0].id)
+        .execute(&pool)
+        .await
+        .expect("simulate forged selected task");
+    let denied_foreign = crate::methods::focused_execution::acquire_selected_task_for_run(
+        &state,
+        user_id,
+        bear.clone(),
+        &session_id,
+        &run_id,
+        &ToolCallId::new("call-foreign-model-focus").unwrap(),
+        &policy.capabilities,
+    )
+    .await
+    .expect_err("model focus must reject a foreign selected task before acquisition");
+    assert!(matches!(
+        denied_foreign,
+        den_http::errors::CustomError::NotFound(_)
+    ));
+    assert!(!denied_foreign.to_string().contains("Private task"));
+    let foreign_attempts: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM docket_execution_attempts WHERE task_id = $1")
+            .bind(private.tasks[0].id)
+            .fetch_one(&pool)
+            .await
+            .expect("count foreign model-focus attempts");
+    assert_eq!(foreign_attempts, 0);
+    sqlx::query("UPDATE client_sessions SET current_task_id = $2 WHERE client_session_id = $1")
+        .bind(&session_id)
+        .bind(task_id)
+        .execute(&pool)
+        .await
+        .expect("restore owned selection");
 
     let run_count = sqlx::query_scalar!(
         r#"SELECT COUNT(*) AS "count!" FROM turn_runs WHERE session_id = $1"#,
@@ -5445,8 +5509,10 @@ async fn work_methods_deny_other_members_same_user_job_without_binding_or_mutati
     let owner_id = create_test_user(&pool).await;
     let other_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;
-    let owner_token = create_token_for_bear(&pool, owner_id, bear_id).await;
+    let owner_token = create_member_token(&pool, owner_id, bear_id).await;
     let other_token = create_member_token(&pool, other_id, bear_id).await;
+    let admin_id = create_test_user(&pool).await;
+    let admin_token = create_token_for_bear(&pool, admin_id, bear_id).await;
     let run_id = create_checkoutable_work_run(&pool, owner_id, bear_id).await;
     let state = test_state(pool.clone());
     let session_id = format!("work-{}", Uuid::new_v4().simple());
@@ -5496,6 +5562,21 @@ async fn work_methods_deny_other_members_same_user_job_without_binding_or_mutati
     let fence = owner["result"]["execution_attempt_fence_epoch"]
         .as_i64()
         .unwrap();
+    let guessed_checkout = rpc_value(
+        state.clone(),
+        &other_token,
+        "work.checkout",
+        json!({
+            "bear_slug": bear_slug, "session_id": format!("guess-{}", Uuid::new_v4().simple()),
+            "work_order_id": run_id,
+            "compatibility": { "protocol": 1, "capabilities": ["tool_attempt_token"] },
+        }),
+    )
+    .await;
+    assert!(
+        guessed_checkout.get("error").is_some(),
+        "{guessed_checkout}"
+    );
     let denied_boundary = rpc_value(
         state.clone(),
         &other_token,
@@ -5595,7 +5676,7 @@ async fn work_methods_deny_other_members_same_user_job_without_binding_or_mutati
     .expect("report unchanged");
     assert_eq!(report, None);
     let legitimate = rpc_value(
-        state,
+        state.clone(),
         &owner_token,
         "work.report",
         json!({
@@ -5605,6 +5686,43 @@ async fn work_methods_deny_other_members_same_user_job_without_binding_or_mutati
     )
     .await;
     assert_eq!(legitimate["result"]["ok"], true, "{legitimate}");
+
+    let admin_run = create_checkoutable_work_run(&pool, owner_id, bear_id).await;
+    upsert_test_session(&pool, owner_id, bear_id, &bear_slug, &session_id).await;
+    let denied_admin_session = rpc_value(
+        state.clone(),
+        &admin_token,
+        "work.checkout",
+        json!({
+            "bear_slug": bear_slug, "session_id": session_id,
+            "work_order_id": admin_run,
+            "compatibility": { "protocol": 1, "capabilities": ["tool_attempt_token"] },
+        }),
+    )
+    .await;
+    assert!(
+        denied_admin_session.get("error").is_some(),
+        "{denied_admin_session}"
+    );
+    let still_unbound: Option<String> =
+        sqlx::query_scalar("SELECT bearwire_session_id FROM bear_work_runs WHERE id = $1")
+            .bind(admin_run)
+            .fetch_one(&pool)
+            .await
+            .expect("admin run binding");
+    assert_eq!(still_unbound, None);
+    let admin_checkout = rpc_value(
+        state,
+        &admin_token,
+        "work.checkout",
+        json!({
+            "bear_slug": bear_slug, "session_id": format!("admin-{}", Uuid::new_v4().simple()),
+            "work_order_id": admin_run,
+            "compatibility": { "protocol": 1, "capabilities": ["tool_attempt_token"] },
+        }),
+    )
+    .await;
+    assert_eq!(admin_checkout["result"]["ok"], true, "{admin_checkout}");
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -5653,7 +5771,7 @@ async fn work_checkout_requires_dispatch_authority_and_session_provenance(pool: 
             .expect("binding");
     assert_eq!(bound, None);
 
-    // A real sandbox checkout uses a token minted for this specific run.
+    // A run-specific token must not override another human's persisted session.
     let dispatched = armature_tokens::create_for_bear(&pool, member_id, bear_id, "test dispatch")
         .await
         .expect("mint run token");
@@ -5666,6 +5784,19 @@ async fn work_checkout_requires_dispatch_authority_and_session_provenance(pool: 
     )
     .await
     .expect("record dispatch token");
+    let member_session = format!("work-{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, member_id, bear_id, &bear_slug, &member_session).await;
+    let denied_owner_session = rpc_value(
+        state.clone(),
+        &owner_token,
+        "work.checkout",
+        checkout(&member_session),
+    )
+    .await;
+    assert!(
+        denied_owner_session.get("error").is_some(),
+        "{denied_owner_session}"
+    );
     upsert_test_session(&pool, owner_id, bear_id, &bear_slug, &session_id).await;
     let denied = rpc_value(
         state.clone(),
@@ -5697,21 +5828,42 @@ async fn work_checkout_requires_dispatch_authority_and_session_provenance(pool: 
         "owner may use their session: {denied_owner}"
     );
 
-    let shared_session = format!("work-{}", Uuid::new_v4().simple());
-    let allowed = rpc_value(
+    let denied = rpc_value(
         state.clone(),
         &dispatched.raw_token,
         "work.checkout",
-        checkout(&shared_session),
+        checkout(&session_id),
     )
     .await;
-    assert_eq!(
-        allowed["result"]["ok"], true,
-        "dispatch token allows shared work: {allowed}"
+    assert!(
+        denied.get("error").is_some(),
+        "dispatcher cannot replay another human's session: {denied}"
     );
-    upsert_test_session(&pool, member_id, bear_id, &bear_slug, &shared_session).await;
-    let attempt_id = allowed["result"]["execution_attempt_id"].clone();
-    let fence = allowed["result"]["execution_attempt_fence_epoch"].clone();
+    let owner_dispatch =
+        armature_tokens::create_for_bear(&pool, owner_id, bear_id, "owner dispatch")
+            .await
+            .expect("mint owner run token");
+    den_docket::work_runs::merge_work_run_result_refs(
+        &pool,
+        run_id,
+        &json!({ "armature_token_id": owner_dispatch.id }),
+    )
+    .await
+    .expect("record owner dispatch token");
+    let owner_replay = rpc_value(
+        state.clone(),
+        &owner_dispatch.raw_token,
+        "work.checkout",
+        checkout(&session_id),
+    )
+    .await;
+    assert_eq!(owner_replay["result"]["ok"], true, "{owner_replay}");
+    assert_eq!(
+        owner_replay["result"]["execution_attempt_id"],
+        denied_owner["result"]["execution_attempt_id"]
+    );
+    let attempt_id = denied_owner["result"]["execution_attempt_id"].clone();
+    let fence = denied_owner["result"]["execution_attempt_fence_epoch"].clone();
     let denied = rpc_value(
         state.clone(),
         &member_token,
@@ -5728,7 +5880,7 @@ async fn work_checkout_requires_dispatch_authority_and_session_provenance(pool: 
     );
     let allowed_boundary = rpc_value(
         state,
-        &dispatched.raw_token,
+        &owner_token,
         "work.boundary",
         json!({
             "bear_slug": bear_slug, "execution_attempt_id": attempt_id, "fence_epoch": fence,
@@ -5737,6 +5889,156 @@ async fn work_checkout_requires_dispatch_authority_and_session_provenance(pool: 
     )
     .await;
     assert_eq!(allowed_boundary["result"]["ok"], true, "{allowed_boundary}");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn shared_work_run_requires_its_exact_dispatch_token_for_noncreator(pool: sqlx::PgPool) {
+    let owner_id = create_test_user(&pool).await;
+    let dispatcher_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    create_member_token(&pool, owner_id, bear_id).await;
+    let generic_token = create_member_token(&pool, dispatcher_id, bear_id).await;
+    let shared_run = create_checkoutable_work_run(&pool, owner_id, bear_id).await;
+    let private_run = create_checkoutable_work_run(&pool, owner_id, bear_id).await;
+    let shared_job: Uuid = sqlx::query_scalar("SELECT job_id FROM bear_work_runs WHERE id = $1")
+        .bind(shared_run)
+        .fetch_one(&pool)
+        .await
+        .expect("shared job id");
+    sqlx::query("UPDATE bear_jobs SET visibility = $2 WHERE id = $1")
+        .bind(shared_job)
+        .bind(TaskListVisibility::BearVisible.as_str())
+        .execute(&pool)
+        .await
+        .expect("share job");
+    let shared_token =
+        armature_tokens::create_for_bear(&pool, dispatcher_id, bear_id, "shared dispatch")
+            .await
+            .expect("mint shared run token");
+    let private_token =
+        armature_tokens::create_for_bear(&pool, dispatcher_id, bear_id, "other dispatch")
+            .await
+            .expect("mint other run token");
+    let session_id = format!("work-{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, dispatcher_id, bear_id, &bear_slug, &session_id).await;
+    let state = test_state(pool.clone());
+    let checkout = |run_id| {
+        json!({
+            "bear_slug": bear_slug, "session_id": session_id, "work_order_id": run_id,
+            "compatibility": { "protocol": 1, "capabilities": ["tool_attempt_token"] },
+        })
+    };
+    let missing_ref = rpc_value(
+        state.clone(),
+        &shared_token.raw_token,
+        "work.checkout",
+        checkout(shared_run),
+    )
+    .await;
+    assert!(missing_ref.get("error").is_some(), "{missing_ref}");
+    for (run_id, token_id) in [
+        (shared_run, shared_token.id),
+        (private_run, private_token.id),
+    ] {
+        den_docket::work_runs::merge_work_run_result_refs(
+            &pool,
+            run_id,
+            &json!({ "armature_token_id": token_id }),
+        )
+        .await
+        .expect("store run-specific dispatch token");
+    }
+    for (token, run_id) in [
+        (&generic_token, shared_run),
+        (&private_token.raw_token, shared_run),
+        (&private_token.raw_token, private_run),
+        (&shared_token.raw_token, private_run),
+    ] {
+        let denied = rpc_value(state.clone(), token, "work.checkout", checkout(run_id)).await;
+        assert!(denied.get("error").is_some(), "{denied}");
+    }
+    for run_id in [shared_run, private_run] {
+        let bound: Option<String> =
+            sqlx::query_scalar("SELECT bearwire_session_id FROM bear_work_runs WHERE id = $1")
+                .bind(run_id)
+                .fetch_one(&pool)
+                .await
+                .expect("denied checkout leaves run unbound");
+        let attempts: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM docket_execution_attempts WHERE binding_id = $1",
+        )
+        .bind(run_id.to_string())
+        .fetch_one(&pool)
+        .await
+        .expect("denied checkout creates no attempt");
+        assert_eq!(bound, None);
+        assert_eq!(attempts, 0);
+    }
+
+    let allowed = rpc_value(
+        state.clone(),
+        &shared_token.raw_token,
+        "work.checkout",
+        checkout(shared_run),
+    )
+    .await;
+    assert_eq!(allowed["result"]["ok"], true, "{allowed}");
+    let attempt_id = allowed["result"]["execution_attempt_id"].clone();
+    let fence = allowed["result"]["execution_attempt_fence_epoch"].clone();
+    for token in [&generic_token, &private_token.raw_token] {
+        let denied_boundary = rpc_value(
+            state.clone(),
+            token,
+            "work.boundary",
+            json!({
+                "bear_slug": bear_slug, "execution_attempt_id": attempt_id,
+                "fence_epoch": fence, "boundary_key": Uuid::new_v4(),
+            }),
+        )
+        .await;
+        assert!(denied_boundary.get("error").is_some(), "{denied_boundary}");
+        let denied_report = rpc_value(
+            state.clone(),
+            token,
+            "work.report",
+            json!({
+                "bear_slug": bear_slug, "work_order_id": shared_run,
+                "session_id": session_id, "summary": "forged report",
+            }),
+        )
+        .await;
+        assert!(denied_report.get("error").is_some(), "{denied_report}");
+    }
+    let report: Option<Value> = sqlx::query_scalar(
+        "SELECT result_refs -> 'armature_report' FROM bear_work_runs WHERE id = $1",
+    )
+    .bind(shared_run)
+    .fetch_one(&pool)
+    .await
+    .expect("no forged report");
+    assert_eq!(report, None);
+    let boundary = rpc_value(
+        state.clone(),
+        &shared_token.raw_token,
+        "work.boundary",
+        json!({
+            "bear_slug": bear_slug, "execution_attempt_id": attempt_id,
+            "fence_epoch": fence, "boundary_key": Uuid::new_v4(),
+        }),
+    )
+    .await;
+    assert_eq!(boundary["result"]["ok"], true, "{boundary}");
+    let report = rpc_value(
+        state,
+        &shared_token.raw_token,
+        "work.report",
+        json!({
+            "bear_slug": bear_slug, "work_order_id": shared_run,
+            "session_id": session_id, "summary": "dispatched report",
+        }),
+    )
+    .await;
+    assert_eq!(report["result"]["ok"], true, "{report}");
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -7259,6 +7561,188 @@ fn assert_docket_not_found(value: &Value) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn focused_execution_authorizes_task_before_attachment_and_reuse(pool: sqlx::PgPool) {
+    let owner = create_test_user(&pool).await;
+    let other = create_test_user(&pool).await;
+    let admin = create_test_user(&pool).await;
+    let (bear_id, slug) = create_test_bear(&pool).await;
+    create_member_token(&pool, owner, bear_id).await;
+    create_member_token(&pool, other, bear_id).await;
+    create_token_for_bear(&pool, admin, bear_id).await;
+    seed_docket_visibility_surface(&pool, bear_id, owner).await;
+    let private = visibility_job(&pool, bear_id, owner, TaskListVisibility::SameUser, None).await;
+    let admin_private =
+        visibility_job(&pool, bear_id, owner, TaskListVisibility::SameUser, None).await;
+    let public = visibility_job(&pool, bear_id, owner, TaskListVisibility::BearVisible, None).await;
+    let owner_session = format!("owner-{}", Uuid::new_v4());
+    let other_session = format!("other-{}", Uuid::new_v4());
+    let admin_session = format!("admin-{}", Uuid::new_v4());
+    let standalone_session = format!("standalone-{}", Uuid::new_v4());
+    for (user, session_id) in [
+        (owner, &owner_session),
+        (other, &other_session),
+        (admin, &admin_session),
+        (other, &standalone_session),
+    ] {
+        upsert_test_session(&pool, user, bear_id, &slug, session_id).await;
+        set_next_scripted_runtime_streams(session_id, vec![ScriptedRuntimeStream::Pending]);
+    }
+    let own_standalone = create_session_task(
+        &pool,
+        other,
+        bear_id,
+        &standalone_session,
+        "Own standalone task",
+    )
+    .await;
+    let mut config = den_core::config::Config::test_stub();
+    config.den_secret_encryption_key = "bearwire-test-secret-key".to_string();
+    config.llm_api_url = start_mock_openai_sse_server_asserting_requests(vec![
+        MockLlmRequestAssertion::requiring(Vec::new()),
+        MockLlmRequestAssertion::requiring(Vec::new()),
+        MockLlmRequestAssertion::requiring(Vec::new()),
+        MockLlmRequestAssertion::requiring(Vec::new()),
+    ]);
+    config.default_llm_model = "openai/bearwire-test-model".to_string();
+    seed_test_bifrost_virtual_key(&pool, bear_id, &config).await;
+    let state = test_state_with_config(pool.clone(), config);
+    let bear = bears_db::get_bear(&pool, bear_id)
+        .await
+        .expect("load bear")
+        .expect("bear exists");
+    let policy = den_core::EffectivePolicy::compile(
+        den_core::TrustProfile::Pair,
+        den_core::Governance::Interactive,
+        den_core::ArmatureAvailability::Connected,
+    );
+    let start = |user, session: String, task_id| {
+        let state = state.clone();
+        let bear = bear.clone();
+        let capabilities = policy.capabilities.clone();
+        async move {
+            crate::methods::focused_execution::start_or_reconcile_session_task_execution(
+                &state,
+                user,
+                bear,
+                &session,
+                task_id,
+                &capabilities,
+            )
+            .await
+        }
+    };
+    let foreign_task = private.tasks[0].id;
+    for task_id in [foreign_task, Uuid::new_v4()] {
+        let denied = start(other, other_session.clone(), task_id)
+            .await
+            .expect_err("foreign and missing task IDs must be indistinguishable");
+        assert!(matches!(denied, den_http::errors::CustomError::NotFound(_)));
+        assert!(!denied.to_string().contains("Private task"));
+    }
+    let other_anchor: Uuid =
+        sqlx::query_scalar("SELECT id FROM client_sessions WHERE client_session_id = $1")
+            .bind(&other_session)
+            .fetch_one(&pool)
+            .await
+            .expect("load other session anchor");
+    let attachments: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM bear_session_task_attachments WHERE task_id = $1")
+            .bind(foreign_task)
+            .fetch_one(&pool)
+            .await
+            .expect("count foreign attachments");
+    assert_eq!(attachments, 0);
+    let other_runs: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM turn_runs WHERE session_id = $1")
+            .bind(&other_session)
+            .fetch_one(&pool)
+            .await
+            .expect("count unauthorized runs");
+    assert_eq!(other_runs, 0);
+    let other_attempts: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM docket_execution_attempts WHERE binding_id = $1")
+            .bind(&other_session)
+            .fetch_one(&pool)
+            .await
+            .expect("count unauthorized attempts");
+    assert_eq!(other_attempts, 0);
+
+    // A forged persisted selection must not bypass the already-selected launch path.
+    sqlx::query("UPDATE client_sessions SET current_task_id = $2 WHERE id = $1")
+        .bind(other_anchor)
+        .bind(foreign_task)
+        .execute(&pool)
+        .await
+        .expect("simulate forged selection");
+    let denied = crate::methods::focused_execution::start_selected_session_task_execution(
+        &state,
+        other,
+        bear.clone(),
+        &other_session,
+        &policy.capabilities,
+    )
+    .await
+    .expect_err("selected foreign task cannot start");
+    assert!(matches!(denied, den_http::errors::CustomError::NotFound(_)));
+    assert!(!denied.to_string().contains("Private task"));
+    let unchanged: (Option<Uuid>, i64, i64) = sqlx::query_as(
+        "SELECT current_task_id,
+                (SELECT COUNT(*) FROM turn_runs WHERE session_id = $2),
+                (SELECT COUNT(*) FROM docket_execution_attempts WHERE binding_id = $2)
+         FROM client_sessions WHERE id = $1",
+    )
+    .bind(other_anchor)
+    .bind(&other_session)
+    .fetch_one(&pool)
+    .await
+    .expect("inspect denied selection");
+    assert_eq!(unchanged, (Some(foreign_task), 0, 0));
+    sqlx::query("UPDATE client_sessions SET current_task_id = NULL WHERE id = $1")
+        .bind(other_anchor)
+        .execute(&pool)
+        .await
+        .expect("clear forged selection");
+
+    let owner_start = start(owner, owner_session.clone(), foreign_task)
+        .await
+        .expect("owner may focus own private job task");
+    assert_eq!(owner_start.task_id(), Some(foreign_task));
+    assert!(owner_start.run_id().is_some());
+    let admin_start = start(admin, admin_session.clone(), admin_private.tasks[0].id)
+        .await
+        .expect("Bear admin may focus a member's private job task");
+    assert_eq!(admin_start.task_id(), Some(admin_private.tasks[0].id));
+    assert!(admin_start.run_id().is_some());
+    let public_start = start(other, other_session.clone(), public.tasks[0].id)
+        .await
+        .expect("member may focus a BearVisible job task");
+    assert_eq!(public_start.task_id(), Some(public.tasks[0].id));
+    let standalone_start = start(other, standalone_session.clone(), own_standalone)
+        .await
+        .expect("member may focus own attached standalone task");
+    assert_eq!(standalone_start.task_id(), Some(own_standalone));
+
+    bears_db::grant_membership(&pool, admin, bear_id, Some(bears_db::BEAR_ROLE_MEMBER))
+        .await
+        .expect("demote admin after starting private task");
+    let denied_reuse = start(admin, admin_session.clone(), admin_private.tasks[0].id)
+        .await
+        .expect_err("already-running focus must recheck current visibility");
+    assert!(matches!(
+        denied_reuse,
+        den_http::errors::CustomError::NotFound(_)
+    ));
+    assert!(!denied_reuse.to_string().contains("Private task"));
+    let admin_runs: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM turn_runs WHERE session_id = $1")
+            .bind(&admin_session)
+            .fetch_one(&pool)
+            .await
+            .expect("count admin runs after denied reuse");
+    assert_eq!(admin_runs, 1);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn docket_rpc_job_visibility_filters_before_limit_and_canonical_source_lookup(
     pool: sqlx::PgPool,
 ) {
@@ -7862,5 +8346,237 @@ async fn human_surface_enrichment_rejects_foreign_sessions_and_work_jobs(pool: s
             .to_string()
             .contains("foreign-work-activity-sentinel"),
         "foreign job activity leaked: {foreign_job}"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn bearwire_session_id_collision_cannot_mutate_victims_attached_work(pool: sqlx::PgPool) {
+    let victim = create_test_user(&pool).await;
+    let attacker = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let (other_bear_id, other_bear_slug) = create_test_bear(&pool).await;
+    let victim_token = create_member_token(&pool, victim, bear_id).await;
+    let attacker_token = create_member_token(&pool, attacker, bear_id).await;
+    let other_bear_token = create_member_token(&pool, victim, other_bear_id).await;
+    let state = test_state(pool.clone());
+    let session_id = format!("shared-work-{}", Uuid::new_v4().simple());
+    let opened = rpc_value(
+        state.clone(),
+        &victim_token,
+        "session.open",
+        json!({
+            "bear_slug": bear_slug, "session_id": session_id,
+        }),
+    )
+    .await;
+    assert_eq!(opened["result"]["ok"], true, "{opened}");
+    let work_run_id = create_checkoutable_work_run_for_target(
+        &pool,
+        victim,
+        bear_id,
+        WorkExecutionTarget::AttachedArmature {
+            client_session_id: session_id.clone(),
+        },
+    )
+    .await;
+    let attached = den_docket::work_runs::get_work_run(&pool, work_run_id)
+        .await
+        .expect("load victim work run")
+        .expect("victim run attached");
+    assert_eq!(attached.id, work_run_id);
+    assert_eq!(attached.attachment_state.as_deref(), Some("attached"));
+
+    for (token, slug) in [
+        (&attacker_token, &bear_slug),
+        (&other_bear_token, &other_bear_slug),
+    ] {
+        for method in ["session.open", "session.close", "run.start"] {
+            let mut params = json!({"bear_slug": slug, "session_id": session_id});
+            if method == "run.start" {
+                params["prompt"] = json!("must not start");
+            }
+            let denial = rpc_value(state.clone(), token, method, params).await;
+            assert!(
+                denial["error"]["data"]["error"]
+                    .as_str()
+                    .unwrap_or("")
+                    .contains("Not Found"),
+                "forged {method}: {denial}"
+            );
+            let unchanged = den_docket::work_runs::get_work_run(&pool, work_run_id)
+                .await
+                .expect("reload victim run")
+                .expect("victim run still attached");
+            assert_eq!(unchanged.id, work_run_id);
+            assert_eq!(
+                unchanged.attachment_state, attached.attachment_state,
+                "forged {method} touched victim attachment"
+            );
+            assert_eq!(
+                unchanged.state, attached.state,
+                "forged {method} touched victim run state"
+            );
+        }
+    }
+    assert!(
+        client_sessions::find_for_user_bear_session(&pool, attacker, &bear_slug, &session_id)
+            .await
+            .expect("find attacker session")
+            .is_none()
+    );
+    assert!(client_sessions::find_for_user_bear_session(
+        &pool,
+        victim,
+        &other_bear_slug,
+        &session_id
+    )
+    .await
+    .expect("find other Bear session")
+    .is_none());
+
+    let owner_closed = rpc_value(
+        state.clone(),
+        &victim_token,
+        "session.close",
+        json!({
+            "bear_slug": bear_slug, "session_id": session_id,
+        }),
+    )
+    .await;
+    assert_eq!(owner_closed["result"]["closed"], true, "{owner_closed}");
+    assert_eq!(
+        owner_closed["result"]["attached_work_disconnected"], true,
+        "{owner_closed}"
+    );
+    let disconnected = den_docket::work_runs::get_work_run(&pool, work_run_id)
+        .await
+        .expect("load disconnected run")
+        .expect("victim run retained");
+    assert_eq!(
+        disconnected.attachment_state.as_deref(),
+        Some("disconnected")
+    );
+    let forged_reopen = rpc_value(
+        state.clone(),
+        &attacker_token,
+        "session.open",
+        json!({
+            "bear_slug": bear_slug, "session_id": session_id,
+        }),
+    )
+    .await;
+    assert!(forged_reopen.get("error").is_some(), "{forged_reopen}");
+    let still_disconnected = den_docket::work_runs::get_work_run(&pool, work_run_id)
+        .await
+        .expect("reload disconnected run")
+        .expect("victim run retained");
+    assert_eq!(
+        still_disconnected.attachment_state,
+        disconnected.attachment_state
+    );
+    let owner_reopened = rpc_value(
+        state.clone(),
+        &victim_token,
+        "session.open",
+        json!({
+            "bear_slug": bear_slug, "session_id": session_id,
+        }),
+    )
+    .await;
+    assert_eq!(
+        owner_reopened["result"]["attached_work_reconnected"], true,
+        "{owner_reopened}"
+    );
+    let forged_close = rpc_value(
+        state.clone(),
+        &attacker_token,
+        "session.close",
+        json!({
+            "bear_slug": bear_slug, "session_id": session_id,
+        }),
+    )
+    .await;
+    assert!(forged_close.get("error").is_some(), "{forged_close}");
+    let still_attached = den_docket::work_runs::get_work_run(&pool, work_run_id)
+        .await
+        .expect("reload reconnected run")
+        .expect("victim run retained");
+    assert_eq!(still_attached.attachment_state.as_deref(), Some("attached"));
+    let final_close = rpc_value(
+        state,
+        &victim_token,
+        "session.close",
+        json!({
+            "bear_slug": bear_slug, "session_id": session_id,
+        }),
+    )
+    .await;
+    assert_eq!(
+        final_close["result"]["attached_work_disconnected"], true,
+        "{final_close}"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn bearwire_ambiguous_historical_session_id_denies_even_bear_admin(pool: sqlx::PgPool) {
+    let admin = create_test_user(&pool).await;
+    let member = create_test_user(&pool).await;
+    let (bear_id, slug) = create_test_bear(&pool).await;
+    let admin_token = create_token_for_bear(&pool, admin, bear_id).await;
+    let member_token = create_member_token(&pool, member, bear_id).await;
+    let state = test_state(pool.clone());
+    let session_id = format!("ambiguous-{}", Uuid::new_v4().simple());
+    let opened = rpc_value(
+        state.clone(),
+        &admin_token,
+        "session.open",
+        json!({
+            "bear_slug": slug, "session_id": session_id,
+        }),
+    )
+    .await;
+    assert_eq!(opened["result"]["ok"], true, "{opened}");
+    // Simulate a historical duplicate created before the global preflight guard.
+    client_sessions::upsert_session(
+        &pool,
+        client_sessions::UpsertClientSession {
+            user_id: member,
+            bear_id,
+            bear_slug: slug.clone(),
+            client_session_id: session_id.clone(),
+            runtime_session_id: format!("bearwire:{bear_id}:{session_id}"),
+            conversation_id: format!("den-conv-{}", Uuid::new_v4().simple()),
+            resolved_conversation_id: None,
+            client: "bearwire-test".to_string(),
+            cwd: None,
+            current_mode: None,
+        },
+    )
+    .await
+    .expect("seed historical duplicate");
+    for (token, label) in [(&admin_token, "admin"), (&member_token, "member")] {
+        for method in ["session.open", "session.close", "run.start"] {
+            let mut params = json!({"bear_slug": slug, "session_id": session_id});
+            if method == "run.start" {
+                params["prompt"] = json!("must not reuse ambiguous run");
+            }
+            let denial = rpc_value(state.clone(), token, method, params).await;
+            assert!(
+                denial["error"]["data"]["error"]
+                    .as_str()
+                    .unwrap_or("")
+                    .contains("Not Found"),
+                "{label} {method} must fail closed: {denial}"
+            );
+        }
+    }
+    let admin_session =
+        client_sessions::find_for_user_bear_session(&pool, admin, &slug, &session_id)
+            .await
+            .expect("reload admin session")
+            .expect("admin session retained");
+    assert!(
+        admin_session.closed_at.is_none(),
+        "denied close must not mark admin session closed"
     );
 }

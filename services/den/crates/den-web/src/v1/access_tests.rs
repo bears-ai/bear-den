@@ -1,10 +1,18 @@
 use super::*;
-use crate::web_chat_runtime::WebChatRuntime;
+use crate::web_chat_runtime::{WebChatRuntime, WebChatRuntimeRequest, WebChatRuntimeStream};
 use axum::{http::Request, routing::get};
 use axum_login::AuthnBackend;
+use bearwire_protocol::wire::BearWireEvent;
+use den_docket::{
+    work_runs::{self, WorkExecutionTarget, WorkJobEnqueue},
+    DocketCommitPolicy, DocketCriterionKind, DocketJobCreate, DocketJobCriterionInput,
+    DocketJobOverlapResolution, DocketTaskInput, DocketTaskKind, DocketTaskScope,
+    DurableResultKind, RoutingStrategy, TaskListVisibility,
+};
 use den_service::bears::db::{
     create_bear, grant_membership, revoke_membership, BearParams, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER,
 };
+use den_service::work_surfaces::{self, NewWorkSurface};
 use http_body_util::BodyExt;
 use minijinja::Environment;
 use sqlx::PgPool;
@@ -151,6 +159,307 @@ pub(super) async fn conversation(pool: &PgPool, bear: Uuid, owner: Option<i32>, 
         .await
         .unwrap()
         .id
+}
+
+#[derive(Default)]
+struct RecordingChatRuntime {
+    requests: std::sync::Mutex<Vec<WebChatRuntimeRequest>>,
+}
+
+impl WebChatRuntime for RecordingChatRuntime {
+    fn stream_chat(
+        &self,
+        _state: &AppState,
+        request: WebChatRuntimeRequest,
+    ) -> futures::future::BoxFuture<'static, Result<WebChatRuntimeStream, CustomError>> {
+        self.requests.lock().unwrap().push(request);
+        Box::pin(async {
+            Ok(Box::pin(futures::stream::iter([Ok(
+                den_protocol::RuntimeStreamEvent::Semantic(
+                    den_protocol::RuntimeSemanticEvent::TurnCompleted { turn: None },
+                ),
+            )])) as WebChatRuntimeStream)
+        })
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn runtime_sessions_use_browser_user_scope_without_changing_conversation_ownership(
+    pool: PgPool,
+) {
+    let (bear, [one, two, admin]) = seed(&pool).await;
+    bears_db::ensure_bear_profile_binding_rows(&pool, bear)
+        .await
+        .unwrap();
+    let runtime = Arc::new(RecordingChatRuntime::default());
+    let app = app_with_runtime(&pool, runtime.clone()).await;
+    let bear_row = bears_db::get_bear(&pool, bear).await.unwrap().unwrap();
+    let state = AppState::test_with_template_env(
+        pool.clone(),
+        Environment::new(),
+        Arc::new(Config::test_stub()),
+    );
+    let mut defaults = Vec::new();
+    let mut cookies = Vec::new();
+    for user in [one, two, admin] {
+        let cookie = login(&app, user).await;
+        let (status, _) = request(
+            &app,
+            &cookie,
+            "POST",
+            "/v1/chat/send",
+            json!({"bear_id": bear, "conversation_id": "default", "message": "hello"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (_, canonical_id) = checked_chat_id(&pool, bear, user, "default").await.unwrap();
+        let expected_session = browser_client_session_id(user, bear, &canonical_id);
+        let sent = runtime.requests.lock().unwrap().last().unwrap().clone();
+        assert_eq!(sent.user_id, user);
+        assert_eq!(sent.conversation_id, canonical_id);
+        assert_eq!(sent.session_id, expected_session);
+        let browser_session = browser_client_session(&state, user, &bear_row, "default")
+            .await
+            .unwrap();
+        assert_eq!(browser_session.client_session_id, expected_session);
+        assert_eq!(browser_session.runtime_session_id, expected_session);
+        defaults.push(expected_session);
+        cookies.push(cookie);
+    }
+    assert_eq!(
+        defaults
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len(),
+        3
+    );
+
+    let shared = "conv-admin-visible";
+    let owned_id = conversation(&pool, bear, Some(one), shared).await;
+    let expected_owner_session = browser_client_session_id(one, bear, shared);
+    let expected_admin_session = browser_client_session_id(admin, bear, shared);
+    assert_ne!(expected_owner_session, expected_admin_session);
+    assert_ne!(
+        browser_client_session_id(two, bear, shared),
+        expected_owner_session
+    );
+    assert_ne!(
+        browser_client_session_id(two, bear, shared),
+        expected_admin_session
+    );
+    for (user, cookie, expected) in [
+        (one, &cookies[0], &expected_owner_session),
+        (admin, &cookies[2], &expected_admin_session),
+    ] {
+        let (status, _) = request(
+            &app,
+            cookie,
+            "POST",
+            "/v1/chat/send",
+            json!({"bear_id": bear, "conversation_id": shared, "message": "hello shared"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let sent = runtime.requests.lock().unwrap().last().unwrap().clone();
+        assert_eq!(sent.user_id, user);
+        assert_eq!(sent.conversation_id, shared);
+        assert_eq!(&sent.session_id, expected);
+        let browser_session = browser_client_session(&state, user, &bear_row, shared)
+            .await
+            .unwrap();
+        assert_eq!(&browser_session.client_session_id, expected);
+    }
+    let before_denial = runtime.requests.lock().unwrap().len();
+    assert_eq!(
+        request(
+            &app,
+            &cookies[1],
+            "POST",
+            "/v1/chat/send",
+            json!({"bear_id": bear, "conversation_id": shared, "message": "guessed"}),
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(runtime.requests.lock().unwrap().len(), before_denial);
+    assert!(browser_client_session(&state, two, &bear_row, shared)
+        .await
+        .is_err());
+    assert_eq!(
+        conversation_persistence::get_conversation_for_external_id(&pool, bear, shared)
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        owned_id
+    );
+    assert!(!conversation_viewer(&pool, bear, two)
+        .await
+        .unwrap()
+        .may_access_external(&pool, shared)
+        .await
+        .unwrap());
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn work_history_requires_authorized_job_and_scoped_events(pool: PgPool) {
+    let (bear, [victim, other, _admin]) = seed(&pool).await;
+    let session_id = format!("shared-work-{}", Uuid::new_v4());
+    for (user, external) in [(victim, "conv-victim-work"), (other, "conv-other-chat")] {
+        conversation(&pool, bear, Some(user), external).await;
+        client_sessions::upsert_session(
+            &pool,
+            client_sessions::UpsertClientSession {
+                user_id: user,
+                bear_id: bear,
+                bear_slug: "web-access-test".to_string(),
+                client_session_id: session_id.clone(),
+                runtime_session_id: session_id.clone(),
+                conversation_id: external.to_string(),
+                resolved_conversation_id: None,
+                client: "test".to_string(),
+                cwd: None,
+                current_mode: Some(client_sessions::ClientSessionMode::Ask),
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    let surface = work_surfaces::create_surface(
+        &pool,
+        victim,
+        NewWorkSurface {
+            name: format!("work-test-{}", Uuid::new_v4().simple()),
+            description: None,
+            upstream_url: "https://example.test/work.git".to_string(),
+            default_ref: "main".to_string(),
+            default_image: None,
+            allowed_outbound_hosts: vec![],
+            credential: None,
+        },
+        "",
+    )
+    .await
+    .unwrap();
+    work_surfaces::assign_bear(&pool, surface.id, bear, victim)
+        .await
+        .unwrap();
+    let job = PgDocketService::from_pool(&pool)
+        .create_job(DocketJobCreate {
+            bear_id: bear,
+            created_by_user_id: victim,
+            created_by_role: "ui".to_string(),
+            goal: "Work on victim's private job".to_string(),
+            work_surface_id: Some(surface.id),
+            work_surface_assignments: vec![],
+            commit_policy: Some(DocketCommitPolicy::PerTask),
+            work_branch: None,
+            visibility: TaskListVisibility::SameUser,
+            source_conversation_id: None,
+            objective_kind: None,
+            supersedes_job_id: None,
+            overlap_resolution: DocketJobOverlapResolution::Reject,
+            criteria: vec![DocketJobCriterionInput {
+                kind: DocketCriterionKind::Narrative,
+                description: "Work complete".to_string(),
+                spec: None,
+                sibling_order: 0,
+            }],
+            tasks: vec![DocketTaskInput {
+                client_key: None,
+                parent_client_key: None,
+                parent_task_id: None,
+                sibling_order: Some(0),
+                kind: DocketTaskKind::Execution,
+                scope: DocketTaskScope::Template,
+                title: "Do private work".to_string(),
+                body: "Work on this job".to_string(),
+                completion_criteria: vec!["Done".to_string()],
+                difficulty: None,
+                effort_hint: None,
+                routing_strategy: RoutingStrategy::Auto,
+                expected_context_size: None,
+                result_rollup_policy: None,
+            }],
+        })
+        .await
+        .unwrap();
+    assert!(PgDocketService::from_pool(&pool)
+        .authorize_job_for_human(bear, job.job.id, other)
+        .await
+        .is_err());
+    let runs = work_runs::enqueue_work_job(
+        &pool,
+        WorkJobEnqueue {
+            bear_id: bear,
+            job_id: job.job.id,
+            durable_result: DurableResultKind::RepositoryChanges,
+            git_ref: None,
+            image_name: None,
+            requested_by_user_id: Some(victim),
+            execution_target: WorkExecutionTarget::Sandbox,
+            attachment_warning: None,
+        },
+    )
+    .await
+    .unwrap();
+    let claimed =
+        work_runs::claim_next_work_run(&pool, "history-test", std::time::Duration::from_secs(60))
+            .await
+            .unwrap()
+            .unwrap();
+    assert_eq!(claimed.id, runs[0].id);
+    work_runs::bind_work_run_session(&pool, claimed.id, bear, &session_id)
+        .await
+        .unwrap();
+
+    for (user, text) in [
+        (victim, "victim private message delta"),
+        (other, "other stray message delta"),
+    ] {
+        den_runtime::bearwire_events::append_bearwire_event(
+            &pool,
+            &session_id,
+            Some(bear),
+            Some(user),
+            BearWireEvent::persistent_typed("message.delta", json!({"delta": text})),
+        )
+        .await
+        .unwrap();
+    }
+    let app = app(&pool).await;
+    let victim_cookie = login(&app, victim).await;
+    let other_cookie = login(&app, other).await;
+    let victim_uri = format!("/v1/chat/history?bear_id={bear}&conversation_id=conv-victim-work");
+    let other_uri = format!("/v1/chat/history?bear_id={bear}&conversation_id=conv-other-chat");
+    let (status, victim_history) =
+        request(&app, &victim_cookie, "GET", &victim_uri, Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(victim_history["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|message| message["text"] == "victim private message delta"));
+    assert!(!victim_history["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|message| message["text"] == "other stray message delta"));
+    let (status, other_history) =
+        request(&app, &other_cookie, "GET", &other_uri, Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!other_history["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|message| message["text"] == "victim private message delta"));
+    assert!(!other_history["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|message| message["text"] == "other stray message delta"));
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -342,6 +651,7 @@ async fn authenticated_routes_enforce_canonical_ownership(pool: PgPool) {
             conv_id: "conv-owned-two",
             message: "rename conversation to stolen",
             request_id: Uuid::new_v4(),
+            resolved_id: None,
         }
     )
     .await
@@ -354,6 +664,7 @@ async fn authenticated_routes_enforce_canonical_ownership(pool: PgPool) {
             conv_id: "conv-owned-one",
             message: "rename conversation to direct owner title",
             request_id: Uuid::new_v4(),
+            resolved_id: None,
         }
     )
     .await

@@ -36,19 +36,20 @@ real-page smoke testing in development.
 
 ## Bear management (`src/web/bear/settings.rs`, `src/web/bear/manage.rs`)
 
-Member-facing bear management at `/bear/{slug}/…` (read for members, write for bear admins), organized by ownership: **Yours** (identity, memory, skills — travels with the Bear) and **This Den** (tools, connections, resources, activity, people — stays here).
+Bear management at `/bear/{slug}/…` is membership-gated. Raw inspection (Bear-wide activity, context, reflection evidence, stance internals, advanced diagnostics) requires Bear admin; ordinary members see shared settings and curated memory. Navigation does not confer access.
 
-- `GET /bear/{slug}/overview` — health, pending-review call to action, recent activity; wide viewports disclose memory statistics and activity-over-time (CSS only)
+- `GET /bear/{slug}/overview` — member-safe overview; Bear admins also see health, recent conversations, raw memory/recall stats, and weekly activity.
 - `GET /bear/{slug}/identity` — identity & charter summary; links to edit forms and per-stance models
 - `GET /bear/{slug}/skills` — owned procedures (honest placeholder until Skills land)
 - `GET /bear/{slug}/tools` — tool matrix: one row per unique tool with origin (built-in / armature-local; MCP when it lands), stance availability as columns
 - `GET /bear/{slug}/connections` — editor (armature) code token; provider connections when they land
 - `GET /bear/{slug}/resources` — the web as a resource under policy (sources/approvals/fetches; POST actions as before), internal resources noted
-- `GET /bear/{slug}/activity` — activity hub: conversations stream (jobs and Cabinet when they land); `GET /bear/{slug}/conversations/{conversation_id}` — transcript detail
+- `GET /bear/{slug}/activity` and `/conversations` — Bear-admin conversation/processing inspection; `GET /bear/{slug}/conversations/{conversation_id}` — Bear-admin raw transcript/compaction/checkpoint detail. Legacy compaction events keyed only by external ID are not rendered because they cannot be attributed to a Bear.
 - `GET /bear/{slug}/people` — membership; bear admins grant/revoke via POST actions
 - `GET /bear/{slug}/portability` — bundle export (`GET /bear/{slug}/export.bear`), import (`POST /bears/import`), what-moves/what-stays
-- `GET /bear/{slug}/context` — prompt assembly, layer by layer: compiled stance prompts, standing notes (durable prompt-memory blocks, humanized), projected memory, recall status, conversation window, tool surface
-- Internals (kept reachable): `GET /bear/{slug}/stances/{stance}` (stance detail + model POSTs; linked from identity/models), `GET|POST /bear/{slug}/models`, `GET /bear/{slug}/advanced` (diagnostics incl. stance-binding status, provision action)
+- `GET /bear/{slug}/context` — Bear-admin prompt/context inspection, including compiled stance prompts, standing-note previews, and the latest Bear-wide conversation budget.
+- `GET /bear/{slug}/reflections` — Bear-admin inspection of Bear-wide reflection events and processing evidence.
+- Internals (kept reachable): `GET /bear/{slug}/stances/{stance}` (Bear-admin stance detail; model POSTs also admin-only), `GET|POST /bear/{slug}/models`, `GET /bear/{slug}/advanced` (Bear-admin diagnostics and provisioning).
 - Retired paths redirect: `/access` → `/people`, `/policy` → `/resources`, `/stances` (list) → `/advanced`, `/persona` → `/context`; `/conversations` remains as an alias of the activity stream
 
 ## Bear memory & entities (`src/bear/memory.rs`)
@@ -81,14 +82,14 @@ Member-facing bear management at `/bear/{slug}/…` (read for members, write for
 
 - `GET /bear/{slug}` — Deep Chat view for a single bear the user may access (membership-checked; `src/web/templates/bear_chat.html`, handler in `src/web/bear_chat.rs`). Registered with trailing-slash redirect (`/bear/{slug}/` → `/bear/{slug}`) so links like `/bear/{slug}/?conversation_id=…` from the details UI resolve.
 - `GET /v1/bears` — JSON list of bears the signed-in user may use (membership-filtered; includes `is_bear_admin`) (`src/web/v1/mod.rs`).
-- `GET /v1/chat/conversations` — query `bear_id` (required). Membership-checked; returns `{ "conversations": [ { "id", "title", "last_message_at" } ] }` from Den-owned conversation persistence.
-- `PATCH /v1/chat/conversations/{conversation_id}` — JSON body `bear_id` plus optional `title` and/or `archived`; membership-checked wrapper for Den-owned conversation metadata.
-- `GET /v1/chat/history` — query `bear_id` (required), optional `conversation_id`, optional `before`, optional `limit` (default 50, max 100). Membership-checked; loads Den-owned conversation history for Deep Chat `loadHistory`.
-- `GET /v1/chat/artifacts` — query `bear_id` (required), optional `conversation_id`. Membership-checked; returns only access-filtered artifact citations linked to the durable conversation, never storage locations, hashes, or provenance.
+- `GET /v1/chat/conversations` — query `bear_id` (required). Lists only canonically owned conversations for ordinary members, filtered before LIMIT; Bear admins may inspect all, including NULL-owner legacy rows. Browser `default` resolves to the user's own durable conversation, not another member's history.
+- `PATCH /v1/chat/conversations/{conversation_id}` — JSON body `bear_id` plus optional `title`, `archived`, or `deleted`; owner/admin authorization required before mutation.
+- `GET /v1/chat/history` — query `bear_id`, optional `conversation_id`, `before`, `limit` (default 50, max 100). Canonical owner/admin authorization and user-visible transcript projection; diagnostic-only/model-only tool records are excluded.
+- `GET /v1/chat/artifacts` — query `bear_id`, optional `conversation_id`. Canonical owner/admin authorization before access-filtered artifact citations; no storage locations, hashes, or provenance.
 - `GET /v1/chat/current-task` — query `bear_id` (required), optional `conversation_id`. Ensures the authenticated browser’s Pair client session for that conversation and returns session-anchored tasks plus its selected current task.
 - `POST /v1/chat/current-task` — JSON body `bear_id`, `conversation_id`, and `title`. Creates a minimal session-owned Pair task for the server-derived browser session; the browser then requests confirmation before selecting it.
 - `POST /v1/chat/current-task/selection-request`, `/select`, `/clear` — JSON body `bear_id`, `conversation_id`, and (for preview/select) `task_id`. Membership-checked browser adapters to the canonical Pair current-task confirmation/select/clear operations; browser session ownership is server-derived from the authenticated user, bear, and conversation.
-- `POST /v1/chat/send` — JSON body `bear_id`, `message`, optional `conversation_id`. Membership-checked; runs the Den-native chat loop through Bifrost. Each request gets a UUID **`X-Request-Id`** on the response (SSE success or JSON error). Failures return **`application/json`** `{ "error": "…", "request_id": "…" }` (not HTML). The browser parses `data:` lines and shows `reasoning_message`, `assistant_message`, and `error_message` payloads in Deep Chat (see `bear_chat.html`).
+- `POST /v1/chat/send` — JSON body `bear_id`, `message`, optional `conversation_id`. Canonical owner/admin authorization; a first `new-*` message materializes an owner-scoped durable conversation and announces its ID before runtime/persistence. Runs the Den-native chat loop through Bifrost. Each request gets a UUID **`X-Request-Id`** on the response (SSE success or JSON error). Failures return **`application/json`** `{ "error": "…", "request_id": "…" }` (not HTML). The browser parses `data:` lines and shows `reasoning_message`, `assistant_message`, and `error_message` payloads in Deep Chat (see `bear_chat.html`).
 
 `/v1/*` uses `login_required!(…)` (same session as the rest of the web app).
 
