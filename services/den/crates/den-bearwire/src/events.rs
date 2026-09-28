@@ -269,9 +269,22 @@ mod tests {
         let other_token = test_token(&pool, other, bear_id).await;
         let other_bear_token = test_token(&pool, owner, other_bear_id).await;
         let session_id = format!("session-{}", Uuid::new_v4().simple());
+        // Recreate a pre-migration collision in this isolated test database.
+        sqlx::query!(
+            "ALTER TABLE client_sessions DISABLE TRIGGER client_sessions_global_owner_guard"
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         test_session(&pool, owner, bear_id, &slug, &session_id).await;
         test_session(&pool, other, bear_id, &slug, &session_id).await;
         test_session(&pool, owner, other_bear_id, &other_slug, &session_id).await;
+        sqlx::query!(
+            "ALTER TABLE client_sessions ENABLE TRIGGER client_sessions_global_owner_guard"
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
         async fn append(
             pool: &sqlx::PgPool,

@@ -766,6 +766,13 @@ mod tests {
         let bear_id = bear(&pool, &slug).await;
         let other_bear_id = bear(&pool, &other_slug).await;
         let session_id = format!("shared-{suffix}");
+        // These rows represent historical collisions predating the ownership guard.
+        sqlx::query!(
+            "ALTER TABLE client_sessions DISABLE TRIGGER client_sessions_global_owner_guard"
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         for (user_id, id, bear_slug) in [
             (owner, bear_id, slug.as_str()),
             (other, bear_id, slug.as_str()),
@@ -776,6 +783,12 @@ mod tests {
                 .unwrap();
             session(&pool, user_id, id, bear_slug, &session_id).await;
         }
+        sqlx::query!(
+            "ALTER TABLE client_sessions ENABLE TRIGGER client_sessions_global_owner_guard"
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
         append(&pool, bear_id, Some(owner), &session_id, "owner.first").await;
         append(&pool, bear_id, Some(other), &session_id, "other").await;

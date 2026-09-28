@@ -306,6 +306,11 @@ async fn runtime_sessions_use_browser_user_scope_without_changing_conversation_o
 async fn work_history_requires_authorized_job_and_scoped_events(pool: PgPool) {
     let (bear, [victim, other, _admin]) = seed(&pool).await;
     let session_id = format!("shared-work-{}", Uuid::new_v4());
+    // Recreate a pre-migration collision; normal writes must still obey the guard.
+    sqlx::query!("ALTER TABLE client_sessions DISABLE TRIGGER client_sessions_global_owner_guard")
+        .execute(&pool)
+        .await
+        .unwrap();
     for (user, external) in [(victim, "conv-victim-work"), (other, "conv-other-chat")] {
         conversation(&pool, bear, Some(user), external).await;
         client_sessions::upsert_session(
@@ -326,6 +331,10 @@ async fn work_history_requires_authorized_job_and_scoped_events(pool: PgPool) {
         .await
         .unwrap();
     }
+    sqlx::query!("ALTER TABLE client_sessions ENABLE TRIGGER client_sessions_global_owner_guard")
+        .execute(&pool)
+        .await
+        .unwrap();
 
     let surface = work_surfaces::create_surface(
         &pool,

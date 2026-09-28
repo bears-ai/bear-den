@@ -20,6 +20,10 @@ Production deploys now run Den schema changes in a dedicated one-off migration j
 
 Reversible does **not** mean operators should blindly run all downs in production. It means each migration must have an intentional rollback story that can be rehearsed and reasoned about.
 
+#### Existing client-session ID collisions
+
+`20260928101801_guard_client_session_id_ownership` adds a database trigger that serializes claims for the same opaque client-session ID and rejects any new cross-user or cross-Bear reuse. It deliberately does **not** delete, rename, or automatically deduplicate older bindings: event and Work records still refer to those IDs as text, and their ownership cannot be reconstructed by renaming only `client_sessions`. The down migration removes the guard without modifying historical data. BearWire preflight continues to fail closed on ambiguous IDs. Review a historical collision with its event/run provenance before a separate, explicit repair; never promote a NULL-owner conversation from a client-session match alone.
+
 #### Startup schema compatibility guard
 
 Den now checks the highest successful version recorded in `public._sqlx_migrations` before serving traffic. If the database has already been migrated to a version newer than the binary's embedded SQLx migrator, startup fails with a clear version-mismatch error instead of running unpredictably against an unknown schema.

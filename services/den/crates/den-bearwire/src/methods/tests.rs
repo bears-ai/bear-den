@@ -8536,7 +8536,11 @@ async fn bearwire_ambiguous_historical_session_id_denies_even_bear_admin(pool: s
     )
     .await;
     assert_eq!(opened["result"]["ok"], true, "{opened}");
-    // Simulate a historical duplicate created before the global preflight guard.
+    // Seed a pre-migration collision, then restore the database guard before any RPC.
+    sqlx::query!("ALTER TABLE client_sessions DISABLE TRIGGER client_sessions_global_owner_guard")
+        .execute(&pool)
+        .await
+        .unwrap();
     client_sessions::upsert_session(
         &pool,
         client_sessions::UpsertClientSession {
@@ -8554,6 +8558,10 @@ async fn bearwire_ambiguous_historical_session_id_denies_even_bear_admin(pool: s
     )
     .await
     .expect("seed historical duplicate");
+    sqlx::query!("ALTER TABLE client_sessions ENABLE TRIGGER client_sessions_global_owner_guard")
+        .execute(&pool)
+        .await
+        .unwrap();
     for (token, label) in [(&admin_token, "admin"), (&member_token, "member")] {
         for method in ["session.open", "session.close", "run.start"] {
             let mut params = json!({"bear_slug": slug, "session_id": session_id});

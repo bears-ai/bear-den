@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "ALTER TABLE client_sessions ENABLE TRIGGER client_sessions_global_owner_guard",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "b9d3da154a059db7433b45b32e7a320233ed352e3deb3d9de1e796dab4a77af9"
+}

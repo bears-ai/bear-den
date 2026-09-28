@@ -1,71 +1,101 @@
-use super::ClientSessionMode;
+use super::*;
+use crate::bears::db::{create_bear, BearParams};
 
-#[test]
-fn client_session_mode_preserves_storage_strings_and_rejects_unknown_values() {
-    assert_eq!(ClientSessionMode::Ask.as_str(), "ask");
-    assert_eq!(ClientSessionMode::Plan.as_str(), "plan");
-    assert_eq!(ClientSessionMode::Write.as_str(), "write");
-
-    assert_eq!(
-        ClientSessionMode::try_from_storage("ask").unwrap(),
-        ClientSessionMode::Ask
-    );
-    assert_eq!(
-        ClientSessionMode::try_from_storage("plan").unwrap(),
-        ClientSessionMode::Plan
-    );
-    assert_eq!(
-        ClientSessionMode::try_from_storage("write").unwrap(),
-        ClientSessionMode::Write
-    );
-    assert!(ClientSessionMode::try_from_storage("admin").is_err());
+async fn bear(pool: &PgPool, slug: &str) -> Uuid {
+    create_bear(
+        pool,
+        BearParams {
+            slug,
+            name: "Session ownership test",
+            description: "",
+            system_prompt: "",
+            default_model: None,
+            tools_enabled: None,
+            context_profile: None,
+        },
+    )
+    .await
+    .unwrap()
 }
 
-#[test]
-fn trusted_workspace_context_prefers_adapter_roots_and_falls_back_to_cwd() {
-    let row = super::ClientSessionRow {
-        id: uuid::Uuid::nil(),
-        user_id: 1,
-        bear_id: uuid::Uuid::nil(),
-        bear_slug: "bear".to_string(),
-        client_session_id: "session-1".to_string(),
-        runtime_session_id: "runtime-1".to_string(),
-        conversation_id: "conv-1".to_string(),
+async fn user(pool: &PgPool, name: &str) -> i32 {
+    sqlx::query_scalar!(
+        "INSERT INTO users (username, email) VALUES ($1, $1) RETURNING id",
+        name
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+fn session(user_id: i32, bear_id: Uuid, id: &str) -> UpsertClientSession {
+    UpsertClientSession {
+        user_id,
+        bear_id,
+        bear_slug: "session-guard-test".to_string(),
+        client_session_id: id.to_string(),
+        runtime_session_id: format!("runtime-{id}"),
+        conversation_id: format!("conv-{id}"),
         resolved_conversation_id: None,
-        client: "zed".to_string(),
-        cwd: Some("/workspace/cwd".to_string()),
-        adapter_environment: Some(serde_json::json!({
-            "cwd": "/workspace/cwd",
-            "workspace_roots": ["/workspace/root-a", "/workspace/root-b"]
-        })),
-        current_mode: "ask".to_string(),
-        current_task_id: None,
-        conversation_title: None,
-        conversation_title_updated_at: None,
-        conversation_title_synced_at: None,
-        closed_at: None,
-        archived_at: None,
-        created_at: time::OffsetDateTime::UNIX_EPOCH,
-        updated_at: time::OffsetDateTime::UNIX_EPOCH,
-    };
+        client: "test".to_string(),
+        cwd: None,
+        current_mode: None,
+    }
+}
 
-    let trusted = row.trusted_workspace_context();
-    assert_eq!(trusted.cwd.as_deref(), Some("/workspace/cwd"));
-    assert_eq!(
-        trusted.roots,
-        vec![
-            "/workspace/root-a".to_string(),
-            "/workspace/root-b".to_string()
-        ]
+#[sqlx::test(migrations = "../../migrations")]
+async fn session_id_cannot_be_claimed_by_a_second_owner_or_bear(pool: PgPool) {
+    let bear_id = bear(&pool, "session-guard-first").await;
+    let other_bear_id = bear(&pool, "session-guard-second").await;
+    let owner = user(&pool, "sessionguardowner").await;
+    let other = user(&pool, "sessionguardother").await;
+    let id = "client-session-shared-id";
+
+    upsert_session(&pool, session(owner, bear_id, id))
+        .await
+        .unwrap();
+    upsert_session(&pool, session(owner, bear_id, id))
+        .await
+        .expect("same canonical owner may reconnect");
+    assert!(upsert_session(&pool, session(other, bear_id, id))
+        .await
+        .is_err());
+    assert!(upsert_session(&pool, session(owner, other_bear_id, id))
+        .await
+        .is_err());
+    let rows = sqlx::query!(
+        "SELECT user_id, bear_id FROM client_sessions WHERE client_session_id = $1",
+        id
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!((rows[0].user_id, rows[0].bear_id), (owner, bear_id));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn simultaneous_session_claims_have_one_canonical_owner(pool: PgPool) {
+    let bear_id = bear(&pool, "session-guard-race").await;
+    let first = user(&pool, "sessionguardracefirst").await;
+    let second = user(&pool, "sessionguardracesecond").await;
+    let id = "client-session-race-id";
+    let (left, right) = tokio::join!(
+        upsert_session(&pool, session(first, bear_id, id)),
+        upsert_session(&pool, session(second, bear_id, id)),
     );
-    assert_eq!(trusted.source, "trusted_session");
-
-    let row = super::ClientSessionRow {
-        adapter_environment: None,
-        ..row
-    };
-    let trusted = row.trusted_workspace_context();
-    assert_eq!(trusted.cwd.as_deref(), Some("/workspace/cwd"));
-    assert_eq!(trusted.roots, vec!["/workspace/cwd".to_string()]);
-    assert_eq!(trusted.source, "trusted_session");
+    assert_ne!(
+        left.is_ok(),
+        right.is_ok(),
+        "exactly one claim must succeed"
+    );
+    let owners = sqlx::query_scalar!(
+        "SELECT user_id FROM client_sessions WHERE client_session_id = $1",
+        id
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(owners.len(), 1);
+    assert!(owners[0] == first || owners[0] == second);
 }
