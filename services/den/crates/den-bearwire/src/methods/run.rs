@@ -50,7 +50,13 @@ use den_service::{
 };
 
 use crate::auth::authenticated_bear;
-use crate::methods::{parse_params, DEFAULT_CLIENT};
+use crate::methods::{
+    conversation::{
+        authorize_existing_conversation, authorize_or_create_conversation, conversation_viewer,
+        require_conversation_access,
+    },
+    parse_params, DEFAULT_CLIENT,
+};
 
 // A focused Docket task must reach the native turn stream before `/focus` claims
 // that autonomous work has started. This is intentionally bounded so an unavailable
@@ -2059,6 +2065,10 @@ pub(crate) async fn run_recover_result(
     )
     .await?
     .ok_or_else(|| CustomError::NotFound("client session not found".to_string()))?;
+    super::session::require_session_conversation_access(state, &session).await?;
+    let viewer = conversation_viewer(state, bear.id, user_id).await?;
+    authorize_existing_conversation(&viewer, &state.sqlx_pool, bear.id, &payload.conversation_id)
+        .await?;
     let task_id = snapshot.selected_task_id.ok_or_else(|| {
         CustomError::ValidationError(
             "technical-budget recovery requires a selected session task".to_string(),
@@ -2281,9 +2291,21 @@ async fn run_start_with_recovery_source(
         .and_then(|session| session.resolved_conversation_id.clone());
     let upstream_target =
         runtime_upstream_target(&conversation_id, resolved_conversation_id.as_deref());
+    let viewer = conversation_viewer(state, bear.id, user_id).await?;
+    // A client-supplied selection and an older resolved runtime target are both
+    // canonical conversation references; neither may point at another owner.
+    authorize_existing_conversation(&viewer, &state.sqlx_pool, bear.id, &conversation_id).await?;
     let cwd = request.cwd;
     let client_context = request.client_context;
     let workspace_roots = normalized_workspace_roots(client_context.as_ref(), cwd.as_deref())?;
+    let conversation = authorize_or_create_conversation(
+        &viewer,
+        &state.sqlx_pool,
+        bear.id,
+        user_id,
+        &upstream_target,
+    )
+    .await?;
     let requested_mode = request.requested_mode;
     // `TurnAuthority` is the single local authority seam for BearWire's tool
     // surface and prompt permission envelope. The concrete stance is resolved
@@ -2343,16 +2365,7 @@ async fn run_start_with_recovery_source(
     let resolved_model =
         preflight_pair_run_model(state, &bear, &session_id, &upstream_target, stance).await?;
     if resolved_model.source.is_default() {
-        let conversation =
-            den_service::conversation::persistence::ensure_conversation_for_external_id(
-                &state.sqlx_pool,
-                bear.id,
-                Some(user_id),
-                &upstream_target,
-                Some(&session_id),
-                None,
-            )
-            .await?;
+        require_conversation_access(&viewer, &state.sqlx_pool, conversation.id).await?;
         let established =
             den_service::conversation::persistence::establish_conversation_default_model_state(
                 &state.sqlx_pool,
@@ -2371,6 +2384,7 @@ async fn run_start_with_recovery_source(
             );
         }
     }
+    require_conversation_access(&viewer, &state.sqlx_pool, conversation.id).await?;
     client_sessions::upsert_session(
         &state.sqlx_pool,
         client_sessions::UpsertClientSession {
@@ -3356,6 +3370,15 @@ pub(crate) async fn run_state_result(
             "run does not belong to authenticated Bear".to_string(),
         ));
     }
+    let session = client_sessions::find_for_user_bear_session_id(
+        &state.sqlx_pool,
+        user_id,
+        bear.id,
+        &run.session_id,
+    )
+    .await?
+    .ok_or_else(|| CustomError::NotFound("BearWire session not found".to_string()))?;
+    super::session::require_session_conversation_access(state, &session).await?;
     if let Some(session_id) = request.session_id.as_deref() {
         if run.session_id != session_id {
             return Err(CustomError::Authorization(
@@ -3433,6 +3456,7 @@ pub(crate) async fn run_cancel_result(
         }));
     };
 
+    super::session::require_session_conversation_access(state, &session).await?;
     let settled = settle_active_run_for_session(
         state,
         &session.client_session_id,

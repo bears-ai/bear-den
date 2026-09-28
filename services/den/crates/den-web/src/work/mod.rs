@@ -111,50 +111,70 @@ async fn resolve_work_surface_prefix(
     unique_scoped_id(ids)
 }
 
+fn visible_job(owner_id: i32, visibility: &str, bear: &BearContext) -> bool {
+    // Even an owner/admin cannot inspect an unrecognized visibility value.
+    let Ok(visibility) = TaskListVisibility::parse(visibility) else {
+        return false;
+    };
+    owner_id == bear.viewer_id || bear.is_admin || visibility == TaskListVisibility::BearVisible
+}
+
 async fn resolve_job_prefix(
     pool: &sqlx::PgPool,
-    bear_id: Uuid,
+    bear: &BearContext,
     prefix: &str,
 ) -> Result<Uuid, CustomError> {
     let prefix = normalized_route_prefix(prefix)?;
-    let ids = sqlx::query_scalar!(
-        "SELECT id FROM bear_jobs WHERE replace(id::text, '-', '') LIKE $1 || '%' AND bear_id = $2 LIMIT 2",
+    let rows = sqlx::query!(
+        "SELECT id, created_by_user_id, visibility FROM bear_jobs WHERE replace(id::text, '-', '') LIKE $1 || '%' AND bear_id = $2 LIMIT 2",
         prefix,
-        bear_id,
+        bear.id,
     )
     .fetch_all(pool)
     .await
     .map_err(den_core::DenError::from)?;
-    unique_scoped_id(ids)
+    let row = rows
+        .as_slice()
+        .first()
+        .filter(|_| rows.len() == 1)
+        .filter(|row| visible_job(row.created_by_user_id, &row.visibility, bear))
+        .ok_or_else(|| CustomError::NotFound("job not found".to_string()))?;
+    Ok(row.id)
 }
 
 async fn resolve_run_prefix(
     pool: &sqlx::PgPool,
-    bear_id: Uuid,
+    bear: &BearContext,
     prefix: &str,
 ) -> Result<Uuid, CustomError> {
     let prefix = normalized_route_prefix(prefix)?;
-    let ids = sqlx::query_scalar!(
-        "SELECT r.id FROM bear_work_runs r JOIN bear_jobs j ON j.id = r.job_id WHERE replace(r.id::text, '-', '') LIKE $1 || '%' AND j.bear_id = $2 LIMIT 2",
+    let rows = sqlx::query!(
+        "SELECT r.id, j.created_by_user_id, j.visibility FROM bear_work_runs r JOIN bear_jobs j ON j.id = r.job_id WHERE replace(r.id::text, '-', '') LIKE $1 || '%' AND j.bear_id = $2 LIMIT 2",
         prefix,
-        bear_id,
+        bear.id,
     )
     .fetch_all(pool)
     .await
     .map_err(den_core::DenError::from)?;
-    unique_scoped_id(ids)
+    let row = rows
+        .as_slice()
+        .first()
+        .filter(|_| rows.len() == 1)
+        .filter(|row| visible_job(row.created_by_user_id, &row.visibility, bear))
+        .ok_or_else(|| CustomError::NotFound("work run not found".to_string()))?;
+    Ok(row.id)
 }
 
 async fn resolve_task_prefix(
     pool: &sqlx::PgPool,
-    bear_id: Uuid,
+    job_id: Uuid,
     prefix: &str,
 ) -> Result<Uuid, CustomError> {
     let prefix = normalized_route_prefix(prefix)?;
     let ids = sqlx::query_scalar!(
-        "SELECT t.id FROM bear_tasks t JOIN bear_jobs j ON j.id = t.job_id WHERE replace(t.id::text, '-', '') LIKE $1 || '%' AND j.bear_id = $2 LIMIT 2",
+        "SELECT id FROM bear_tasks WHERE replace(id::text, '-', '') LIKE $1 || '%' AND job_id = $2 LIMIT 2",
         prefix,
-        bear_id,
+        job_id,
     )
     .fetch_all(pool)
     .await
@@ -561,6 +581,8 @@ fn require_user(auth_session: &AuthSession) -> Result<i32, CustomError> {
 struct BearContext {
     id: Uuid,
     slug: String,
+    viewer_id: i32,
+    is_admin: bool,
 }
 
 async fn bear_context(
@@ -576,9 +598,14 @@ async fn bear_context(
     let bear = bears_db::bear_for_user_by_slug(state.sqlx_pool(), user_id, slug)
         .await?
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
+    let role = bears_db::membership_role_for_user(state.sqlx_pool(), user_id, bear.id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
     Ok(BearContext {
         id: bear.id,
         slug: bear.slug,
+        viewer_id: user_id,
+        is_admin: bears_db::role_is_bear_admin(role.as_deref()),
     })
 }
 
@@ -616,8 +643,10 @@ async fn index(
 
     let service = PgDocketService::from_pool(state.sqlx_pool());
     let jobs = service
-        .list_jobs(
+        .list_jobs_for_viewer(
             bear_id,
+            bear.viewer_id,
+            bear.is_admin,
             DocketJobListFilter {
                 include_archived: show_archived,
                 ..DocketJobListFilter::default()
@@ -929,7 +958,7 @@ async fn edit_job(
     Form(form): Form<EditJobForm>,
 ) -> Result<Response, CustomError> {
     let bear = bear_context(&state, &auth_session, &bear_slug).await?;
-    let job_id = resolve_job_prefix(state.sqlx_pool(), bear.id, &job_ref).await?;
+    let job_id = resolve_job_prefix(state.sqlx_pool(), &bear, &job_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
     let bear_id: Option<Uuid> =
@@ -1038,7 +1067,7 @@ async fn duplicate_job(
     Path((bear_slug, job_ref)): Path<(String, String)>,
 ) -> Result<Response, CustomError> {
     let bear = bear_context(&state, &auth_session, &bear_slug).await?;
-    let job_id = resolve_job_prefix(state.sqlx_pool(), bear.id, &job_ref).await?;
+    let job_id = resolve_job_prefix(state.sqlx_pool(), &bear, &job_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
     let owner = sqlx::query_scalar!("SELECT bear_id FROM bear_jobs WHERE id = $1", job_id)
@@ -1149,7 +1178,7 @@ async fn complete_job(
     Path((bear_slug, job_ref)): Path<(String, String)>,
 ) -> Result<Response, CustomError> {
     let bear = bear_context(&state, &auth_session, &bear_slug).await?;
-    let job_id = resolve_job_prefix(state.sqlx_pool(), bear.id, &job_ref).await?;
+    let job_id = resolve_job_prefix(state.sqlx_pool(), &bear, &job_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
     let owner = sqlx::query_scalar!("SELECT bear_id FROM bear_jobs WHERE id = $1", job_id)
@@ -1211,7 +1240,7 @@ async fn archive_job(
     Path((bear_slug, job_ref)): Path<(String, String)>,
 ) -> Result<Response, CustomError> {
     let bear = bear_context(&state, &auth_session, &bear_slug).await?;
-    let job_id = resolve_job_prefix(state.sqlx_pool(), bear.id, &job_ref).await?;
+    let job_id = resolve_job_prefix(state.sqlx_pool(), &bear, &job_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
     let owner = sqlx::query_scalar!("SELECT bear_id FROM bear_jobs WHERE id = $1", job_id)
@@ -1272,7 +1301,7 @@ async fn add_top_level_task(
     Form(form): Form<AddTopLevelTaskForm>,
 ) -> Result<Response, CustomError> {
     let bear = bear_context(&state, &auth_session, &bear_slug).await?;
-    let job_id = resolve_job_prefix(state.sqlx_pool(), bear.id, &job_ref).await?;
+    let job_id = resolve_job_prefix(state.sqlx_pool(), &bear, &job_ref).await?;
     ensure_safe_task_mutation_boundary(state.sqlx_pool(), job_id).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
@@ -1365,7 +1394,7 @@ async fn job_detail(
     Query(query): Query<JobDetailQuery>,
 ) -> Result<Response, CustomError> {
     let bear = bear_context(&state, &auth_session, &bear_slug).await?;
-    let job_id = resolve_job_prefix(state.sqlx_pool(), bear.id, &job_ref).await?;
+    let job_id = resolve_job_prefix(state.sqlx_pool(), &bear, &job_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
 
@@ -1494,7 +1523,7 @@ async fn job_detail(
         .collect();
 
     let selected_task_id = match query.task.as_deref() {
-        Some(task_ref) => resolve_task_prefix(state.sqlx_pool(), bear_id, task_ref)
+        Some(task_ref) => resolve_task_prefix(state.sqlx_pool(), job_id, task_ref)
             .await
             .ok(),
         None => None,
@@ -1629,9 +1658,9 @@ async fn add_child_task(
     Form(form): Form<AddChildTaskForm>,
 ) -> Result<Response, CustomError> {
     let bear = bear_context(&state, &auth_session, &bear_slug).await?;
-    let job_id = resolve_job_prefix(state.sqlx_pool(), bear.id, &job_ref).await?;
+    let job_id = resolve_job_prefix(state.sqlx_pool(), &bear, &job_ref).await?;
     ensure_safe_task_mutation_boundary(state.sqlx_pool(), job_id).await?;
-    let parent_task_id = resolve_task_prefix(state.sqlx_pool(), bear.id, &parent_ref).await?;
+    let parent_task_id = resolve_task_prefix(state.sqlx_pool(), job_id, &parent_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
     let Some(bear_id) = sqlx::query_scalar!("SELECT bear_id FROM bear_jobs WHERE id = $1", job_id)
@@ -1710,9 +1739,9 @@ async fn move_task(
     Path((bear_slug, job_ref, task_ref, direction)): Path<(String, String, String, String)>,
 ) -> Result<Response, CustomError> {
     let bear = bear_context(&state, &auth_session, &bear_slug).await?;
-    let job_id = resolve_job_prefix(state.sqlx_pool(), bear.id, &job_ref).await?;
+    let job_id = resolve_job_prefix(state.sqlx_pool(), &bear, &job_ref).await?;
     ensure_safe_task_mutation_boundary(state.sqlx_pool(), job_id).await?;
-    let task_id = resolve_task_prefix(state.sqlx_pool(), bear.id, &task_ref).await?;
+    let task_id = resolve_task_prefix(state.sqlx_pool(), job_id, &task_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
     let Some(bear_id) = sqlx::query_scalar!("SELECT bear_id FROM bear_jobs WHERE id = $1", job_id)
@@ -1797,8 +1826,8 @@ async fn retry_task(
     Form(form): Form<RetryTaskForm>,
 ) -> Result<Response, CustomError> {
     let bear = bear_context(&state, &auth_session, &bear_slug).await?;
-    let job_id = resolve_job_prefix(state.sqlx_pool(), bear.id, &job_ref).await?;
-    let task_id = resolve_task_prefix(state.sqlx_pool(), bear.id, &task_ref).await?;
+    let job_id = resolve_job_prefix(state.sqlx_pool(), &bear, &job_ref).await?;
+    let task_id = resolve_task_prefix(state.sqlx_pool(), job_id, &task_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
     let Some(bear_id) = sqlx::query_scalar!("SELECT bear_id FROM bear_jobs WHERE id = $1", job_id)
@@ -1873,7 +1902,7 @@ async fn run_detail(
     Path((bear_slug, run_ref)): Path<(String, String)>,
 ) -> Result<Response, CustomError> {
     let bear = bear_context(&state, &auth_session, &bear_slug).await?;
-    let run_id = resolve_run_prefix(state.sqlx_pool(), bear.id, &run_ref).await?;
+    let run_id = resolve_run_prefix(state.sqlx_pool(), &bear, &run_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
     let run = work_runs::get_work_run(state.sqlx_pool(), run_id)
@@ -2024,7 +2053,7 @@ async fn dispatch_job(
     Form(form): Form<DispatchForm>,
 ) -> Result<Response, CustomError> {
     let bear = bear_context(&state, &auth_session, &bear_slug).await?;
-    let job_id = resolve_job_prefix(state.sqlx_pool(), bear.id, &job_ref).await?;
+    let job_id = resolve_job_prefix(state.sqlx_pool(), &bear, &job_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
     let bear_id: Option<Uuid> =
@@ -2084,7 +2113,7 @@ async fn steer_run(
     paused: bool,
 ) -> Result<Response, CustomError> {
     let bear = bear_context(state, auth_session, bear_slug).await?;
-    let run_id = resolve_run_prefix(state.sqlx_pool(), bear.id, run_ref).await?;
+    let run_id = resolve_run_prefix(state.sqlx_pool(), &bear, run_ref).await?;
     let user_id = require_user(auth_session)?;
     let bears = member_bears(state, user_id).await?;
     let run = work_runs::get_work_run(state.sqlx_pool(), run_id)
@@ -2111,7 +2140,7 @@ async fn cancel_job_run(
     Path((bear_slug, job_ref)): Path<(String, String)>,
 ) -> Result<Response, CustomError> {
     let bear = bear_context(&state, &auth_session, &bear_slug).await?;
-    let job_id = resolve_job_prefix(state.sqlx_pool(), bear.id, &job_ref).await?;
+    let job_id = resolve_job_prefix(state.sqlx_pool(), &bear, &job_ref).await?;
     PgDocketService::from_pool(state.sqlx_pool())
         .cancel_job_run(bear.id, job_id)
         .await?;
@@ -2124,7 +2153,7 @@ async fn cancel_run(
     Path((bear_slug, run_ref)): Path<(String, String)>,
 ) -> Result<Response, CustomError> {
     let bear = bear_context(&state, &auth_session, &bear_slug).await?;
-    let run_id = resolve_run_prefix(state.sqlx_pool(), bear.id, &run_ref).await?;
+    let run_id = resolve_run_prefix(state.sqlx_pool(), &bear, &run_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
     let run = work_runs::get_work_run(state.sqlx_pool(), run_id)
@@ -2155,7 +2184,7 @@ async fn retry_run(
     Path((bear_slug, run_ref)): Path<(String, String)>,
 ) -> Result<Response, CustomError> {
     let bear = bear_context(&state, &auth_session, &bear_slug).await?;
-    let run_id = resolve_run_prefix(state.sqlx_pool(), bear.id, &run_ref).await?;
+    let run_id = resolve_run_prefix(state.sqlx_pool(), &bear, &run_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
     let run = work_runs::get_work_run(state.sqlx_pool(), run_id)

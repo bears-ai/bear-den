@@ -13,7 +13,7 @@
   <ul>
     <li><a href="/bear/{{ bear.slug | e }}/identity"{% if nav_active == "identity" %} aria-current="page"{% endif %}>Identity &amp; charter</a></li>
     <li><a href="/bear/{{ bear.slug | e }}/memory"{% if nav_active == "memory" %} aria-current="page"{% endif %}>Memory</a></li>
-    <li><a href="/bear/{{ bear.slug | e }}/context"{% if nav_active == "context" %} aria-current="page"{% endif %}>Context</a></li>
+    {% if can_manage_bear %}<li><a href="/bear/{{ bear.slug | e }}/context"{% if nav_active == "context" %} aria-current="page"{% endif %}>Context</a></li>{% endif %}
     <li><a href="/bear/{{ bear.slug | e }}/skills"{% if nav_active == "skills" %} aria-current="page"{% endif %}>Skills</a></li>
   </ul>
 
@@ -23,8 +23,10 @@
     <li><a href="/bear/{{ bear.slug | e }}/connections"{% if nav_active == "connections" %} aria-current="page"{% endif %}>Connections</a></li>
     <li><a href="/bear/{{ bear.slug | e }}/resources"{% if nav_active == "resources" %} aria-current="page"{% endif %}>Resources</a></li>
     <li><a href="/bear/{{ bear.slug | e }}/jobs"{% if nav_active == "docket" %} aria-current="page"{% endif %}>Docket</a></li>
+    {% if can_manage_bear %}
     <li><a href="/bear/{{ bear.slug | e }}/activity"{% if nav_active == "activity" %} aria-current="page"{% endif %}>Activity</a></li>
     <li><a href="/bear/{{ bear.slug | e }}/reflections"{% if nav_active == "reflections" %} aria-current="page"{% endif %}>Reflections</a></li>
+    {% endif %}
     <li><a href="/bear/{{ bear.slug | e }}/people"{% if nav_active == "people" %} aria-current="page"{% endif %}>People</a></li>
   </ul>
 
@@ -32,10 +34,12 @@
     <li><a href="/bear/{{ bear.slug | e }}/portability"{% if nav_active == "portability" %} aria-current="page"{% endif %}>Portability</a></li>
   </ul>
 
+  {% if can_manage_bear %}
   <details class="bear-manage-nav-details"{% if nav_active in ["stances", "advanced"] %} open{% endif %}>
     <summary>Internals</summary>
     <ul>
       <li><a href="/bear/{{ bear.slug | e }}/advanced"{% if nav_active == "advanced" %} aria-current="page"{% endif %}>Advanced</a></li>
     </ul>
   </details>
+  {% endif %}
 </nav>

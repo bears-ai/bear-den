@@ -31,28 +31,15 @@
   Review accepted/queued outcomes in the <a href="/bear/{{ bear.slug | e }}/memory">Memory review queue</a>.
 </p>
 
-<form method="get" action="/bear/{{ bear.slug }}/conversations">
-  <label>Show
-    <select name="compaction">
-      <option value="all"{% if compaction_filter == "all" %} selected{% endif %}>all conversations</option>
-      <option value="needs_action"{% if compaction_filter == "needs_action" %} selected{% endif %}>needs reflection attention</option>
-      <option value="none"{% if compaction_filter == "none" %} selected{% endif %}>no compaction events</option>
-      <option value="skipped"{% if compaction_filter == "skipped" %} selected{% endif %}>latest compaction skipped</option>
-      <option value="applied"{% if compaction_filter == "applied" %} selected{% endif %}>latest compaction applied</option>
-    </select>
-  </label>
-  <button type="submit">Filter</button>
-</form>
+<p class="form-hint">Legacy compaction event status is unavailable here because events are not keyed to a Bear. Conversation-scoped artifacts remain available in each conversation.</p>
 
 {% if conversations and conversations | length > 0 %}
 <form method="post" action="/bear/{{ bear.slug }}/conversations/reflect">
 <p>
   <button type="submit" name="bulk_action" value="selected">Reflect selected conversations</button>
-  <button type="submit" name="bulk_action" value="all_no_compaction">Reflect up to 25 with no compaction events</button>
-  <button type="submit" name="bulk_action" value="all_skipped_compaction">Reflect up to 25 with skipped compaction</button>
 </p>
 <table>
-  <thead><tr><th>Select</th><th>Title</th><th>External id</th><th>Client session</th><th>Context budget</th><th>Compaction</th><th>Updated</th><th></th></tr></thead>
+  <thead><tr><th>Select</th><th>Title</th><th>External id</th><th>Client session</th><th>Context budget</th><th>Updated</th><th></th></tr></thead>
   <tbody>
   {% for c in conversations %}
     <tr>
@@ -67,15 +54,6 @@
         {% else %}
           <em>none</em>
         {% endif %}
-      </td>
-      <td>
-        {% if c.compaction_event_count > 0 %}
-          {{ c.compaction_status | e }} · {{ c.compaction_event_count }} event{% if c.compaction_event_count != 1 %}s{% endif %}<br>
-          <small>{{ c.latest_compaction_at }}</small><br>
-        {% else %}
-          <em>none</em><br>
-        {% endif %}
-        <small>{{ c.compaction_explanation | e }}</small>
       </td>
       <td>{{ c.updated_at }}</td>
       <td>

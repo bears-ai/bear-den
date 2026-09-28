@@ -1,5 +1,5 @@
 //! Route tests for the work UI's job-creation and dispatch forms. Postgres-
-//! backed (skip without DATABASE_URL); login is seeded through a test-only
+//! backed (skip only without DATABASE_URL); login is seeded through a test-only
 //! route, same pattern as `bear::settings::tests`.
 
 use super::*;
@@ -115,26 +115,17 @@ async fn test_pool() -> Option<sqlx::PgPool> {
         eprintln!("skipping DB-backed work route test: DATABASE_URL is not set");
         return None;
     };
-    let pool = match PgPoolOptions::new()
+    let pool = PgPoolOptions::new()
         .max_connections(2)
         .acquire_timeout(std::time::Duration::from_secs(5))
         .connect(&url)
         .await
-    {
-        Ok(pool) => pool,
-        Err(err) => {
-            eprintln!("skipping DB-backed work route test: could not connect: {err}");
-            return None;
-        }
-    };
-    if let Err(err) = sqlx::migrate!("../../migrations")
+        .expect("DATABASE_URL is set: work route tests must connect to Postgres");
+    sqlx::migrate!("../../migrations")
         .set_ignore_missing(true)
         .run(&pool)
         .await
-    {
-        eprintln!("skipping DB-backed work route test: migrations failed: {err}");
-        return None;
-    }
+        .expect("DATABASE_URL is set: work route migrations must succeed");
     Some(pool)
 }
 
@@ -1046,6 +1037,419 @@ async fn post_form(
         )
         .await
         .expect("form response")
+}
+
+async fn get_page(app: &axum::Router, cookie: &str, uri: &str) -> (StatusCode, String) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(uri)
+                .header(header::COOKIE, cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("GET response");
+    let status = response.status();
+    let body = String::from_utf8_lossy(&response.into_body().collect().await.unwrap().to_bytes())
+        .into_owned();
+    (status, body)
+}
+
+#[tokio::test]
+async fn jobs_and_runs_enforce_member_visibility_before_reads_and_mutations() {
+    let _guard = TEST_DB_LOCK.lock().await;
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let (owner_id, bear_id, slug) = seed_member(&pool).await;
+    bears_db::grant_membership(&pool, owner_id, bear_id, Some("member"))
+        .await
+        .expect("demote owner to member");
+    let mut other_users = Vec::new();
+    for role in ["member", "admin"] {
+        let unique = Uuid::new_v4().simple().to_string();
+        let user_id = sqlx::query_scalar!(
+            "INSERT INTO users (email, username, display_name, passhash)
+             VALUES ($1, $2, $3, $4) RETURNING id",
+            format!("work-ui-{unique}@example.test"),
+            format!("wu{}", &unique[..28]),
+            "Work UI Test",
+            "test-passhash",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("create other user");
+        bears_db::grant_membership(&pool, user_id, bear_id, Some(role))
+            .await
+            .expect("grant other membership");
+        other_users.push(user_id);
+    }
+    let surface_id = assigned_surface_id(&pool, owner_id, bear_id).await;
+    let app = test_app(pool.clone()).await;
+    let owner = login_cookie(&app, owner_id).await;
+    let member = login_cookie(&app, other_users[0]).await;
+    let admin = login_cookie(&app, other_users[1]).await;
+
+    let mut job_ids = Vec::new();
+    for goal in ["Owner secret journal", "Shared job journal"] {
+        let response = post_form(
+            &app,
+            &owner,
+            &format!("/bear/{slug}/jobs/new"),
+            format!("goal={}&surface_id={surface_id}&commit_policy=per_task&allow_default_ref=true&task_title=Check&task_criteria=done",
+                urlencoding::encode(goal)),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        let id = sqlx::query_scalar!(
+            "SELECT id FROM bear_jobs WHERE bear_id = $1 AND goal = $2",
+            bear_id,
+            goal,
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("created job");
+        job_ids.push(id);
+    }
+    let (private, shared) = (job_ids[0], job_ids[1]);
+    sqlx::query!(
+        "UPDATE bear_jobs SET visibility = 'bear_visible' WHERE id = $1",
+        shared,
+    )
+    .execute(&pool)
+    .await
+    .expect("share second job");
+    let policy = sqlx::query!(
+        "SELECT commit_policy, work_branch FROM bear_jobs WHERE id = $1",
+        private
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("created policy");
+    assert_eq!(
+        policy.commit_policy.as_deref(),
+        Some("per_task"),
+        "{policy:?}"
+    );
+    assert_eq!(policy.work_branch.as_deref(), Some("main"), "{policy:?}");
+    let private_task: Uuid = sqlx::query_scalar!(
+        "SELECT id FROM bear_tasks WHERE job_id = $1 LIMIT 1",
+        private,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("private task");
+    let private_run = post_form(
+        &app,
+        &owner,
+        &format!("/bear/{slug}/jobs/{}/dispatch", route_id(private)),
+        "image=&git_ref=".into(),
+    )
+    .await;
+    let dispatch_status = private_run.status();
+    let dispatch_body = private_run.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(
+        dispatch_status,
+        StatusCode::SEE_OTHER,
+        "{}",
+        String::from_utf8_lossy(&dispatch_body)
+    );
+    let run_id: Uuid = sqlx::query_scalar!(
+        "SELECT id FROM bear_work_runs WHERE job_id = $1 ORDER BY queued_at DESC LIMIT 1",
+        private,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("private work run");
+    sqlx::query!(
+        "UPDATE bear_work_runs SET result_refs = $2::jsonb WHERE id = $1",
+        run_id,
+        serde_json::json!({"log_tail": "secret run log and audit"}),
+    )
+    .execute(&pool)
+    .await
+    .expect("seed sensitive log");
+
+    let job_url = format!("/bear/{slug}/jobs/{}", route_id(private));
+    let shared_url = format!("/bear/{slug}/jobs/{}", route_id(shared));
+    let run_url = format!("/bear/{slug}/jobs/runs/{}", route_id(run_id));
+    let (status, listing) = get_page(&app, &member, &format!("/bear/{slug}/jobs")).await;
+    assert_eq!(status, StatusCode::OK, "{listing}");
+    assert!(!listing.contains("Owner secret journal"));
+    assert!(listing.contains("Shared job journal"));
+    let (status, _) = get_page(&app, &owner, &job_url).await;
+    assert_eq!(status, StatusCode::OK, "owner can inspect private job");
+    let (status, _) = get_page(&app, &admin, &job_url).await;
+    assert_eq!(status, StatusCode::OK, "admin can inspect private job");
+    let (status, _) = get_page(&app, &member, &shared_url).await;
+    assert_eq!(status, StatusCode::OK, "member can inspect BearVisible job");
+    for url in [&job_url, &run_url] {
+        let (status, body) = get_page(&app, &member, url).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "guessed {url}: {body}");
+        assert!(!body.contains("secret run log and audit"));
+    }
+    let (status, _) = get_page(&app, &admin, &run_url).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "admin can inspect private run audit"
+    );
+    assert_eq!(get_page(&app, &owner, &run_url).await.0, StatusCode::OK);
+
+    let response = post_form(
+        &app,
+        &owner,
+        &format!("{shared_url}/dispatch"),
+        "image=&git_ref=".into(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let shared_run: Uuid = sqlx::query_scalar!(
+        "SELECT id FROM bear_work_runs WHERE job_id = $1 ORDER BY queued_at DESC LIMIT 1",
+        shared,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("shared work run");
+    let shared_run_url = format!("/bear/{slug}/jobs/runs/{}", route_id(shared_run));
+    assert_eq!(
+        get_page(&app, &member, &shared_run_url).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        post_form(
+            &app,
+            &member,
+            &format!("{shared_run_url}/cancel"),
+            String::new()
+        )
+        .await
+        .status(),
+        StatusCode::SEE_OTHER,
+        "member can control BearVisible work run"
+    );
+
+    for restricted in ["private_to_profile", "handoff_requested"] {
+        sqlx::query!(
+            "UPDATE bear_jobs SET visibility = $2 WHERE id = $1",
+            private,
+            restricted
+        )
+        .execute(&pool)
+        .await
+        .expect("set restricted visibility");
+        assert_eq!(
+            get_page(&app, &member, &job_url).await.0,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            get_page(&app, &member, &run_url).await.0,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(get_page(&app, &owner, &job_url).await.0, StatusCode::OK);
+        assert_eq!(get_page(&app, &admin, &job_url).await.0, StatusCode::OK);
+    }
+    sqlx::query!(
+        "UPDATE bear_jobs SET visibility = 'same_user' WHERE id = $1",
+        private
+    )
+    .execute(&pool)
+    .await
+    .expect("restore SameUser visibility");
+
+    let (_, foreign_bear_id, foreign_slug) = seed_member(&pool).await;
+    bears_db::grant_membership(&pool, other_users[0], foreign_bear_id, Some("member"))
+        .await
+        .expect("member belongs to foreign Bear too");
+    for url in [
+        format!("/bear/{foreign_slug}/jobs/{}", route_id(private)),
+        format!("/bear/{foreign_slug}/jobs/runs/{}", route_id(run_id)),
+    ] {
+        assert_eq!(
+            get_page(&app, &member, &url).await.0,
+            StatusCode::NOT_FOUND,
+            "cross-Bear guessed URL {url}"
+        );
+    }
+
+    for suffix in [
+        format!("{shared_url}/tasks/{}/children", route_id(private_task)),
+        format!("{shared_url}/tasks/{}/move/up", route_id(private_task)),
+        format!("{shared_url}/tasks/{}/retry", route_id(private_task)),
+    ] {
+        assert_eq!(
+            post_form(
+                &app,
+                &member,
+                &suffix,
+                "title=No&criteria=done&reason=No".into()
+            )
+            .await
+            .status(),
+            StatusCode::NOT_FOUND,
+            "task from different job: {suffix}"
+        );
+    }
+
+    let rejected = [
+        (
+            format!("{job_url}/edit"),
+            format!("goal=Hacked&surface_id={surface_id}&commit_policy=per_task"),
+        ),
+        (format!("{job_url}/duplicate"), String::new()),
+        (format!("{job_url}/complete"), String::new()),
+        (format!("{job_url}/archive"), String::new()),
+        (
+            format!("{job_url}/tasks"),
+            "title=Hacked&criteria=done".into(),
+        ),
+        (format!("{job_url}/dispatch"), "image=&git_ref=".into()),
+        (format!("{job_url}/cancel"), String::new()),
+        (
+            format!("{job_url}/tasks/{}/children", route_id(private_task)),
+            "title=Hacked&criteria=done".into(),
+        ),
+        (
+            format!("{job_url}/tasks/{}/move/up", route_id(private_task)),
+            String::new(),
+        ),
+        (
+            format!("{job_url}/tasks/{}/retry", route_id(private_task)),
+            "reason=Hacked".into(),
+        ),
+        (format!("{run_url}/pause"), String::new()),
+        (format!("{run_url}/resume"), String::new()),
+        (format!("{run_url}/cancel"), String::new()),
+        (format!("{run_url}/retry"), String::new()),
+    ];
+    for (url, body) in rejected {
+        let response = post_form(&app, &member, &url, body).await;
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "cross-member POST {url}"
+        );
+    }
+    let private_job = sqlx::query!(
+        "SELECT goal, visibility FROM bear_jobs WHERE id = $1",
+        private,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("unchanged private job");
+    assert_eq!(private_job.goal, "Owner secret journal");
+    assert_eq!(private_job.visibility, "same_user");
+    let task_count: i64 =
+        sqlx::query_scalar!("SELECT count(*) FROM bear_tasks WHERE job_id = $1", private,)
+            .fetch_one(&pool)
+            .await
+            .expect("unchanged private tasks")
+            .expect("count");
+    assert_eq!(task_count, 1);
+    let run_count: i64 = sqlx::query_scalar!(
+        "SELECT count(*) FROM bear_work_runs WHERE job_id = $1",
+        private,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("unchanged private runs")
+    .expect("count");
+    assert_eq!(run_count, 1);
+
+    // Filtering must precede LIMIT: the newer private job cannot consume the
+    // sole slot of the member's viewer-scoped Docket listing.
+    sqlx::query!(
+        "UPDATE bear_jobs SET updated_at = NOW() + INTERVAL '1 hour' WHERE id = $1",
+        private
+    )
+    .execute(&pool)
+    .await
+    .expect("rank private job first");
+    let visible = PgDocketService::from_pool(&pool)
+        .list_jobs_for_viewer(
+            bear_id,
+            other_users[0],
+            false,
+            DocketJobListFilter {
+                limit: 1,
+                ..DocketJobListFilter::default()
+            },
+        )
+        .await
+        .expect("viewer-scoped Docket list");
+    assert_eq!(visible.len(), 1);
+    assert_eq!(visible[0].id, shared);
+
+    assert_eq!(
+        post_form(
+            &app,
+            &owner,
+            &format!("{job_url}/edit"),
+            format!("goal=Owner+updated&surface_id={surface_id}&commit_policy=per_task")
+        )
+        .await
+        .status(),
+        StatusCode::SEE_OTHER,
+        "owner can control private job"
+    );
+    assert_eq!(
+        post_form(
+            &app,
+            &admin,
+            &format!("{job_url}/tasks"),
+            "title=Admin+task&criteria=done".into()
+        )
+        .await
+        .status(),
+        StatusCode::SEE_OTHER,
+        "admin can control private job"
+    );
+    assert_eq!(
+        post_form(
+            &app,
+            &member,
+            &format!("{shared_url}/edit"),
+            format!("goal=Shared+updated&surface_id={surface_id}&commit_policy=per_task")
+        )
+        .await
+        .status(),
+        StatusCode::SEE_OTHER,
+        "member can control BearVisible job"
+    );
+}
+
+#[test]
+fn unknown_visibility_is_not_accessible_even_to_owner_or_admin() {
+    let bear = BearContext {
+        id: Uuid::nil(),
+        slug: "test".into(),
+        viewer_id: 42,
+        is_admin: true,
+    };
+    assert!(!visible_job(42, "future_visibility", &bear));
+    let member = BearContext {
+        is_admin: false,
+        ..bear
+    };
+    for visibility in [
+        TaskListVisibility::SameUser,
+        TaskListVisibility::PrivateToProfile,
+        TaskListVisibility::HandoffRequested,
+    ] {
+        assert!(!visible_job(43, visibility.as_str(), &member));
+    }
+    assert!(visible_job(
+        43,
+        TaskListVisibility::BearVisible.as_str(),
+        &member
+    ));
+    assert!(visible_job(
+        42,
+        TaskListVisibility::SameUser.as_str(),
+        &member
+    ));
 }
 
 #[test]

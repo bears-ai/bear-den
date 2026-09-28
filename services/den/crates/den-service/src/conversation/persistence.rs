@@ -23,6 +23,45 @@ pub struct ConversationRecord {
     pub updated_at: time::OffsetDateTime,
 }
 
+/// Shared SQL row for Bear-wide and human-visible conversation listings.
+#[derive(sqlx::FromRow)]
+pub(super) struct ConversationRow {
+    pub(super) id: Uuid,
+    pub(super) bear_id: Uuid,
+    pub(super) external_conversation_id: Option<String>,
+    pub(super) source_client_session_id: Option<String>,
+    pub(super) current_title: Option<String>,
+    pub(super) latest_context_budget_json: Option<Json<serde_json::Value>>,
+    pub(super) latest_context_budget_updated_at: Option<time::OffsetDateTime>,
+    pub(super) updated_at: time::OffsetDateTime,
+}
+
+impl TryFrom<ConversationRow> for ConversationRecord {
+    type Error = DenError;
+
+    fn try_from(row: ConversationRow) -> Result<Self, Self::Error> {
+        Ok(Self {
+            id: row.id,
+            bear_id: row.bear_id,
+            external_conversation_id: row.external_conversation_id,
+            source_client_session_id: row.source_client_session_id,
+            current_title: row.current_title,
+            latest_context_budget: row
+                .latest_context_budget_json
+                .map(|value| {
+                    serde_json::from_value(value.0).map_err(|err| {
+                        DenError::Parsing(format!(
+                            "decode conversation latest_context_budget_json payload: {err}"
+                        ))
+                    })
+                })
+                .transpose()?,
+            latest_context_budget_updated_at: row.latest_context_budget_updated_at,
+            updated_at: row.updated_at,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ConversationModelState {
     pub conversation_id: Uuid,
@@ -274,6 +313,13 @@ impl PersistedConversationMessage {
     }
 
     pub fn to_model_transcript_record(&self) -> Option<PersistedTranscriptRecord> {
+        if !self
+            .storage_visibility()
+            .ok()?
+            .is_model_transcript_visible()
+        {
+            return None;
+        }
         if let Some(message) = self.to_model_transcript_message() {
             return Some(PersistedTranscriptRecord::Message(message));
         }
@@ -336,7 +382,14 @@ impl PersistedConversationMessage {
                 created_at: message.created_at,
             });
         }
-        self.to_user_history_record()
+        if !self
+            .storage_visibility()
+            .ok()?
+            .is_model_transcript_visible()
+        {
+            return None;
+        }
+        self.to_tool_history_record()
     }
 
     pub fn to_user_history_record(&self) -> Option<PersistedUserHistoryMessage> {
@@ -356,6 +409,13 @@ impl PersistedConversationMessage {
             });
         }
 
+        if !self.storage_visibility().ok()?.is_user_history_visible() {
+            return None;
+        }
+        self.to_tool_history_record()
+    }
+
+    fn to_tool_history_record(&self) -> Option<PersistedUserHistoryMessage> {
         match self.storage_message_type().ok()? {
             ConversationMessageType::ToolCall => {
                 let payload = self.tool_request_payload().ok()??;
@@ -836,75 +896,25 @@ pub async fn list_conversations_for_bear(
     bear_id: Uuid,
     limit: i64,
 ) -> Result<Vec<ConversationRecord>, DenError> {
-    let rows = sqlx::query(
-        r"
-        SELECT id, bear_id, external_conversation_id, source_client_session_id, current_title, latest_context_budget_json, latest_context_budget_updated_at, updated_at
+    let rows = sqlx::query_as!(
+        ConversationRow,
+        r#"
+        SELECT id, bear_id, external_conversation_id, source_client_session_id, current_title,
+               latest_context_budget_json AS "latest_context_budget_json?: Json<serde_json::Value>",
+               latest_context_budget_updated_at, updated_at
         FROM conversations
         WHERE bear_id = $1
         ORDER BY updated_at DESC
         LIMIT $2
-        ",
+        "#,
+        bear_id,
+        limit.clamp(1, 200),
     )
-    .bind(bear_id)
-    .bind(limit.clamp(1, 200))
     .fetch_all(pool)
     .await
     .map_err(|err| DenError::Database(format!("list conversations for bear: {err}")))?;
 
-    rows.into_iter()
-        .map(|row| {
-            Ok(ConversationRecord {
-                id: row
-                    .try_get("id")
-                    .map_err(|err| DenError::Database(format!("decode conversation id: {err}")))?,
-                bear_id: row.try_get("bear_id").map_err(|err| {
-                    DenError::Database(format!("decode conversation bear_id: {err}"))
-                })?,
-                external_conversation_id: row.try_get("external_conversation_id").map_err(
-                    |err| {
-                        DenError::Database(format!(
-                            "decode conversation external_conversation_id: {err}"
-                        ))
-                    },
-                )?,
-                source_client_session_id: row.try_get("source_client_session_id").map_err(
-                    |err| {
-                        DenError::Database(format!(
-                            "decode conversation source_client_session_id: {err}"
-                        ))
-                    },
-                )?,
-                current_title: row.try_get("current_title").map_err(|err| {
-                    DenError::Database(format!("decode conversation current_title: {err}"))
-                })?,
-                latest_context_budget: row
-                    .try_get::<Option<Json<serde_json::Value>>, _>("latest_context_budget_json")
-                    .map_err(|err| {
-                        DenError::Database(format!(
-                            "decode conversation latest_context_budget_json: {err}"
-                        ))
-                    })?
-                    .map(|value| {
-                        serde_json::from_value(value.0).map_err(|err| {
-                            DenError::Parsing(format!(
-                                "decode conversation latest_context_budget_json payload: {err}"
-                            ))
-                        })
-                    })
-                    .transpose()?,
-                latest_context_budget_updated_at: row
-                    .try_get("latest_context_budget_updated_at")
-                    .map_err(|err| {
-                    DenError::Database(format!(
-                        "decode conversation latest_context_budget_updated_at: {err}"
-                    ))
-                })?,
-                updated_at: row.try_get("updated_at").map_err(|err| {
-                    DenError::Database(format!("decode conversation updated_at: {err}"))
-                })?,
-            })
-        })
-        .collect()
+    rows.into_iter().map(ConversationRecord::try_from).collect()
 }
 
 pub async fn list_messages_page(

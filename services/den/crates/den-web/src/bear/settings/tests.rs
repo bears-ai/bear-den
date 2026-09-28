@@ -13,6 +13,11 @@ use axum::{
     routing::get,
 };
 use axum_login::AuthnBackend;
+use den_runtime::{
+    runtime::compaction_observability::RuntimeCompactionEvent,
+    runtime::compaction_store::record_runtime_compaction_event,
+    runtime_conversations::RuntimeCompactionTriggerKind,
+};
 use http_body_util::BodyExt;
 use minijinja::Environment;
 use sqlx::postgres::PgPoolOptions;
@@ -76,6 +81,55 @@ fn test_state(pool: sqlx::PgPool) -> AppState {
     template_env
             .add_template("bear/settings/policy.html", "{{ message }} {{ web_sources | length }} {{ web_approvals | length }} {{ web_fetches | length }}{% for approval in web_approvals %} {{ approval.approved_by_user_label }}{% endfor %}")
             .expect("add test template");
+    template_env
+        .add_template("base.html", "{% block content %}{% endblock %}")
+        .expect("add base template");
+    template_env
+        .add_template(
+            "bear/_manage.html",
+            include_str!("../../templates/bear/_manage.html"),
+        )
+        .expect("add manage template");
+    template_env
+        .add_template(
+            "bear/settings/_bear_nav.html",
+            include_str!("../../templates/bear/settings/_bear_nav.html"),
+        )
+        .expect("add nav template");
+    template_env
+        .add_template(
+            "bear/settings/overview.html",
+            include_str!("../../templates/bear/settings/overview.html"),
+        )
+        .expect("add overview template");
+    template_env
+        .add_template(
+            "bear/manage/identity.html",
+            include_str!("../../templates/bear/manage/identity.html"),
+        )
+        .expect("add identity template");
+    for (page, source) in [
+        (
+            "conversations",
+            include_str!("../../templates/bear/settings/conversations.html"),
+        ),
+        (
+            "conversation",
+            include_str!("../../templates/bear/settings/conversation.html"),
+        ),
+    ] {
+        template_env
+            .add_template_owned(format!("bear/settings/{page}.html"), source)
+            .expect("add activity template");
+    }
+    for page in ["reflections", "context", "stance", "advanced"] {
+        template_env
+            .add_template_owned(
+                format!("bear/settings/{page}.html"),
+                format!("{page} admin page"),
+            )
+            .expect("add inspection test template");
+    }
     AppState::test_with_template_env(pool, template_env, config)
 }
 
@@ -101,6 +155,7 @@ async fn test_app(pool: sqlx::PgPool) -> axum::Router {
     store.migrate().await.expect("session store migration");
     Router::new()
         .merge(router())
+        .merge(super::super::manage::router())
         .route("/test-login/{user_id}", get(test_login))
         .with_state(test_state(pool.clone()))
         .layer(
@@ -154,8 +209,8 @@ async fn create_test_bear(pool: &sqlx::PgPool, slug: &str) -> Uuid {
 }
 
 /// User with a verified email (the settings pages redirect unverified users)
-/// and an admin membership on the given bear.
-async fn create_bear_admin_user(pool: &sqlx::PgPool, bear_id: Uuid) -> i32 {
+/// and a membership on the given bear.
+async fn create_bear_user(pool: &sqlx::PgPool, bear_id: Uuid, role: &str) -> i32 {
     let unique = Uuid::new_v4().simple().to_string();
     let email = format!("web-settings-{unique}@example.test");
     let username = format!("ws{}", &unique[..28]);
@@ -184,14 +239,170 @@ async fn create_bear_admin_user(pool: &sqlx::PgPool, bear_id: Uuid) -> i32 {
     .execute(pool)
     .await
     .expect("verify email");
-    bears_db::grant_membership(pool, user_id, bear_id, Some(BEAR_ROLE_ADMIN))
+    bears_db::grant_membership(pool, user_id, bear_id, Some(role))
         .await
-        .expect("grant admin membership");
+        .expect("grant bear membership");
     user_id
+}
+
+async fn create_bear_admin_user(pool: &sqlx::PgPool, bear_id: Uuid) -> i32 {
+    create_bear_user(pool, bear_id, BEAR_ROLE_ADMIN).await
 }
 
 fn fresh_slug() -> String {
     format!("web-settings-{}", Uuid::new_v4())
+}
+
+async fn get_as(app: &axum::Router, cookie: &str, uri: &str) -> (StatusCode, String) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(uri)
+                .header(header::COOKIE, cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("settings GET response");
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    (status, String::from_utf8_lossy(&body).into_owned())
+}
+
+#[tokio::test]
+async fn inspection_gets_require_bear_admin_but_overview_remains_member_viewable() {
+    let _guard = TEST_DB_LOCK.lock().await;
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let slug = fresh_slug();
+    let bear_id = create_test_bear(&pool, &slug).await;
+    let admin_id = create_bear_admin_user(&pool, bear_id).await;
+    let member_id = create_bear_user(&pool, bear_id, BEAR_ROLE_MEMBER).await;
+    let external_id = format!("settings-test-{}", Uuid::new_v4());
+    let conversation = conversation_persistence::ensure_conversation_for_external_id(
+        &pool,
+        bear_id,
+        Some(admin_id),
+        &external_id,
+        None,
+        Some("private conversation title"),
+    )
+    .await
+    .expect("persist conversation");
+    let other_bear = create_test_bear(&pool, &fresh_slug()).await;
+    let other_conversation = conversation_persistence::ensure_conversation_for_external_id(
+        &pool,
+        other_bear,
+        None,
+        &external_id,
+        None,
+        Some("other Bear's conversation"),
+    )
+    .await
+    .expect("persist colliding conversation");
+    record_runtime_compaction_event(
+        &pool,
+        &RuntimeCompactionEvent {
+            conversation_id: external_id,
+            trigger: RuntimeCompactionTriggerKind::Manual,
+            policy_version: "legacy-test".to_string(),
+            status: RuntimeCompactionEventStatus::Failed,
+            boundary: None,
+            source_group_start: None,
+            source_group_end: None,
+            artifact: None,
+            diagnostic: Some("other Bear's private compaction diagnostic".to_string()),
+        },
+    )
+    .await
+    .expect("persist legacy compaction event");
+    let app = test_app(pool.clone()).await;
+    let admin_cookie = login_cookie(&app, admin_id).await;
+    let member_cookie = login_cookie(&app, member_id).await;
+
+    let (status, body) = get_as(&app, &member_cookie, &format!("/bear/{slug}/overview")).await;
+    assert_eq!(status, StatusCode::OK, "member overview: {body}");
+    for forbidden in [
+        "private conversation title",
+        "Recent activity",
+        "Pending proposals",
+        "Stance-local",
+        "role health",
+        "Health",
+        "Activity over time",
+        "Recall status",
+        "Pending observations",
+        "Week of",
+        &format!("/bear/{slug}/activity"),
+        &format!("/bear/{slug}/reflections"),
+        &format!("/bear/{slug}/context"),
+        &format!("/bear/{slug}/advanced"),
+    ] {
+        assert!(
+            !body.contains(forbidden),
+            "member overview exposed {forbidden}"
+        );
+    }
+    assert!(body.contains("Open memory"));
+    let (status, body) = get_as(&app, &admin_cookie, &format!("/bear/{slug}/overview")).await;
+    assert_eq!(status, StatusCode::OK, "admin overview: {body}");
+    for expected in [
+        "Health",
+        "Recent activity",
+        "private conversation title",
+        "Activity over time",
+        "Week of",
+        "Memory",
+    ] {
+        assert!(
+            body.contains(expected),
+            "admin overview missing {expected}: {body}"
+        );
+    }
+    assert!(body.contains("Recall status") || body.contains("Memory statistics unavailable."));
+    assert!(body.contains(&format!("/bear/{slug}/activity")));
+
+    let (status, body) = get_as(&app, &member_cookie, &format!("/bear/{slug}/identity")).await;
+    assert_eq!(status, StatusCode::OK, "member identity: {body}");
+    assert!(body.contains("Stances"));
+    assert!(!body.contains(&format!("/bear/{slug}/stances/")));
+    let (status, body) = get_as(&app, &admin_cookie, &format!("/bear/{slug}/identity")).await;
+    assert_eq!(status, StatusCode::OK, "admin identity: {body}");
+    assert!(body.contains(&format!("/bear/{slug}/stances/chat")));
+
+    for path in [
+        "activity".to_string(),
+        "conversations".to_string(),
+        format!("conversations/{}", conversation.id),
+        "reflections".to_string(),
+        "context".to_string(),
+        "stances/chat".to_string(),
+        "profiles/chat".to_string(),
+        "advanced".to_string(),
+    ] {
+        let uri = format!("/bear/{slug}/{path}");
+        let (status, body) = get_as(&app, &member_cookie, &uri).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "member {uri}: {body}");
+        let (status, body) = get_as(&app, &admin_cookie, &uri).await;
+        assert_eq!(status, StatusCode::OK, "admin {uri}: {body}");
+        if path == "activity" || path.starts_with("conversations") {
+            assert!(body.contains("Legacy compaction"), "admin {uri}: {body}");
+            assert!(
+                !body.contains("other Bear's private compaction diagnostic"),
+                "admin {uri}: {body}"
+            );
+            assert!(!body.contains("legacy-test"), "admin {uri}: {body}");
+        }
+    }
+    let (status, body) = get_as(
+        &app,
+        &admin_cookie,
+        &format!("/bear/{slug}/conversations/{}", other_conversation.id),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "cross-Bear UUID: {body}");
 }
 
 #[tokio::test]

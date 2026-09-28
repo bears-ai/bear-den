@@ -5,6 +5,7 @@ pub mod archived;
 pub mod events;
 pub mod message_types;
 pub mod persistence;
+pub mod viewer;
 
 #[cfg(test)]
 mod events_tests {

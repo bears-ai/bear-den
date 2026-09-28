@@ -12,6 +12,7 @@
     <p><strong>{{ message | e }}</strong></p>
     {% endif %}
 
+    {% if can_manage_bear %}
     {% if pending_reviews > 0 %}
     <p>
         <a class="button-link" href="/bear/{{ bear.slug | e }}/memory"
@@ -77,8 +78,12 @@
         <a href="/bear/{{ bear.slug | e }}">Start one</a>.
     </p>
     {% endif %}
+    {% else %}
+    <p><a href="/bear/{{ bear.slug | e }}/memory">Open memory</a></p>
+    {% endif %}
 </div>
 
+{% if can_manage_bear %}
 {# Responsive disclosure: additive detail on wide viewports, CSS only. #}
 <div class="bear-manage-disclosed">
     <div class="bear-manage-overview-wide">
@@ -166,4 +171,5 @@
         </section>
     </div>
 </div>
+{% endif %}
 {% endblock %}

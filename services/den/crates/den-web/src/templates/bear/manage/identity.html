@@ -35,9 +35,13 @@
     <ul>
         {% for stance in stances %}
         <li>
+            {% if can_manage_bear %}
             <a href="/bear/{{ bear.slug | e }}/stances/{{ stance }}"
                 >{{ stance }}</a
             >
+            {% else %}
+            {{ stance }}
+            {% endif %}
         </li>
         {% endfor %}
     </ul>

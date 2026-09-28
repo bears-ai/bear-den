@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (SELECT 1 FROM armature_tokens t WHERE t.token_hash = $1 AND t.id::text = r.result_refs ->> 'armature_token_id' AND t.user_id = $2) AS \"authorized!\" FROM bear_work_runs r WHERE r.id = $3 AND r.bear_id = $4",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "authorized!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int4",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "76efebe59b09618cb656bdc278cf83eabfea4296a4cc11eb339da5d1d636f0cf"
+}

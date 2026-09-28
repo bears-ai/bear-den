@@ -7,13 +7,20 @@
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use den_core::{config::Config, DenError};
+use den_core::{
+    config::Config,
+    ids::{BearId, UserId},
+    DenError,
+};
 
 use den_memory::MemoryStoreManager;
 use den_protocol::{
     CheckpointAuditContext, RuntimeContinuation, RuntimeConversationBackend, RuntimeConversationRef,
 };
-use den_service::client_sessions;
+use den_service::{
+    client_sessions,
+    conversation::{persistence::ensure_conversation_for_external_id, viewer::ConversationViewer},
+};
 
 use den_core::conversation_ids::is_native_runtime_conversation_id;
 
@@ -147,6 +154,32 @@ pub async fn materialize_runtime_conversation_if_needed<B: RuntimeConversationBa
         .create_conversation(request.binding)
         .await?
         .id;
+    let viewer = ConversationViewer::resolve(
+        request.sqlx_pool,
+        BearId::new(request.bear_id),
+        UserId::new(request.user_id),
+    )
+    .await?
+    .ok_or_else(|| DenError::Authorization("not a member of this bear".to_string()))?;
+    // The canonical insert never changes the owner on conflict. Do not bind a
+    // session to an existing conversation the human can no longer access.
+    ensure_conversation_for_external_id(
+        request.sqlx_pool,
+        request.bear_id,
+        Some(request.user_id),
+        &conv_id,
+        None,
+        None,
+    )
+    .await?;
+    if !viewer
+        .may_access_external(request.sqlx_pool, &conv_id)
+        .await?
+    {
+        return Err(DenError::Authorization(format!(
+            "cannot access conversation {conv_id}"
+        )));
+    }
     client_sessions::upsert_session(
         request.sqlx_pool,
         client_sessions::UpsertClientSession {

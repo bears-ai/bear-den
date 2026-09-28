@@ -1,0 +1,53 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.bearwire_session_id, r.execution_target, r.attached_client_session_id, r.result_refs, j.created_by_user_id, j.visibility FROM bear_work_runs r JOIN bear_jobs j ON j.id = r.job_id AND j.bear_id = r.bear_id WHERE r.id = $1 AND r.bear_id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "bearwire_session_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "execution_target",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "attached_client_session_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "result_refs",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 4,
+        "name": "created_by_user_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 5,
+        "name": "visibility",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true,
+      false,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "dabc7137b617b6ba109d1a6d9dbf64627ce42aa794d31f2c997ea7dd511a2050"
+}

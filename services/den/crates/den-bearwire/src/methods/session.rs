@@ -30,7 +30,12 @@ use den_service::{
 };
 
 use crate::auth::{authenticate_for_bear_slug, authenticated_bear};
-use crate::methods::{parse_params, DEFAULT_CLIENT};
+use crate::methods::{
+    conversation::{
+        authorize_existing_conversation, authorize_or_create_conversation, conversation_viewer,
+    },
+    parse_params, DEFAULT_CLIENT,
+};
 
 fn interactive_session_policy() -> den_core::EffectivePolicy {
     den_core::EffectivePolicy::compile(
@@ -220,6 +225,25 @@ fn resolved_or_stored_conversation_id(session: &client_sessions::ClientSessionRo
         .unwrap_or(session.conversation_id.as_str())
 }
 
+pub(super) async fn require_session_conversation_access(
+    state: &DenState,
+    session: &client_sessions::ClientSessionRow,
+) -> Result<(), CustomError> {
+    let viewer = conversation_viewer(state, session.bear_id, session.user_id).await?;
+    authorize_existing_conversation(
+        &viewer,
+        &state.sqlx_pool,
+        session.bear_id,
+        &session.conversation_id,
+    )
+    .await?;
+    if let Some(resolved) = session.resolved_conversation_id.as_deref() {
+        authorize_existing_conversation(&viewer, &state.sqlx_pool, session.bear_id, resolved)
+            .await?;
+    }
+    Ok(())
+}
+
 async fn session_state_payload(
     state: &DenState,
     session: client_sessions::ClientSessionRow,
@@ -227,14 +251,16 @@ async fn session_state_payload(
 ) -> Result<Value, CustomError> {
     let conversation_external_id = resolved_or_stored_conversation_id(&session);
     let conversation_runtime_id = conversation_external_id.to_string();
-    let latest_context_budget =
-        den_service::conversation::persistence::get_conversation_for_external_id(
-            &state.sqlx_pool,
-            session.bear_id,
-            conversation_external_id,
-        )
-        .await?
-        .and_then(|conversation| conversation.latest_context_budget);
+    require_session_conversation_access(state, &session).await?;
+    let viewer = conversation_viewer(state, session.bear_id, session.user_id).await?;
+    let latest_context_budget = authorize_existing_conversation(
+        &viewer,
+        &state.sqlx_pool,
+        session.bear_id,
+        conversation_external_id,
+    )
+    .await?
+    .and_then(|conversation| conversation.latest_context_budget);
     let trusted_workspace = session.trusted_workspace_context();
 
     let runtime_task_context = if work_enabled {
@@ -405,6 +431,30 @@ pub(crate) async fn session_open_result(
     let resolved_conversation_id = existing
         .as_ref()
         .and_then(|session| session.resolved_conversation_id.clone());
+    let current_mode = request
+        .mode
+        .as_deref()
+        .map(client_sessions::ClientSessionMode::try_from_storage)
+        .transpose()?;
+    let viewer = conversation_viewer(state, bear.id, user_id).await?;
+    // Check both IDs: an existing session can retain a resolved canonical target
+    // even when the client supplies a different selection on reconnect.
+    if let Some(resolved) = resolved_conversation_id.as_deref() {
+        authorize_existing_conversation(&viewer, &state.sqlx_pool, bear.id, resolved).await?;
+    }
+    authorize_existing_conversation(&viewer, &state.sqlx_pool, bear.id, &conversation_id).await?;
+    if let Some(resolved) = resolved_conversation_id.as_deref() {
+        authorize_or_create_conversation(&viewer, &state.sqlx_pool, bear.id, user_id, resolved)
+            .await?;
+    }
+    authorize_or_create_conversation(
+        &viewer,
+        &state.sqlx_pool,
+        bear.id,
+        user_id,
+        &conversation_id,
+    )
+    .await?;
     let runtime_session_id = request
         .runtime_session_id
         .or_else(|| {
@@ -414,11 +464,6 @@ pub(crate) async fn session_open_result(
         })
         .unwrap_or_else(|| format!("bearwire:{}:{}", bear.id, session_id));
     let cwd = request.cwd;
-    let current_mode = request
-        .mode
-        .as_deref()
-        .map(client_sessions::ClientSessionMode::try_from_storage)
-        .transpose()?;
     let client_context = request.client_context;
     client_sessions::upsert_session(
         &state.sqlx_pool,
@@ -515,10 +560,8 @@ pub(crate) async fn session_compact_result(
     )
     .await?
     .ok_or_else(|| CustomError::NotFound("BearWire session not found".to_string()))?;
-    let conversation_id = session
-        .resolved_conversation_id
-        .as_deref()
-        .unwrap_or(&session.conversation_id);
+    let conversation_id = resolved_or_stored_conversation_id(&session);
+    require_session_conversation_access(state, &session).await?;
     let state_result = prepare_turn_compaction(
         &state.sqlx_pool,
         &state.config,
@@ -563,6 +606,7 @@ pub(crate) async fn session_close_result(
     else {
         return Ok(json!({ "ok": true, "closed": false, "session_id": session_id }));
     };
+    require_session_conversation_access(state, &session).await?;
     let reflection_payload =
         match reflect_pair_session(&state.sqlx_pool, state, &session, "session_close").await {
             Ok(payload) => payload,
@@ -702,6 +746,7 @@ pub(crate) async fn session_execution_diagnostics_result(
     )
     .await?
     .ok_or_else(|| CustomError::NotFound("client session not found".to_string()))?;
+    require_session_conversation_access(state, &session).await?;
     let diagnostics = super::focused_execution::focused_execution_diagnostics(
         state,
         user_id,
@@ -781,6 +826,16 @@ pub(crate) async fn session_current_task_start_result(
             "focused task controls are disabled".to_string(),
         ));
     }
+    if let Some(session) = client_sessions::find_for_user_bear_session_id(
+        &state.sqlx_pool,
+        user_id,
+        bear.id,
+        &request.session_id,
+    )
+    .await?
+    {
+        require_session_conversation_access(state, &session).await?;
+    }
     if let Some(run) =
         den_runtime::turn_runs::active_run_for_session(&state.sqlx_pool, &request.session_id)
             .await?
@@ -857,6 +912,7 @@ pub(crate) async fn start_session_task_execution(
     )
     .await?
     .ok_or_else(|| CustomError::NotFound("client session not found".to_string()))?;
+    require_session_conversation_access(state, &session).await?;
     let task_id = session.current_task_id.ok_or_else(|| {
         CustomError::ValidationError(
             "no current session task is selected for this session".to_string(),
@@ -996,6 +1052,12 @@ async fn session_model_payload(
         .resolved_conversation_id
         .as_deref()
         .unwrap_or(&session.conversation_id);
+    require_session_conversation_access(state, &session).await?;
+    let viewer = conversation_viewer(state, bear.id, user_id).await?;
+    // The model view's loader also ensures the canonical row. Claim and recheck
+    // missing IDs first, rather than letting that loader attach an unverified ID.
+    authorize_or_create_conversation(&viewer, &state.sqlx_pool, bear.id, user_id, conversation_id)
+        .await?;
     let view = den_service::model_selection::load_conversation_model_selection_view(
         &state.sqlx_pool,
         bear,
@@ -1052,13 +1114,14 @@ pub(crate) async fn session_model_set_result(
         .resolved_conversation_id
         .as_deref()
         .unwrap_or(&session.conversation_id);
-    let conversation = den_service::conversation::persistence::ensure_conversation_for_external_id(
+    require_session_conversation_access(state, &session).await?;
+    let viewer = conversation_viewer(state, bear.id, user_id).await?;
+    let conversation = authorize_or_create_conversation(
+        &viewer,
         &state.sqlx_pool,
         bear.id,
-        Some(user_id),
+        user_id,
         conversation_id,
-        Some(&session.client_session_id),
-        None,
     )
     .await?;
     let model_state = den_service::model_selection::apply_conversation_model_selection(

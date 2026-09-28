@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id FROM bear_work_runs WHERE bearwire_session_id = $1 AND id <> $2 AND state IN ('claimed', 'provisioning', 'running', 'reporting') LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "80edaaf078e813f8506b157ff0e5638fe4f90a186f958b950628ab171bbe5deb"
+}

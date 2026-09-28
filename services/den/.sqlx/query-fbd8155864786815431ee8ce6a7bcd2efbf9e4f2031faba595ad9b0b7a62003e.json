@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE conversations SET updated_at = NOW() - INTERVAL '2 hours' WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fbd8155864786815431ee8ce6a7bcd2efbf9e4f2031faba595ad9b0b7a62003e"
+}

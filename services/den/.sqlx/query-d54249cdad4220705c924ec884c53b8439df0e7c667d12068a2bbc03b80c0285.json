@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT external_conversation_id, created_by_user_id FROM conversations WHERE bear_id = $1 AND external_conversation_id = ANY($2)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "external_conversation_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "created_by_user_id",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "d54249cdad4220705c924ec884c53b8439df0e7c667d12068a2bbc03b80c0285"
+}

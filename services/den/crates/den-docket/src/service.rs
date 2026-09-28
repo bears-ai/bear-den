@@ -242,6 +242,18 @@ impl PgDocketService {
     pub fn from_pool(pool: &PgPool) -> Self {
         Self { pool: pool.clone() }
     }
+
+    /// Web viewer-scoped listing; visibility is applied in SQL before LIMIT.
+    /// The unscoped trait method remains available to trusted Docket callers.
+    pub async fn list_jobs_for_viewer(
+        &self,
+        bear_id: Uuid,
+        user_id: i32,
+        is_bear_admin: bool,
+        filter: DocketJobListFilter,
+    ) -> Result<Vec<DocketJobRow>, DenError> {
+        db::list_jobs(&self.pool, bear_id, filter, Some((user_id, is_bear_admin))).await
+    }
 }
 
 impl DocketService for PgDocketService {
@@ -254,7 +266,7 @@ impl DocketService for PgDocketService {
         bear_id: Uuid,
         filter: DocketJobListFilter,
     ) -> Result<Vec<DocketJobRow>, DenError> {
-        db::list_jobs(&self.pool, bear_id, filter).await
+        db::list_jobs(&self.pool, bear_id, filter, None).await
     }
 
     async fn get_job(

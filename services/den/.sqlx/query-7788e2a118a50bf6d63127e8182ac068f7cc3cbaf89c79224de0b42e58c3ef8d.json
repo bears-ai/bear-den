@@ -1,0 +1,67 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT c.id, c.bear_id, c.external_conversation_id, c.source_client_session_id,\n                   c.current_title,\n                   c.latest_context_budget_json AS \"latest_context_budget_json?: Json<serde_json::Value>\",\n                   c.latest_context_budget_updated_at, c.updated_at\n            FROM conversations c\n            JOIN user_bear ub ON ub.bear_id = c.bear_id AND ub.user_id = $2\n            WHERE c.bear_id = $1\n              AND (c.created_by_user_id = $2 OR\n                   ($3 AND lower(btrim(coalesce(ub.role, ''))) = 'admin'))\n            ORDER BY c.updated_at DESC, c.id DESC\n            LIMIT $4\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "bear_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "external_conversation_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "source_client_session_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "current_title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "latest_context_budget_json?: Json<serde_json::Value>",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 6,
+        "name": "latest_context_budget_updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4",
+        "Bool",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "7788e2a118a50bf6d63127e8182ac068f7cc3cbaf89c79224de0b42e58c3ef8d"
+}

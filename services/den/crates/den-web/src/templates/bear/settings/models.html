@@ -456,7 +456,7 @@
                         >
                     </td>
                     <td>{{ row.source | e }}</td>
-                    <td><a href="/bear/{{ bear.slug | e }}/stances/{{ row.profile | e }}">Configure stance</a></td>
+                    <td>{% if can_manage_bear %}<a href="/bear/{{ bear.slug | e }}/stances/{{ row.profile | e }}">Configure stance</a>{% endif %}</td>
                 </tr>
                 {% endfor %}
             </tbody>

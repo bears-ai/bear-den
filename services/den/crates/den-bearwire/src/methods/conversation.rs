@@ -10,6 +10,8 @@ use bearwire_protocol::{
     methods::{ConversationDiagnosticsRequest, ConversationHistoryRequest},
     surface::{SurfaceHistoryEvent, SurfaceResourceRef},
 };
+use den_core::ids::{BearId, UserId};
+use den_docket::{DocketService, PgDocketService};
 use den_http::errors::CustomError;
 use den_runtime::{
     bearwire_events,
@@ -18,7 +20,7 @@ use den_runtime::{
 use den_service::{
     artifacts::{self, ArtifactAccessContext, DocketArtifactTargetKind},
     client_sessions,
-    conversation::persistence,
+    conversation::{persistence, viewer::ConversationViewer},
     DenState,
 };
 
@@ -58,6 +60,7 @@ struct DocketDiagnosticEventRow {
 async fn list_docket_diagnostic_events(
     pool: &sqlx::PgPool,
     bear_id: Uuid,
+    user_id: i32,
     conversation_id: &str,
     limit: i64,
 ) -> Result<Vec<DocketDiagnosticEventRow>, den_core::DenError> {
@@ -67,6 +70,7 @@ async fn list_docket_diagnostic_events(
             SELECT id AS job_id
             FROM bear_jobs
             WHERE bear_id = $1 AND source_conversation_id = $2
+              AND created_by_user_id = $3
         ), docket_events AS (
             SELECT events.id, events.created_at, events.event_type, events.payload,
                    events.task_id
@@ -79,11 +83,12 @@ async fn list_docket_diagnostic_events(
         SELECT id, created_at, event_type, payload, task_id
         FROM docket_events
         ORDER BY created_at ASC
-        LIMIT $3
+        LIMIT $4
         ",
     )
     .bind(bear_id)
     .bind(conversation_id)
+    .bind(user_id)
     .bind(limit)
     .fetch_all(pool)
     .await
@@ -265,6 +270,72 @@ fn surface_text_with_resource_refs(text: String, resources: &[SurfaceResourceRef
     rendered
 }
 
+pub(super) async fn conversation_viewer(
+    state: &DenState,
+    bear_id: Uuid,
+    user_id: i32,
+) -> Result<ConversationViewer, CustomError> {
+    ConversationViewer::resolve(&state.sqlx_pool, BearId::new(bear_id), UserId::new(user_id))
+        .await?
+        .ok_or_else(conversation_not_found)
+}
+
+fn conversation_not_found() -> CustomError {
+    CustomError::NotFound("conversation not found".to_string())
+}
+
+pub(super) async fn require_conversation_access(
+    viewer: &ConversationViewer,
+    pool: &sqlx::PgPool,
+    conversation_id: Uuid,
+) -> Result<(), CustomError> {
+    if !viewer.may_access_id(pool, conversation_id).await? {
+        return Err(conversation_not_found());
+    }
+    Ok(())
+}
+
+/// Check the canonical record before creating anything. The ensure call must not
+/// update a competing owner's row if another request claims the external ID first.
+pub(super) async fn authorize_existing_conversation(
+    viewer: &ConversationViewer,
+    pool: &sqlx::PgPool,
+    bear_id: Uuid,
+    external_id: &str,
+) -> Result<Option<persistence::ConversationRecord>, CustomError> {
+    let conversation =
+        persistence::get_conversation_for_external_id(pool, bear_id, external_id).await?;
+    if let Some(conversation) = &conversation {
+        require_conversation_access(viewer, pool, conversation.id).await?;
+    }
+    Ok(conversation)
+}
+
+pub(super) async fn authorize_or_create_conversation(
+    viewer: &ConversationViewer,
+    pool: &sqlx::PgPool,
+    bear_id: Uuid,
+    user_id: i32,
+    external_id: &str,
+) -> Result<persistence::ConversationRecord, CustomError> {
+    if let Some(conversation) =
+        authorize_existing_conversation(viewer, pool, bear_id, external_id).await?
+    {
+        return Ok(conversation);
+    }
+    let conversation = persistence::ensure_conversation_for_external_id(
+        pool,
+        bear_id,
+        Some(user_id),
+        external_id,
+        None,
+        None,
+    )
+    .await?;
+    require_conversation_access(viewer, pool, conversation.id).await?;
+    Ok(conversation)
+}
+
 pub(crate) async fn conversation_diagnostics_result(
     state: &DenState,
     headers: &HeaderMap,
@@ -273,6 +344,7 @@ pub(crate) async fn conversation_diagnostics_result(
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
     let request: ConversationDiagnosticsRequest = parse_params(params)?;
     let limit = request.limit.clamp(1, 100);
+    let viewer = conversation_viewer(state, bear.id, user_id).await?;
     let Some(conversation) = persistence::get_conversation_for_external_id(
         &state.sqlx_pool,
         bear.id,
@@ -287,6 +359,8 @@ pub(crate) async fn conversation_diagnostics_result(
             "records": [],
         }));
     };
+
+    require_conversation_access(&viewer, &state.sqlx_pool, conversation.id).await?;
 
     let Some(session) = client_sessions::find_latest_for_bear_conversation(
         &state.sqlx_pool,
@@ -368,13 +442,34 @@ pub(crate) async fn conversation_diagnostics_result(
     }))
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum HumanHistoryKind {
+    Conversation,
+    Surface,
+}
+
+impl HumanHistoryKind {
+    fn response_kind(self) -> &'static str {
+        match self {
+            Self::Conversation => "conversation_history",
+            Self::Surface => "conversation_surface_history",
+        }
+    }
+
+    fn records_key(self) -> &'static str {
+        match self {
+            Self::Conversation => "messages",
+            Self::Surface => "surface_events",
+        }
+    }
+}
+
 pub(crate) async fn conversation_history_result(
     state: &DenState,
     headers: &HeaderMap,
     params: &Value,
 ) -> Result<Value, CustomError> {
-    conversation_history_like_result(state, headers, params, "conversation_history", "messages")
-        .await
+    conversation_history_like_result(state, headers, params, HumanHistoryKind::Conversation).await
 }
 
 pub(crate) async fn conversation_surface_history_result(
@@ -385,14 +480,7 @@ pub(crate) async fn conversation_surface_history_result(
     // ponytail: surface replay currently merges structured conversation rows with a small
     // allowlist of persisted BearWire events. The ceiling is pagination/order across independent
     // sequences; replace this with a dedicated persisted surface-event stream when Phase 3 grows.
-    conversation_history_like_result(
-        state,
-        headers,
-        params,
-        "conversation_surface_history",
-        "surface_events",
-    )
-    .await
+    conversation_history_like_result(state, headers, params, HumanHistoryKind::Surface).await
 }
 
 fn work_activity_surface_event(entry: WorkActivityEntry) -> Option<SurfaceHistoryEvent> {
@@ -454,14 +542,16 @@ async fn conversation_history_like_result(
     state: &DenState,
     headers: &HeaderMap,
     params: &Value,
-    response_kind: &str,
-    records_key: &str,
+    kind: HumanHistoryKind,
 ) -> Result<Value, CustomError> {
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let response_kind = kind.response_kind();
+    let records_key = kind.records_key();
     let request: ConversationHistoryRequest = parse_params(params)?;
     let conversation_id = request.conversation_id;
     let before_sequence_no = request.before;
     let limit = request.limit.clamp(1, 100);
+    let viewer = conversation_viewer(state, bear.id, user_id).await?;
 
     let Some(conversation) =
         persistence::get_conversation_for_external_id(&state.sqlx_pool, bear.id, &conversation_id)
@@ -478,17 +568,14 @@ async fn conversation_history_like_result(
         return Ok(response);
     };
 
-    let projection = if records_key == "surface_events" {
-        persistence::ConversationHistoryProjection::UserHistory
-    } else {
-        persistence::ConversationHistoryProjection::ModelTranscript
-    };
+    require_conversation_access(&viewer, &state.sqlx_pool, conversation.id).await?;
+
     let rows = persistence::list_projected_messages_page(
         &state.sqlx_pool,
         conversation.id,
         before_sequence_no,
         limit,
-        projection,
+        persistence::ConversationHistoryProjection::UserHistory,
     )
     .await?;
     let has_more = rows.len() >= limit as usize;
@@ -497,13 +584,8 @@ async fn conversation_history_like_result(
         .iter()
         .rev()
         .filter_map(|row| {
-            let message = if records_key == "surface_events" {
-                row.to_user_history_record()
-            } else {
-                row.to_model_history_record()
-            }?;
-            let kind = message.kind.as_str();
-            match kind {
+            let message = row.to_user_history_record()?;
+            match message.kind.as_str() {
                 "tool_call" => Some(json!(SurfaceHistoryEvent::ToolCall {
                     id: message
                         .message_id
@@ -541,7 +623,7 @@ async fn conversation_history_like_result(
                     if text.trim().is_empty() {
                         return None;
                     }
-                    let resources = if records_key == "surface_events" && message.role == "user" {
+                    let resources = if kind == HumanHistoryKind::Surface && message.role == "user" {
                         surface_resource_refs_from_content_json(&row.content_json)
                     } else {
                         Vec::new()
@@ -561,14 +643,39 @@ async fn conversation_history_like_result(
         })
         .collect::<Vec<_>>();
 
-    if records_key == "surface_events" && request.include_surface_enrichment {
-        if let Some(session) = client_sessions::find_latest_for_bear_conversation(
+    if kind == HumanHistoryKind::Surface && request.include_surface_enrichment {
+        require_conversation_access(&viewer, &state.sqlx_pool, conversation.id).await?;
+        let session = client_sessions::find_latest_for_bear_conversation(
             &state.sqlx_pool,
             bear.id,
             &conversation_id,
         )
         .await?
-        {
+        .filter(|session| session.user_id == user_id);
+        let mut include_related_enrichment = true;
+        let safe_session = if let Some(session) = session {
+            let work_run = den_docket::work_runs::get_work_run_by_session(
+                &state.sqlx_pool,
+                &session.client_session_id,
+            )
+            .await?;
+            let permitted = if let Some(work_run) = work_run.as_ref() {
+                work_run.bear_id == bear.id
+                    && PgDocketService::from_pool(&state.sqlx_pool)
+                        .get_job(bear.id, work_run.job_id)
+                        .await?
+                        .is_some_and(|job| job.job.created_by_user_id == user_id)
+            } else {
+                true
+            };
+            if !permitted {
+                include_related_enrichment = false;
+            }
+            permitted.then_some((session, work_run.is_some()))
+        } else {
+            None
+        };
+        if let Some((session, is_work_session)) = safe_session {
             messages.insert(
                 0,
                 json!(SurfaceHistoryEvent::SessionInfoUpdate {
@@ -596,12 +703,6 @@ async fn conversation_history_like_result(
                 limit,
             )
             .await?;
-            let is_work_session = den_docket::work_runs::get_work_run_by_session(
-                &state.sqlx_pool,
-                &session.client_session_id,
-            )
-            .await?
-            .is_some();
             if is_work_session {
                 messages.extend(
                     project_work_activity(surface_event_rows)
@@ -675,55 +776,63 @@ async fn conversation_history_like_result(
             }
         }
 
-        let conversation_artifact_refs = artifacts::list_conversation_artifact_citations(
-            &state.sqlx_pool,
-            bear.id,
-            &conversation_id,
-            ArtifactAccessContext {
-                bear_id: bear.id,
-                user_id: Some(user_id),
-                profile: den_core::BearProfile::Pair,
-            },
-        )
-        .await?
-        .into_iter()
-        .map(|citation| citation.artifact_ref)
-        .collect::<Vec<_>>();
-        if let Some(event) =
-            conversation_artifact_surface_event(&conversation_id, &conversation_artifact_refs)
-        {
-            messages.push(json!(event));
-        }
-
-        for row in list_docket_diagnostic_events(&state.sqlx_pool, bear.id, &conversation_id, limit)
+        if include_related_enrichment {
+            let conversation_artifact_refs = artifacts::list_conversation_artifact_citations(
+                &state.sqlx_pool,
+                bear.id,
+                &conversation_id,
+                ArtifactAccessContext {
+                    bear_id: bear.id,
+                    user_id: Some(user_id),
+                    profile: den_core::BearProfile::Pair,
+                },
+            )
             .await?
-        {
-            let artifact_refs = if let Some(task_id) = row.task_id {
-                artifacts::list_docket_artifact_citations(
-                    &state.sqlx_pool,
-                    bear.id,
-                    DocketArtifactTargetKind::Task,
-                    task_id,
-                    ArtifactAccessContext {
-                        bear_id: bear.id,
-                        user_id: Some(user_id),
-                        profile: den_core::BearProfile::Pair,
-                    },
-                )
-                .await?
-                .into_iter()
-                .map(|citation| citation.artifact_ref)
-                .collect()
-            } else {
-                Vec::new()
-            };
-            if let Some(event) = docket_diagnostic_surface_event(row, &artifact_refs) {
-                messages.push(event);
+            .into_iter()
+            .map(|citation| citation.artifact_ref)
+            .collect::<Vec<_>>();
+            if let Some(event) =
+                conversation_artifact_surface_event(&conversation_id, &conversation_artifact_refs)
+            {
+                messages.push(json!(event));
+            }
+
+            for row in list_docket_diagnostic_events(
+                &state.sqlx_pool,
+                bear.id,
+                user_id,
+                &conversation_id,
+                limit,
+            )
+            .await?
+            {
+                let artifact_refs = if let Some(task_id) = row.task_id {
+                    artifacts::list_docket_artifact_citations(
+                        &state.sqlx_pool,
+                        bear.id,
+                        DocketArtifactTargetKind::Task,
+                        task_id,
+                        ArtifactAccessContext {
+                            bear_id: bear.id,
+                            user_id: Some(user_id),
+                            profile: den_core::BearProfile::Pair,
+                        },
+                    )
+                    .await?
+                    .into_iter()
+                    .map(|citation| citation.artifact_ref)
+                    .collect()
+                } else {
+                    Vec::new()
+                };
+                if let Some(event) = docket_diagnostic_surface_event(row, &artifact_refs) {
+                    messages.push(event);
+                }
             }
         }
     }
 
-    if records_key == "surface_events" {
+    if kind == HumanHistoryKind::Surface {
         messages.sort_by(|left, right| {
             let left_created = left
                 .get("created_at")
@@ -737,7 +846,7 @@ async fn conversation_history_like_result(
         });
     }
 
-    if records_key == "surface_events" {
+    if kind == HumanHistoryKind::Surface {
         let mut counts = std::collections::BTreeMap::<&str, usize>::new();
         for event in &messages {
             let category = match event.get("kind").and_then(Value::as_str) {

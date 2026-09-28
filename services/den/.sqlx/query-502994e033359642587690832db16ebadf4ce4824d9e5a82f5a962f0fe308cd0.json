@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.id FROM docket_execution_attempts a JOIN bear_work_runs r ON r.id::text = a.binding_id AND r.bear_id = a.bear_id WHERE a.id = $1 AND a.fence_epoch = $2 AND a.binding_kind = 'work_assignment' AND a.bear_id = $3",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int8",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "502994e033359642587690832db16ebadf4ce4824d9e5a82f5a962f0fe308cd0"
+}

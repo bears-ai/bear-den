@@ -675,18 +675,11 @@ impl NativeRuntimeConversationBackend {
 impl RuntimeConversationBackend for NativeRuntimeConversationBackend {
     async fn create_conversation(
         &self,
-        binding: &RoleRuntimeBinding,
+        _binding: &RoleRuntimeBinding,
     ) -> Result<RuntimeConversationRef, DenError> {
-        let id = format!("den-conv-{}", Uuid::new_v4().simple());
-        if let Some(pool) = &self.pool {
-            if let Some(bear_id) = bear_id_from_native_binding(binding) {
-                conversation_persistence::ensure_conversation_for_external_id(
-                    pool, bear_id, None, &id, None, None,
-                )
-                .await?;
-            }
-        }
-        Ok(RuntimeConversationRef { id })
+        Ok(RuntimeConversationRef {
+            id: format!("den-conv-{}", Uuid::new_v4().simple()),
+        })
     }
 
     async fn verify_conversation_belongs_to_binding(

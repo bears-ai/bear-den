@@ -5,6 +5,7 @@ use den_docket::{
     DocketExecutionControl, DocketExecutionNextAction, DocketExecutionTaskSettlement,
     DocketJobExecuteRequest, DocketJobListFilter, DocketOutcomeDisposition, DocketService,
     DocketSessionTaskSettlement, DocketTaskListFilter, DocketTaskStatus, PgDocketService,
+    TaskListVisibility,
 };
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -24,12 +25,58 @@ use den_service::{
         self, ArtifactAccessContext, AttachDocketArtifactInput, DocketArtifactRole,
         DocketArtifactTargetKind,
     },
+    bears::db as bears_db,
     client_sessions, DenState,
 };
 
 use crate::auth::authenticated_bear;
+use crate::methods::conversation::{authorize_existing_conversation, conversation_viewer};
 use crate::methods::focused_execution::start_or_reconcile_session_task_execution;
 use crate::methods::parse_params;
+
+fn job_visible_to_human(owner_id: i32, visibility: &str, user_id: i32, is_admin: bool) -> bool {
+    let Ok(visibility) = TaskListVisibility::parse(visibility) else {
+        return false;
+    };
+    owner_id == user_id || is_admin || visibility == TaskListVisibility::BearVisible
+}
+
+async fn viewer_is_admin(
+    state: &DenState,
+    bear_id: Uuid,
+    user_id: i32,
+) -> Result<bool, CustomError> {
+    let role = bears_db::membership_role_for_user(&state.sqlx_pool, user_id, bear_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("Bear not found or token lacks access".to_string()))?;
+    Ok(bears_db::role_is_bear_admin(role.as_deref()))
+}
+
+async fn require_job_access(
+    state: &DenState,
+    bear_id: Uuid,
+    user_id: i32,
+    job_id: Uuid,
+) -> Result<(), CustomError> {
+    // Supply the full UUID, never a caller-provided prefix. This shares the
+    // Bear-scoped lookup used by the Work UI without broadening its result set.
+    let rows = sqlx::query!(
+        "SELECT id, created_by_user_id, visibility FROM bear_jobs WHERE replace(id::text, '-', '') LIKE $1 || '%' AND bear_id = $2 LIMIT 2",
+        job_id.simple().to_string(),
+        bear_id,
+    )
+    .fetch_all(&state.sqlx_pool)
+    .await?;
+    let is_admin = viewer_is_admin(state, bear_id, user_id).await?;
+    let allowed = matches!(rows.as_slice(), [row] if row.id == job_id
+        && job_visible_to_human(row.created_by_user_id, &row.visibility, user_id, is_admin));
+    if !allowed {
+        return Err(CustomError::NotFound(format!(
+            "Docket job {job_id} not found"
+        )));
+    }
+    Ok(())
+}
 
 pub async fn docket_jobs_list_result(
     state: &DenState,
@@ -38,11 +85,14 @@ pub async fn docket_jobs_list_result(
 ) -> Result<Value, CustomError> {
     let request: DocketJobsListRequest = parse_params(params)?;
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let is_admin = viewer_is_admin(state, bear.id, user_id).await?;
     let source_conversation_id = source_conversation_id(state, user_id, bear.id, &request).await?;
     let service = PgDocketService::from_pool(&state.sqlx_pool);
     let jobs = service
-        .list_jobs(
+        .list_jobs_for_viewer(
             bear.id,
+            user_id,
+            is_admin,
             DocketJobListFilter {
                 include_cancelled: request.include_cancelled.unwrap_or(false),
                 include_archived: request.include_archived.unwrap_or(false),
@@ -66,7 +116,12 @@ pub async fn runtime_diagnostics_list_result(
     params: &Value,
 ) -> Result<Value, CustomError> {
     let request: RuntimeDiagnosticsListRequest = parse_params(params)?;
-    let (_, bear) = authenticated_bear(state, headers, params).await?;
+    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    if !viewer_is_admin(state, bear.id, user_id).await? {
+        return Err(CustomError::Authorization(
+            "Bear admin access is required for runtime diagnostics".to_string(),
+        ));
+    }
     let severity = match request.severity.as_deref() {
         None => None,
         Some("warning") => Some(RuntimeExceptionSeverity::Warning),
@@ -112,6 +167,7 @@ pub async fn docket_job_diagnostics_result(
     let job_id = Uuid::parse_str(&request.job_id)
         .map_err(|err| CustomError::ValidationError(format!("invalid job_id: {err}")))?;
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    require_job_access(state, bear.id, user_id, job_id).await?;
     let service = PgDocketService::from_pool(&state.sqlx_pool);
     let job = service
         .get_job(bear.id, job_id)
@@ -217,7 +273,8 @@ pub async fn docket_jobs_cancel_run_result(
     let request: DocketJobsCancelRunRequest = parse_params(params)?;
     let job_id = Uuid::parse_str(&request.job_id)
         .map_err(|err| CustomError::ValidationError(format!("invalid job_id: {err}")))?;
-    let (_, bear) = authenticated_bear(state, headers, params).await?;
+    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    require_job_access(state, bear.id, user_id, job_id).await?;
     let job = PgDocketService::from_pool(&state.sqlx_pool)
         .cancel_job_run(bear.id, job_id)
         .await?;
@@ -233,6 +290,7 @@ pub async fn docket_jobs_execute_result(
     let job_id = Uuid::parse_str(&request.job_id)
         .map_err(|err| CustomError::ValidationError(format!("invalid job_id: {err}")))?;
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    require_job_access(state, bear.id, user_id, job_id).await?;
     let service = PgDocketService::from_pool(&state.sqlx_pool);
     let outcome = service
         .execute_job(execution_request(bear.id, user_id, job_id, &request))
@@ -259,6 +317,7 @@ pub async fn docket_jobs_reconcile_result(
     let job_id = Uuid::parse_str(&request.job_id)
         .map_err(|err| CustomError::ValidationError(format!("invalid job_id: {err}")))?;
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    require_job_access(state, bear.id, user_id, job_id).await?;
     let service = PgDocketService::from_pool(&state.sqlx_pool);
     let outcome = service
         .reconcile_execution(execution_request(bear.id, user_id, job_id, &request))
@@ -291,6 +350,20 @@ pub async fn docket_jobs_settle_task_result(
         .map(parse_outcome_disposition)
         .transpose()?;
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    require_job_access(state, bear.id, user_id, job_id).await?;
+    let task_job_id = sqlx::query_scalar!(
+        "SELECT job_id FROM bear_tasks WHERE id = $1 AND bear_id = $2",
+        task_id,
+        bear.id,
+    )
+    .fetch_optional(&state.sqlx_pool)
+    .await?
+    .flatten();
+    if task_job_id != Some(job_id) {
+        return Err(CustomError::NotFound(format!(
+            "Docket task {task_id} not found"
+        )));
+    }
     let service = PgDocketService::from_pool(&state.sqlx_pool);
     let attempt_session_id = attempt_session_id(&request);
     let settled_attempt = if let Some(session_id) = attempt_session_id.as_deref() {
@@ -434,6 +507,19 @@ pub async fn docket_session_tasks_settle_result(
     )
     .await?
     .ok_or_else(|| CustomError::NotFound(format!("session {} not found", request.session_id)))?;
+    // A session task may be attached to a Docket job; check its visibility
+    // before looking up attempt output or touching task state.
+    let job_id = sqlx::query_scalar!(
+        "SELECT job_id FROM bear_tasks WHERE id = $1 AND bear_id = $2",
+        task_id,
+        bear.id,
+    )
+    .fetch_optional(&state.sqlx_pool)
+    .await?
+    .flatten();
+    if let Some(job_id) = job_id {
+        require_job_access(state, bear.id, user_id, job_id).await?;
+    }
     let result_refs = resolve_candidate_git_commit_output(
         state,
         bear.id,
@@ -788,26 +874,28 @@ async fn source_conversation_id(
     bear_id: uuid::Uuid,
     request: &DocketJobsListRequest,
 ) -> Result<Option<String>, CustomError> {
-    if let Some(conversation_id) = request.conversation_id.as_ref() {
-        return Ok(Some(conversation_id.clone()));
-    }
-    let Some(session_id) = request.session_id.as_ref() else {
-        return Ok(None);
-    };
-    let session = client_sessions::find_for_user_bear_session_id(
-        &state.sqlx_pool,
-        user_id,
-        bear_id,
-        session_id,
-    )
-    .await?
-    .ok_or_else(|| CustomError::NotFound(format!("session {session_id} not found")))?;
-    Ok(Some(
+    let source = if let Some(conversation_id) = request.conversation_id.as_ref() {
+        conversation_id.clone()
+    } else {
+        let Some(session_id) = request.session_id.as_ref() else {
+            return Ok(None);
+        };
+        let session = client_sessions::find_for_user_bear_session_id(
+            &state.sqlx_pool,
+            user_id,
+            bear_id,
+            session_id,
+        )
+        .await?
+        .ok_or_else(|| CustomError::NotFound(format!("session {session_id} not found")))?;
         session
             .resolved_conversation_id
             .filter(|id| !id.trim().is_empty())
-            .unwrap_or(session.conversation_id),
-    ))
+            .unwrap_or(session.conversation_id)
+    };
+    let viewer = conversation_viewer(state, bear_id, user_id).await?;
+    authorize_existing_conversation(&viewer, &state.sqlx_pool, bear_id, &source).await?;
+    Ok(Some(source))
 }
 
 #[cfg(test)]
@@ -916,6 +1004,15 @@ mod tests {
         assert_eq!(status["reason"], "active_task_is_stale");
         assert_eq!(status["resources"]["run_id"], run_id.to_string());
         assert_eq!(status["resources"]["selected_task_id"], task_id.to_string());
+    }
+
+    #[test]
+    fn unknown_job_visibility_is_not_readable_even_by_owner_or_admin() {
+        assert!(!job_visible_to_human(1, "unrecognized", 1, true));
+        assert!(!job_visible_to_human(1, "unrecognized", 1, false));
+        assert!(!job_visible_to_human(1, "unrecognized", 2, true));
+        assert!(!job_visible_to_human(1, "handoff_requested", 2, false));
+        assert!(job_visible_to_human(1, "bear_visible", 2, false));
     }
 
     #[test]

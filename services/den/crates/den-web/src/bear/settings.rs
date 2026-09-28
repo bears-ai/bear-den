@@ -1,4 +1,5 @@
-//! Bear-scoped settings at `/bear/{slug}/…` for members (read) and bear admins (write).
+//! Bear-scoped settings at `/bear/{slug}/…`: members can view shared settings;
+//! inspection of raw activity, context, and diagnostics requires a Bear admin.
 
 use axum::{
     body::Body,
@@ -15,7 +16,6 @@ use bearwire_protocol::wire::BearWireEvent;
 use minijinja::context;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
 use std::path::{Path as FsPath, PathBuf};
 use std::str::FromStr;
@@ -152,8 +152,6 @@ struct DomainQuery {
     message: Option<String>,
     #[serde(default)]
     error: Option<String>,
-    #[serde(default)]
-    compaction: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -363,10 +361,6 @@ struct ConversationAdminRow {
     title: String,
     source_session: String,
     updated_at: String,
-    compaction_status: String,
-    compaction_event_count: i64,
-    latest_compaction_at: Option<String>,
-    compaction_explanation: String,
     latest_context_budget: Option<ContextBudgetReport>,
     latest_context_budget_updated_at: Option<String>,
     latest_context_budget_summary: Option<String>,
@@ -435,18 +429,6 @@ struct ReflectionWatermarkAdmin {
 }
 
 #[derive(Debug, Serialize)]
-struct CompactionEventAdminRow {
-    trigger: String,
-    status: String,
-    policy_version: String,
-    source_group_start: Option<i32>,
-    source_group_end: Option<i32>,
-    diagnostic: Option<String>,
-    artifact_json: String,
-    created_at: String,
-}
-
-#[derive(Debug, Serialize)]
 struct CheckpointArtifactAdminRow {
     run_id: String,
     checkpoint_id: String,
@@ -488,27 +470,6 @@ fn context_budget_summary(report: &ContextBudgetReport) -> String {
             "{} tokens estimated (reserve {})",
             report.estimated_total_tokens, report.reserved_output_tokens
         ),
-    }
-}
-
-fn compaction_status_explanation(
-    status: Option<&str>,
-    budget: Option<&ContextBudgetReport>,
-) -> String {
-    match status {
-        Some("Applied") | Some("applied") => {
-            "A compaction artifact exists; reflection can mine the compacted summary.".to_string()
-        }
-        Some("Skipped") | Some("skipped") => {
-            "Compaction evaluated this conversation but did not create an artifact, usually because the visible transcript is still below the configured context-pressure thresholds.".to_string()
-        }
-        Some(other) => format!("Latest compaction event status: {other}."),
-        None => match budget.and_then(|b| b.context_window.map(|limit| (b.estimated_total_tokens, limit))) {
-            Some((used, limit)) => format!(
-                "No compaction event yet. Latest context estimate is {used}/{limit} tokens, so proactive/live reflection may wait until threshold pressure unless you trigger reflection manually."
-            ),
-            None => "No compaction event yet. This usually means proactive processing has not touched this conversation since tracking was added, or the conversation has no context budget record yet.".to_string(),
-        },
     }
 }
 
@@ -933,106 +894,18 @@ fn reflection_watermark_admin(
     }
 }
 
-fn conversation_timeline_rows(
-    compaction_events: &[CompactionEventAdminRow],
-    reflections: &[ReflectionAdminRow],
-) -> Vec<ConversationTimelineRow> {
-    let mut rows = Vec::new();
-    rows.extend(compaction_events.iter().map(|event| {
-        ConversationTimelineRow {
-            created_at: event.created_at.clone(),
-            kind: "Compaction".to_string(),
-            label: event.status.clone(),
-            details: event
-                .diagnostic
-                .clone()
-                .unwrap_or_else(|| format!("{} · {}", event.trigger, event.policy_version)),
-        }
-    }));
-    rows.extend(
-        reflections
-            .iter()
-            .map(|reflection| ConversationTimelineRow {
-                created_at: reflection.created_at.clone(),
-                kind: "Reflection".to_string(),
-                label: reflection.status_label.clone(),
-                details: reflection.status_explanation.clone(),
-            }),
-    );
+fn conversation_timeline_rows(reflections: &[ReflectionAdminRow]) -> Vec<ConversationTimelineRow> {
+    let mut rows: Vec<_> = reflections
+        .iter()
+        .map(|reflection| ConversationTimelineRow {
+            created_at: reflection.created_at.clone(),
+            kind: "Reflection".to_string(),
+            label: reflection.status_label.clone(),
+            details: reflection.status_explanation.clone(),
+        })
+        .collect();
     rows.sort_by(|a, b| b.created_at.cmp(&a.created_at));
     rows
-}
-
-async fn conversation_compaction_events(
-    pool: &sqlx::PgPool,
-    external_conversation_id: Option<&str>,
-    limit: i64,
-) -> Result<Vec<CompactionEventAdminRow>, CustomError> {
-    let Some(external_conversation_id) = external_conversation_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return Ok(Vec::new());
-    };
-    let rows = sqlx::query_as::<
-        _,
-        (
-            String,
-            String,
-            String,
-            Option<i32>,
-            Option<i32>,
-            Option<String>,
-            Option<serde_json::Value>,
-            time::OffsetDateTime,
-        ),
-    >(
-        r"
-        SELECT trigger,
-               status,
-               policy_version,
-               source_group_start,
-               source_group_end,
-               diagnostic,
-               artifact,
-               created_at
-        FROM runtime_compaction_events
-        WHERE conversation_id = $1
-        ORDER BY created_at DESC
-        LIMIT $2
-        ",
-    )
-    .bind(external_conversation_id)
-    .bind(limit)
-    .fetch_all(pool)
-    .await
-    .map_err(|err| CustomError::Database(format!("list compaction events: {err}")))?;
-    Ok(rows
-        .into_iter()
-        .map(
-            |(
-                trigger,
-                status,
-                policy_version,
-                source_group_start,
-                source_group_end,
-                diagnostic,
-                artifact,
-                created_at,
-            )| CompactionEventAdminRow {
-                trigger,
-                status,
-                policy_version,
-                source_group_start,
-                source_group_end,
-                diagnostic,
-                artifact_json: artifact
-                    .map(pretty_json)
-                    .unwrap_or_else(|| "null".to_string()),
-                created_at: created_at.to_string(),
-            },
-        )
-        .collect())
 }
 
 async fn conversation_checkpoint_artifacts(
@@ -1642,6 +1515,20 @@ async fn overview_view(
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
+    if !can_manage_bear {
+        return web::render_template(
+            &state,
+            "bear/settings/overview.html",
+            auth_session,
+            context! {
+                message => query.message,
+                can_manage_bear,
+                ..bear_nav_context(&bear, "overview"),
+            },
+        )
+        .await;
+    }
+
     let id = bear.id;
     let member_count = bears_db::count_bear_members(state.sqlx_pool(), id).await?;
     let runtime_configured = true;
@@ -2584,10 +2471,11 @@ async fn stance_detail_view(
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
-    let (bear, can_manage_bear) = match load_session_bear(&state, &auth_session, &slug).await? {
+    let bear = match load_session_bear_manage(&state, &auth_session, &slug).await? {
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
+    let can_manage_bear = true;
     let role = stance
         .parse::<BearProfile>()
         .map_err(CustomError::NotFound)?;
@@ -2670,53 +2558,20 @@ async fn conversations_view(
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
-    let (bear, can_manage_bear) = match load_session_bear(&state, &auth_session, &slug).await? {
+    let bear = match load_session_bear_manage(&state, &auth_session, &slug).await? {
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
+    let can_manage_bear = true;
     let rows =
         conversation_persistence::list_conversations_for_bear(state.sqlx_pool(), bear.id, 50)
             .await?;
-    let external_ids: Vec<String> = rows
-        .iter()
-        .filter_map(|c| c.external_conversation_id.clone())
-        .collect();
-    let compaction_stats: HashMap<String, (i64, String, time::OffsetDateTime)> =
-        if external_ids.is_empty() {
-            HashMap::new()
-        } else {
-            sqlx::query!(
-                r#"
-                SELECT DISTINCT ON (conversation_id)
-                       conversation_id AS "conversation_id!: String",
-                       COUNT(*) OVER (PARTITION BY conversation_id)::bigint AS "event_count!: i64",
-                       status AS "status!: String",
-                       created_at AS "created_at!: time::OffsetDateTime"
-                FROM runtime_compaction_events
-                WHERE conversation_id = ANY($1)
-                ORDER BY conversation_id, created_at DESC
-                "#,
-                &external_ids
-            )
-            .fetch_all(state.sqlx_pool())
-            .await
-            .map_err(|err| CustomError::Database(format!("list compaction stats: {err}")))?
-            .into_iter()
-            .map(|row| {
-                (
-                    row.conversation_id,
-                    (row.event_count, row.status, row.created_at),
-                )
-            })
-            .collect()
-        };
-    let mut conversations: Vec<ConversationAdminRow> = rows
+    let conversations: Vec<ConversationAdminRow> = rows
         .into_iter()
         .map(|c| {
             let external_id = c
                 .external_conversation_id
                 .unwrap_or_else(|| "(none)".to_string());
-            let stats = compaction_stats.get(&external_id);
             ConversationAdminRow {
                 id: c.id,
                 external_id,
@@ -2728,15 +2583,7 @@ async fn conversations_view(
                     .source_client_session_id
                     .unwrap_or_else(|| "—".to_string()),
                 updated_at: c.updated_at.to_string(),
-                compaction_status: stats
-                    .map(|(_, status, _)| status.clone())
-                    .unwrap_or_else(|| "none".to_string()),
-                compaction_event_count: stats.map(|(count, _, _)| *count).unwrap_or(0),
-                latest_compaction_at: stats.map(|(_, _, created_at)| created_at.to_string()),
-                compaction_explanation: compaction_status_explanation(
-                    stats.map(|(_, status, _)| status.as_str()),
-                    c.latest_context_budget.as_ref(),
-                ),
+
                 latest_context_budget_updated_at: c
                     .latest_context_budget_updated_at
                     .map(|value| value.to_string()),
@@ -2748,20 +2595,7 @@ async fn conversations_view(
             }
         })
         .collect();
-    let compaction_filter = query.compaction.as_deref().unwrap_or("all");
-    if compaction_filter != "all" {
-        conversations.retain(|c| match compaction_filter {
-            "none" => c.compaction_event_count == 0,
-            "skipped" => c.compaction_status.eq_ignore_ascii_case("skipped"),
-            "applied" => c.compaction_status.eq_ignore_ascii_case("applied"),
-            // ponytail: this is a latest-event filter; upgrade to durable
-            // reflected-through watermarks when duplicate-prevention state lands.
-            "needs_action" => {
-                c.compaction_event_count == 0 || c.compaction_status.eq_ignore_ascii_case("skipped")
-            }
-            _ => true,
-        });
-    }
+
     let live_reflection_status = live_reflection_status_for_bear(
         state.sqlx_pool(),
         bear.id,
@@ -2781,7 +2615,7 @@ async fn conversations_view(
             live_reflection_enabled => bear.live_reflection_enabled,
             message => query.message,
             error => query.error,
-            compaction_filter,
+
             ..bear_nav_context(&bear, "activity"),
         },
     )
@@ -2793,10 +2627,11 @@ async fn reflections_view(
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
-    let (bear, can_manage_bear) = match load_session_bear(&state, &auth_session, &slug).await? {
+    let bear = match load_session_bear_manage(&state, &auth_session, &slug).await? {
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
+    let can_manage_bear = true;
     let reflections = reflection_rows_for_bear(state.sqlx_pool(), bear.id, None, 100).await?;
     web::render_template(
         &state,
@@ -2818,10 +2653,11 @@ async fn conversation_detail_view(
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
-    let (bear, can_manage_bear) = match load_session_bear(&state, &auth_session, &slug).await? {
+    let bear = match load_session_bear_manage(&state, &auth_session, &slug).await? {
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
+    let can_manage_bear = true;
     let conv = conversation_persistence::get_conversation_by_id(state.sqlx_pool(), conversation_id)
         .await?
         .ok_or_else(|| CustomError::NotFound("conversation not found".to_string()))?;
@@ -2829,12 +2665,9 @@ async fn conversation_detail_view(
         return Err(CustomError::NotFound("conversation not found".to_string()));
     }
     let messages = list_messages_page(state.sqlx_pool(), conversation_id, None, 40).await?;
-    let compaction_events = conversation_compaction_events(
-        state.sqlx_pool(),
-        conv.external_conversation_id.as_deref(),
-        20,
-    )
-    .await?;
+    // Legacy runtime_compaction_events only carries an external conversation id,
+    // so it cannot safely be attributed to this Bear. Show only persisted,
+    // conversation-id-scoped artifacts below.
     let compaction_artifacts =
         conversation_compaction_artifacts(state.sqlx_pool(), conversation_id, 10).await?;
     let checkpoint_artifacts = conversation_checkpoint_artifacts(
@@ -2846,7 +2679,7 @@ async fn conversation_detail_view(
     .await?;
     let reflections =
         reflection_rows_for_bear(state.sqlx_pool(), bear.id, Some(conversation_id), 20).await?;
-    let processing_timeline = conversation_timeline_rows(&compaction_events, &reflections);
+    let processing_timeline = conversation_timeline_rows(&reflections);
     let reflection_watermark =
         reflection_watermark_admin(messages.iter().map(|m| m.sequence_no).max(), &reflections);
     let message_rows: Vec<MessageAdminRow> = messages
@@ -2870,7 +2703,6 @@ async fn conversation_detail_view(
         context! {
             conv,
             message_rows,
-            compaction_events,
             compaction_artifacts,
             checkpoint_artifacts,
             reflections,
@@ -2895,10 +2727,11 @@ async fn context_view(
 ) -> Result<Response, CustomError> {
     use den_core::tools::prompt_memory::{PromptMemoryBlockScope, PromptMemoryBlockState};
 
-    let (bear, can_manage_bear) = match load_session_bear(&state, &auth_session, &slug).await? {
+    let bear = match load_session_bear_manage(&state, &auth_session, &slug).await? {
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
+    let can_manage_bear = true;
     let id = bear.id;
 
     // Layer 1: the compiled stance prompt.
@@ -3098,10 +2931,11 @@ async fn advanced_view(
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
-    let (bear, can_manage_bear) = match load_session_bear(&state, &auth_session, &slug).await? {
+    let bear = match load_session_bear_manage(&state, &auth_session, &slug).await? {
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
+    let can_manage_bear = true;
     let stats = memory_stats_for_bear(&state, bear.id).await?;
     let agent_health_rows = bear_agent_health_rows(&state, bear.id, true).await?;
     web::render_template(
@@ -3164,7 +2998,10 @@ async fn reflect_conversations_post(
         Ok(b) => b,
         Err(r) => return Ok(r.into_response()),
     };
-    let selected_ids = conversation_ids_for_reflection_action(&state, bear.id, &form).await?;
+    let selected_ids = match form.bulk_action.as_str() {
+        "selected" | "" => form.conversation_ids,
+        _ => Vec::new(),
+    };
     if selected_ids.is_empty() {
         return Ok(Redirect::to(&format!(
             "/bear/{}/conversations?message={}",
@@ -3291,60 +3128,6 @@ async fn reconsider_conversation_post(
         },
     )
     .await
-}
-
-async fn conversation_ids_for_reflection_action(
-    state: &AppState,
-    bear_id: Uuid,
-    form: &ReflectConversationsForm,
-) -> Result<Vec<Uuid>, CustomError> {
-    match form.bulk_action.as_str() {
-        "all_no_compaction" => sqlx::query_scalar!(
-            r#"
-            SELECT c.id
-            FROM conversations c
-            WHERE c.bear_id = $1
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM runtime_compaction_events e
-                  WHERE e.conversation_id = c.external_conversation_id
-              )
-            ORDER BY c.updated_at DESC
-            LIMIT 25
-            "#,
-            bear_id
-        )
-        .fetch_all(state.sqlx_pool())
-        .await
-        .map_err(|err| {
-            CustomError::Database(format!("select conversations without compaction: {err}"))
-        }),
-        "all_skipped_compaction" => sqlx::query_scalar!(
-            r#"
-            SELECT c.id
-            FROM conversations c
-            JOIN LATERAL (
-                SELECT e.status
-                FROM runtime_compaction_events e
-                WHERE e.conversation_id = c.external_conversation_id
-                ORDER BY e.created_at DESC
-                LIMIT 1
-            ) latest ON TRUE
-            WHERE c.bear_id = $1
-              AND lower(latest.status) = 'skipped'
-            ORDER BY c.updated_at DESC
-            LIMIT 25
-            "#,
-            bear_id
-        )
-        .fetch_all(state.sqlx_pool())
-        .await
-        .map_err(|err| {
-            CustomError::Database(format!("select skipped-compaction conversations: {err}"))
-        }),
-        "selected" | "" => Ok(form.conversation_ids.clone()),
-        _ => Ok(Vec::new()),
-    }
 }
 
 async fn reflect_persisted_conversation(

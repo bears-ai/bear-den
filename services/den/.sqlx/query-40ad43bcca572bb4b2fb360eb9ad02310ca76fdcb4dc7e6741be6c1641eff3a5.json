@@ -1,0 +1,124 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT j.id, j.bear_id, j.created_by_user_id, j.created_by_role, j.goal,\n               (SELECT a.work_surface_id FROM job_work_surface_assignments a\n                JOIN work_surfaces s ON s.id = a.work_surface_id\n                WHERE a.job_id = j.id AND s.kind = 'git_workspace' AND a.mutation_policy <> 'forbidden'\n                ORDER BY a.created_at LIMIT 1) AS work_surface_id,\n               j.commit_policy, j.work_branch, COALESCE(j.lifecycle_intent, 'draft') AS \"status!: _\",\n               j.lifecycle_intent, j.visibility, j.source_conversation_id, j.objective_kind,\n               j.supersedes_job_id, j.current_run_id, j.created_at, j.updated_at\n        FROM bear_jobs j\n        WHERE j.bear_id = $1\n          AND ($2::text IS NULL OR j.source_conversation_id = $2)\n          AND ($4::int IS NULL OR (\n              j.visibility = ANY($6)\n              AND (j.created_by_user_id = $4 OR $5 OR j.visibility = $7)\n          ))\n        ORDER BY j.updated_at DESC\n        LIMIT $3\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "bear_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "created_by_user_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 3,
+        "name": "created_by_role",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "goal",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "work_surface_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 6,
+        "name": "commit_policy",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "work_branch",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "status!: _",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "lifecycle_intent",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "visibility",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "source_conversation_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "objective_kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
+        "name": "supersedes_job_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 14,
+        "name": "current_run_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 15,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 16,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Int8",
+        "Int4",
+        "Bool",
+        "TextArray",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      null,
+      true,
+      true,
+      null,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "40ad43bcca572bb4b2fb360eb9ad02310ca76fdcb4dc7e6741be6c1641eff3a5"
+}

@@ -52,7 +52,7 @@ use super::model::{
     DocketTaskListFilter, DocketTaskPlacement, DocketTaskProjection, DocketTaskRow,
     DocketTaskRunStateRow, DocketTaskStatus, DocketTaskUpdate, DocketValidationError,
     DocketWorkBoundaryCheck, TaskListItemStatus, TaskListProjection, TaskListSourceRef,
-    TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState,
+    TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState, TaskListVisibility,
 };
 
 pub(super) async fn create_job(
@@ -620,12 +620,22 @@ pub(super) async fn list_jobs(
     pool: &PgPool,
     bear_id: Uuid,
     filter: DocketJobListFilter,
+    viewer: Option<(i32, bool)>,
 ) -> Result<Vec<DocketJobRow>, DenError> {
     let limit = if filter.limit <= 0 {
         50
     } else {
         filter.limit.min(200)
     };
+    let known_visibility: Vec<String> = [
+        TaskListVisibility::PrivateToProfile,
+        TaskListVisibility::SameUser,
+        TaskListVisibility::BearVisible,
+        TaskListVisibility::HandoffRequested,
+    ]
+    .into_iter()
+    .map(|visibility| visibility.as_str().to_string())
+    .collect();
     let rows = sqlx::query_as!(
         DocketJobRow,
         r#"
@@ -640,12 +650,20 @@ pub(super) async fn list_jobs(
         FROM bear_jobs j
         WHERE j.bear_id = $1
           AND ($2::text IS NULL OR j.source_conversation_id = $2)
+          AND ($4::int IS NULL OR (
+              j.visibility = ANY($6)
+              AND (j.created_by_user_id = $4 OR $5 OR j.visibility = $7)
+          ))
         ORDER BY j.updated_at DESC
         LIMIT $3
         "#,
         bear_id,
         filter.source_conversation_id.as_deref(),
-        limit
+        limit,
+        viewer.map(|(user_id, _)| user_id),
+        viewer.is_some_and(|(_, is_admin)| is_admin),
+        &known_visibility,
+        TaskListVisibility::BearVisible.as_str(),
     )
     .fetch_all(pool)
     .await?;
@@ -654,6 +672,9 @@ pub(super) async fn list_jobs(
     // read pattern. Batch projection loading if list sizes make this material in production.
     let mut jobs = Vec::with_capacity(rows.len());
     for mut job in rows {
+        if viewer.is_some() && TaskListVisibility::parse(&job.visibility).is_err() {
+            continue;
+        }
         if !filter.include_cancelled && job.lifecycle_intent.as_deref() == Some("cancelled") {
             continue;
         }

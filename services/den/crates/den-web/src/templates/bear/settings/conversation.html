@@ -45,7 +45,7 @@
   </tbody>
 </table>
 {% else %}
-<p><em>No compaction or reflection processing recorded yet.</em></p>
+<p><em>No reflection processing recorded yet.</em></p>
 {% endif %}
 
 <h3>Latest Context Budget</h3>
@@ -82,27 +82,7 @@
 <p><em>No context budget snapshot recorded for this conversation.</em></p>
 {% endif %}
 
-<h3>Compaction</h3>
-{% if compaction_events and compaction_events | length > 0 %}
-<table>
-  <thead><tr><th>When</th><th>Status</th><th>Trigger</th><th>Policy</th><th>Source groups</th><th>Diagnostic</th></tr></thead>
-  <tbody>
-  {% for event in compaction_events %}
-    <tr>
-      <td>{{ event.created_at }}</td>
-      <td>{{ event.status | e }}</td>
-      <td>{{ event.trigger | e }}</td>
-      <td><code>{{ event.policy_version | e }}</code></td>
-      <td>{% if event.source_group_start is not none and event.source_group_end is not none %}{{ event.source_group_start }}–{{ event.source_group_end }}{% else %}<em>none</em>{% endif %}</td>
-      <td>{% if event.diagnostic %}{{ event.diagnostic | e }}{% else %}<em>none</em>{% endif %}</td>
-    </tr>
-    <tr><td colspan="6"><details><summary>Event artifact reference</summary><pre style="white-space: pre-wrap; max-height:16rem; overflow:auto;">{{ event.artifact_json | e }}</pre></details></td></tr>
-  {% endfor %}
-  </tbody>
-</table>
-{% else %}
-<p><em>No compaction events recorded for this conversation.</em></p>
-{% endif %}
+<p class="form-hint">Legacy compaction events are unavailable here because they are not keyed to a Bear. Conversation-scoped compaction artifacts appear below.</p>
 
 <h3>Reflection watermark</h3>
 <p class="form-hint">This shows how far pair reflection has processed the transcript, so repeated reflection runs are easier to reason about and duplicate proposal concerns are visible.</p>

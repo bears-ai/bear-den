@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT EXISTS (\n                SELECT 1 FROM conversations c\n                JOIN user_bear ub ON ub.bear_id = c.bear_id AND ub.user_id = $2\n                WHERE c.bear_id = $1 AND c.id = $3\n                  AND (c.created_by_user_id = $2 OR\n                       ($4 AND lower(btrim(coalesce(ub.role, ''))) = 'admin'))\n            ) AS \"allowed!\"\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "allowed!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4",
+        "Uuid",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "1a134ce47eba60d6e659c58a1cb05ec1529836a638dd84e04dda163348da9e2e"
+}
