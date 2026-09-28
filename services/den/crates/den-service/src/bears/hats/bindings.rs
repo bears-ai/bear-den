@@ -21,7 +21,15 @@ pub async fn bind_conversation_hat(
            FROM bear_hats AS h
            WHERE c.id = $2 AND c.bear_id = $1 AND c.status = 'active'
              AND h.id = $3 AND h.bear_id = c.bear_id
-             AND (c.hat_id IS NULL OR c.hat_id = $3)
+             AND (c.hat_id = $3 OR (c.hat_id IS NULL
+                 AND NOT EXISTS (SELECT 1 FROM conversation_messages m WHERE m.conversation_id = c.id)
+                 AND NOT EXISTS (
+                     SELECT 1 FROM client_sessions s
+                     WHERE s.bear_id = c.bear_id AND s.closed_at IS NULL
+                       AND (s.conversation_id = c.external_conversation_id
+                            OR s.resolved_conversation_id = c.external_conversation_id)
+                 )
+             ))
            RETURNING c.hat_id AS "hat_id!: Uuid""#,
         bear_id.as_uuid(),
         conversation_id,
@@ -37,6 +45,30 @@ pub async fn bind_conversation_hat(
     Ok(())
 }
 
+pub async fn conversation_can_bind_hat(
+    pool: &PgPool,
+    bear_id: BearId,
+    conversation_id: Uuid,
+) -> Result<bool, DenError> {
+    Ok(sqlx::query_scalar!(
+        r#"SELECT EXISTS (
+            SELECT 1 FROM conversations c
+            WHERE c.bear_id = $1 AND c.id = $2 AND c.status = 'active' AND c.hat_id IS NULL
+              AND NOT EXISTS (SELECT 1 FROM conversation_messages m WHERE m.conversation_id = c.id)
+              AND NOT EXISTS (
+                  SELECT 1 FROM client_sessions s
+                  WHERE s.bear_id = c.bear_id AND s.closed_at IS NULL
+                    AND (s.conversation_id = c.external_conversation_id
+                         OR s.resolved_conversation_id = c.external_conversation_id)
+              )
+        ) AS "can_bind!""#,
+        bear_id.as_uuid(),
+        conversation_id,
+    )
+    .fetch_one(pool)
+    .await?)
+}
+
 pub async fn conversation_hat(
     pool: &PgPool,
     bear_id: BearId,
@@ -50,6 +82,22 @@ pub async fn conversation_hat(
     .fetch_optional(pool)
     .await?;
     Ok(hat.flatten().map(HatId::new))
+}
+
+pub async fn job_hat(
+    pool: &PgPool,
+    bear_id: BearId,
+    job_id: Uuid,
+) -> Result<Option<HatId>, DenError> {
+    let hat = sqlx::query_scalar!(
+        "SELECT hat_id FROM bear_jobs WHERE bear_id = $1 AND id = $2",
+        bear_id.as_uuid(),
+        job_id,
+    )
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| DenError::NotFound("Job not found for this Bear".into()))?;
+    Ok(hat.map(HatId::new))
 }
 
 /// Bind a draft Job only when all its assigned surfaces are on a Work-enabled

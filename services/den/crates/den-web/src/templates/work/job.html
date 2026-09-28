@@ -11,6 +11,20 @@
     · source change policy <strong>{{ commit_policy_label }}</strong>
     {% if work_branch %} · publishes to <code>{{ work_branch }}</code>{% endif %}
 </p>
+{% if can_manage_hat %}
+<div class="box">
+  <h3>Hat for this Job</h3>
+  {% if job_hat %}
+  <p>Bound to <a href="/bear/{{ bear_slug | e }}/hats/{{ job_hat }}">{{ job_hat_name | e }}</a>. An existing Job cannot switch hats.</p>
+  {% elif can_bind_job_hat and hat_choices %}
+  <p class="form-hint">Only a draft Job with no runs can be bound. The hat must have autonomous Work enabled and include every surface assigned to the Job.</p>
+  <form method="post" action="/bear/{{ bear_slug | e }}/jobs/{{ job_id }}/hat">
+    <label>Responsibility <select name="hat_id" required>{% for hat in hat_choices %}<option value="{{ hat.id }}">{{ hat.name | e }}</option>{% endfor %}</select></label>
+    <button type="submit">Bind draft Job to hat</button>
+  </form>
+  {% else %}<p class="form-hint">No eligible hat is available for this Job. <a href="/bear/{{ bear_slug | e }}/hats">Configure a hat</a> before starting a new draft Job.</p>{% endif %}
+</div>
+{% endif %}
 {% if work_surface_id and work_branch %}
 <p><a href="/work/surfaces/{{ work_surface_id }}/diff?base={{ work_surface_default_ref | urlencode }}&head={{ work_branch | urlencode }}">Inspect work branch diff and provider diagnostics</a>.</p>
 {% endif %}

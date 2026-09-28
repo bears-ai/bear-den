@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (\n            SELECT 1 FROM conversations c\n            WHERE c.bear_id = $1 AND c.id = $2 AND c.status = 'active' AND c.hat_id IS NULL\n              AND NOT EXISTS (SELECT 1 FROM conversation_messages m WHERE m.conversation_id = c.id)\n              AND NOT EXISTS (\n                  SELECT 1 FROM client_sessions s\n                  WHERE s.bear_id = c.bear_id AND s.closed_at IS NULL\n                    AND (s.conversation_id = c.external_conversation_id\n                         OR s.resolved_conversation_id = c.external_conversation_id)\n              )\n        ) AS \"can_bind!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "can_bind!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "c0d6eb7b4713207ce8d6973805b4b0a0d67b6bec4f97ae460755f9bd95f92d30"
+}

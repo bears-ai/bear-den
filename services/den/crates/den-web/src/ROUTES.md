@@ -40,11 +40,12 @@ Bear management at `/bear/{slug}/…` is membership-gated. Raw inspection (Bear-
 
 - `GET /bear/{slug}/overview` — member-safe overview; Bear admins also see health, recent conversations, raw memory/recall stats, and weekly activity.
 - `GET /bear/{slug}/identity` — identity & charter summary; links to edit forms and per-stance models
+- `GET|POST /bear/{slug}/hats`, `GET|POST /bear/{slug}/hats/{hat_id}` — Bear-admin hat list/create and purpose edit. `POST /hats/{hat_id}/surfaces` replaces its permitted subset of Bear-assigned surfaces; `POST /hats/{hat_id}/work` enables Work only for an empty hat with a surface (or disables it). `POST /hats/{hat_id}/conversations` creates and binds a new admin-owned chat before its first turn.
 - `GET /bear/{slug}/skills` — owned procedures (honest placeholder until Skills land)
 - `GET /bear/{slug}/tools` — tool matrix: one row per unique tool with origin (built-in / armature-local; MCP when it lands), stance availability as columns
 - `GET /bear/{slug}/connections` — editor (armature) code token; provider connections when they land
 - `GET /bear/{slug}/resources` — the web as a resource under policy (sources/approvals/fetches; POST actions as before), internal resources noted
-- `GET /bear/{slug}/activity` and `/conversations` — Bear-admin conversation/processing inspection; `GET /bear/{slug}/conversations/{conversation_id}` — Bear-admin raw transcript/compaction/checkpoint detail. Legacy compaction events keyed only by external ID are not rendered because they cannot be attributed to a Bear.
+- `GET /bear/{slug}/activity` and `/conversations` — Bear-admin conversation/processing inspection; `GET /bear/{slug}/conversations/{conversation_id}` — Bear-admin raw transcript/compaction/checkpoint detail; `POST /bear/{slug}/conversations/{conversation_id}/hat` binds only an empty inactive conversation once. Legacy compaction events keyed only by external ID are not rendered because they cannot be attributed to a Bear.
 - `GET /bear/{slug}/people` — membership; bear admins grant/revoke via POST actions
 - `GET /bear/{slug}/portability` — bundle export (`GET /bear/{slug}/export.bear`), import (`POST /bears/import`), what-moves/what-stays
 - `GET /bear/{slug}/context` — Bear-admin prompt/context inspection, including compiled stance prompts, standing-note previews, and the latest Bear-wide conversation budget.
@@ -140,7 +141,7 @@ All `/cabinet/*` routes use `login_required!(…)`; every Den user may read and 
 - `GET /bear/{bear_slug}/jobs` — jobs + active/past Docket runs overview (auto-refreshes while runs are active)
 - `GET /bear/{bear_slug}/jobs/new` — job creation form (goal, sandbox root, commit policy, work branch, tasks)
 - `POST /bear/{bear_slug}/jobs/new` — create the Docket job (tasks assigned to the work stance; created_by_role `ui`)
-- `GET /bear/{bear_slug}/jobs/{job_id}` — job detail: editable goal/surface/commit policy/branch, task tree with statuses, job dispatch, duplication, run history with publish outcomes
+- `GET /bear/{bear_slug}/jobs/{job_id}` — job detail: editable goal/surface/commit policy/branch, task tree with statuses, job dispatch, duplication, run history with publish outcomes. `POST /bear/{bear_slug}/jobs/{job_id}/hat` is Bear-admin-only and binds an eligible draft Job once to a Work-enabled hat covering all its surfaces.
 - `POST /bear/{bear_slug}/jobs/{job_id}/edit` — update job-level settings; task-tree editing remains separate/deferred
 - `POST /bear/{bear_slug}/jobs/{job_id}/duplicate` — copy job intent/settings/criteria/task hierarchy into a fresh ready job; run state and publish branch are reset
 - `POST /bear/{bear_slug}/jobs/{job_id}/cancel` — cancel the active Bear-owned Docket lifecycle run and release any stale Pair execution claim; this works even if its original Pair session is defunct and is distinct from sandbox work-run cancellation

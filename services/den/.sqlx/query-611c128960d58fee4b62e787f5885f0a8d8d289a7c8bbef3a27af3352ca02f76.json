@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE conversations AS c SET hat_id = $3\n           FROM bear_hats AS h\n           WHERE c.id = $2 AND c.bear_id = $1 AND c.status = 'active'\n             AND h.id = $3 AND h.bear_id = c.bear_id\n             AND (c.hat_id = $3 OR (c.hat_id IS NULL AND NOT EXISTS (\n                 SELECT 1 FROM conversation_messages m WHERE m.conversation_id = c.id\n             )))\n           RETURNING c.hat_id AS \"hat_id!: Uuid\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "hat_id!: Uuid",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "611c128960d58fee4b62e787f5885f0a8d8d289a7c8bbef3a27af3352ca02f76"
+}

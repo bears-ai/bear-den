@@ -29,6 +29,17 @@
   <dd>{{ conv.updated_at }}</dd>
 </dl>
 
+<h3>Hat</h3>
+{% if bound_hat %}
+<p>This conversation wears <a href="/bear/{{ bear.slug | e }}/hats/{{ bound_hat }}">its bound hat</a>. It cannot switch hats after binding.</p>
+{% elif can_bind_hat and available_hats %}
+<p class="form-hint">Choose once, before the first message. Notes formed here remain conversation-local until reviewed; binding does not share earlier private notes.</p>
+<form method="post" action="/bear/{{ bear.slug | e }}/conversations/{{ conv.id }}/hat">
+  <label>Responsibility <select name="hat_id" required>{% for hat in available_hats %}<option value="{{ hat.id }}">{{ hat.name | e }}</option>{% endfor %}</select></label>
+  <button type="submit">Bind this empty conversation</button>
+</form>
+{% else %}<p class="form-hint">This conversation has no hat. It has already started, so it cannot be retroactively bound. <a href="/bear/{{ bear.slug | e }}/hats">Start a new conversation wearing a hat</a>.</p>{% endif %}
+
 <h3>Processing timeline</h3>
 {% if processing_timeline and processing_timeline | length > 0 %}
 <table>

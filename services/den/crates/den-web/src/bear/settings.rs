@@ -29,7 +29,7 @@ use crate::{
     errors::CustomError,
     web::{self, AppState},
 };
-use den_core::{AgentLoopControlLevel, DenError};
+use den_core::{ids::BearId, AgentLoopControlLevel, DenError};
 use den_memory::{bear_memory_admin_stats, BearMemoryAdminStats};
 use den_protocol::ContextBudgetReport;
 use den_runtime::{
@@ -44,7 +44,7 @@ use den_service::{
     bears::{
         context_profile_from_json, db as bears_db,
         db::{role_is_bear_admin, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER},
-        get_compiled_bear_config,
+        get_compiled_bear_config, hats,
         managed_blocks::BearCompiledConfigRow,
         provision, BearProfile,
     },
@@ -2664,7 +2664,17 @@ async fn conversation_detail_view(
     if conv.bear_id != bear.id {
         return Err(CustomError::NotFound("conversation not found".to_string()));
     }
+    let bound_hat =
+        hats::bindings::conversation_hat(state.sqlx_pool(), BearId::new(bear.id), conversation_id)
+            .await?;
+    let available_hats = hats::list_hats(state.sqlx_pool(), BearId::new(bear.id)).await?;
     let messages = list_messages_page(state.sqlx_pool(), conversation_id, None, 40).await?;
+    let can_bind_hat = hats::bindings::conversation_can_bind_hat(
+        state.sqlx_pool(),
+        BearId::new(bear.id),
+        conversation_id,
+    )
+    .await?;
     // Legacy runtime_compaction_events only carries an external conversation id,
     // so it cannot safely be attributed to this Bear. Show only persisted,
     // conversation-id-scoped artifacts below.
@@ -2702,6 +2712,9 @@ async fn conversation_detail_view(
         auth_session,
         context! {
             conv,
+            bound_hat,
+            available_hats,
+            can_bind_hat,
             message_rows,
             compaction_artifacts,
             checkpoint_artifacts,

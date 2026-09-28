@@ -1,0 +1,24 @@
+{% extends "bear/_manage.html" %}
+{% block title %}Hats · {{ bear.slug }}{% endblock %}
+{% block manage %}
+<div class="box">
+  <h2>Hats</h2>
+  <p class="form-hint">A hat names a responsibility and limits which of this Bear's assigned work surfaces it may use. It does not grant a tool, credential, or permission. Notes from one conversation stay there until reviewed; shared hat knowledge can be reused wherever this hat is worn.</p>
+  {% if hats %}
+  <ul>
+    {% for hat in hats %}
+    <li><a href="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}">{{ hat.name | e }}</a> — {{ hat.purpose | e }} · autonomous Work {{ hat.work_enabled and "on" or "off" }}</li>
+    {% endfor %}
+  </ul>
+  {% else %}<p>No hats configured yet.</p>{% endif %}
+</div>
+<div class="box">
+  <h3>New hat</h3>
+  <form method="post" action="/bear/{{ bear.slug | e }}/hats">
+    <label>Responsibility <input name="name" required maxlength="120" placeholder="Security review"></label>
+    <label>Purpose <textarea name="purpose" required rows="3" placeholder="Review the security of this repository"></textarea></label>
+    <button type="submit">Create hat</button>
+  </form>
+  <p class="form-hint">Autonomous Work starts off. Configure permitted surfaces before considering Work.</p>
+</div>
+{% endblock %}

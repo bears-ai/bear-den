@@ -43,11 +43,11 @@ use den_service::bears::{
 use den_service::client_sessions;
 
 pub(crate) use super::member::{email_verify_redirect, load_bear_member, viewer_can_manage_bear};
-use super::settings;
+use super::{hats, settings};
 
 pub fn router() -> Router<AppState> {
     settings::router()
-        .merge(Router::new())
+        .merge(hats::router())
         .route_with_tsr("/bears/new", get(new_bear_get).post(new_bear_post))
         .route_with_tsr("/bear/{slug}/details", get(legacy_details_redirect))
         .route(

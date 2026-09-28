@@ -187,6 +187,7 @@ use crate::{
     errors::CustomError,
     web::{self, AppState},
 };
+use den_core::ids::{BearId, HatId};
 use den_docket::work_runs::{self, WorkRunListFilter, WorkRunRow};
 use den_docket::{
     DocketCommitPolicy, DocketCriterionStateUpdate, DocketCriterionStatus, DocketEffortHint,
@@ -197,8 +198,7 @@ use den_docket::{
 };
 use den_sandbox::protocol::CatalogResponse;
 use den_sandbox::SandboxClient;
-use den_service::bears::db as bears_db;
-use den_service::bears::BearProfile;
+use den_service::bears::{db as bears_db, hats, BearProfile};
 
 pub mod surfaces;
 
@@ -220,6 +220,7 @@ pub fn docket_router() -> Router<AppState> {
         .route("/jobs", get(index))
         .route("/jobs/new", get(new_job_form).post(create_job))
         .route("/jobs/{job_id}", get(job_detail))
+        .route("/jobs/{job_id}/hat", post(bind_job_hat))
         .route("/jobs/{job_id}/edit", post(edit_job))
         .route("/jobs/{job_id}/duplicate", post(duplicate_job))
         .route("/jobs/{job_id}/complete", post(complete_job))
@@ -1387,6 +1388,34 @@ struct JobDetailQuery {
     task: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct JobHatForm {
+    hat_id: Uuid,
+}
+
+async fn bind_job_hat(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Path((bear_slug, job_ref)): Path<(String, String)>,
+    Form(form): Form<JobHatForm>,
+) -> Result<Response, CustomError> {
+    let bear = bear_context(&state, &auth_session, &bear_slug).await?;
+    if !bear.is_admin {
+        return Err(CustomError::Authorization(
+            "Bear admin access is required to bind a Job hat".into(),
+        ));
+    }
+    let job_id = resolve_job_prefix(state.sqlx_pool(), &bear, &job_ref).await?;
+    hats::bindings::bind_job_hat(
+        state.sqlx_pool(),
+        BearId::new(bear.id),
+        job_id,
+        HatId::new(form.hat_id),
+    )
+    .await?;
+    Ok(Redirect::to(&format!("/bear/{}/jobs/{}", bear.slug, route_id(job_id))).into_response())
+}
+
 async fn job_detail(
     State(state): State<AppState>,
     auth_session: AuthSession,
@@ -1585,6 +1614,34 @@ async fn job_detail(
         },
         projection.job.work_branch.as_deref(),
     );
+    let hat_id = if bear.is_admin {
+        hats::bindings::job_hat(state.sqlx_pool(), BearId::new(bear_id), job_id).await?
+    } else {
+        None
+    };
+    let job_hat_name = if let Some(id) = hat_id {
+        Some(
+            hats::manage::get_hat(state.sqlx_pool(), BearId::new(bear_id), id)
+                .await?
+                .name,
+        )
+    } else {
+        None
+    };
+    let hat_choices = if bear.is_admin && hat_id.is_none() {
+        hats::list_hats(state.sqlx_pool(), BearId::new(bear_id))
+            .await?
+            .into_iter()
+            .filter(|hat| hat.work_enabled)
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let can_bind_job_hat = bear.is_admin
+        && hat_id.is_none()
+        && projection.job.lifecycle_intent.is_none()
+        && projection.job.current_run_id.is_none()
+        && selected_work_surface_id.is_some();
     let catalog = provider_catalog(&state).await;
     web::render_template(
         &state,
@@ -1599,6 +1656,11 @@ async fn job_detail(
             goal => projection.job.goal,
             job_display_id => uuid_hex_prefix(job_id, DISPLAY_ID_HEX_LEN),
             job_full_id => job_id.to_string(),
+            can_manage_hat => bear.is_admin,
+            job_hat => hat_id,
+            job_hat_name,
+            hat_choices,
+            can_bind_job_hat,
             job_title => entity_ref(job_id, "Job", &projection.job.goal, Some(&projection.job.status))["title"],
             status => projection.job.status,
             docket_run_state => projection.current_run.as_ref().map(|run| run.state.clone()),

@@ -13,6 +13,7 @@
   <ul>
     <li><a href="/bear/{{ bear.slug | e }}/identity"{% if nav_active == "identity" %} aria-current="page"{% endif %}>Identity &amp; charter</a></li>
     <li><a href="/bear/{{ bear.slug | e }}/memory"{% if nav_active == "memory" %} aria-current="page"{% endif %}>Memory</a></li>
+    {% if can_manage_bear %}<li><a href="/bear/{{ bear.slug | e }}/hats"{% if nav_active == "hats" %} aria-current="page"{% endif %}>Hats</a></li>{% endif %}
     {% if can_manage_bear %}<li><a href="/bear/{{ bear.slug | e }}/context"{% if nav_active == "context" %} aria-current="page"{% endif %}>Context</a></li>{% endif %}
     <li><a href="/bear/{{ bear.slug | e }}/skills"{% if nav_active == "skills" %} aria-current="page"{% endif %}>Skills</a></li>
   </ul>

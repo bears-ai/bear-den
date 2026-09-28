@@ -8,17 +8,19 @@ use den_core::{
     ids::{BearId, HatId, UserId},
     DenError,
 };
+use serde::Serialize;
 use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
 pub mod bindings;
+pub mod manage;
 pub mod memory_binding;
 
 #[cfg(test)]
 mod tests;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BearHat {
     pub id: HatId,
     pub bear_id: BearId,
@@ -81,7 +83,13 @@ pub async fn create_hat(
         created_by_user_id.get(),
     )
     .fetch_one(pool)
-    .await?;
+    .await
+    .map_err(|err| match err {
+        sqlx::Error::Database(db) if db.is_unique_violation() => DenError::ValidationError(
+            "a hat with that name already exists for this Bear".into(),
+        ),
+        other => other.into(),
+    })?;
     Ok(row.into())
 }
 
@@ -105,14 +113,7 @@ pub async fn allow_surface(
     hat_id: HatId,
     surface_id: Uuid,
 ) -> Result<(), DenError> {
-    sqlx::query!(
-        r#"INSERT INTO bear_hat_work_surfaces (bear_id, hat_id, surface_id)
-           VALUES ($1, $2, $3)"#,
-        bear_id.as_uuid(),
-        hat_id.as_uuid(),
-        surface_id,
-    )
-    .execute(pool)
-    .await?;
-    Ok(())
+    let mut surfaces = manage::allowed_surfaces(pool, bear_id, hat_id).await?;
+    surfaces.push(surface_id);
+    manage::replace_surfaces(pool, bear_id, hat_id, &surfaces).await
 }

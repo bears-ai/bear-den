@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM bear_hat_work_surfaces WHERE bear_id = $1 AND hat_id = $2 AND surface_id != ALL($3)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "UuidArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b657330cc1866debf8691a4e33aba9e0cf8e2867bb5c79b3e14385a1cc52234e"
+}

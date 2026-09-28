@@ -257,9 +257,29 @@ async fn hats_only_attenuate_bear_surface_grants() {
     assert!(bind_job_hat(&pool, BearId::new(bear), job_id, hat.id)
         .await
         .is_err());
+    assert!(
+        allow_surface(&pool, BearId::new(bear), hat.id, second_surface)
+            .await
+            .is_err(),
+        "a Work-enabled hat cannot silently gain another surface"
+    );
+    sqlx::query!(
+        "UPDATE bear_hats SET work_enabled = false WHERE id = $1",
+        hat.id.as_uuid()
+    )
+    .execute(&pool)
+    .await
+    .expect("disable Work for fixture review");
     allow_surface(&pool, BearId::new(bear), hat.id, second_surface)
         .await
-        .expect("allow second Bear-assigned surface");
+        .expect("allow second Bear-assigned surface while Work is disabled");
+    sqlx::query!(
+        "UPDATE bear_hats SET work_enabled = true WHERE id = $1",
+        hat.id.as_uuid()
+    )
+    .execute(&pool)
+    .await
+    .expect("fixture has no curated memory; re-enable Work");
     bind_job_hat(&pool, BearId::new(bear), job_id, hat.id)
         .await
         .expect("bind eligible draft Job");

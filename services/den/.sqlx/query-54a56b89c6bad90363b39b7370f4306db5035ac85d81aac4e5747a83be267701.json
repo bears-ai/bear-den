@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO work_surfaces (id, name, kind, created_by_user_id, created_at, updated_at) VALUES ($1, $2, 'git_workspace', $3, NOW(), NOW())",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "54a56b89c6bad90363b39b7370f4306db5035ac85d81aac4e5747a83be267701"
+}

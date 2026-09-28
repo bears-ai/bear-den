@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bear_hats SET work_enabled = false, updated_at = NOW() WHERE bear_id = $1 AND id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3f71889402ffe364a20d15738d9fa483e8a72849073ad0cdca7e3043dfec3a33"
+}

@@ -1,0 +1,43 @@
+{% extends "bear/_manage.html" %}
+{% block title %}{{ hat.name }} · Hats{% endblock %}
+{% block manage %}
+<p><a href="/bear/{{ bear.slug | e }}/hats">← All hats</a></p>
+<div class="box">
+  <h2>{{ hat.name | e }}</h2>
+  {% if message %}<p>{{ message | e }}</p>{% endif %}
+  <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}">
+    <label>Responsibility <input name="name" value="{{ hat.name | e }}" required maxlength="120"></label>
+    <label>Purpose <textarea name="purpose" required rows="3">{{ hat.purpose | e }}</textarea></label>
+    <button type="submit">Save description</button>
+  </form>
+  <p class="form-hint">The hat limits the Bear's work; it does not grant authority. A conversation's hat cannot be changed after binding.</p>
+  <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/conversations">
+    <button type="submit">Start a conversation wearing this hat</button>
+  </form>
+  <p class="form-hint">Notes from that conversation stay there until reviewed. A hat's reviewed knowledge may be used by future conversations wearing it.</p>
+</div>
+<div class="box">
+  <h3>Permitted work surfaces</h3>
+  <p class="form-hint">Only surfaces already assigned to this Bear are available. A hat narrows that grant; the person, channel or armature, and Job must still be authorized. Removing a surface also revokes that hat's Work eligibility for existing runs.</p>
+  {% if choices %}
+  <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/surfaces">
+    {% for surface in choices %}
+    <label><input type="checkbox" name="surface_ids" value="{{ surface.id }}"{% if surface.selected %} checked{% endif %}> {{ surface.name | e }}{% if surface.description %} — {{ surface.description | e }}{% endif %}</label>
+    {% endfor %}
+    <button type="submit">Save permitted surfaces</button>
+  </form>
+  {% else %}<p>No work surfaces are assigned to this Bear yet.</p>{% endif %}
+</div>
+<div class="box">
+  <h3>Autonomous Work: {{ hat.work_enabled and "on" or "off" }}</h3>
+  <p class="form-hint">Work also requires an authorized Job. Hat memory shared with interactive conversations can be used by approved Work when enabled. Populated hats cannot enable Work here until their existing memory has been reviewed through a separate flow.</p>
+  {% if hat.work_enabled %}
+  <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/work"><button type="submit" name="action" value="disable">Disable autonomous Work</button></form>
+  {% else %}
+  <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/work">
+    <label>Type <code>enable work</code> to confirm <input name="confirmation" autocomplete="off" required></label>
+    <button type="submit" name="action" value="enable"{% if grant_count == 0 %} disabled{% endif %}>Enable Work for an empty hat</button>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}
