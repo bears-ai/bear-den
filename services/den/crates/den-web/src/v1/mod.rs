@@ -804,10 +804,6 @@ async fn chat_conversations(
         })
         .collect::<Vec<_>>();
 
-    if !conversations.iter().any(|row| row.id == "default") {
-        conversations.insert(0, default_row());
-    }
-
     let hats = hats::list_hats(state.sqlx_pool(), BearId::new(bear.id))
         .await?
         .into_iter()
@@ -816,7 +812,10 @@ async fn chat_conversations(
             name: hat.name,
             purpose: hat.purpose,
         })
-        .collect();
+        .collect::<Vec<_>>();
+    if hats.is_empty() && !conversations.iter().any(|row| row.id == "default") {
+        conversations.insert(0, default_row());
+    }
     Ok(Json(ChatConversationsResponse {
         conversations,
         hats,
@@ -1703,6 +1702,12 @@ async fn chat_send_native_inner(
     let session_id = browser_client_session_id(user_id, bear.id, &conv_id);
     let canonical_conversation =
         ensure_chat_conversation(state.sqlx_pool(), bear.id, user_id, &viewer, &conv_id).await?;
+    hats::memory_binding::for_conversation(
+        state.sqlx_pool(),
+        BearId::new(bear.id),
+        canonical_conversation.id,
+    )
+    .await?;
     if let Some(response) = maybe_handle_direct_set_conversation_title(
         &state,
         ConversationTitleRequest {
@@ -1796,7 +1801,14 @@ async fn chat_send_native_inner(
                 }) => {
                     let requested = normalize_client_conversation_id(Some(&conversation.id))?;
                     let (viewer, id) = checked_chat_id(&pool, bear.id, user_id, &requested).await?;
-                    ensure_chat_conversation(&pool, bear.id, user_id, &viewer, &id).await?;
+                    let resolved =
+                        ensure_chat_conversation(&pool, bear.id, user_id, &viewer, &id).await?;
+                    hats::memory_binding::for_conversation(
+                        &pool,
+                        BearId::new(bear.id),
+                        resolved.id,
+                    )
+                    .await?;
                     if display_default && id == initial_id {
                         // Persistence already has the canonical ID; keep the UI on `default`.
                         return Ok(RuntimeStreamEvent::ProviderActivity);

@@ -919,6 +919,144 @@ async fn default_and_conflict_are_isolated_and_list_filters_before_limit(pool: P
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn configured_hats_make_unbound_browser_threads_read_only_without_stranding_history(
+    pool: PgPool,
+) {
+    use den_core::ids::{BearId, UserId};
+    use den_service::bears::hats;
+    let (bear, [owner, other, admin]) = seed(&pool).await;
+    bears_db::ensure_bear_profile_binding_rows(&pool, bear)
+        .await
+        .unwrap();
+    let old_id = conversation(&pool, bear, Some(owner), "conv-old-notes").await;
+    conversation_persistence::append_message(
+        &pool,
+        old_id,
+        &den_service::conversation_message_types::ConversationMessageWrite::user_turn(
+            "Old conversation text",
+            json!({"text": "Old conversation text"}),
+            None,
+        ),
+    )
+    .await
+    .unwrap();
+    let runtime = Arc::new(RecordingChatRuntime::default());
+    let app = app_with_runtime(&pool, runtime.clone()).await;
+    let owner_cookie = login(&app, owner).await;
+    let other_cookie = login(&app, other).await;
+    let admin_cookie = login(&app, admin).await;
+    let (status, _) = request(
+        &app,
+        &owner_cookie,
+        "POST",
+        "/v1/chat/send",
+        json!({"bear_id": bear, "conversation_id": "default", "message": "before hats"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let no_hat_calls = runtime.requests.lock().unwrap().len();
+    let hat = hats::create_hat(
+        &pool,
+        BearId::new(bear),
+        UserId::new(admin),
+        "Review",
+        "Review conversations",
+    )
+    .await
+    .unwrap();
+    let (_, list) = request(
+        &app,
+        &owner_cookie,
+        "GET",
+        &format!("/v1/chat/conversations?bear_id={bear}"),
+        Value::Null,
+    )
+    .await;
+    assert!(list["conversations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|row| row["id"] == "conv-old-notes" && row["hat_id"].is_null()));
+    let old_count = sqlx::query_scalar!(
+        "SELECT count(*) AS \"count!\" FROM conversation_messages WHERE conversation_id = $1",
+        old_id,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    for (cookie, external, expected) in [
+        (&owner_cookie, "conv-old-notes", StatusCode::FORBIDDEN),
+        (&admin_cookie, "conv-old-notes", StatusCode::FORBIDDEN),
+        (&owner_cookie, "default", StatusCode::FORBIDDEN),
+        (&owner_cookie, "new-unbound", StatusCode::FORBIDDEN),
+    ] {
+        let (status, _) = request(
+            &app,
+            cookie,
+            "POST",
+            "/v1/chat/send",
+            json!({"bear_id": bear, "conversation_id": external, "message": "must not persist"}),
+        )
+        .await;
+        assert_eq!(status, expected, "{external}");
+    }
+    assert_eq!(runtime.requests.lock().unwrap().len(), no_hat_calls);
+    assert_eq!(
+        sqlx::query_scalar!(
+            "SELECT count(*) AS \"count!\" FROM conversation_messages WHERE conversation_id = $1",
+            old_id,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        old_count
+    );
+    for cookie in [&owner_cookie, &admin_cookie] {
+        let (status, history) = request(
+            &app,
+            cookie,
+            "GET",
+            &format!("/v1/chat/history?bear_id={bear}&conversation_id=conv-old-notes"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{history}");
+        assert!(history.to_string().contains("Old conversation text"));
+    }
+    assert_eq!(
+        request(
+            &app,
+            &other_cookie,
+            "GET",
+            &format!("/v1/chat/history?bear_id={bear}&conversation_id=conv-old-notes"),
+            Value::Null,
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    let (status, created) = request(
+        &app,
+        &owner_cookie,
+        "POST",
+        "/v1/chat/conversations",
+        json!({"bear_id": bear, "hat_id": hat.id}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let (status, _) = request(
+        &app,
+        &owner_cookie,
+        "POST",
+        "/v1/chat/send",
+        json!({"bear_id": bear, "conversation_id": created["id"], "message": "under hat"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(runtime.requests.lock().unwrap().len(), no_hat_calls + 1);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn members_choose_a_hat_before_a_browser_conversation_starts(pool: PgPool) {
     use den_core::ids::{BearId, UserId};
     use den_service::bears::hats::{self, bindings, memory_binding};

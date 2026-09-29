@@ -49,6 +49,9 @@ block head %} {{ super() }}
         >
     </div>
     <p id="err" class="den-err" hidden></p>
+    <p id="den-legacy-conversation-notice" role="status" hidden>
+        Legacy conversation — read-only now that this Bear uses hats. You can review its history here; choose a hat under “+ New conversation” to continue chatting.
+    </p>
     <div id="chat-wrap">
         {# Deep Chat reads errorMessages when the messages controller is
         constructed; set here so displayServiceErrorMessages is true before
@@ -1118,6 +1121,11 @@ block head %} {{ super() }}
             return;
         }
         errEl.hidden = true;
+        var selected = DEN_CONVERSATIONS.find(function (row) { return row.id === CONVERSATION_ID; });
+        if (DEN_HATS.length && (!selected || !selected.hat_id)) {
+            denChatSignalError(signals, "This conversation is read-only. Choose a hat under + New conversation to continue.");
+            return;
+        }
 
         var abortCtl = new AbortController();
         var reasoningVisible = false;
@@ -1488,10 +1496,11 @@ block head %} {{ super() }}
         var menu = document.getElementById("den-conv-menu");
         var current = document.getElementById("den-conv-current");
         if (!menu) return;
-        var list = DEN_CONVERSATIONS.length
-            ? DEN_CONVERSATIONS.slice()
-            : [{ id: "default", title: "Main chat" }];
-        var currentTitle = "Conversation";
+        var list = DEN_CONVERSATIONS.slice();
+        var currentTitle = DEN_HATS.length ? "Choose a hat to start" : "Conversation";
+        var selected = list.find(function (row) { return row.id === CONVERSATION_ID; });
+        var notice = document.getElementById("den-legacy-conversation-notice");
+        if (notice) notice.hidden = !(DEN_HATS.length && selected && !selected.hat_id);
         menu.innerHTML = "";
 
         for (var i = 0; i < list.length; i++) {
@@ -1502,7 +1511,7 @@ block head %} {{ super() }}
             item.className = "den-conv-menu-row";
             if (c.id === CONVERSATION_ID) {
                 item.className += " den-conv-menu-row-selected";
-                currentTitle = (c.title || c.id) + (hatName(c.hat_id) ? " · " + hatName(c.hat_id) : "");
+                currentTitle = (c.title || c.id) + (hatName(c.hat_id) ? " · " + hatName(c.hat_id) : DEN_HATS.length ? " · Legacy (read-only)" : "");
             }
 
             var selectBtn = document.createElement("button");
@@ -1512,7 +1521,7 @@ block head %} {{ super() }}
                 "aria-current",
                 c.id === CONVERSATION_ID ? "true" : "false",
             );
-            selectBtn.textContent = (c.title || c.id) + (hatName(c.hat_id) ? " · " + hatName(c.hat_id) : "");
+            selectBtn.textContent = (c.title || c.id) + (hatName(c.hat_id) ? " · " + hatName(c.hat_id) : DEN_HATS.length ? " · Legacy (read-only)" : "");
             selectBtn.onclick = (function (id) {
                 return function () {
                     if (id !== CONVERSATION_ID) setConversation(id, true);
@@ -1711,7 +1720,7 @@ block head %} {{ super() }}
                     rows.push(c);
                     optionIds.push(c.id);
                 }
-                if (rows.length === 0) {
+                if (rows.length === 0 && !DEN_HATS.length) {
                     rows.push({ id: "default", title: "Main chat" });
                     optionIds.push("default");
                 }

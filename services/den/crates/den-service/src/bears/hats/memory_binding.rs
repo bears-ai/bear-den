@@ -15,6 +15,27 @@ pub enum ResolvedMemoryBinding {
     Bound(MemoryReadGrant),
 }
 
+/// A configured Bear cannot silently fall back to profile-local memory for
+/// an unbound human conversation or Work run. Legacy compatibility is retained
+/// only while the Bear has no hats to choose from.
+pub async fn legacy_only_without_hats(
+    pool: &PgPool,
+    bear_id: BearId,
+) -> Result<ResolvedMemoryBinding, DenError> {
+    let has_hats = sqlx::query_scalar!(
+        "SELECT EXISTS (SELECT 1 FROM bear_hats WHERE bear_id = $1) AS \"has_hats!\"",
+        bear_id.as_uuid(),
+    )
+    .fetch_one(pool)
+    .await?;
+    if has_hats {
+        return Err(DenError::Authorization(
+            "this Bear uses hats; start a conversation or Job with a hat instead of legacy profile memory".into(),
+        ));
+    }
+    Ok(ResolvedMemoryBinding::Legacy)
+}
+
 pub async fn for_conversation(
     pool: &PgPool,
     bear_id: BearId,
@@ -28,13 +49,13 @@ pub async fn for_conversation(
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| DenError::NotFound("active conversation is not bound to this Bear".into()))?;
-    Ok(match hat_id {
-        Some(id) => ResolvedMemoryBinding::Bound(MemoryReadGrant::new(
+    match hat_id {
+        Some(id) => Ok(ResolvedMemoryBinding::Bound(MemoryReadGrant::new(
             MemorySource::Conversation(canonical_conversation_id),
             Some(id.into()),
-        )),
-        None => ResolvedMemoryBinding::Legacy,
-    })
+        ))),
+        None => legacy_only_without_hats(pool, bear_id).await,
+    }
 }
 
 pub async fn for_external_conversation(
@@ -65,7 +86,7 @@ pub async fn for_work_run(
     .await?
     .ok_or_else(|| DenError::NotFound("Work run is not bound to this Bear".into()))?;
     let Some(hat_id) = row.hat_id else {
-        return Ok(ResolvedMemoryBinding::Legacy);
+        return legacy_only_without_hats(pool, bear_id).await;
     };
     if eligible_job_hat(pool, bear_id, row.job_id).await? != Some(hat_id.into()) {
         return Err(DenError::Authorization(

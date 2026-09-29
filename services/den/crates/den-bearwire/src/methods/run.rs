@@ -39,7 +39,8 @@ use den_runtime::{
 };
 use den_service::{
     bears::{
-        db as bears_db, render_turn_fragment, repository_prompt_fragment_registry, BearProfile,
+        db as bears_db, hats::memory_binding, render_turn_fragment,
+        repository_prompt_fragment_registry, BearProfile,
     },
     bifrost::BifrostCatalogEntry,
     client_sessions,
@@ -2356,6 +2357,7 @@ async fn run_start_with_recovery_source(
     let live_work_run =
         den_docket::work_runs::get_live_work_run_by_session(&state.sqlx_pool, &session_id).await?;
     let stance = if let Some(work_run) = live_work_run {
+        memory_binding::for_work_run(&state.sqlx_pool, BearId::new(bear.id), work_run.id).await?;
         tracing::info!(
             work_run_id = %work_run.id,
             job_id = %work_run.job_id,
@@ -2366,6 +2368,8 @@ async fn run_start_with_recovery_source(
         );
         BearProfile::Work
     } else {
+        memory_binding::for_conversation(&state.sqlx_pool, BearId::new(bear.id), conversation.id)
+            .await?;
         tracing::debug!(
             session_id = %session_id,
             stance = "pair",

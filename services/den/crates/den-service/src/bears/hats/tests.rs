@@ -182,8 +182,12 @@ async fn hats_only_attenuate_bear_surface_grants() {
     .fetch_one(&pool)
     .await
     .expect("create other Bear conversation");
+    assert!(matches!(
+        memory_binding::for_conversation(&pool, BearId::new(bear), conversation_id).await,
+        Err(DenError::Authorization(_))
+    ));
     assert_eq!(
-        memory_binding::for_conversation(&pool, BearId::new(bear), conversation_id)
+        memory_binding::for_conversation(&pool, BearId::new(other_bear), other_conversation_id)
             .await
             .unwrap(),
         memory_binding::ResolvedMemoryBinding::Legacy
@@ -368,6 +372,35 @@ async fn hats_only_attenuate_bear_surface_grants() {
     .execute(&pool)
     .await
     .expect("fixture has no curated memory; re-enable Work");
+    let unbound_job = sqlx::query_scalar!(
+        "INSERT INTO bear_jobs (bear_id, created_by_user_id, created_by_role, goal)
+         VALUES ($1, $2, 'ui', 'Old unbound Job') RETURNING id",
+        bear,
+        user,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let unbound_job_run = sqlx::query_scalar!(
+        "INSERT INTO bear_job_runs (job_id) VALUES ($1) RETURNING id",
+        unbound_job,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let unbound_work_run = sqlx::query_scalar!(
+        "INSERT INTO bear_work_runs (bear_id, job_id, job_run_id) VALUES ($1, $2, $3) RETURNING id",
+        bear,
+        unbound_job,
+        unbound_job_run,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(matches!(
+        memory_binding::for_work_run(&pool, BearId::new(bear), unbound_work_run).await,
+        Err(DenError::Authorization(_))
+    ));
     bind_job_hat(&pool, BearId::new(bear), job_id, hat.id)
         .await
         .expect("bind eligible draft Job");

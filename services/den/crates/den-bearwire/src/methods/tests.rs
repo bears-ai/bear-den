@@ -297,6 +297,76 @@ async fn ide_default_and_first_interaction_hat_selection_bind_one_canonical_conv
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn configured_hats_reject_unbound_ide_turn_before_persisting_a_run_or_message(
+    pool: sqlx::PgPool,
+) {
+    use den_core::ids::{BearId, UserId};
+    use den_service::bears::hats::{self, memory_binding};
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let owner = BearId::new(bear_id);
+    let hat = hats::create_hat(&pool, owner, UserId::new(user_id), "IDE review", "Review")
+        .await
+        .unwrap();
+    let state = test_state(pool.clone());
+    let session_id = format!("ide-{}", Uuid::new_v4().simple());
+    let opened = rpc_value(
+        state.clone(),
+        &token,
+        "session.open",
+        json!({"bear_slug": bear_slug, "session_id": session_id, "client": "zed"}),
+    )
+    .await;
+    assert_eq!(opened["result"]["ok"], true, "{opened}");
+    let external = opened["result"]["session"]["resolved_conversation_id"]
+        .as_str()
+        .unwrap();
+    let canonical = den_service::conversation::persistence::get_conversation_for_external_id(
+        &pool, bear_id, external,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(matches!(
+        memory_binding::for_conversation(&pool, owner, canonical.id).await,
+        Err(den_core::DenError::Authorization(_))
+    ));
+    let denied = rpc_value(
+        state.clone(),
+        &token,
+        "run.start",
+        json!({"bear_slug": bear_slug, "session_id": session_id, "prompt": "Do not save this", "client": "zed"}),
+    )
+    .await;
+    assert!(denied.get("error").is_some(), "{denied}");
+    let messages = sqlx::query_scalar!(
+        "SELECT count(*) AS \"count!\" FROM conversation_messages WHERE conversation_id = $1",
+        canonical.id,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(messages, 0);
+    let runs = sqlx::query_scalar!(
+        "SELECT count(*) AS \"count!\" FROM turn_runs WHERE session_id = $1",
+        session_id,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(runs, 0);
+    let chosen = rpc_value(
+        state,
+        &token,
+        "session.hat.select",
+        json!({"bear_slug": bear_slug, "session_id": session_id, "hat_id": hat.id}),
+    )
+    .await;
+    assert_eq!(chosen["result"]["ok"], true, "{chosen}");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn ide_hat_selection_survives_the_first_run_and_is_fixed_afterwards(pool: sqlx::PgPool) {
     use den_core::ids::{BearId, UserId};
     use den_service::bears::hats::{self, bindings};
