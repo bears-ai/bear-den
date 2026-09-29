@@ -218,6 +218,25 @@ async fn too_many_historical_records_cannot_be_approved_from_a_truncated_page(po
         )
         .await
         .unwrap();
+        if index == hat_review::REVIEW_PAGE_SIZE as i64 {
+            let first = snapshot_for_admin(&pool, &stores, bear, hat.id, user)
+                .await
+                .unwrap();
+            let second = snapshot_page_for_admin(&pool, &stores, bear, hat.id, user, 2)
+                .await
+                .unwrap();
+            assert!(first.complete);
+            assert_eq!(first.page_count, 2);
+            assert_eq!(first.records.len(), hat_review::REVIEW_PAGE_SIZE);
+            assert_eq!(second.records.len(), 1);
+            assert_eq!(first.sha256, second.sha256);
+            assert_ne!(first.records[0].memory_id, second.records[0].memory_id);
+            assert!(
+                snapshot_page_for_admin(&pool, &stores, bear, hat.id, user, 3)
+                    .await
+                    .is_err()
+            );
+        }
     }
     let snapshot = snapshot_for_admin(&pool, &stores, bear, hat.id, user)
         .await
@@ -225,4 +244,47 @@ async fn too_many_historical_records_cannot_be_approved_from_a_truncated_page(po
     assert!(!snapshot.complete);
     assert_eq!(snapshot.total_records, hat_review::MAX_REVIEW_RECORDS + 1);
     assert!(snapshot.sha256.is_none());
+    let surface = Uuid::new_v4();
+    sqlx::query!(
+        "INSERT INTO work_surfaces (id, name, kind, created_by_user_id, created_at, updated_at)
+         VALUES ($1, 'hatworkreviewrepo', 'git_workspace', $2, NOW(), NOW())",
+        surface,
+        user.get(),
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query!(
+        "INSERT INTO work_surface_bears (surface_id, bear_id) VALUES ($1, $2)",
+        surface,
+        bear.as_uuid()
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    hats::manage::replace_surfaces(&pool, bear, hat.id, &[surface])
+        .await
+        .unwrap();
+    assert!(matches!(
+        review_and_enable(
+            &pool,
+            &stores,
+            bear,
+            hat.id,
+            user,
+            WorkReviewDecision {
+                expected_sha256: "0".repeat(64),
+                expected_record_count: snapshot.total_records,
+                rationale: "I reviewed all the historical entries for Work".into(),
+            },
+        )
+        .await,
+        Err(DenError::Authorization(_))
+    ));
+    assert!(
+        !hats::manage::get_hat(&pool, bear, hat.id)
+            .await
+            .unwrap()
+            .work_enabled
+    );
 }

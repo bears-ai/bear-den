@@ -1,7 +1,7 @@
 //! Bear-admin review of all historical hat memory before Work gains access.
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     response::{IntoResponse, Redirect, Response},
     routing::get,
     Router,
@@ -39,8 +39,20 @@ struct WorkReviewForm {
     confirm_work_audience: bool,
 }
 
+#[derive(Debug, Deserialize)]
+struct ReviewPageQuery {
+    #[serde(default = "first_review_page")]
+    page: u32,
+    expected_sha256: Option<String>,
+}
+
+fn first_review_page() -> u32 {
+    1
+}
+
 async fn review_get(
     Path((slug, hat_uuid)): Path<(String, Uuid)>,
+    Query(query): Query<ReviewPageQuery>,
     State(state): State<AppState>,
     auth: AuthSession,
 ) -> Result<Response, CustomError> {
@@ -52,14 +64,23 @@ async fn review_get(
     let hat_id = HatId::new(hat_uuid);
     let reviewer = UserId::new(session_user(&auth).await?.id);
     let hat = manage::get_hat(state.sqlx_pool(), bear_id, hat_id).await?;
-    let snapshot = work_review::snapshot_for_admin(
+    let snapshot = work_review::snapshot_page_for_admin(
         state.sqlx_pool(),
         &state.memory_stores,
         bear_id,
         hat_id,
         reviewer,
+        query.page,
     )
     .await?;
+    if query.page > 1
+        && (snapshot.sha256.is_none()
+            || query.expected_sha256.as_deref() != snapshot.sha256.as_deref())
+    {
+        return Err(CustomError::ValidationError(
+            "hat memory changed during review; start again at page 1".into(),
+        ));
+    }
     web::render_template(
         &state,
         "bear/manage/hat_work_review.jinja",

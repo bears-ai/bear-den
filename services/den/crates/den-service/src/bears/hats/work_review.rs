@@ -27,6 +27,8 @@ pub struct WorkMemoryReviewSnapshot {
     pub records: Vec<HatReviewRecord>,
     pub complete: bool,
     pub sha256: Option<String>,
+    pub page: u32,
+    pub page_count: u32,
 }
 
 fn fingerprint(records: &[HatReviewRecord]) -> Result<String, DenError> {
@@ -37,6 +39,7 @@ fn fingerprint(records: &[HatReviewRecord]) -> Result<String, DenError> {
 
 fn review_snapshot(
     snapshot: hat_review::HatReviewSnapshot,
+    page: u32,
 ) -> Result<WorkMemoryReviewSnapshot, DenError> {
     let complete = snapshot.complete();
     let sha256 = if complete {
@@ -44,11 +47,24 @@ fn review_snapshot(
     } else {
         None
     };
+    let shown = snapshot.records.len();
+    let page_count = shown.div_ceil(hat_review::REVIEW_PAGE_SIZE).max(1) as u32;
+    if page == 0 || page > page_count {
+        return Err(DenError::ValidationError("invalid hat review page".into()));
+    }
+    let records = snapshot
+        .records
+        .into_iter()
+        .skip((page as usize - 1) * hat_review::REVIEW_PAGE_SIZE)
+        .take(hat_review::REVIEW_PAGE_SIZE)
+        .collect();
     Ok(WorkMemoryReviewSnapshot {
         total_records: snapshot.total_records,
-        records: snapshot.records,
+        records,
         complete,
         sha256,
+        page,
+        page_count,
     })
 }
 
@@ -110,7 +126,21 @@ pub async fn snapshot_for_admin(
     require_admin(pool, bear_id, reviewer).await?;
     get_hat(pool, bear_id, hat_id).await?;
     let store = stores.store_for_bear(bear_id.as_uuid()).await?;
-    review_snapshot(hat_review::snapshot_for_hat(&store, hat_id).await?)
+    review_snapshot(hat_review::snapshot_for_hat(&store, hat_id).await?, 1)
+}
+
+pub async fn snapshot_page_for_admin(
+    pool: &PgPool,
+    stores: &MemoryStoreManager,
+    bear_id: BearId,
+    hat_id: HatId,
+    reviewer: UserId,
+    page: u32,
+) -> Result<WorkMemoryReviewSnapshot, DenError> {
+    require_admin(pool, bear_id, reviewer).await?;
+    get_hat(pool, bear_id, hat_id).await?;
+    let store = stores.store_for_bear(bear_id.as_uuid()).await?;
+    review_snapshot(hat_review::snapshot_for_hat(&store, hat_id).await?, page)
 }
 
 #[derive(Debug, Clone)]
@@ -192,9 +222,9 @@ pub async fn review_and_enable(
         .await
         .map_err(|err| DenError::System(format!("begin hat review fence: {err}")))?;
     let outcome: Result<WorkReviewReceipt, DenError> = async {
-        let snapshot = review_snapshot(hat_review::snapshot_for_hat_on(&mut sqlite, bear_id.as_uuid(), hat_id).await?)?;
+        let snapshot = review_snapshot(hat_review::snapshot_for_hat_on(&mut sqlite, bear_id.as_uuid(), hat_id).await?, 1)?;
         if !snapshot.complete || snapshot.total_records == 0 {
-            return Err(DenError::Authorization("this hat is empty or has more records than can be reviewed on this page".into()));
+            return Err(DenError::Authorization("this hat is empty or exceeds the bounded historical review limit".into()));
         }
         if snapshot.total_records != decision.expected_record_count
             || snapshot.sha256.as_deref() != Some(decision.expected_sha256.as_str())

@@ -484,6 +484,19 @@ async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
     )
     .await
     .unwrap();
+    for index in 0..100 {
+        den_memory::append_memory_record(
+            &memory,
+            &den_memory::LogicalMemoryPath::hat(hat.id, &format!("paged-{index}")),
+            "note",
+            "curate",
+            None,
+            &format!("paged knowledge {index}"),
+            &serde_json::json!({}),
+        )
+        .await
+        .unwrap();
+    }
     assert_eq!(
         request(
             &app,
@@ -505,7 +518,10 @@ async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
     let review_url = format!("{detail}/work-review");
     let (status, page, _) = request(&app, &admin_cookie, "GET", &review_url, "").await;
     assert_eq!(status, StatusCode::OK, "{page}");
-    assert!(page.contains("curated hat knowledge"));
+    assert!(page.contains("Page 1 of 2"));
+    assert!(page.contains("Continue to page 2"));
+    assert!(!page.contains("Record the review decision"));
+    assert!(!page.contains("curated hat knowledge"));
     assert_eq!(
         request(&app, &member_cookie, "GET", &review_url, "")
             .await
@@ -521,7 +537,61 @@ async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
     )
     .await
     .unwrap();
+    let old_sha = snapshot.sha256.unwrap();
+    den_memory::append_memory_record(
+        &memory,
+        &den_memory::LogicalMemoryPath::hat(hat.id, "changed-between-pages"),
+        "note",
+        "curate",
+        None,
+        "newly reviewed entry",
+        &serde_json::json!({}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        request(
+            &app,
+            &admin_cookie,
+            "GET",
+            &format!("{review_url}?page=2&expected_sha256={old_sha}"),
+            "",
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    let snapshot = hats::work_review::snapshot_for_admin(
+        &pool,
+        &state.memory_stores,
+        BearId::new(bear_id),
+        hat.id,
+        UserId::new(admin),
+    )
+    .await
+    .unwrap();
     let reviewed_sha = snapshot.sha256.unwrap();
+    let (status, _, _) = request(
+        &app,
+        &admin_cookie,
+        "GET",
+        &format!("{review_url}?page=2"),
+        "",
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, last_page, _) = request(
+        &app,
+        &admin_cookie,
+        "GET",
+        &format!("{review_url}?page=2&expected_sha256={reviewed_sha}"),
+        "",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{last_page}");
+    assert!(last_page.contains("Page 2 of 2"));
+    assert!(last_page.contains("curated hat knowledge"));
+    assert!(last_page.contains("Record the review decision"));
     let decision = format!(
         "expected_sha256={}&expected_record_count={}&rationale=Reviewed+the+existing+knowledge+for+Work&confirm_work_audience=true",
         reviewed_sha, snapshot.total_records,

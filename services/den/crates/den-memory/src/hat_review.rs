@@ -8,7 +8,10 @@ use uuid::Uuid;
 
 use crate::BearMemoryStore;
 
-pub const MAX_REVIEW_RECORDS: i64 = 100;
+// Bound the canonical snapshot and its fingerprint while still allowing several
+// individually readable review pages. Hats beyond this ceiling remain blocked.
+pub const MAX_REVIEW_RECORDS: i64 = 500;
+pub const REVIEW_PAGE_SIZE: usize = 100;
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct HatReviewRecord {
