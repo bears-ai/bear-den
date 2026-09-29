@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO bears (slug, name) VALUES ('dispatch-hat-bear', 'Dispatch Hat') RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "6fc4202d5a2227ae656866571360a2fdf178edaa5cc707ba6dc65741d0a62693"
+}

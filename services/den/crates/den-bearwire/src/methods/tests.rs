@@ -5816,6 +5816,57 @@ async fn work_checkout_rejection_projects_non_dispatchable_gate(pool: sqlx::PgPo
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn configured_hats_reject_legacy_work_checkout_before_session_or_attempt_binding(
+    pool: sqlx::PgPool,
+) {
+    use den_core::ids::{BearId, UserId};
+    use den_service::bears::hats;
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let work_run_id = create_checkoutable_work_run(&pool, user_id, bear_id).await;
+    hats::create_hat(
+        &pool,
+        BearId::new(bear_id),
+        UserId::new(user_id),
+        "Work review",
+        "New runs need an eligible hat",
+    )
+    .await
+    .unwrap();
+    let denied = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "work.checkout",
+        json!({
+            "bear_slug": bear_slug,
+            "session_id": format!("work-{}", Uuid::new_v4().simple()),
+            "work_order_id": work_run_id,
+            "compatibility": { "protocol": 1, "capabilities": ["tool_attempt_token"] },
+        }),
+    )
+    .await;
+    assert!(denied.get("error").is_some(), "{denied}");
+    let bound_session = sqlx::query_scalar!(
+        "SELECT bearwire_session_id FROM bear_work_runs WHERE id = $1",
+        work_run_id,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(bound_session.is_none());
+    let attempts = sqlx::query_scalar!(
+        "SELECT count(*) AS \"count!\" FROM docket_execution_attempts
+         WHERE binding_kind = 'work_assignment' AND binding_id = $1",
+        work_run_id.to_string(),
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(attempts, 0);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn work_checkout_returns_a_stable_canonical_attempt(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;

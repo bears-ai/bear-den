@@ -14,8 +14,7 @@ use sqlx::PgPool;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use den_core::config::Config;
-use den_core::DenError;
+use den_core::{config::Config, ids::BearId, DenError};
 use den_docket::work_runs::{
     self, WorkRunDispatchContext, WorkRunFinalize, WorkRunProvisioned, WorkRunRow, WorkRunState,
 };
@@ -24,6 +23,7 @@ use den_sandbox::protocol::{
     CreateSandboxRequest, NetworkMode, PublishRequest, SandboxLimits, SandboxType,
 };
 use den_sandbox::SandboxClient;
+use den_service::bears::hats::memory_binding;
 
 use crate::runtime_exception_events::{
     self, NewRuntimeExceptionEvent, RuntimeExceptionContext, RuntimeExceptionSeverity,
@@ -135,6 +135,19 @@ async fn auto_enqueue(pool: &PgPool) {
             })
             .collect();
         for (job_id, requested_by_user_id) in jobs {
+            if let Err(err) =
+                memory_binding::require_eligible_job(pool, BearId::new(bear_id), job_id).await
+            {
+                match err {
+                    DenError::Authorization(_) => {
+                        tracing::debug!(%bear_id, %job_id, error = %err, "work_dispatch: skipping ineligible automatic Job")
+                    }
+                    _ => {
+                        tracing::warn!(%bear_id, %job_id, error = %err, "work_dispatch: failed to check automatic Job eligibility")
+                    }
+                }
+                continue;
+            }
             match work_runs::enqueue_work_job(
                 pool,
                 work_runs::WorkJobEnqueue {
@@ -210,6 +223,12 @@ async fn provision_run(
     client: &SandboxClient,
     run: &WorkRunRow,
 ) {
+    // Recheck the canonical Job hat before touching task state, minting a token,
+    // or creating a sandbox. Also applies when adopting a previously claimed run.
+    if let Err(err) = memory_binding::for_work_run(pool, BearId::new(run.bear_id), run.id).await {
+        fail_run(pool, run, "work_hat_ineligible", &err.to_string(), None).await;
+        return;
+    }
     let context = match work_runs::get_work_run_dispatch_context(pool, run.id).await {
         Ok(context) => context,
         Err(err) => {
@@ -1008,6 +1027,10 @@ async fn orphan_sweep(pool: &PgPool, config: &Arc<Config>, client: &SandboxClien
         }
     }
 }
+
+#[cfg(test)]
+#[path = "work_dispatch/hat_tests.rs"]
+mod hat_tests;
 
 #[cfg(test)]
 mod tests {

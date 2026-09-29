@@ -14,7 +14,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use den_core::BearProfile;
+use den_core::{ids::BearId, BearProfile};
 use den_docket::{
     work_runs, DocketCheckpointDirectiveAcknowledge, DocketService, DocketWorkBoundaryCheck,
     DocketWorkBoundarySignal, PgDocketService, TaskListVisibility,
@@ -26,7 +26,10 @@ use den_service::{
         self, ArtifactStorageKind, ArtifactVisibility, AttachArtifactInput,
         CreateJsonArtifactInput, ReserveArtifactInput,
     },
-    bears::{db as bears_db, render_turn_fragment, repository_prompt_fragment_registry},
+    bears::{
+        db as bears_db, hats::memory_binding, render_turn_fragment,
+        repository_prompt_fragment_registry,
+    },
     DenState,
 };
 
@@ -223,6 +226,14 @@ pub(crate) async fn work_checkout_result(
         user_id,
         request.work_order_id,
         Some(&request.session_id),
+    )
+    .await?;
+    // A Work checkout may mint an execution attempt and expose a prompt; the
+    // durable Job/hat/surface grant must be eligible before that happens.
+    memory_binding::for_work_run(
+        &state.sqlx_pool,
+        BearId::new(bear.id),
+        request.work_order_id,
     )
     .await?;
     let checkout = work_runs::checkout_work_run_for_session(
