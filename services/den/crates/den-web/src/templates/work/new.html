@@ -1,5 +1,22 @@
 {% extends "base.html" %}
-{% block title %}New Docket job{% endblock %}
+{% block title %}New Docket job<script>
+(function () {
+    var surface = document.querySelector('select[name="surface_id"]');
+    var hats = document.getElementById('job-hat-choice');
+    if (!surface || !hats) return;
+    function updateHats() {
+        Array.prototype.forEach.call(hats.options, function (option) {
+            if (!option.value) return;
+            var allowed = (option.getAttribute('data-surfaces') || '').split(',');
+            option.disabled = !surface.value || allowed.indexOf(surface.value) < 0;
+        });
+        if (hats.selectedOptions.length && hats.selectedOptions[0].disabled) hats.value = '';
+    }
+    surface.addEventListener('change', updateHats);
+    updateHats();
+})();
+</script>
+{% endblock %}
 {% block content %}
 <p><a href="/bear/{{ bear_slug }}/jobs">← Docket</a></p>
 <h1>New work job</h1>
@@ -31,6 +48,23 @@
             {% endif %}
         </label>
     </p>
+    {% if hat_choices %}
+    <p>
+        <label>Responsibility (hat)<br>
+            <select name="hat_id" required id="job-hat-choice">
+                <option value="" selected disabled>Choose a Work-enabled hat…</option>
+                {% for hat in hat_choices %}
+                <option value="{{ hat.id }}" data-surfaces="{{ hat.surface_ids | join(',') | e }}">{{ hat.name | e }} — {{ hat.purpose | e }}</option>
+                {% endfor %}
+            </select>
+        </label><br>
+        <small>Only hats that allow the chosen surface are eligible. A hat limits the Job; it does not grant credentials or start a run.</small>
+    </p>
+    {% elif has_hats %}
+    <p class="form-errors">This Bear has no Work-enabled hats with permitted surfaces. Ask a Bear admin to configure one before creating a new Job.</p>
+    {% else %}
+    <p class="form-hint">This Bear has no hats yet. A Job created here uses the legacy unbound path; ask a Bear admin to configure hats for scoped Work.</p>
+    {% endif %}
     <p>
         <label>Legacy provider root <small>(advanced; ignored when a surface is selected)</small><br>
             <input type="text" name="root" placeholder="root name on the sandbox provider">
@@ -71,6 +105,6 @@
             {% endfor %}
         </tbody>
     </table>
-    <p><button type="submit">Create job</button></p>
+    <p><button type="submit"{% if has_hats and not hat_choices %} disabled{% endif %}>Create job</button></p>
 </form>
 {% endblock %}

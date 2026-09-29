@@ -20,6 +20,8 @@ mod execution_attempt_tests;
 mod execution_control_tests;
 pub mod execution_profiles;
 #[cfg(test)]
+mod hat_job_tests;
+#[cfg(test)]
 mod integration_tests;
 #[cfg(test)]
 mod job_access_tests;

@@ -73,6 +73,7 @@ block head %} {{ super() }}
     /** Active thread; set to match the conversation tab UI after `loadConversations()` and on change. */
     var CONVERSATION_ID = PREFERRED_CONVERSATION_ID;
     var DEN_CONVERSATIONS = [];
+    var DEN_HATS = [];
     var DEN_PENDING_CONVERSATION = null;
     var DEN_MODEL_OPTIONS = [];
     /**
@@ -1477,6 +1478,12 @@ block head %} {{ super() }}
         });
     }
 
+    function hatName(id) {
+        if (!id) return "";
+        var hat = DEN_HATS.find(function (candidate) { return candidate.id === id; });
+        return hat ? hat.name : "";
+    }
+
     function renderConversationTabs() {
         var menu = document.getElementById("den-conv-menu");
         var current = document.getElementById("den-conv-current");
@@ -1495,7 +1502,7 @@ block head %} {{ super() }}
             item.className = "den-conv-menu-row";
             if (c.id === CONVERSATION_ID) {
                 item.className += " den-conv-menu-row-selected";
-                currentTitle = c.title || c.id;
+                currentTitle = (c.title || c.id) + (hatName(c.hat_id) ? " · " + hatName(c.hat_id) : "");
             }
 
             var selectBtn = document.createElement("button");
@@ -1505,7 +1512,7 @@ block head %} {{ super() }}
                 "aria-current",
                 c.id === CONVERSATION_ID ? "true" : "false",
             );
-            selectBtn.textContent = c.title || c.id;
+            selectBtn.textContent = (c.title || c.id) + (hatName(c.hat_id) ? " · " + hatName(c.hat_id) : "");
             selectBtn.onclick = (function (id) {
                 return function () {
                     if (id !== CONVERSATION_ID) setConversation(id, true);
@@ -1602,7 +1609,56 @@ block head %} {{ super() }}
         newBtn.type = "button";
         newBtn.className = "den-conv-menu-main";
         newBtn.textContent = "+ New conversation";
+        var hatSelect = document.createElement("select");
+        hatSelect.setAttribute("aria-label", "Hat for new conversation");
+        if (DEN_HATS.length) {
+            var choose = document.createElement("option");
+            choose.value = "";
+            choose.textContent = "Choose a hat…";
+            hatSelect.appendChild(choose);
+            DEN_HATS.forEach(function (hat) {
+                var option = document.createElement("option");
+                option.value = hat.id;
+                option.textContent = hat.name + (hat.purpose ? " — " + hat.purpose : "");
+                hatSelect.appendChild(option);
+            });
+            newBtn.disabled = true;
+            hatSelect.onchange = function () { newBtn.disabled = !hatSelect.value; };
+        } else {
+            var legacy = document.createElement("option");
+            legacy.value = "";
+            legacy.textContent = "No hats configured (legacy conversation)";
+            hatSelect.appendChild(legacy);
+            hatSelect.disabled = true;
+        }
+        newItem.appendChild(hatSelect);
         newBtn.onclick = function () {
+            if (DEN_HATS.length) {
+                if (!hatSelect.value) return;
+                newBtn.disabled = true;
+                fetch("/v1/chat/conversations", {
+                    method: "POST", credentials: "same-origin",
+                    headers: { "Content-Type": "application/json", Accept: "application/json" },
+                    body: JSON.stringify({ bear_id: BEAR_ID, hat_id: hatSelect.value }),
+                }).then(function (response) {
+                    if (denResponseRequiresLogin(response)) {
+                        denRedirectToLogin();
+                        return { __den_skip: true };
+                    }
+                    if (!response.ok) return response.text().then(function (text) { throw new Error(text || "Could not start a hat conversation"); });
+                    return response.json();
+                }).then(function (created) {
+                    if (!created || created.__den_skip) return;
+                    DEN_PENDING_CONVERSATION = null;
+                    DEN_CONVERSATIONS.unshift({ id: created.id, title: created.title || "New chat", hat_id: created.hat_id });
+                    setConversation(created.id, true);
+                    closeConversationMenu();
+                }).catch(function (err) {
+                    newBtn.disabled = false;
+                    showErr(String(err.message || err));
+                });
+                return;
+            }
             var id = makeNewConversationId();
             DEN_PENDING_CONVERSATION = {
                 id: id,
@@ -1644,6 +1700,7 @@ block head %} {{ super() }}
             })
             .then(function (data) {
                 if (data && data.__den_skip) return "skip-boot";
+                DEN_HATS = data && data.hats ? data.hats : [];
                 var list = data && data.conversations ? data.conversations : [];
                 var rows = [];
                 var optionIds = [];

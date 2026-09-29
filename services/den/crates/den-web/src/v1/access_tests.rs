@@ -917,3 +917,148 @@ async fn default_and_conflict_are_isolated_and_list_filters_before_limit(pool: P
             .is_some()
     );
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn members_choose_a_hat_before_a_browser_conversation_starts(pool: PgPool) {
+    use den_core::ids::{BearId, UserId};
+    use den_service::bears::hats::{self, bindings, memory_binding};
+    let (bear, [first, second, _admin]) = seed(&pool).await;
+    let chosen = hats::create_hat(
+        &pool,
+        BearId::new(bear),
+        UserId::new(first),
+        "Security review",
+        "Review the repository",
+    )
+    .await
+    .unwrap();
+    let foreign_bear = create_bear(
+        &pool,
+        BearParams {
+            slug: "web-access-other-hat",
+            name: "Other Bear",
+            description: "",
+            system_prompt: "",
+            default_model: None,
+            tools_enabled: None,
+            context_profile: None,
+        },
+    )
+    .await
+    .unwrap();
+    let foreign = hats::create_hat(
+        &pool,
+        BearId::new(foreign_bear),
+        UserId::new(first),
+        "Other Bear",
+        "Not a member",
+    )
+    .await
+    .unwrap();
+    let app = app(&pool).await;
+    let first_cookie = login(&app, first).await;
+    let second_cookie = login(&app, second).await;
+    let route = "/v1/chat/conversations";
+    let (status, listed) = request(
+        &app,
+        &second_cookie,
+        "GET",
+        &format!("{route}?bear_id={bear}"),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(listed["hats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|hat| hat["id"] == chosen.id.to_string()));
+    assert_eq!(
+        request(
+            &app,
+            &second_cookie,
+            "POST",
+            route,
+            json!({"bear_id": bear, "hat_id": foreign.id})
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        request(
+            &app,
+            &second_cookie,
+            "POST",
+            route,
+            json!({"bear_id": foreign_bear, "hat_id": foreign.id})
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    let (status, created) = request(
+        &app,
+        &second_cookie,
+        "POST",
+        route,
+        json!({"bear_id": bear, "hat_id": chosen.id}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let external_id = created["id"].as_str().unwrap();
+    assert!(external_id.starts_with("conv-"));
+    let canonical =
+        conversation_persistence::get_conversation_for_external_id(&pool, bear, external_id)
+            .await
+            .unwrap()
+            .unwrap();
+    assert_eq!(
+        bindings::conversation_hat(&pool, BearId::new(bear), canonical.id)
+            .await
+            .unwrap(),
+        Some(chosen.id)
+    );
+    assert!(
+        matches!(memory_binding::for_conversation(&pool, BearId::new(bear), canonical.id).await.unwrap(),
+        memory_binding::ResolvedMemoryBinding::Bound(grant) if grant.hat_id() == Some(chosen.id))
+    );
+    let (_, own_list) = request(
+        &app,
+        &second_cookie,
+        "GET",
+        &format!("{route}?bear_id={bear}"),
+        Value::Null,
+    )
+    .await;
+    assert!(own_list["conversations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|row| row["id"] == external_id && row["hat_id"] == chosen.id.to_string()));
+    let (_, other_list) = request(
+        &app,
+        &first_cookie,
+        "GET",
+        &format!("{route}?bear_id={bear}"),
+        Value::Null,
+    )
+    .await;
+    assert!(!other_list["conversations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|row| row["id"] == external_id));
+    assert_eq!(
+        request(
+            &app,
+            &first_cookie,
+            "GET",
+            &format!("/v1/chat/history?bear_id={bear}&conversation_id={external_id}"),
+            Value::Null
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+}

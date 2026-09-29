@@ -1627,3 +1627,95 @@ async fn create_job_enforces_surface_assignment() {
     .expect("job row");
     assert_job_uses_surface(&pool, job_id, surface_id).await;
 }
+
+#[tokio::test]
+async fn member_creates_a_job_bound_to_a_work_enabled_hat_atomically() {
+    use den_core::ids::{BearId, UserId};
+    use den_service::bears::hats;
+    let _guard = TEST_DB_LOCK.lock().await;
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let (admin, bear_id, slug) = seed_member(&pool).await;
+    let surface = assigned_surface_id(&pool, admin, bear_id).await;
+    let hat = hats::create_hat(
+        &pool,
+        BearId::new(bear_id),
+        UserId::new(admin),
+        "Work review",
+        "Review repository changes",
+    )
+    .await
+    .unwrap();
+    hats::allow_surface(&pool, BearId::new(bear_id), hat.id, surface)
+        .await
+        .unwrap();
+    sqlx::query!(
+        "UPDATE bear_hats SET work_enabled = true WHERE id = $1",
+        hat.id.as_uuid()
+    )
+    .execute(&pool)
+    .await
+    .unwrap(); // Empty test hat has passed the fixture's Work review.
+    let nonce = Uuid::new_v4().simple().to_string();
+    let member = sqlx::query_scalar!(
+        "INSERT INTO users (email, username, display_name, passhash) VALUES ($1, $2, 'Hat Work Member', 'x') RETURNING id",
+        format!("workhat-{nonce}@example.test"), format!("wh{}", &nonce[..12]),
+    ).fetch_one(&pool).await.unwrap();
+    bears_db::grant_membership(&pool, member, bear_id, Some(bears_db::BEAR_ROLE_MEMBER))
+        .await
+        .unwrap();
+    let app = test_app(pool.clone()).await;
+    let cookie = login_cookie(&app, member).await;
+    let (page_status, page) = get_page(&app, &cookie, &format!("/bear/{slug}/jobs/new")).await;
+    assert_eq!(page_status, StatusCode::OK, "{page}");
+    assert!(
+        page.contains("Work review"),
+        "members should be offered configured Work hats"
+    );
+    let endpoint = format!("/bear/{slug}/jobs/new");
+    let base = format!("goal=Check+dependencies+{nonce}&surface_id={surface}&commit_policy=none&task_title=Inspect+dependencies&task_criteria=List+outdated+packages");
+    assert_eq!(
+        post_form(&app, &cookie, &endpoint, base.clone())
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST,
+        "a configured Bear must not silently fall back to an unbound Job"
+    );
+    let foreign = format!("{base}&hat_id={}", Uuid::new_v4());
+    assert_eq!(
+        post_form(&app, &cookie, &endpoint, foreign).await.status(),
+        StatusCode::FORBIDDEN
+    );
+    let jobs_before: i64 = sqlx::query_scalar!(
+        "SELECT count(*) AS \"count!: i64\" FROM bear_jobs WHERE bear_id = $1 AND created_by_user_id = $2",
+        bear_id, member,
+    ).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        jobs_before, 0,
+        "failed hat selection must not leave an unbound Job"
+    );
+    let response = post_form(
+        &app,
+        &cookie,
+        &endpoint,
+        format!("{base}&hat_id={}", hat.id),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let job = sqlx::query!(
+        "SELECT id, hat_id, current_run_id FROM bear_jobs WHERE bear_id = $1 AND created_by_user_id = $2 ORDER BY created_at DESC LIMIT 1",
+        bear_id, member,
+    ).fetch_one(&pool).await.unwrap();
+    assert_eq!(job.hat_id, Some(hat.id.as_uuid()));
+    assert!(
+        job.current_run_id.is_some(),
+        "hat is bound before Docket creates the initial run"
+    );
+    assert_eq!(
+        hats::bindings::eligible_job_hat(&pool, BearId::new(bear_id), job.id)
+            .await
+            .unwrap(),
+        Some(hat.id)
+    );
+}

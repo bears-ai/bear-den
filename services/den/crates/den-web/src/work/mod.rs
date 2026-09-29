@@ -752,9 +752,9 @@ async fn new_job_form(
     bear_slugs.sort_by(|a, b| a.1.cmp(&b.1));
     let catalog = provider_catalog(&state).await;
 
-    // Managed surfaces available to any of the user's bears; the create
-    // handler re-checks the selected bear's assignment server-side.
-    let bear_ids: Vec<Uuid> = bears.keys().copied().collect();
+    // Only this Bear's assigned surfaces can appear beside its hat choices.
+    // The handler still re-checks the grant before creating a Job.
+    let bear_ids = [bear.id];
     let mut surfaces: Vec<serde_json::Value> = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for surface in
@@ -769,6 +769,19 @@ async fn new_job_form(
         }
     }
 
+    let configured_hats = hats::list_hats(state.sqlx_pool(), BearId::new(bear.id)).await?;
+    let has_hats = !configured_hats.is_empty();
+    let mut hat_choices = Vec::new();
+    for hat in configured_hats.into_iter().filter(|hat| hat.work_enabled) {
+        let granted =
+            hats::manage::allowed_surfaces(state.sqlx_pool(), BearId::new(bear.id), hat.id).await?;
+        if !granted.is_empty() {
+            hat_choices.push(serde_json::json!({
+                "id": hat.id, "name": hat.name, "purpose": hat.purpose,
+                "surface_ids": granted.into_iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+            }));
+        }
+    }
     web::render_template(
         &state,
         "work/new.html",
@@ -779,6 +792,8 @@ async fn new_job_form(
             bear_slug => bear.slug,
             catalog => catalog,
             surfaces => surfaces,
+            hat_choices,
+            has_hats,
         },
     )
     .await
@@ -789,6 +804,8 @@ async fn new_job_form(
 #[derive(Debug, Deserialize)]
 struct NewJobForm {
     goal: String,
+    #[serde(default)]
+    hat_id: Option<Uuid>,
     /// Managed work surface id (preferred; from the surface select).
     #[serde(default)]
     surface_id: String,
@@ -908,30 +925,40 @@ async fn create_job(
         entered_branch
     };
 
-    let job = PgDocketService::from_pool(state.sqlx_pool())
-        .create_job(DocketJobCreate {
-            bear_id: bear.id,
-            created_by_user_id: user_id,
-            created_by_role: "ui".to_string(),
-            goal: form.goal,
-            work_surface_id,
-            work_surface_assignments: Vec::new(),
-            commit_policy,
-            work_branch,
-            visibility: TaskListVisibility::SameUser,
-            source_conversation_id: None,
-            objective_kind: None,
-            supersedes_job_id: None,
-            overlap_resolution: den_docket::DocketJobOverlapResolution::Reject,
-            criteria: vec![DocketJobCriterionInput {
-                kind: den_docket::DocketCriterionKind::Narrative,
-                description: "All tasks completed to their criteria".to_string(),
-                spec: None,
-                sibling_order: 0,
-            }],
-            tasks,
-        })
-        .await?;
+    let configured_hats = hats::list_hats(state.sqlx_pool(), BearId::new(bear.id)).await?;
+    let selected_hat = form.hat_id.map(HatId::new);
+    if !configured_hats.is_empty() && selected_hat.is_none() {
+        return Err(CustomError::ValidationError(
+            "choose a Work-enabled hat for this Bear before creating a Job".into(),
+        ));
+    }
+    let service = PgDocketService::from_pool(state.sqlx_pool());
+    let create = DocketJobCreate {
+        bear_id: bear.id,
+        created_by_user_id: user_id,
+        created_by_role: "ui".to_string(),
+        goal: form.goal,
+        work_surface_id,
+        work_surface_assignments: Vec::new(),
+        commit_policy,
+        work_branch,
+        visibility: TaskListVisibility::SameUser,
+        source_conversation_id: None,
+        objective_kind: None,
+        supersedes_job_id: None,
+        overlap_resolution: den_docket::DocketJobOverlapResolution::Reject,
+        criteria: vec![DocketJobCriterionInput {
+            kind: den_docket::DocketCriterionKind::Narrative,
+            description: "All tasks completed to their criteria".to_string(),
+            spec: None,
+            sibling_order: 0,
+        }],
+        tasks,
+    };
+    let job = match selected_hat {
+        Some(hat) => service.create_job_with_hat(create, hat).await?,
+        None => service.create_job(create).await?,
+    };
     Ok(Redirect::to(&format!(
         "/bear/{}/jobs/{}",
         bear.slug,

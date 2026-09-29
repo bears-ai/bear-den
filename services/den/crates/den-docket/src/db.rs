@@ -11,6 +11,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use den_core::{
+    ids::HatId,
     tools::identity::{role_is_bear_admin, BEAR_ROLE_ADMIN},
     DenError,
 };
@@ -62,6 +63,14 @@ pub(super) async fn create_job(
     pool: &PgPool,
     create: DocketJobCreate,
 ) -> Result<DocketJobProjection, DenError> {
+    create_job_with_hat(pool, create, None).await
+}
+
+pub(super) async fn create_job_with_hat(
+    pool: &PgPool,
+    create: DocketJobCreate,
+    selected_hat: Option<HatId>,
+) -> Result<DocketJobProjection, DenError> {
     validate_docket_job_create(&create)?;
     let surface_assignments = docket_job_surface_assignments(&create);
     if matches!(
@@ -73,6 +82,47 @@ pub(super) async fn create_job(
     }
 
     let mut tx = pool.begin().await?;
+    if let Some(hat_id) = selected_hat {
+        if surface_assignments.is_empty() {
+            return Err(DenError::Authorization(
+                "a hat-bound Work Job requires at least one assigned surface".into(),
+            ));
+        }
+        let surface_ids: Vec<Uuid> = surface_assignments
+            .iter()
+            .map(|item| item.work_surface_id)
+            .collect();
+        // Hold the hat row lock across creation. Grant revocation or Work disablement
+        // can subsequently fence a run, but cannot race this initial binding.
+        let work_enabled = sqlx::query_scalar!(
+            "SELECT work_enabled FROM bear_hats WHERE bear_id = $1 AND id = $2 FOR SHARE",
+            create.bear_id,
+            hat_id.as_uuid(),
+        )
+        .fetch_optional(&mut *tx)
+        .await?
+        .unwrap_or(false);
+        let covered = sqlx::query_scalar!(
+            r#"SELECT NOT EXISTS (
+                 SELECT 1 FROM unnest($3::uuid[]) AS assignment(surface_id)
+                 WHERE NOT EXISTS (
+                     SELECT 1 FROM bear_hat_work_surfaces allowed
+                     WHERE allowed.bear_id = $1 AND allowed.hat_id = $2
+                       AND allowed.surface_id = assignment.surface_id
+                 )
+               ) AS "covered!""#,
+            create.bear_id,
+            hat_id.as_uuid(),
+            &surface_ids,
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+        if !work_enabled || !covered {
+            return Err(DenError::Authorization(
+                "hat is not Work-enabled or does not permit every Job surface".into(),
+            ));
+        }
+    }
     let predecessor = sqlx::query_scalar!(
         r#"
         SELECT j.id
@@ -130,9 +180,9 @@ job_id)
         INSERT INTO bear_jobs (
             bear_id, created_by_user_id, created_by_role, goal,
             commit_policy, work_branch, lifecycle_intent, visibility, source_conversation_id, objective_kind,
-            supersedes_job_id
+            supersedes_job_id, hat_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING id
         "#,
         create.bear_id,
@@ -149,7 +199,8 @@ job_id)
         create.visibility.as_str(),
         create.source_conversation_id.as_deref(),
         create.objective_kind.as_deref(),
-        create.supersedes_job_id
+        create.supersedes_job_id,
+        selected_hat.map(|id| id.as_uuid()),
     )
     .fetch_one(&mut *tx)
     .await?;

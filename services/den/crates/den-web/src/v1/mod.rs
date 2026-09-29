@@ -48,7 +48,7 @@ use den_service::{
     artifacts::{self, ArtifactAccessContext},
     bears::{
         db::{self as bears_db, role_is_bear_admin},
-        BearProfile,
+        hats, BearProfile,
     },
     client_sessions,
     conversation::{persistence as conversation_persistence, viewer::ConversationViewer},
@@ -57,7 +57,10 @@ use den_service::{
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/bears", get(list_my_bears))
-        .route("/chat/conversations", get(chat_conversations))
+        .route(
+            "/chat/conversations",
+            get(chat_conversations).post(chat_conversation_create),
+        )
         .route(
             "/chat/conversations/{conversation_id}",
             patch(chat_conversation_patch),
@@ -144,6 +147,8 @@ pub struct ChatConversationRow {
     pub id: String,
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub hat_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_message_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest_context_budget: Option<ContextBudgetReport>,
@@ -154,6 +159,27 @@ pub struct ChatConversationRow {
 #[derive(Serialize)]
 pub struct ChatConversationsResponse {
     pub conversations: Vec<ChatConversationRow>,
+    pub hats: Vec<ChatHatChoice>,
+}
+
+#[derive(Serialize)]
+pub struct ChatHatChoice {
+    pub id: Uuid,
+    pub name: String,
+    pub purpose: String,
+}
+
+#[derive(Deserialize)]
+struct ChatConversationCreateBody {
+    bear_id: Uuid,
+    hat_id: Uuid,
+}
+
+#[derive(Serialize)]
+struct ChatConversationCreateResponse {
+    id: String,
+    title: String,
+    hat_id: Uuid,
 }
 
 #[derive(Debug, Deserialize)]
@@ -658,6 +684,46 @@ async fn chat_current_task_clear(
     })))
 }
 
+async fn chat_conversation_create(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Json(body): Json<ChatConversationCreateBody>,
+) -> Result<Json<ChatConversationCreateResponse>, CustomError> {
+    let user_id = auth_session
+        .user
+        .as_ref()
+        .map(|user| user.id)
+        .ok_or_else(|| CustomError::Authentication("login required".into()))?;
+    let _viewer = conversation_viewer(state.sqlx_pool(), body.bear_id, user_id).await?;
+    let bear = bears_db::get_bear(state.sqlx_pool(), body.bear_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("bear not found".into()))?;
+    let hat_id = den_core::ids::HatId::new(body.hat_id);
+    hats::manage::get_hat(state.sqlx_pool(), BearId::new(bear.id), hat_id).await?;
+    let id = format!("conv-{}", Uuid::new_v4().simple());
+    let conversation = conversation_persistence::ensure_conversation_for_external_id(
+        state.sqlx_pool(),
+        bear.id,
+        Some(user_id),
+        &id,
+        None,
+        None,
+    )
+    .await?;
+    hats::bindings::bind_conversation_hat(
+        state.sqlx_pool(),
+        BearId::new(bear.id),
+        conversation.id,
+        hat_id,
+    )
+    .await?;
+    Ok(Json(ChatConversationCreateResponse {
+        id,
+        title: "New chat".into(),
+        hat_id: body.hat_id,
+    }))
+}
+
 async fn chat_conversations(
     State(state): State<AppState>,
     auth_session: AuthSession,
@@ -678,15 +744,26 @@ async fn chat_conversations(
     let default_row = || ChatConversationRow {
         id: "default".to_string(),
         title: "Main chat".to_string(),
+        hat_id: None,
         last_message_at: None,
         latest_context_budget: None,
         latest_context_budget_updated_at: None,
     };
 
     let archived_ids = archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
-    let mut conversations = viewer
-        .list_visible(state.sqlx_pool(), 100)
-        .await?
+    let visible = viewer.list_visible(state.sqlx_pool(), 100).await?;
+    let ids: Vec<Uuid> = visible.iter().map(|row| row.id).collect();
+    let hat_bindings: std::collections::HashMap<Uuid, Option<Uuid>> = sqlx::query!(
+        "SELECT id, hat_id FROM conversations WHERE bear_id = $1 AND id = ANY($2)",
+        bear.id,
+        &ids,
+    )
+    .fetch_all(state.sqlx_pool())
+    .await?
+    .into_iter()
+    .map(|row| (row.id, row.hat_id))
+    .collect();
+    let mut conversations = visible
         .into_iter()
         .filter_map(|row| {
             let id = row.external_conversation_id?;
@@ -699,6 +776,7 @@ async fn chat_conversations(
             let display_id = if id == default_id { "default" } else { &id };
             Some(ChatConversationRow {
                 id: display_id.to_string(),
+                hat_id: hat_bindings.get(&row.id).copied().flatten(),
                 title: row
                     .current_title
                     .filter(|title| !title.trim().is_empty())
@@ -730,7 +808,19 @@ async fn chat_conversations(
         conversations.insert(0, default_row());
     }
 
-    Ok(Json(ChatConversationsResponse { conversations }))
+    let hats = hats::list_hats(state.sqlx_pool(), BearId::new(bear.id))
+        .await?
+        .into_iter()
+        .map(|hat| ChatHatChoice {
+            id: hat.id.as_uuid(),
+            name: hat.name,
+            purpose: hat.purpose,
+        })
+        .collect();
+    Ok(Json(ChatConversationsResponse {
+        conversations,
+        hats,
+    }))
 }
 
 async fn chat_conversation_patch(

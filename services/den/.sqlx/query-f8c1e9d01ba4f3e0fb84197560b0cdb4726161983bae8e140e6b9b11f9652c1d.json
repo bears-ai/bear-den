@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT NOT EXISTS (\n                 SELECT 1 FROM unnest($3::uuid[]) AS assignment(surface_id)\n                 WHERE NOT EXISTS (\n                     SELECT 1 FROM bear_hat_work_surfaces allowed\n                     WHERE allowed.bear_id = $1 AND allowed.hat_id = $2\n                       AND allowed.surface_id = assignment.surface_id\n                 )\n               ) AS \"covered!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "covered!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "UuidArray"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "f8c1e9d01ba4f3e0fb84197560b0cdb4726161983bae8e140e6b9b11f9652c1d"
+}

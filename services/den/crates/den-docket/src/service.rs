@@ -8,7 +8,7 @@
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use den_core::{BearProfile, DenError};
+use den_core::{ids::HatId, BearProfile, DenError};
 
 use super::db;
 use super::model::{
@@ -241,6 +241,17 @@ impl PgDocketService {
     /// Construct from a borrowed pool (clones the inner `Arc`).
     pub fn from_pool(pool: &PgPool) -> Self {
         Self { pool: pool.clone() }
+    }
+
+    /// Create a Job and its initial run with a validated hat in the same Postgres
+    /// transaction. Unlike later binding, this cannot leave an unbound Job on
+    /// failure and remains safe when creation immediately materializes a run.
+    pub async fn create_job_with_hat(
+        &self,
+        create: DocketJobCreate,
+        hat_id: HatId,
+    ) -> Result<DocketJobProjection, DenError> {
+        db::create_job_with_hat(&self.pool, create, Some(hat_id)).await
     }
 
     /// Recheck current Bear membership and access to an exact Docket job ID without
