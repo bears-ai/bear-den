@@ -52,6 +52,12 @@ block head %} {{ super() }}
     <p id="den-legacy-conversation-notice" role="status" hidden>
         Legacy conversation — read-only now that this Bear uses hats. You can review its history here; choose a hat under “+ New conversation” to continue chatting.
     </p>
+    <details id="den-private-notes" hidden>
+        <summary>Private conversation notes</summary>
+        <p>Only this conversation can use these unreviewed notes. Reviewed knowledge for its hat and the Bear is shared separately.</p>
+        <button id="den-notes-refresh" type="button" class="button-link">Refresh notes</button>
+        <ul id="den-notes-list" aria-live="polite"></ul>
+    </details>
     <div id="chat-wrap">
         {# Deep Chat reads errorMessages when the messages controller is
         constructed; set here so displayServiceErrorMessages is true before
@@ -1448,12 +1454,52 @@ block head %} {{ super() }}
         );
     }
 
+    function loadPrivateNotes() {
+        var list = document.getElementById("den-notes-list");
+        var selection = CONVERSATION_ID;
+        if (!list || !BEAR_ID) return;
+        list.textContent = "Loading notes…";
+        var params = new URLSearchParams({ bear_id: BEAR_ID, conversation_id: selection });
+        fetch("/v1/chat/notes?" + params.toString(), { credentials: "same-origin" })
+            .then(function (response) {
+                if (denResponseRequiresLogin(response)) {
+                    denRedirectToLogin();
+                    return null;
+                }
+                if (!response.ok) throw new Error("Could not load this conversation's notes");
+                return response.json();
+            })
+            .then(function (notes) {
+                if (!notes || selection !== CONVERSATION_ID) return;
+                list.replaceChildren();
+                if (!notes.length) {
+                    list.textContent = "No private notes yet.";
+                    return;
+                }
+                notes.forEach(function (note) {
+                    var item = document.createElement("li");
+                    var label = document.createElement("strong");
+                    label.textContent = (note.kind || "Note") + " · " + (note.created_at || "");
+                    var content = document.createElement("pre");
+                    content.textContent = note.content || "";
+                    item.appendChild(label);
+                    item.appendChild(content);
+                    list.appendChild(item);
+                });
+            })
+            .catch(function (error) {
+                if (selection === CONVERSATION_ID) list.textContent = String(error.message || error);
+            });
+    }
+
     function setConversation(id, shouldRemount) {
         CONVERSATION_ID = id || "default";
         PREFERRED_CONVERSATION_ID = CONVERSATION_ID;
         syncConversationUrl(CONVERSATION_ID);
         renderConversationTabs();
         loadConversationModel();
+        var notes = document.getElementById("den-private-notes");
+        if (notes && notes.open && !notes.hidden) loadPrivateNotes();
         if (shouldRemount !== false) remountDeepChat();
     }
 
@@ -1501,6 +1547,8 @@ block head %} {{ super() }}
         var selected = list.find(function (row) { return row.id === CONVERSATION_ID; });
         var notice = document.getElementById("den-legacy-conversation-notice");
         if (notice) notice.hidden = !(DEN_HATS.length && selected && !selected.hat_id);
+        var notes = document.getElementById("den-private-notes");
+        if (notes) notes.hidden = !(selected && selected.own_notes_available);
         menu.innerHTML = "";
 
         for (var i = 0; i < list.length; i++) {
@@ -1659,7 +1707,7 @@ block head %} {{ super() }}
                 }).then(function (created) {
                     if (!created || created.__den_skip) return;
                     DEN_PENDING_CONVERSATION = null;
-                    DEN_CONVERSATIONS.unshift({ id: created.id, title: created.title || "New chat", hat_id: created.hat_id });
+                    DEN_CONVERSATIONS.unshift({ id: created.id, title: created.title || "New chat", hat_id: created.hat_id, own_notes_available: true });
                     setConversation(created.id, true);
                     closeConversationMenu();
                 }).catch(function (err) {
@@ -1774,6 +1822,12 @@ block head %} {{ super() }}
     }
 
     function boot() {
+        var notes = document.getElementById("den-private-notes");
+        if (notes) notes.addEventListener("toggle", function () {
+            if (notes.open && !notes.hidden) loadPrivateNotes();
+        });
+        var refresh = document.getElementById("den-notes-refresh");
+        if (refresh) refresh.addEventListener("click", loadPrivateNotes);
         var modelSelect = currentModelSelect();
         if (modelSelect) {
             modelSelect.addEventListener("change", function () {

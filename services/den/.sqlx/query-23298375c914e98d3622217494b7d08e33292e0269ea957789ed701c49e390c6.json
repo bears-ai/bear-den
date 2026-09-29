@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (\n                SELECT 1 FROM conversations c\n                JOIN user_bear ub ON ub.bear_id = c.bear_id AND ub.user_id = $2\n                WHERE c.bear_id = $1 AND c.id = $3 AND c.status = 'active'\n                  AND c.created_by_user_id = $2\n            ) AS \"allowed!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "allowed!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "23298375c914e98d3622217494b7d08e33292e0269ea957789ed701c49e390c6"
+}

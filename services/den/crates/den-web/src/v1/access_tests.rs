@@ -919,6 +919,107 @@ async fn default_and_conflict_are_isolated_and_list_filters_before_limit(pool: P
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn browser_notes_show_only_the_conversation_creators_own_source(pool: PgPool) {
+    use den_core::ids::{BearId, UserId};
+    use den_memory::{append_memory_record, LogicalMemoryPath, MemorySource, MemoryStoreManager};
+    use den_service::bears::hats::{self, bindings};
+    let (bear, [one, two, admin]) = seed(&pool).await;
+    let hat = hats::create_hat(
+        &pool,
+        BearId::new(bear),
+        UserId::new(admin),
+        "Notes test",
+        "Review source isolation",
+    )
+    .await
+    .unwrap();
+    let first = conversation(&pool, bear, Some(one), "conv-owner-notes").await;
+    let second = conversation(&pool, bear, Some(two), "conv-other-notes").await;
+    for canonical in [first, second] {
+        bindings::bind_conversation_hat(&pool, BearId::new(bear), canonical, hat.id)
+            .await
+            .unwrap();
+    }
+    let stores = MemoryStoreManager::new(&Config::test_stub());
+    let store = stores.store_for_bear(bear).await.unwrap();
+    for (path, text) in [
+        (
+            LogicalMemoryPath::source_local(MemorySource::Conversation(first), "note"),
+            "first private note",
+        ),
+        (
+            LogicalMemoryPath::source_local(MemorySource::Conversation(second), "note"),
+            "other private note",
+        ),
+        (
+            LogicalMemoryPath::hat(hat.id, "note"),
+            "reviewed hat knowledge",
+        ),
+        (
+            LogicalMemoryPath::shared_core("note"),
+            "Bear-wide knowledge",
+        ),
+    ] {
+        append_memory_record(&store, &path, "note", "pair", None, text, &json!({}))
+            .await
+            .unwrap();
+    }
+    let app = app(&pool).await;
+    let one_cookie = login(&app, one).await;
+    let two_cookie = login(&app, two).await;
+    let admin_cookie = login(&app, admin).await;
+    let uri = format!("/v1/chat/notes?bear_id={bear}&conversation_id=conv-owner-notes");
+    let (_, owner_list) = request(
+        &app,
+        &one_cookie,
+        "GET",
+        &format!("/v1/chat/conversations?bear_id={bear}"),
+        Value::Null,
+    )
+    .await;
+    assert!(owner_list["conversations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|row| row["id"] == "conv-owner-notes" && row["own_notes_available"] == true));
+    let (_, admin_list) = request(
+        &app,
+        &admin_cookie,
+        "GET",
+        &format!("/v1/chat/conversations?bear_id={bear}"),
+        Value::Null,
+    )
+    .await;
+    assert!(admin_list["conversations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|row| row["id"] == "conv-owner-notes" && row["own_notes_available"] == false));
+    let (status, notes) = request(&app, &one_cookie, "GET", &uri, Value::Null).await;
+    assert_eq!(status, StatusCode::OK, "{notes}");
+    assert_eq!(notes.as_array().unwrap().len(), 1);
+    assert_eq!(notes[0]["content"], "first private note");
+    assert!(!notes.to_string().contains("other private note"));
+    assert!(!notes.to_string().contains("reviewed hat knowledge"));
+    for cookie in [&two_cookie, &admin_cookie] {
+        assert_eq!(
+            request(&app, cookie, "GET", &uri, Value::Null).await.0,
+            StatusCode::FORBIDDEN
+        );
+    }
+    let (status, own_second) = request(
+        &app,
+        &two_cookie,
+        "GET",
+        &format!("/v1/chat/notes?bear_id={bear}&conversation_id=conv-other-notes"),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{own_second}");
+    assert_eq!(own_second[0]["content"], "other private note");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn configured_hats_make_unbound_browser_threads_read_only_without_stranding_history(
     pool: PgPool,
 ) {

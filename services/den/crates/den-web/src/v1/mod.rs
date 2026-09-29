@@ -66,6 +66,7 @@ pub fn router() -> Router<AppState> {
             patch(chat_conversation_patch),
         )
         .route("/chat/history", get(chat_history))
+        .route("/chat/notes", get(chat_notes))
         .route("/chat/artifacts", get(chat_artifacts))
         .route("/chat/model", get(chat_model_get).patch(chat_model_patch))
         .route("/chat/current-task", get(chat_current_task_get))
@@ -148,6 +149,7 @@ pub struct ChatConversationRow {
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hat_id: Option<Uuid>,
+    pub own_notes_available: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_message_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -724,6 +726,72 @@ async fn chat_conversation_create(
     }))
 }
 
+#[derive(Debug, Deserialize)]
+struct ChatNotesQuery {
+    bear_id: Uuid,
+    conversation_id: String,
+}
+
+#[derive(Serialize)]
+struct ChatSourceNote {
+    memory_id: String,
+    kind: String,
+    content: String,
+    created_at: String,
+}
+
+async fn chat_notes(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Query(q): Query<ChatNotesQuery>,
+) -> Result<Json<Vec<ChatSourceNote>>, CustomError> {
+    let user_id = auth_session
+        .user
+        .as_ref()
+        .map(|user| user.id)
+        .ok_or_else(|| CustomError::Authentication("login required".into()))?;
+    let requested = normalize_client_conversation_id(Some(&q.conversation_id))?;
+    let (viewer, external) =
+        checked_chat_id(state.sqlx_pool(), q.bear_id, user_id, &requested).await?;
+    let conversation = conversation_persistence::get_conversation_for_external_id(
+        state.sqlx_pool(),
+        q.bear_id,
+        &external,
+    )
+    .await?
+    .ok_or_else(|| CustomError::NotFound("conversation not found".into()))?;
+    if !viewer
+        .may_read_own_source(state.sqlx_pool(), conversation.id)
+        .await?
+    {
+        return Err(CustomError::Authorization(
+            "only this conversation's creator can inspect its private notes".into(),
+        ));
+    }
+    let grant = match hats::memory_binding::for_conversation(
+        state.sqlx_pool(),
+        BearId::new(q.bear_id),
+        conversation.id,
+    )
+    .await?
+    {
+        hats::memory_binding::ResolvedMemoryBinding::Legacy => return Ok(Json(Vec::new())),
+        hats::memory_binding::ResolvedMemoryBinding::Bound(grant) => grant,
+    };
+    let store = state.memory_stores.store_for_bear(q.bear_id).await?;
+    let notes = den_memory::scoped::recent_source(&store, grant, 50)
+        .await?
+        .into_iter()
+        .map(|record| ChatSourceNote {
+            memory_id: record.memory_id,
+            kind: record.kind,
+            content: record.content_text,
+            created_at: record.created_at,
+        })
+        .collect();
+    Ok(Json(notes))
+}
+
 async fn chat_conversations(
     State(state): State<AppState>,
     auth_session: AuthSession,
@@ -745,6 +813,7 @@ async fn chat_conversations(
         id: "default".to_string(),
         title: "Main chat".to_string(),
         hat_id: None,
+        own_notes_available: false,
         last_message_at: None,
         latest_context_budget: None,
         latest_context_budget_updated_at: None,
@@ -753,15 +822,15 @@ async fn chat_conversations(
     let archived_ids = archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
     let visible = viewer.list_visible(state.sqlx_pool(), 100).await?;
     let ids: Vec<Uuid> = visible.iter().map(|row| row.id).collect();
-    let hat_bindings: std::collections::HashMap<Uuid, Option<Uuid>> = sqlx::query!(
-        "SELECT id, hat_id FROM conversations WHERE bear_id = $1 AND id = ANY($2)",
+    let hat_bindings: std::collections::HashMap<Uuid, (Option<Uuid>, Option<i32>)> = sqlx::query!(
+        "SELECT id, hat_id, created_by_user_id FROM conversations WHERE bear_id = $1 AND id = ANY($2)",
         bear.id,
         &ids,
     )
     .fetch_all(state.sqlx_pool())
     .await?
     .into_iter()
-    .map(|row| (row.id, row.hat_id))
+    .map(|row| (row.id, (row.hat_id, row.created_by_user_id)))
     .collect();
     let mut conversations = visible
         .into_iter()
@@ -776,7 +845,10 @@ async fn chat_conversations(
             let display_id = if id == default_id { "default" } else { &id };
             Some(ChatConversationRow {
                 id: display_id.to_string(),
-                hat_id: hat_bindings.get(&row.id).copied().flatten(),
+                hat_id: hat_bindings.get(&row.id).and_then(|binding| binding.0),
+                own_notes_available: hat_bindings
+                    .get(&row.id)
+                    .is_some_and(|(hat, owner)| hat.is_some() && *owner == Some(user_id)),
                 title: row
                     .current_title
                     .filter(|title| !title.trim().is_empty())

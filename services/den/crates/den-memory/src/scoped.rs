@@ -107,6 +107,78 @@ pub async fn read_path(
     Ok(visible)
 }
 
+/// Newest current notes from this verified source only, for its human owner.
+/// Unlike general keyword search, unrelated curated records cannot consume the
+/// page limit before source-local results are selected.
+pub async fn recent_source(
+    store: &BearMemoryStore,
+    grant: MemoryReadGrant,
+    limit: i64,
+) -> Result<Vec<MemoryRecordRow>, DenError> {
+    const PAGE_SIZE: i64 = 64;
+    let mut visible = Vec::new();
+    let mut cursor: Option<(i64, String)> = None;
+    let access = AccessContext::empty();
+    let limit = limit.clamp(1, 50) as usize;
+    loop {
+        // sqlx-dynamic: SQLite is per-Bear; the keyset cursor is optional and
+        // all Bear/source identifiers and values are bound, not interpolated.
+        let mut builder = QueryBuilder::<Sqlite>::new(
+            "SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
+                    logical_path, work_surface_ref, metadata_json, created_at, salience,
+                    supersedes_memory_id, invalid_at FROM memory_records WHERE bear_id = ",
+        );
+        builder
+            .push_bind(store.bear_id().to_string())
+            .push(" AND scope_type = 'source_local' AND scope_source_kind = ")
+            .push_bind(grant.source.kind())
+            .push(" AND scope_source_id = ")
+            .push_bind(grant.source.id().to_string())
+            .push(
+                " AND visibility = 'normal' AND invalid_at IS NULL
+                  AND COALESCE(json_extract(metadata_json, '$.lifecycle.status'), 'active')
+                      NOT IN ('archived', 'archive-candidate')
+                  AND NOT EXISTS (
+                      SELECT 1 FROM memory_records newer
+                      WHERE newer.bear_id = memory_records.bear_id
+                        AND newer.supersedes_memory_id = memory_records.memory_id
+                  )",
+            );
+        if let Some((sequence_no, memory_id)) = &cursor {
+            builder
+                .push(" AND (sequence_no < ")
+                .push_bind(*sequence_no)
+                .push(" OR (sequence_no = ")
+                .push_bind(*sequence_no)
+                .push(" AND memory_id < ")
+                .push_bind(memory_id.clone())
+                .push("))");
+        }
+        builder
+            .push(" ORDER BY sequence_no DESC, memory_id DESC LIMIT ")
+            .push_bind(PAGE_SIZE);
+        let rows = builder
+            .build_query_as::<MemoryRecordSqlRow>()
+            .fetch_all(store.pool())
+            .await
+            .map_err(|err| DenError::System(format!("source notes read failed: {err}")))?;
+        let fetched = rows.len();
+        for row in rows {
+            let row = row.into_row();
+            cursor = Some((row.sequence_no, row.memory_id.clone()));
+            if record_visible(store, &row.memory_id, &access).await? {
+                visible.push(row);
+                if visible.len() == limit {
+                    return Ok(visible);
+                }
+            }
+        }
+        if fetched < PAGE_SIZE as usize {
+            return Ok(visible);
+        }
+    }
+}
+
 pub async fn browse(
     store: &BearMemoryStore,
     grant: MemoryReadGrant,

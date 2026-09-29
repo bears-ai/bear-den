@@ -60,6 +60,26 @@ impl ConversationViewer {
         Ok(allowed)
     }
 
+    /// Source-local notes are private to the canonical conversation creator.
+    /// Bear-admin transcript inspection is not a grant to browse that source's
+    /// uncurated notes through the ordinary member interface.
+    pub async fn may_read_own_source(&self, pool: &PgPool, id: Uuid) -> Result<bool, DenError> {
+        let allowed = sqlx::query_scalar!(
+            r#"SELECT EXISTS (
+                SELECT 1 FROM conversations c
+                JOIN user_bear ub ON ub.bear_id = c.bear_id AND ub.user_id = $2
+                WHERE c.bear_id = $1 AND c.id = $3 AND c.status = 'active'
+                  AND c.created_by_user_id = $2
+            ) AS "allowed!""#,
+            self.bear_id.as_uuid(),
+            self.user_id.get(),
+            id,
+        )
+        .fetch_one(pool)
+        .await?;
+        Ok(allowed)
+    }
+
     pub async fn may_access_id(&self, pool: &PgPool, id: Uuid) -> Result<bool, DenError> {
         let allowed = sqlx::query_scalar!(
             r#"

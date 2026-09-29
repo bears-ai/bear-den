@@ -76,6 +76,60 @@ async fn direct_keyword_and_browse_only_see_own_source_curated_hat_and_core() {
 }
 
 #[tokio::test]
+async fn recent_source_is_source_only_even_with_newer_curated_or_colliding_rows() {
+    let store = new_test_store().await;
+    let own = MemorySource::Conversation(Uuid::new_v4());
+    let other = MemorySource::Conversation(Uuid::new_v4());
+    let own_note = append_memory_record(
+        &store,
+        &LogicalMemoryPath::source_local(own, "my-note"),
+        "note",
+        "pair",
+        None,
+        "only my private note",
+        &json!({}),
+    )
+    .await
+    .unwrap();
+    for index in 0..70 {
+        append_memory_record(
+            &store,
+            &LogicalMemoryPath::source_local(other, &format!("other-{index}")),
+            "note",
+            "pair",
+            None,
+            "someone else's source note",
+            &json!({}),
+        )
+        .await
+        .unwrap();
+    }
+    append_memory_record(
+        &store,
+        &LogicalMemoryPath::shared_core("recent-core"),
+        "note",
+        "curate",
+        None,
+        "curated core",
+        &json!({}),
+    )
+    .await
+    .unwrap();
+    let own_records = recent_source(&store, MemoryReadGrant::new(own, None), 50)
+        .await
+        .unwrap();
+    assert_eq!(own_records.len(), 1);
+    assert_eq!(own_records[0].memory_id, own_note.memory_id);
+    assert_eq!(
+        recent_source(&store, MemoryReadGrant::new(other, None), 1)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn path_collision_cannot_read_legacy_record_through_visible_scope() {
     let store = new_test_store().await;
     let source = MemorySource::Conversation(Uuid::new_v4());
@@ -166,6 +220,7 @@ async fn access_bearing_rules_still_constrain_scoped_reads() {
         .unwrap()
         .is_empty());
     assert!(browse(&store, grant, &denied).await.unwrap().is_empty());
+    assert!(recent_source(&store, grant, 10).await.unwrap().is_empty());
 
     let allowed = AccessContext::empty().with_confinement([surface]);
     assert_eq!(
