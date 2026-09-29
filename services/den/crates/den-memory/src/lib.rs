@@ -10,6 +10,7 @@ mod conflicts;
 pub mod descriptors;
 pub mod entity;
 pub mod harvest;
+pub mod hat_promotion;
 pub mod import;
 pub mod library;
 mod logical_path;

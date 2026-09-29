@@ -14,6 +14,7 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 pub mod bindings;
+pub mod curation;
 pub mod manage;
 pub mod memory_binding;
 
