@@ -32,6 +32,10 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route_with_tsr("/bear/{slug}/hats", get(index).post(create))
         .route_with_tsr("/bear/{slug}/hats/{hat_id}", get(detail).post(update))
+        .route_with_tsr(
+            "/bear/{slug}/hats/{hat_id}/ide-default",
+            post(set_ide_default),
+        )
         .route_with_tsr("/bear/{slug}/hats/{hat_id}/surfaces", post(set_surfaces))
         .route_with_tsr("/bear/{slug}/hats/{hat_id}/work", post(set_work))
         .route_with_tsr(
@@ -97,13 +101,17 @@ async fn index(
         Ok(bear) => bear,
         Err(redirect) => return Ok(redirect.into_response()),
     };
-    let hats = hats::list_hats(state.sqlx_pool(), BearId::new(bear.id)).await?;
+    let bear_id = BearId::new(bear.id);
+    let hats = hats::list_hats(state.sqlx_pool(), bear_id).await?;
+    let ide_default_hat_id = hats::ide_default_hat(state.sqlx_pool(), bear_id)
+        .await?
+        .map(|id| id.to_string());
     web::render_template(
         &state,
         "bear/manage/hats.jinja",
         auth,
         context! {
-            hats, can_manage_bear => true, native_runtime => true,
+            hats, ide_default_hat_id, can_manage_bear => true, native_runtime => true,
             ..bear_nav_context(&bear, "hats"),
         },
     )
@@ -145,6 +153,13 @@ async fn detail(
     let bear_id = BearId::new(bear.id);
     let hat_id = HatId::new(hat_id);
     let hat = manage::get_hat(state.sqlx_pool(), bear_id, hat_id).await?;
+    let ide_default_hat_id = hats::ide_default_hat(state.sqlx_pool(), bear_id).await?;
+    let is_ide_default = ide_default_hat_id == Some(hat_id);
+    let ide_default_hat_name = hats::list_hats(state.sqlx_pool(), bear_id)
+        .await?
+        .into_iter()
+        .find(|candidate| Some(candidate.id) == ide_default_hat_id)
+        .map(|candidate| candidate.name);
     let granted = manage::allowed_surfaces(state.sqlx_pool(), bear_id, hat_id).await?;
     let choices: Vec<SurfaceChoice> =
         work_surfaces::list_surfaces_for_bears(state.sqlx_pool(), &[bear.id])
@@ -162,7 +177,7 @@ async fn detail(
         "bear/manage/hat.jinja",
         auth,
         context! {
-            hat, choices, grant_count => granted.len(), message => query.message,
+            hat, is_ide_default, ide_default_hat_name, choices, grant_count => granted.len(), message => query.message,
             can_manage_bear => true, native_runtime => true,
             ..bear_nav_context(&bear, "hats"),
         },
@@ -189,6 +204,20 @@ async fn update(
         &form.purpose,
     )
     .await?;
+    Ok(Redirect::to(&hat_url(&bear.slug, id)).into_response())
+}
+
+async fn set_ide_default(
+    Path((slug, hat_id)): Path<(String, Uuid)>,
+    State(state): State<AppState>,
+    auth: AuthSession,
+) -> Result<Response, CustomError> {
+    let bear = match load_session_bear_manage(&state, &auth, &slug).await? {
+        Ok(bear) => bear,
+        Err(redirect) => return Ok(redirect.into_response()),
+    };
+    let id = HatId::new(hat_id);
+    hats::set_ide_default_hat(state.sqlx_pool(), BearId::new(bear.id), id).await?;
     Ok(Redirect::to(&hat_url(&bear.slug, id)).into_response())
 }
 

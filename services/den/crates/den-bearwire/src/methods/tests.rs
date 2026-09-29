@@ -69,6 +69,334 @@ use crate::{
 };
 use bearwire_protocol::{rpc::JsonRpcRequest, surface::SurfaceHistoryEvent, wire::BearWireEvent};
 
+#[sqlx::test(migrations = "../../migrations")]
+async fn ide_default_and_first_interaction_hat_selection_bind_one_canonical_conversation(
+    pool: sqlx::PgPool,
+) {
+    use den_core::ids::{BearId, UserId};
+    use den_service::bears::hats::{self, bindings, memory_binding};
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let owner = BearId::new(bear_id);
+    let default = hats::create_hat(
+        &pool,
+        owner,
+        UserId::new(user_id),
+        "General IDE",
+        "Pair in the editor",
+    )
+    .await
+    .unwrap();
+    let review = hats::create_hat(
+        &pool,
+        owner,
+        UserId::new(user_id),
+        "Security review",
+        "Review carefully",
+    )
+    .await
+    .unwrap();
+    hats::set_ide_default_hat(&pool, owner, default.id)
+        .await
+        .unwrap();
+    let state = test_state(pool.clone());
+    let session_id = format!("ide-{}", Uuid::new_v4());
+    let opened = rpc_value(
+        state.clone(),
+        &token,
+        "session.open",
+        json!({
+            "bear_slug": bear_slug, "session_id": session_id, "client": "zed",
+        }),
+    )
+    .await;
+    assert_eq!(opened["result"]["ok"], true, "{opened}");
+    let resolved = opened["result"]["session"]["resolved_conversation_id"]
+        .as_str()
+        .unwrap();
+    assert!(resolved.starts_with("den-conv-"));
+    let canonical = den_service::conversation::persistence::get_conversation_for_external_id(
+        &pool, bear_id, resolved,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        bindings::conversation_hat(&pool, owner, canonical.id)
+            .await
+            .unwrap(),
+        Some(default.id)
+    );
+    let listed = rpc_value(
+        state.clone(),
+        &token,
+        "hats.list",
+        json!({
+            "bear_slug": bear_slug, "session_id": session_id,
+        }),
+    )
+    .await;
+    assert_eq!(
+        listed["result"]["ide_default_hat_id"],
+        default.id.to_string()
+    );
+    assert_eq!(listed["result"]["selected_hat_id"], default.id.to_string());
+    let other_user = create_test_user(&pool).await;
+    let other_token = create_member_token(&pool, other_user, bear_id).await;
+    let stolen = rpc_value(
+        state.clone(),
+        &other_token,
+        "session.hat.select",
+        json!({
+            "bear_slug": bear_slug, "session_id": session_id, "hat_id": review.id,
+        }),
+    )
+    .await;
+    assert!(stolen.get("error").is_some(), "{stolen}");
+    assert_eq!(
+        bindings::conversation_hat(&pool, owner, canonical.id)
+            .await
+            .unwrap(),
+        Some(default.id)
+    );
+    let changed = rpc_value(
+        state.clone(),
+        &token,
+        "session.hat.select",
+        json!({
+            "bear_slug": bear_slug, "session_id": session_id, "hat_id": review.id,
+        }),
+    )
+    .await;
+    assert_eq!(changed["result"]["ok"], true, "{changed}");
+    assert_eq!(
+        bindings::conversation_hat(&pool, owner, canonical.id)
+            .await
+            .unwrap(),
+        Some(review.id)
+    );
+    assert!(
+        matches!(memory_binding::for_conversation(&pool, owner, canonical.id).await.unwrap(),
+        memory_binding::ResolvedMemoryBinding::Bound(grant) if grant.hat_id() == Some(review.id))
+    );
+    let reopened = rpc_value(
+        state.clone(),
+        &token,
+        "session.open",
+        json!({
+            "bear_slug": bear_slug, "session_id": session_id, "client": "zed",
+        }),
+    )
+    .await;
+    assert_eq!(reopened["result"]["ok"], true, "{reopened}");
+    assert_eq!(
+        bindings::conversation_hat(&pool, owner, canonical.id)
+            .await
+            .unwrap(),
+        Some(review.id)
+    );
+    append_message(
+        &pool,
+        canonical.id,
+        &ConversationMessageWrite::user_turn("A first turn", json!({"text":"A first turn"}), None),
+    )
+    .await
+    .unwrap();
+    let denied = rpc_value(
+        state.clone(),
+        &token,
+        "session.hat.select",
+        json!({
+            "bear_slug": bear_slug, "session_id": session_id, "hat_id": default.id,
+        }),
+    )
+    .await;
+    assert!(denied.get("error").is_some(), "{denied}");
+    assert_eq!(
+        bindings::conversation_hat(&pool, owner, canonical.id)
+            .await
+            .unwrap(),
+        Some(review.id)
+    );
+
+    let other_session = format!("ide-{}", Uuid::new_v4());
+    let new_open = rpc_value(
+        state.clone(),
+        &token,
+        "session.open",
+        json!({
+            "bear_slug": bear_slug, "session_id": other_session, "client": "zed",
+        }),
+    )
+    .await;
+    assert_eq!(new_open["result"]["ok"], true, "{new_open}");
+    let (other_bear, other_slug) = create_test_bear(&pool).await;
+    let foreign = hats::create_hat(
+        &pool,
+        BearId::new(other_bear),
+        UserId::new(user_id),
+        "Foreign",
+        "Other Bear",
+    )
+    .await
+    .unwrap();
+    let wrong_bear = rpc_value(
+        state.clone(),
+        &token,
+        "session.hat.select",
+        json!({
+            "bear_slug": bear_slug, "session_id": other_session, "hat_id": foreign.id,
+        }),
+    )
+    .await;
+    assert!(wrong_bear.get("error").is_some(), "{wrong_bear}");
+    let other_token = create_token_for_bear(&pool, user_id, other_bear).await;
+    let unbound_session = format!("ide-{}", Uuid::new_v4());
+    let unbound = rpc_value(
+        state.clone(),
+        &other_token,
+        "session.open",
+        json!({
+            "bear_slug": other_slug, "session_id": unbound_session, "client": "zed",
+        }),
+    )
+    .await;
+    assert_eq!(unbound["result"]["ok"], true, "{unbound}");
+    let unbound_id = unbound["result"]["session"]["resolved_conversation_id"]
+        .as_str()
+        .unwrap();
+    let unbound_record = den_service::conversation::persistence::get_conversation_for_external_id(
+        &pool, other_bear, unbound_id,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        bindings::conversation_hat(&pool, BearId::new(other_bear), unbound_record.id)
+            .await
+            .unwrap(),
+        None
+    );
+    let chosen = rpc_value(
+        state,
+        &other_token,
+        "session.hat.select",
+        json!({
+            "bear_slug": other_slug, "session_id": unbound_session, "hat_id": foreign.id,
+        }),
+    )
+    .await;
+    assert_eq!(chosen["result"]["ok"], true, "{chosen}");
+    assert_eq!(
+        bindings::conversation_hat(&pool, BearId::new(other_bear), unbound_record.id)
+            .await
+            .unwrap(),
+        Some(foreign.id)
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn ide_hat_selection_survives_the_first_run_and_is_fixed_afterwards(pool: sqlx::PgPool) {
+    use den_core::ids::{BearId, UserId};
+    use den_service::bears::hats::{self, bindings};
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let bear = BearId::new(bear_id);
+    let general = hats::create_hat(
+        &pool,
+        bear,
+        UserId::new(user_id),
+        "IDE general",
+        "General work",
+    )
+    .await
+    .unwrap();
+    let security = hats::create_hat(
+        &pool,
+        bear,
+        UserId::new(user_id),
+        "IDE security",
+        "Review work",
+    )
+    .await
+    .unwrap();
+    hats::set_ide_default_hat(&pool, bear, general.id)
+        .await
+        .unwrap();
+    let mut config = den_core::config::Config::test_stub();
+    config.den_secret_encryption_key = "bearwire-test-secret-key".to_string();
+    config.llm_api_url = start_mock_openai_sse_server();
+    config.default_llm_model = "openai/bearwire-test-model".to_string();
+    seed_test_bifrost_virtual_key(&pool, bear_id, &config).await;
+    let state = test_state_with_config(pool.clone(), config);
+    let session_id = format!("ide-{}", Uuid::new_v4().simple());
+    let opened = rpc_value(
+        state.clone(),
+        &token,
+        "session.open",
+        json!({
+            "bear_slug": bear_slug, "session_id": session_id, "client": "zed",
+        }),
+    )
+    .await;
+    assert_eq!(opened["result"]["ok"], true, "{opened}");
+    let durable = opened["result"]["session"]["resolved_conversation_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let selected = rpc_value(
+        state.clone(),
+        &token,
+        "session.hat.select",
+        json!({
+            "bear_slug": bear_slug, "session_id": session_id, "hat_id": security.id,
+        }),
+    )
+    .await;
+    assert_eq!(selected["result"]["ok"], true, "{selected}");
+    let prompt = "Inspect this repository";
+    let started = rpc_value(
+        state.clone(),
+        &token,
+        "run.start",
+        json!({
+            "bear_slug": bear_slug, "session_id": session_id, "prompt": prompt, "client": "zed",
+        }),
+    )
+    .await;
+    assert_eq!(started["result"]["ok"], true, "{started}");
+    let resolved = wait_for_resolved_conversation_id(&pool, user_id, &bear_slug, &session_id).await;
+    assert_eq!(
+        resolved, durable,
+        "run must not materialize a second unbound conversation"
+    );
+    wait_for_user_message(&pool, bear_id, &resolved, prompt).await;
+    let canonical = den_service::conversation::persistence::get_conversation_for_external_id(
+        &pool, bear_id, &durable,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        bindings::conversation_hat(&pool, bear, canonical.id)
+            .await
+            .unwrap(),
+        Some(security.id)
+    );
+    let denied = rpc_value(
+        state,
+        &token,
+        "session.hat.select",
+        json!({
+            "bear_slug": bear_slug, "session_id": session_id, "hat_id": general.id,
+        }),
+    )
+    .await;
+    assert!(denied.get("error").is_some(), "{denied}");
+}
+
 #[test]
 fn normalized_workspace_roots_uses_cwd_when_roots_are_not_declared() {
     assert_eq!(

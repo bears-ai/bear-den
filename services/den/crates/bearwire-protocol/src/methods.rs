@@ -195,6 +195,20 @@ pub struct SessionOpenRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct SessionHatListRequest {
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SessionHatSelectRequest {
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub session_id: String,
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub hat_id: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct SessionIdRequest {
     #[serde(deserialize_with = "deserialize_required_string")]
     pub session_id: String,

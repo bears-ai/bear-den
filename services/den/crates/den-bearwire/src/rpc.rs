@@ -28,6 +28,16 @@ pub(crate) async fn rpc(
             methods::session::session_open_result(&state, &headers, &request.params).await,
             format!("BearWire {} failed", request.method),
         ),
+        "hats.list" => method_response(
+            request.id,
+            methods::session::hats_list_result(&state, &headers, &request.params).await,
+            "BearWire hats.list failed",
+        ),
+        "session.hat.select" => method_response(
+            request.id,
+            methods::session::session_hat_select_result(&state, &headers, &request.params).await,
+            "BearWire session.hat.select failed",
+        ),
         "session.close" => method_response(
             request.id,
             methods::session::session_close_result(&state, &headers, &request.params).await,

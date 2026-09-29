@@ -45,6 +45,51 @@ pub async fn bind_conversation_hat(
     Ok(())
 }
 
+/// Change the IDE's initial hat only while its owned canonical conversation has
+/// no user/model activity. The authenticated session ID is a locator, never a
+/// source of hat authority; the target hat must belong to this Bear.
+pub async fn select_initial_conversation_hat(
+    pool: &PgPool,
+    bear_id: BearId,
+    conversation_id: Uuid,
+    user_id: den_core::ids::UserId,
+    client_session_id: &str,
+    hat_id: HatId,
+) -> Result<(), DenError> {
+    let selected = sqlx::query_scalar!(
+        r#"UPDATE conversations AS c SET hat_id = $5
+           FROM bear_hats AS h
+           WHERE c.id = $2 AND c.bear_id = $1 AND c.created_by_user_id = $3
+             AND c.status = 'active' AND h.id = $5 AND h.bear_id = c.bear_id
+             AND EXISTS (
+                 SELECT 1 FROM client_sessions s
+                 WHERE s.client_session_id = $4 AND s.user_id = $3 AND s.bear_id = c.bear_id
+                   AND (s.conversation_id = c.external_conversation_id
+                        OR s.resolved_conversation_id = c.external_conversation_id)
+             )
+             AND NOT EXISTS (SELECT 1 FROM conversation_messages m WHERE m.conversation_id = c.id)
+             AND NOT EXISTS (SELECT 1 FROM turn_runs r WHERE r.session_id = $4)
+             AND NOT EXISTS (
+                 SELECT 1 FROM client_sessions s JOIN turn_runs r ON r.session_id = s.client_session_id
+                 WHERE s.bear_id = c.bear_id
+                   AND (s.conversation_id = c.external_conversation_id
+                        OR s.resolved_conversation_id = c.external_conversation_id)
+             )
+             AND NOT EXISTS (
+                 SELECT 1 FROM bear_work_runs r WHERE r.bear_id = c.bear_id
+                   AND (r.bearwire_session_id = $4 OR r.attached_client_session_id = $4)
+             )
+           RETURNING c.hat_id AS "hat_id!: Uuid""#,
+        bear_id.as_uuid(), conversation_id, user_id.get(), client_session_id, hat_id.as_uuid(),
+    ).fetch_optional(pool).await?;
+    if selected.is_none() {
+        return Err(DenError::Authorization(
+            "a hat can only be selected for your IDE conversation before its first turn".into(),
+        ));
+    }
+    Ok(())
+}
+
 pub async fn conversation_can_bind_hat(
     pool: &PgPool,
     bear_id: BearId,

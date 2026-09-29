@@ -215,6 +215,7 @@ fn headless_adapter_state() -> (AdapterState, AdapterSharedState) {
         approval_cache: crate::approvals::ApprovalCache::default(),
         cancellation_tx,
         active_prompts: Arc::new(TokioMutex::new(HashMap::new())),
+        prompted_sessions: Arc::new(TokioMutex::new(std::collections::HashSet::new())),
         projection_dispatcher: crate::projection_dispatcher::AcpProjectionDispatcher::default(),
         execution_diagnostics: crate::execution_diagnostics::ExecutionDiagnosticStore::default(),
     };

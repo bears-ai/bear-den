@@ -93,6 +93,39 @@ pub async fn create_hat(
     Ok(row.into())
 }
 
+/// The configured IDE preference, if an admin has selected one. A missing
+/// preference never implies that a conversation is wearing a hat.
+pub async fn ide_default_hat(pool: &PgPool, bear_id: BearId) -> Result<Option<HatId>, DenError> {
+    let id = sqlx::query_scalar!(
+        "SELECT ide_default_hat_id FROM bears WHERE id = $1",
+        bear_id.as_uuid(),
+    )
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| DenError::NotFound("Bear not found".into()))?;
+    Ok(id.map(HatId::new))
+}
+
+/// Select a hat owned by this Bear as its single IDE preference. The composite
+/// foreign key also protects this invariant against direct database writes.
+pub async fn set_ide_default_hat(
+    pool: &PgPool,
+    bear_id: BearId,
+    hat_id: HatId,
+) -> Result<(), DenError> {
+    let updated = sqlx::query!(
+        "UPDATE bears SET ide_default_hat_id = $2 WHERE id = $1 AND EXISTS (SELECT 1 FROM bear_hats WHERE bear_id = $1 AND id = $2)",
+        bear_id.as_uuid(),
+        hat_id.as_uuid(),
+    )
+    .execute(pool)
+    .await?;
+    if updated.rows_affected() == 0 {
+        return Err(DenError::NotFound("hat not found for this Bear".into()));
+    }
+    Ok(())
+}
+
 pub async fn list_hats(pool: &PgPool, bear_id: BearId) -> Result<Vec<BearHat>, DenError> {
     let rows = sqlx::query_as!(
         BearHatRow,

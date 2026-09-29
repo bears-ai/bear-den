@@ -17,6 +17,94 @@ async fn test_pool() -> Option<PgPool> {
     Some(pool)
 }
 
+#[sqlx::test(migrations = "../../migrations")]
+async fn ide_default_is_explicit_single_and_bear_scoped(pool: PgPool) {
+    let user = sqlx::query_scalar!(
+        "INSERT INTO users (email, username) VALUES ('idehat@example.test', 'idehat') RETURNING id"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let bear = sqlx::query_scalar!(
+        "INSERT INTO bears (slug, name) VALUES ('idehatbear', 'IDE Bear') RETURNING id"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let other = sqlx::query_scalar!(
+        "INSERT INTO bears (slug, name) VALUES ('idehatother', 'Other IDE Bear') RETURNING id"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let bear_id = BearId::new(bear);
+    let other_id = BearId::new(other);
+    assert_eq!(ide_default_hat(&pool, bear_id).await.unwrap(), None);
+    let first = create_hat(&pool, bear_id, UserId::new(user), "First", "First purpose")
+        .await
+        .unwrap();
+    let second = create_hat(
+        &pool,
+        bear_id,
+        UserId::new(user),
+        "Second",
+        "Second purpose",
+    )
+    .await
+    .unwrap();
+    let foreign = create_hat(
+        &pool,
+        other_id,
+        UserId::new(user),
+        "Foreign",
+        "Other purpose",
+    )
+    .await
+    .unwrap();
+    assert_eq!(ide_default_hat(&pool, bear_id).await.unwrap(), None);
+    assert_eq!(ide_default_hat(&pool, other_id).await.unwrap(), None);
+    set_ide_default_hat(&pool, bear_id, first.id).await.unwrap();
+    assert_eq!(
+        ide_default_hat(&pool, bear_id).await.unwrap(),
+        Some(first.id)
+    );
+    assert!(matches!(
+        set_ide_default_hat(&pool, bear_id, foreign.id).await,
+        Err(DenError::NotFound(_))
+    ));
+    assert!(matches!(
+        set_ide_default_hat(&pool, bear_id, HatId::new(Uuid::new_v4())).await,
+        Err(DenError::NotFound(_))
+    ));
+    assert!(
+        sqlx::query!(
+            "UPDATE bears SET ide_default_hat_id = $2 WHERE id = $1",
+            bear,
+            foreign.id.as_uuid(),
+        )
+        .execute(&pool)
+        .await
+        .is_err(),
+        "the database must reject a cross-Bear default"
+    );
+    assert_eq!(
+        ide_default_hat(&pool, bear_id).await.unwrap(),
+        Some(first.id)
+    );
+    set_ide_default_hat(&pool, bear_id, second.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        ide_default_hat(&pool, bear_id).await.unwrap(),
+        Some(second.id)
+    );
+    assert_eq!(ide_default_hat(&pool, other_id).await.unwrap(), None);
+    assert!(matches!(
+        ide_default_hat(&pool, BearId::new(Uuid::new_v4())).await,
+        Err(DenError::NotFound(_))
+    ));
+}
+
 #[tokio::test]
 async fn hats_only_attenuate_bear_surface_grants() {
     let Some(pool) = test_pool().await else {

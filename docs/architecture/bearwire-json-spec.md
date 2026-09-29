@@ -1056,9 +1056,13 @@ session.open
 session.resume
 session.close
 session.state
+hats.list
+session.hat.select
 session.model.get
 session.model.set
 ```
+
+`hats.list` requires authenticated Bear membership and may take `session_id`; it returns Bear-owned hats, the Bear's optional IDE default hat ID, and the session conversation's selected hat ID. `session.hat.select` takes `session_id` and an exact hat UUID. Den only changes the authenticated human's canonical conversation while it has no persisted messages or turns and no Work binding. This is a first-interaction choice, not a connection-level permission or a way to switch hats after a turn. The armature's `/hat` command supplies the human-facing selection; normal IDE sessions bind the configured default on creation.
 
 `session.model.get` returns conversation-scoped model state for the session, including `selection_mode`, `requested_model`, `selected_model`, `effective_model`, and `model_options` for ACP UI controls.
 

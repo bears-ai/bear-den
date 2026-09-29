@@ -33,13 +33,19 @@ Live BearWire projection keeps execution ownership explicit: Den-hosted tool eve
 
 `session/load` replays persisted conversation history and typed surface records as ACP `session/update` notifications where Den has enough structured history to reconstruct them. This can include user/assistant text, reasoning/thought chunks, and completed tool records; richer upstream runtime event history is still limited to what Den persisted as replayable surface state.
 
-`session/list` lists persisted/resumable Den ACP sessions only. Newly-created adapter-local sessions are transient until the first prompt causes Den to persist them, and they are not listed after adapter restart.
+`session/list` lists persisted/resumable Den ACP sessions only. With BearWire configured, `session/new` opens a Den-owned session and durable conversation before the first prompt; no model turn is recorded until the first ordinary prompt.
 
 Not implemented yet:
 
 - MCP relay
 - terminal tool execution
 - broader file mutation tools beyond ACP's standard read/write text-file requests
+
+## Choosing a hat in the IDE
+
+The connection and its code token remain **Bear-scoped**: they authenticate the human and armature, not a hat or tool grant. A Bear admin can mark one hat as this Bear's **IDE default** on the Hats page. New ACP conversations use it when configured; existing conversations are unchanged. A Bear without a default starts new editor conversations unbound unless a hat is chosen before the first turn.
+
+On a fresh IDE conversation, enter `/hat` to list the available hats without using the selection opportunity. Enter `/hat <hat name or UUID>` **before any other productive interaction** to wear a different hat (or choose one if no default exists). Den verifies and saves the choice against the durable conversation; the editor cannot change it after a turn, nor can reconnection choose a different hat. To change responsibilities later, start a new conversation. A hat does not grant filesystem tools, credentials, outbound access, or permission to run Work; Work uses the assigned Job's hat.
 
 ## Chrome DevTools tools
 

@@ -1,6 +1,6 @@
 use axum::http::HeaderMap;
 use den_core::{
-    ids::{BearId, UserId},
+    ids::{BearId, HatId, UserId},
     DenError,
 };
 
@@ -10,8 +10,9 @@ use sqlx::PgPool;
 use bearwire_protocol::{
     methods::{
         RunStartRequest, SessionCurrentTaskClearRequest, SessionCurrentTaskSelectionRequest,
-        SessionCurrentTaskStartRequest, SessionExecutionDiagnosticsRequest, SessionIdRequest,
-        SessionModelSetRequest, SessionOpenRequest, SessionStateRequest,
+        SessionCurrentTaskStartRequest, SessionExecutionDiagnosticsRequest, SessionHatListRequest,
+        SessionHatSelectRequest, SessionIdRequest, SessionModelSetRequest, SessionOpenRequest,
+        SessionStateRequest,
     },
     wire::BearWireEvent,
 };
@@ -29,7 +30,7 @@ use den_runtime::{
     turn_ids::ClientSessionId,
 };
 use den_service::{
-    bears::{db as bears_db, BearProfile},
+    bears::{db as bears_db, hats, BearProfile},
     client_sessions, DenState,
 };
 
@@ -467,17 +468,28 @@ pub(crate) async fn session_open_result(
     )
     .await?;
     let client = request.client.unwrap_or_else(|| DEFAULT_CLIENT.to_string());
-    let conversation_id = request
-        .conversation_id
+    let requested_conversation_id = request.conversation_id;
+    let is_new = existing.is_none()
+        && requested_conversation_id
+            .as_deref()
+            .is_none_or(|id| id.starts_with("new-"));
+    // Allocate one canonical conversation before the first IDE interaction. A
+    // later runtime materialization must not strand the selected hat on a
+    // provisional new-acp-* row.
+    let new_canonical_id = is_new.then(|| format!("den-conv-{}", uuid::Uuid::new_v4().simple()));
+    let conversation_id = requested_conversation_id
         .or_else(|| {
             existing
                 .as_ref()
                 .map(|session| session.conversation_id.clone())
         })
+        .or_else(|| new_canonical_id.clone())
         .unwrap_or_else(|| format!("new-acp-{client}-{}", uuid::Uuid::new_v4().simple()));
-    let resolved_conversation_id = existing
-        .as_ref()
-        .and_then(|session| session.resolved_conversation_id.clone());
+    let resolved_conversation_id = new_canonical_id.clone().or_else(|| {
+        existing
+            .as_ref()
+            .and_then(|session| session.resolved_conversation_id.clone())
+    });
     let current_mode = request
         .mode
         .as_deref()
@@ -494,7 +506,7 @@ pub(crate) async fn session_open_result(
         authorize_or_create_conversation(&viewer, &state.sqlx_pool, bear.id, user_id, resolved)
             .await?;
     }
-    authorize_or_create_conversation(
+    let selected_conversation = authorize_or_create_conversation(
         &viewer,
         &state.sqlx_pool,
         bear.id,
@@ -502,6 +514,38 @@ pub(crate) async fn session_open_result(
         &conversation_id,
     )
     .await?;
+    if is_new
+        && den_docket::work_runs::get_live_work_run_by_session(&state.sqlx_pool, &session_id)
+            .await?
+            .is_none()
+    {
+        if let Some(default_hat) =
+            hats::ide_default_hat(&state.sqlx_pool, BearId::new(bear.id)).await?
+        {
+            let durable_id = resolved_conversation_id
+                .as_deref()
+                .unwrap_or(&conversation_id);
+            let canonical = if durable_id == conversation_id {
+                selected_conversation
+            } else {
+                authorize_or_create_conversation(
+                    &viewer,
+                    &state.sqlx_pool,
+                    bear.id,
+                    user_id,
+                    durable_id,
+                )
+                .await?
+            };
+            hats::bindings::bind_conversation_hat(
+                &state.sqlx_pool,
+                BearId::new(bear.id),
+                canonical.id,
+                default_hat,
+            )
+            .await?;
+        }
+    }
     let runtime_session_id = request
         .runtime_session_id
         .or_else(|| {
@@ -596,6 +640,98 @@ pub(crate) async fn session_open_result(
         "event_sequence": persisted.sequence_no,
         "attached_work_reconnected": reconnected,
     }))
+}
+
+pub(crate) async fn hats_list_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let request: SessionHatListRequest = parse_params(params)?;
+    let bear_id = BearId::new(bear.id);
+    let ide_default_hat_id = hats::ide_default_hat(&state.sqlx_pool, bear_id).await?;
+    let selected_hat_id = if let Some(session_id) = request.session_id.as_deref() {
+        require_exclusive_client_session_id(
+            &state.sqlx_pool,
+            &ClientSessionId::new(session_id.to_string())?,
+            UserId::new(user_id),
+            bear_id,
+        )
+        .await?;
+        let session = client_sessions::find_for_user_bear_session_id(
+            &state.sqlx_pool,
+            user_id,
+            bear.id,
+            session_id,
+        )
+        .await?
+        .ok_or_else(|| CustomError::NotFound("IDE session not found".into()))?;
+        let viewer = conversation_viewer(state, bear.id, user_id).await?;
+        let conversation_id = resolved_or_stored_conversation_id(&session);
+        let conversation =
+            authorize_existing_conversation(&viewer, &state.sqlx_pool, bear.id, conversation_id)
+                .await?
+                .ok_or_else(|| CustomError::NotFound("conversation not found".into()))?;
+        hats::bindings::conversation_hat(&state.sqlx_pool, bear_id, conversation.id).await?
+    } else {
+        None
+    };
+    Ok(json!({
+        "hats": hats::list_hats(&state.sqlx_pool, bear_id).await?,
+        "ide_default_hat_id": ide_default_hat_id,
+        "selected_hat_id": selected_hat_id,
+    }))
+}
+
+pub(crate) async fn session_hat_select_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let request: SessionHatSelectRequest = parse_params(params)?;
+    let session_id = ClientSessionId::new(request.session_id)?;
+    let bear_id = BearId::new(bear.id);
+    require_exclusive_client_session_id(
+        &state.sqlx_pool,
+        &session_id,
+        UserId::new(user_id),
+        bear_id,
+    )
+    .await?;
+    let session = client_sessions::find_for_user_bear_session_id(
+        &state.sqlx_pool,
+        user_id,
+        bear.id,
+        session_id.as_str(),
+    )
+    .await?
+    .ok_or_else(|| CustomError::NotFound("IDE session not found".into()))?;
+    let viewer = conversation_viewer(state, bear.id, user_id).await?;
+    let conversation = authorize_existing_conversation(
+        &viewer,
+        &state.sqlx_pool,
+        bear.id,
+        resolved_or_stored_conversation_id(&session),
+    )
+    .await?
+    .ok_or_else(|| CustomError::NotFound("conversation not found".into()))?;
+    let requested = uuid::Uuid::parse_str(&request.hat_id)
+        .map_err(|_| CustomError::ValidationError("hat_id must be a UUID".into()))?;
+    let hat_id = HatId::new(requested);
+    hats::bindings::select_initial_conversation_hat(
+        &state.sqlx_pool,
+        bear_id,
+        conversation.id,
+        UserId::new(user_id),
+        session_id.as_str(),
+        hat_id,
+    )
+    .await?;
+    Ok(
+        json!({ "ok": true, "hat_id": hat_id, "conversation_id": conversation.external_conversation_id }),
+    )
 }
 
 pub(crate) async fn session_compact_result(

@@ -156,7 +156,7 @@ use serde_json::{json, Value};
 #[cfg(test)]
 use std::fs;
 use std::{
-    collections::{hash_map::DefaultHasher, HashMap},
+    collections::{hash_map::DefaultHasher, HashMap, HashSet},
     env,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
@@ -251,6 +251,7 @@ struct AdapterSharedState {
     approval_cache: ApprovalCache,
     cancellation_tx: broadcast::Sender<CancellationNotice>,
     active_prompts: Arc<TokioMutex<HashMap<String, ActivePromptTurn>>>,
+    prompted_sessions: Arc<TokioMutex<HashSet<String>>>,
     projection_dispatcher: AcpProjectionDispatcher,
     execution_diagnostics: execution_diagnostics::ExecutionDiagnosticStore,
 }
@@ -1802,6 +1803,7 @@ async fn run() -> Result<()> {
         approval_cache,
         cancellation_tx,
         active_prompts: Arc::new(TokioMutex::new(HashMap::new())),
+        prompted_sessions: Arc::new(TokioMutex::new(HashSet::new())),
         projection_dispatcher: AcpProjectionDispatcher::default(),
         execution_diagnostics: execution_diagnostics::ExecutionDiagnosticStore::default(),
     };
@@ -3052,6 +3054,24 @@ async fn handle_request(
         }
         "session/prompt" => {
             if let Some(id) = request.id {
+                // A bare /hat only lists options. Claim the first productive ACP
+                // interaction before spawning a selection or Den turn, so a
+                // concurrent ordinary prompt cannot race the switch.
+                let first_interaction = if let Some(session_id) = request
+                    .params
+                    .get("sessionId")
+                    .and_then(Value::as_str)
+                    .filter(|id| !id.is_empty())
+                {
+                    let mut seen = shared_state.prompted_sessions.lock().await;
+                    reserve_first_acp_interaction(
+                        &mut seen,
+                        session_id,
+                        prompt_text_from_params(&request.params).ok().as_deref(),
+                    )
+                } else {
+                    false
+                };
                 if let Some(command) = prompt_text_from_params(&request.params)
                     .ok()
                     .and_then(|prompt| parse_local_slash_command(&prompt))
@@ -3073,6 +3093,7 @@ async fn handle_request(
                             id.clone(),
                             request.params,
                             command,
+                            first_interaction,
                         )
                         .await
                         {
@@ -5482,6 +5503,92 @@ async fn write_prompt_end_turn_response(response_id: Value) -> Result<()> {
     write_response(response_id, Ok(prompt_end_turn_response_value()?)).await
 }
 
+async fn hat_report(
+    http: &reqwest::Client,
+    config: &Config,
+    session_id: &str,
+    prompt: &str,
+    first_interaction: bool,
+) -> String {
+    let listing = match bearwire::rpc_call(
+        http,
+        config,
+        "hats.list",
+        json!({
+            "bear_slug": config.bear, "session_id": session_id,
+        }),
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(err) => return format!("Could not list IDE hats: {err:#}"),
+    };
+    let hats = listing
+        .get("hats")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let choices = hats
+        .iter()
+        .filter_map(|hat| {
+            Some(format!(
+                "- {} ({})",
+                hat.get("name")?.as_str()?,
+                hat.get("id")?.as_str()?
+            ))
+        })
+        .collect::<Vec<_>>();
+    let hat_label = |key: &str| -> String {
+        let Some(id) = listing.get(key).and_then(Value::as_str) else {
+            return "none".to_string();
+        };
+        hats.iter()
+            .find(|hat| hat.get("id").and_then(Value::as_str) == Some(id))
+            .and_then(|hat| hat.get("name").and_then(Value::as_str))
+            .unwrap_or(id)
+            .to_string()
+    };
+    let selected = hat_label("selected_hat_id");
+    let default = hat_label("ide_default_hat_id");
+    let list = format!(
+        "Current: {selected}. IDE default: {default}.\nAvailable hats:\n{}",
+        if choices.is_empty() {
+            "- none".to_string()
+        } else {
+            choices.join("\n")
+        }
+    );
+    let target = prompt.trim().strip_prefix("/hat").unwrap_or("").trim();
+    if target.is_empty() {
+        return format!(
+            "{list}\nUse /hat <name or id> before the first turn to choose a different hat."
+        );
+    }
+    if !first_interaction {
+        return format!("{list}\nThe hat can only be changed as this IDE conversation's first interaction. Start a new conversation to wear another hat.");
+    }
+    let matched = hats.iter().find(|hat| {
+        hat.get("id").and_then(Value::as_str) == Some(target)
+            || hat
+                .get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|name| name.eq_ignore_ascii_case(target))
+    });
+    let Some(hat) = matched else {
+        return format!("No hat named {target:?}.\n{list}\nStart a new IDE conversation to retry the first-interaction selection.");
+    };
+    let Some(hat_id) = hat.get("id").and_then(Value::as_str) else {
+        return "Den returned a hat without an ID.".to_string();
+    };
+    match bearwire::rpc_call(http, config, "session.hat.select", json!({
+        "bear_slug": config.bear, "session_id": session_id, "hat_id": hat_id,
+    })).await {
+        Ok(_) => format!("Wearing {} for this conversation. This choice cannot change after the first turn.",
+            hat.get("name").and_then(Value::as_str).unwrap_or(hat_id)),
+        Err(err) => format!("Could not choose that hat: {err:#}. Start a new IDE conversation if this one has already begun."),
+    }
+}
+
 async fn handle_local_slash_prompt(
     http: Option<&reqwest::Client>,
     config: Option<&Config>,
@@ -5490,6 +5597,7 @@ async fn handle_local_slash_prompt(
     response_id: Value,
     params: Value,
     command: LocalSlashCommand,
+    first_interaction: bool,
 ) -> Result<()> {
     let session_id = params
         .get("sessionId")
@@ -5506,6 +5614,13 @@ async fn handle_local_slash_prompt(
             debug_argument_from_prompt(&prompt),
         )
         .await
+    } else if command == LocalSlashCommand::Hat {
+        match (http, config) {
+            (Some(http), Some(config)) if bearwire::enabled() => {
+                hat_report(http, config, session_id, &prompt, first_interaction).await
+            }
+            _ => den_required_slash_command_unavailable(command),
+        }
     } else if command == LocalSlashCommand::Focus {
         focus_report(
             http,
@@ -5797,6 +5912,7 @@ enum LocalSlashCommand {
     Runtime,
     Status,
     Focus,
+    Hat,
     Version,
     Debug,
 }
@@ -5861,6 +5977,13 @@ const LOCAL_SLASH_COMMANDS: &[LocalSlashCommandDescriptor] = &[
         den_required: true,
     },
     LocalSlashCommandDescriptor {
+        name: "hat",
+        aliases: &[],
+        description: "List hats with /hat; choose with /hat <name or id> before the first turn.",
+        command: LocalSlashCommand::Hat,
+        den_required: true,
+    },
+    LocalSlashCommandDescriptor {
         name: "version",
         aliases: &[],
         description: "Show BEARS adapter version/build metadata plus optional Den version.",
@@ -5900,6 +6023,17 @@ fn local_slash_descriptor_for_command(
     LOCAL_SLASH_COMMANDS
         .iter()
         .find(|descriptor| descriptor.command == command)
+}
+
+fn reserve_first_acp_interaction(
+    prompted_sessions: &mut HashSet<String>,
+    session_id: &str,
+    prompt: Option<&str>,
+) -> bool {
+    if prompt.is_some_and(|text| text.trim() == "/hat") {
+        return !prompted_sessions.contains(session_id);
+    }
+    prompted_sessions.insert(session_id.to_string())
 }
 
 fn parse_local_slash_command(prompt: &str) -> Option<LocalSlashCommand> {
@@ -5956,6 +6090,9 @@ async fn handle_local_slash_command(
             status_report(http, config, adapter_state, shared_state, session_id).await
         }
         LocalSlashCommand::Focus => "Den ACP /focus usage: /focus [job_id]".to_string(),
+        LocalSlashCommand::Hat => {
+            "Use /hat <name or id> as the first interaction in a new IDE conversation.".to_string()
+        }
         LocalSlashCommand::Version => version_report(http, config).await,
         LocalSlashCommand::Debug => debug_report(shared_state, session_id, None).await,
     }
@@ -12339,6 +12476,21 @@ mod tests {
                     }
                 }
             }),
+            Some("hats.list") => json!({
+                "jsonrpc": "2.0", "id": id,
+                "result": {
+                    "ide_default_hat_id": "11111111-1111-1111-1111-111111111111",
+                    "selected_hat_id": "11111111-1111-1111-1111-111111111111",
+                    "hats": [
+                        {"id":"11111111-1111-1111-1111-111111111111", "name":"General IDE"},
+                        {"id":"22222222-2222-2222-2222-222222222222", "name":"Security review"}
+                    ]
+                }
+            }),
+            Some("session.hat.select") => json!({
+                "jsonrpc": "2.0", "id": id,
+                "result": {"ok": true, "hat_id": value.pointer("/params/hat_id")}
+            }),
             Some("session.state") => {
                 if let Some(session_id) =
                     value.pointer("/params/session_id").and_then(Value::as_str)
@@ -12607,6 +12759,7 @@ mod tests {
             approval_cache: ApprovalCache::default(),
             cancellation_tx,
             active_prompts: Arc::new(TokioMutex::new(HashMap::new())),
+            prompted_sessions: Arc::new(TokioMutex::new(HashSet::new())),
             projection_dispatcher: AcpProjectionDispatcher::default(),
             execution_diagnostics: execution_diagnostics::ExecutionDiagnosticStore::default(),
         }
@@ -13672,6 +13825,65 @@ mod tests {
         assert_eq!(
             parse_local_slash_command("/status"),
             Some(LocalSlashCommand::Status)
+        );
+    }
+
+    #[test]
+    fn hat_slash_reserves_the_first_productive_interaction() {
+        assert_eq!(
+            parse_local_slash_command("/hat Security review"),
+            Some(LocalSlashCommand::Hat)
+        );
+        assert!(local_slash_available_commands()
+            .iter()
+            .any(|command| command.name == "hat"));
+        let mut prompted = HashSet::new();
+        assert!(reserve_first_acp_interaction(
+            &mut prompted,
+            "session-one",
+            Some("/hat")
+        ));
+        assert!(
+            prompted.is_empty(),
+            "listing must not use the one selection opportunity"
+        );
+        assert!(reserve_first_acp_interaction(
+            &mut prompted,
+            "session-one",
+            Some("/hat Security review")
+        ));
+        assert!(!reserve_first_acp_interaction(
+            &mut prompted,
+            "session-one",
+            Some("/hat General IDE")
+        ));
+        assert!(reserve_first_acp_interaction(
+            &mut prompted,
+            "session-two",
+            Some("ordinary prompt")
+        ));
+        assert!(!reserve_first_acp_interaction(
+            &mut prompted,
+            "session-two",
+            Some("/hat Security review")
+        ));
+    }
+
+    #[tokio::test]
+    async fn hat_slash_selects_by_name_through_bearwire_once() {
+        let (api_url, _paths, methods) =
+            start_bearwire_test_server_with_events_and_methods(false, vec![]).await;
+        let config = test_config(api_url);
+        let http = reqwest::Client::new();
+        let listed = hat_report(&http, &config, "ide-test", "/hat", true).await;
+        assert!(listed.contains("Security review"));
+        let selected = hat_report(&http, &config, "ide-test", "/hat Security review", true).await;
+        assert!(selected.contains("Wearing Security review"), "{selected}");
+        let rejected = hat_report(&http, &config, "ide-test", "/hat General IDE", false).await;
+        assert!(rejected.contains("first interaction"));
+        assert_eq!(
+            methods.lock().await.as_slice(),
+            ["hats.list", "hats.list", "session.hat.select", "hats.list"]
         );
     }
 

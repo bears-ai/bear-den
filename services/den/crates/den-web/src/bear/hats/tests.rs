@@ -187,6 +187,40 @@ async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
     let (status, body, _) = request(&app, &admin_cookie, "GET", &detail, "").await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.contains("Security review"));
+    assert!(body.contains("None selected"));
+    assert!(body.contains("Make IDE default"));
+    assert_eq!(
+        hats::ide_default_hat(&pool, BearId::new(bear_id))
+            .await
+            .unwrap(),
+        None
+    );
+    let default_path = format!("{detail}/ide-default");
+    assert_eq!(
+        request(&app, &member_cookie, "POST", &default_path, "")
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        request(&app, &admin_cookie, "POST", &default_path, "")
+            .await
+            .0,
+        StatusCode::SEE_OTHER
+    );
+    assert_eq!(
+        hats::ide_default_hat(&pool, BearId::new(bear_id))
+            .await
+            .unwrap(),
+        Some(hat.id)
+    );
+    let (status, body, _) = request(&app, &admin_cookie, "GET", path, "").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.contains("IDE default</strong>"));
+    let (status, body, _) = request(&app, &admin_cookie, "GET", &detail, "").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.contains("IDE default for this Bear"));
+    assert!(body.contains("Security review</"));
     assert_eq!(
         request(
             &app,
@@ -272,6 +306,49 @@ async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
     )
     .await
     .unwrap();
+    bears_db::grant_membership(&pool, admin, other_bear_id, Some(BEAR_ROLE_ADMIN))
+        .await
+        .unwrap();
+    assert_eq!(
+        request(
+            &app,
+            &admin_cookie,
+            "POST",
+            &format!("/bear/hatotherui/hats/{}/ide-default", hat.id),
+            ""
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        hats::ide_default_hat(&pool, BearId::new(other_bear_id))
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        request(
+            &app,
+            &admin_cookie,
+            "POST",
+            &format!("/bear/hatadminui/hats/{}/ide-default", other_hat.id),
+            ""
+        )
+        .await
+        .0,
+        StatusCode::SEE_OTHER
+    );
+    assert_eq!(
+        hats::ide_default_hat(&pool, BearId::new(bear_id))
+            .await
+            .unwrap(),
+        Some(other_hat.id)
+    );
+    let (status, body, _) = request(&app, &admin_cookie, "GET", &detail, "").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.contains("Make IDE default"));
+    assert!(body.contains("Another"));
     assert_eq!(
         request(
             &app,

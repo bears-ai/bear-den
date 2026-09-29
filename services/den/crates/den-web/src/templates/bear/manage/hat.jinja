@@ -10,7 +10,10 @@
     <label>Purpose <textarea name="purpose" required rows="3">{{ hat.purpose | e }}</textarea></label>
     <button type="submit">Save description</button>
   </form>
-  <p class="form-hint">The hat limits the Bear's work; it does not grant authority. A conversation's hat cannot be changed after binding.</p>
+  <p class="form-hint">The hat limits the Bear's work; it does not grant authority. An IDE conversation can choose a different hat only before its first interaction; after that, its hat is fixed.</p>
+  <p><strong>IDE default for this Bear:</strong> {% if ide_default_hat_name %}{{ ide_default_hat_name | e }}{% else %}None selected{% endif %}</p>
+  {% if not is_ide_default %}<form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/ide-default"><button type="submit">Make IDE default</button></form>{% endif %}
+  <p class="form-hint">New IDE conversations wear the default before their first turn; existing conversations and Jobs are unchanged. /hat can choose another hat only as the first interaction.</p>
   <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/conversations">
     <button type="submit">Start a conversation wearing this hat</button>
   </form>

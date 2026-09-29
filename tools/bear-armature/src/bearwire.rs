@@ -3253,6 +3253,9 @@ mod tests {
             active_prompts: std::sync::Arc::new(tokio::sync::Mutex::new(
                 std::collections::HashMap::new(),
             )),
+            prompted_sessions: std::sync::Arc::new(tokio::sync::Mutex::new(
+                std::collections::HashSet::new(),
+            )),
             projection_dispatcher: crate::AcpProjectionDispatcher::default(),
             execution_diagnostics: crate::execution_diagnostics::ExecutionDiagnosticStore::default(
             ),
