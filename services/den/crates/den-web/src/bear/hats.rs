@@ -26,6 +26,7 @@ use crate::{
 };
 
 mod review;
+mod work_review;
 
 #[cfg(test)]
 mod tests;
@@ -33,6 +34,7 @@ mod tests;
 pub fn router() -> Router<AppState> {
     Router::new()
         .merge(review::router())
+        .merge(work_review::router())
         .route_with_tsr("/bear/{slug}/hats", get(index).post(create))
         .route_with_tsr("/bear/{slug}/hats/{hat_id}", get(detail).post(update))
         .route_with_tsr(
@@ -164,6 +166,17 @@ async fn detail(
         .find(|candidate| Some(candidate.id) == ide_default_hat_id)
         .map(|candidate| candidate.name);
     let granted = manage::allowed_surfaces(state.sqlx_pool(), bear_id, hat_id).await?;
+    let memory = state.memory_stores.store_for_bear(bear.id).await?;
+    let historical_hat_records = den_memory::hat_review::snapshot_for_hat(&memory, hat_id)
+        .await?
+        .total_records;
+    let work_reviews = hats::work_review::list_receipts(
+        state.sqlx_pool(),
+        bear_id,
+        hat_id,
+        UserId::new(session_user(&auth).await?.id),
+    )
+    .await?;
     let choices: Vec<SurfaceChoice> =
         work_surfaces::list_surfaces_for_bears(state.sqlx_pool(), &[bear.id])
             .await?
@@ -180,7 +193,7 @@ async fn detail(
         "bear/manage/hat.jinja",
         auth,
         context! {
-            hat, is_ide_default, ide_default_hat_name, choices, grant_count => granted.len(), message => query.message,
+            hat, is_ide_default, ide_default_hat_name, choices, grant_count => granted.len(), historical_hat_records, work_reviews, message => query.message,
             can_manage_bear => true, native_runtime => true,
             ..bear_nav_context(&bear, "hats"),
         },

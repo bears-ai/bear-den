@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT reviewed_by_user_id, record_count FROM bear_hat_work_reviews WHERE id = $1 AND bear_id = $2 AND hat_id = $3",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "reviewed_by_user_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "record_count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "ee7ca40b4539c137ba1bcdfd712f6c47fa64c184eba1d3c8afca6d4589860861"
+}

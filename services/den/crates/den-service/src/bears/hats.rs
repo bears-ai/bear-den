@@ -17,6 +17,7 @@ pub mod bindings;
 pub mod curation;
 pub mod manage;
 pub mod memory_binding;
+pub mod work_review;
 
 #[cfg(test)]
 mod tests;

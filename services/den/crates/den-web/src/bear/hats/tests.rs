@@ -502,6 +502,87 @@ async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
             .unwrap()
             .work_enabled
     );
+    let review_url = format!("{detail}/work-review");
+    let (status, page, _) = request(&app, &admin_cookie, "GET", &review_url, "").await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("curated hat knowledge"));
+    assert_eq!(
+        request(&app, &member_cookie, "GET", &review_url, "")
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    let snapshot = hats::work_review::snapshot_for_admin(
+        &pool,
+        &state.memory_stores,
+        BearId::new(bear_id),
+        hat.id,
+        UserId::new(admin),
+    )
+    .await
+    .unwrap();
+    let reviewed_sha = snapshot.sha256.unwrap();
+    let decision = format!(
+        "expected_sha256={}&expected_record_count={}&rationale=Reviewed+the+existing+knowledge+for+Work&confirm_work_audience=true",
+        reviewed_sha, snapshot.total_records,
+    );
+    assert_eq!(
+        request(&app, &member_cookie, "POST", &review_url, &decision)
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        request(
+            &app,
+            &admin_cookie,
+            "POST",
+            &review_url,
+            &decision.replace("&confirm_work_audience=true", "")
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        request(
+            &app,
+            &admin_cookie,
+            "POST",
+            &review_url,
+            &decision.replace(&reviewed_sha, &"0".repeat(64))
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        request(&app, &admin_cookie, "POST", &review_url, &decision)
+            .await
+            .0,
+        StatusCode::SEE_OTHER
+    );
+    assert!(
+        manage::get_hat(&pool, BearId::new(bear_id), hat.id)
+            .await
+            .unwrap()
+            .work_enabled
+    );
+    assert_eq!(
+        bindings::eligible_job_hat(&pool, BearId::new(bear_id), job_id)
+            .await
+            .unwrap(),
+        Some(hat.id)
+    );
+    let reviews = sqlx::query_scalar!(
+        "SELECT count(*) AS \"count!: i64\" FROM bear_hat_work_reviews WHERE bear_id = $1 AND hat_id = $2",
+        bear_id, hat.id.as_uuid(),
+    ).fetch_one(&pool).await.unwrap();
+    assert_eq!(reviews, 1);
+    let (status, history, _) = request(&app, &admin_cookie, "GET", &detail, "").await;
+    assert_eq!(status, StatusCode::OK, "{history}");
+    assert!(history.contains("Past Work memory reviews"));
+    assert!(history.contains("Reviewed the existing knowledge for Work"));
 }
 
 #[sqlx::test(migrations = "../../migrations")]

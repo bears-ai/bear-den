@@ -1,0 +1,47 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.id, r.record_count, r.rationale, r.reviewed_at, u.username AS \"reviewed_by!\"\n         FROM bear_hat_work_reviews r JOIN users u ON u.id = r.reviewed_by_user_id\n         WHERE r.bear_id = $1 AND r.hat_id = $2 ORDER BY r.reviewed_at DESC LIMIT 20",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "record_count",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "rationale",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "reviewed_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 4,
+        "name": "reviewed_by!",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "3e2babba531145d562c7e12587ecb807e3219582c41a02373887df55826bb634"
+}
