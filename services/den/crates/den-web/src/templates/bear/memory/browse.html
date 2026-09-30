@@ -8,7 +8,7 @@
 
 <div class="box">
   <h2>Memory library</h2>
-  <p class="form-hint">{% if can_manage_bear %}All recorded logical paths for admin inspection.{% else %}Curated shared and hat entries only; session notes are not shown until promoted.{% endif %} Each path links to its current entry; the count shows visible versions.</p>
+  <p class="form-hint">{% if can_manage_bear %}All recorded logical paths for admin inspection. Each path links to its current entry.{% else %}Curated Bear-wide and named-hat entries only; session notes are not shown until promoted. Each entry links to its current version.{% endif %} Counts show visible versions.</p>
 
   {% if delete_notice %}<p class="success">Deleted memory at {{ delete_notice }} path(s).</p>{% endif %}
   {% if review_notice %}<p class="success">Review requested; a memory proposal was created for curate.</p>{% endif %}
@@ -18,10 +18,10 @@
 {% if groups %}
 {% for group in groups %}
 <div class="box">
-  <h3><code>{{ group.label | e }}/</code></h3>
+  <h3>{% if can_manage_bear %}<code>{{ group.label | e }}/</code>{% else %}{{ group.label | e }}{% endif %}</h3>
   <table>
     <thead>
-      <tr>{% if can_manage_bear %}<th></th>{% endif %}<th>Path</th><th>Kind</th><th>Versions</th><th>Updated</th></tr>
+      <tr>{% if can_manage_bear %}<th></th>{% endif %}<th>{% if can_manage_bear %}Path{% else %}Entry{% endif %}</th><th>Kind</th><th>Versions</th><th>Updated</th></tr>
     </thead>
     <tbody>
       {% for p in group.paths %}
@@ -30,8 +30,8 @@
         <td><input type="checkbox" form="memory-delete-form" name="paths" value="{{ p.logical_path | e }}"></td>
         {% endif %}
         <td>
-          <a href="/bear/{{ bear.slug | e }}/memory/records/{{ p.head_memory_id | urlencode }}"><code>{{ p.logical_path | e }}</code></a>
-          <span class="form-hint">({{ p.scope_type | e }}{% if p.scope_profile %} / {{ p.scope_profile | e }}{% endif %})</span>
+          <a href="/bear/{{ bear.slug | e }}/memory/records/{{ p.head_memory_id | urlencode }}">{% if can_manage_bear %}<code>{{ p.logical_path | e }}</code>{% else %}{{ p.kind | e }}{% endif %}</a>
+          {% if can_manage_bear %}<span class="form-hint">({{ p.scope_type | e }}{% if p.scope_profile %} / {{ p.scope_profile | e }}{% endif %})</span>{% endif %}
         </td>
         <td>{{ p.kind | e }}</td>
         <td>{{ p.version_count }}</td>

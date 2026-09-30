@@ -270,7 +270,7 @@ pub async fn browse(
         let key = (
             row.logical_path.clone(),
             row.scope_type.clone(),
-            row.scope_hat_id,
+            row.scope_hat_id.clone(),
         );
         let (summary, has_head) = paths.entry(key).or_insert_with(|| {
             (
@@ -278,6 +278,11 @@ pub async fn browse(
                     logical_path: row.logical_path,
                     scope_type: row.scope_type,
                     scope_profile: row.scope_profile.clone(),
+                    scope_hat_id: row
+                        .scope_hat_id
+                        .as_deref()
+                        .and_then(|id| uuid::Uuid::parse_str(id).ok())
+                        .map(den_core::ids::HatId::new),
                     kind: row.kind.clone(),
                     head_memory_id: row.memory_id.clone(),
                     head_created_at: row.created_at.clone(),

@@ -337,6 +337,9 @@ async fn memory_routes_enforce_curated_member_and_admin_inspection_boundaries() 
     assert_eq!(status, StatusCode::OK, "{body}");
 
     assert_ids(&body, &curated, &raw);
+    assert!(body.contains("Hat: Memory route hat"), "{body}");
+    assert!(body.contains("Bear-wide"), "{body}");
+    assert!(!body.contains("core/pretend-core.md"), "{body}");
     assert!(!body.contains("route-source"));
     assert!(!body.contains("route-legacy"));
 

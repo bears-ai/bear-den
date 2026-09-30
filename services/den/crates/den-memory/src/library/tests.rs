@@ -113,6 +113,23 @@ async fn library_grants_only_shared_and_bound_hats_even_for_guessed_ids_and_coll
         .find(|s| s.head_memory_id == hat_a_second.memory_id)
         .unwrap();
     assert_eq!(a_summary.version_count, 2);
+    assert_eq!(a_summary.scope_hat_id, Some(a));
+    assert_eq!(
+        summaries
+            .iter()
+            .find(|s| s.head_memory_id == hat_b.memory_id)
+            .unwrap()
+            .scope_hat_id,
+        Some(b)
+    );
+    assert_eq!(
+        summaries
+            .iter()
+            .find(|s| s.head_memory_id == shared.memory_id)
+            .unwrap()
+            .scope_hat_id,
+        None
+    );
     assert_eq!(summaries.iter().filter(|s| s.version_count == 1).count(), 2);
     assert_eq!(
         summaries.iter().filter(|s| s.scope_type == "hat").count(),

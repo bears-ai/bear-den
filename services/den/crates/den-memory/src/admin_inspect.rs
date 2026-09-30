@@ -6,7 +6,7 @@ use serde::Serialize;
 use sqlx::Row;
 use uuid::Uuid;
 
-use den_core::{config::Config, DenError};
+use den_core::{config::Config, ids::HatId, DenError};
 
 use crate::{
     list_memory_proposals, memory_sequence_high_water,
@@ -321,6 +321,7 @@ pub struct PathSummary {
     pub logical_path: String,
     pub scope_type: String,
     pub scope_profile: Option<String>,
+    pub scope_hat_id: Option<HatId>,
     pub kind: String,
     pub head_memory_id: String,
     pub head_created_at: String,
@@ -334,7 +335,7 @@ pub async fn list_path_summaries(
     let store = manager.store_for_bear(bear_id).await?;
     let rows = sqlx::query(
         r"
-        SELECT m.logical_path, m.scope_type, m.scope_profile, m.kind,
+        SELECT m.logical_path, m.scope_type, m.scope_profile, m.scope_hat_id, m.kind,
                m.memory_id AS head_memory_id, m.created_at AS head_created_at,
                agg.version_count
         FROM memory_records m
@@ -360,6 +361,12 @@ pub async fn list_path_summaries(
                 logical_path: row.try_get("logical_path").ok()?,
                 scope_type: row.try_get("scope_type").ok()?,
                 scope_profile: row.try_get("scope_profile").ok(),
+                scope_hat_id: row
+                    .try_get::<Option<String>, _>("scope_hat_id")
+                    .ok()
+                    .flatten()
+                    .and_then(|id| Uuid::parse_str(&id).ok())
+                    .map(HatId::new),
                 kind: row.try_get("kind").ok()?,
                 head_memory_id: row.try_get("head_memory_id").ok()?,
                 head_created_at: row.try_get("head_created_at").ok()?,

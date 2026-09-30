@@ -2292,11 +2292,33 @@ async fn browse_view(
     let manager = state.memory_stores.clone();
     let viewer = MemoryLibraryViewer::resolve(&state, bear.id, can_manage_bear).await?;
     let summaries = viewer.browse(&manager, bear.id).await?;
+    let hat_names: HashMap<HatId, String> = if can_manage_bear {
+        HashMap::new()
+    } else {
+        hats::list_hats(state.sqlx_pool(), BearId::new(bear.id))
+            .await?
+            .into_iter()
+            .map(|hat| (hat.id, hat.name))
+            .collect()
+    };
 
-    // Group by first path segment, preserving a stable, meaningful order.
+    // Admin inspection groups by path; member presentation uses canonical scope.
     let mut groups: Vec<PathGroup> = Vec::new();
     for summary in summaries {
-        let label = path_group_label(&summary.logical_path);
+        let label = if can_manage_bear {
+            path_group_label(&summary.logical_path)
+        } else {
+            match store::MemoryScopeType::parse(&summary.scope_type) {
+                Some(store::MemoryScopeType::Shared) => "Bear-wide".to_string(),
+                Some(store::MemoryScopeType::Hat) => {
+                    let Some(name) = summary.scope_hat_id.and_then(|id| hat_names.get(&id)) else {
+                        continue;
+                    };
+                    format!("Hat: {name}")
+                }
+                _ => continue,
+            }
+        };
         if let Some(group) = groups.iter_mut().find(|g| g.label == label) {
             group.paths.push(summary);
         } else {
@@ -2332,7 +2354,7 @@ async fn browse_view(
 /// Canonical-first ordering for the browse groups (`core` shared memory before role branches).
 fn group_rank(label: &str) -> usize {
     match label {
-        "core" => 0,
+        "core" | "Bear-wide" => 0,
         "pair" => 1,
         "work" => 2,
         "curate" => 3,
