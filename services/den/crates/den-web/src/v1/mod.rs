@@ -267,7 +267,7 @@ pub struct ChatModelResponse {
 /// `None` / empty / `default` → agent main conversation. Existing runtime conversations use
 /// interactive `conv-...` or BearWire/headless `den-conv-...` ids. The web UI may also send a
 /// temporary `new-...` placeholder before Den resolves the durable conversation id.
-fn normalize_client_conversation_id(raw: Option<&str>) -> Result<String, CustomError> {
+pub(crate) fn normalize_client_conversation_id(raw: Option<&str>) -> Result<String, CustomError> {
     let s = raw
         .map(str::trim)
         .filter(|s| !s.is_empty())

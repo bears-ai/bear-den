@@ -30,7 +30,7 @@ use crate::{
 };
 
 use super::settings::{bear_nav_context, load_session_bear, session_user};
-use den_core::ids::{BearId, HatId};
+use den_core::ids::{BearId, HatId, UserId};
 use den_memory::library::{self, CuratedMemoryGrant};
 use den_memory::{
     self as store, bear_memory_admin_stats, count_memory_proposals, count_records_by_kind,
@@ -43,6 +43,7 @@ use den_memory::{
     PathSummary, SqliteMemoryProposal,
 };
 use den_service::bears::{db as bears_db, hats, BearProfile};
+use den_service::conversation::viewer::ConversationViewer;
 use den_service::recall::{
     query::{retain_curated_candidates, search_curated_library},
     registry as recall_registry, semantic_search_for_bear,
@@ -1903,6 +1904,64 @@ async fn import_staged_bundle(
     Ok(report)
 }
 
+#[derive(Serialize)]
+struct OwnNotePreview {
+    kind: String,
+    snippet: String,
+    created_at: String,
+    conversation_title: String,
+    chat_id: Option<String>,
+}
+
+async fn own_note_preview(
+    state: &AppState,
+    bear_id: Uuid,
+    user_id: i32,
+) -> Result<Vec<OwnNotePreview>, CustomError> {
+    let viewer = ConversationViewer::resolve(
+        state.sqlx_pool(),
+        BearId::new(bear_id),
+        UserId::new(user_id),
+    )
+    .await?
+    .ok_or_else(|| {
+        CustomError::Authorization("Bear membership is required to read notes".into())
+    })?;
+    let sources = viewer.recent_own_note_sources(state.sqlx_pool()).await?;
+    let ids: Vec<Uuid> = sources.iter().map(|source| source.id).collect();
+    let notes = den_memory::scoped::recent_own_conversation_notes(
+        &state.memory_stores.store_for_bear(bear_id).await?,
+        &ids,
+        8,
+    )
+    .await?;
+    let sources: HashMap<Uuid, _> = sources
+        .into_iter()
+        .map(|source| (source.id, source))
+        .collect();
+    Ok(notes
+        .into_iter()
+        .filter_map(|note| {
+            let source = sources.get(&note.conversation_id)?;
+            let chat_id = source.external_conversation_id.as_deref().and_then(|id| {
+                let normalized = crate::v1::normalize_client_conversation_id(Some(id)).ok()?;
+                (normalized != "default" && !normalized.starts_with("new-")).then_some(normalized)
+            });
+            Some(OwnNotePreview {
+                kind: note.kind,
+                snippet: note.content_text.chars().take(240).collect(),
+                created_at: note.created_at,
+                conversation_title: source
+                    .title
+                    .clone()
+                    .filter(|title| !title.trim().is_empty())
+                    .unwrap_or_else(|| "Untitled conversation".into()),
+                chat_id,
+            })
+        })
+        .collect())
+}
+
 async fn dashboard_view(
     Path(slug): Path<String>,
     Query(query): Query<DashboardQuery>,
@@ -1914,6 +1973,8 @@ async fn dashboard_view(
         Err(r) => return Ok(r.into_response()),
     };
     let id = bear.id;
+    let user_id = session_user(&auth_session).await?.id;
+    let own_notes = own_note_preview(&state, id, user_id).await?;
     let viewer = MemoryLibraryViewer::resolve(&state, id, can_manage_bear).await?;
     let config = state.config.as_ref();
     let manager = state.memory_stores.clone();
@@ -1934,6 +1995,7 @@ async fn dashboard_view(
             auth_session,
             context! {
                 recent,
+                own_notes,
                 head_count,
                 can_manage_bear,
                 native_runtime => true,
@@ -2039,6 +2101,7 @@ async fn dashboard_view(
         auth_session,
         context! {
             stats,
+            own_notes,
             head_count,
             by_kind,
             by_profile,

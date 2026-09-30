@@ -11,6 +11,14 @@ use crate::bears::db::{membership_role_for_user, role_is_bear_admin};
 
 use super::persistence::{ConversationRecord, ConversationRow};
 
+/// A bounded set of canonical conversations whose private source notes belong to this human.
+#[derive(Debug, Clone)]
+pub struct OwnedNoteSource {
+    pub id: Uuid,
+    pub external_conversation_id: Option<String>,
+    pub title: Option<String>,
+}
+
 /// Resolve only after the caller has authenticated the human user ID.
 /// A cached viewer cannot grant access after membership or admin role is removed:
 /// every read also checks the current `user_bear` row in its SQL predicate.
@@ -99,6 +107,35 @@ impl ConversationViewer {
         .fetch_one(pool)
         .await?;
         Ok(allowed)
+    }
+
+    /// This is narrower than transcript visibility: even Bear admins cannot use
+    /// their inspection rights to browse another human's private notes here.
+    pub async fn recent_own_note_sources(
+        &self,
+        pool: &PgPool,
+    ) -> Result<Vec<OwnedNoteSource>, DenError> {
+        let rows = sqlx::query!(
+            r#"SELECT c.id, c.external_conversation_id, c.current_title
+               FROM conversations c
+               JOIN user_bear ub ON ub.bear_id = c.bear_id AND ub.user_id = $2
+               WHERE c.bear_id = $1 AND c.created_by_user_id = $2
+                 AND c.status = 'active' AND c.hat_id IS NOT NULL
+               ORDER BY c.updated_at DESC, c.id DESC
+               LIMIT 200"#,
+            self.bear_id.as_uuid(),
+            self.user_id.get(),
+        )
+        .fetch_all(pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| OwnedNoteSource {
+                id: row.id,
+                external_conversation_id: row.external_conversation_id,
+                title: row.current_title,
+            })
+            .collect())
     }
 
     pub async fn list_visible(

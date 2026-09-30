@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 
 use den_core::{ids::HatId, DenError};
 use sqlx::{QueryBuilder, Sqlite};
+use uuid::Uuid;
 
 use crate::{
     access::{record_visible, AccessContext},
@@ -105,6 +106,77 @@ pub async fn read_path(
         }
     }
     Ok(visible)
+}
+
+#[derive(Debug, Clone)]
+pub struct OwnConversationNote {
+    pub conversation_id: Uuid,
+    pub memory_id: String,
+    pub kind: String,
+    pub content_text: String,
+    pub created_at: String,
+}
+
+/// Dashboard preview for a bounded set of *Postgres-verified* owned conversation IDs.
+/// No path or hat-name matching confers source authority. The empty access context
+/// excludes all access-bearing notes before LIMIT, so denied rows cannot starve
+/// the visible preview.
+pub async fn recent_own_conversation_notes(
+    store: &BearMemoryStore,
+    owned_conversation_ids: &[Uuid],
+    limit: i64,
+) -> Result<Vec<OwnConversationNote>, DenError> {
+    if owned_conversation_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    if owned_conversation_ids.len() > 200 {
+        return Err(DenError::ValidationError(
+            "too many owned note sources".into(),
+        ));
+    }
+    // sqlx-dynamic: the verified ID list is serialized as one bound JSON array;
+    // json_each is used only for membership, never as an authorization source.
+    let ids = serde_json::to_string(owned_conversation_ids)
+        .map_err(|err| DenError::System(format!("encode owned note sources: {err}")))?;
+    let rows = sqlx::query_as::<_, (String, String, String, String, String)>(
+        "SELECT m.scope_source_id, m.memory_id, m.kind, m.content_text, m.created_at
+         FROM memory_records m
+         WHERE m.bear_id = ? AND m.scope_type = 'source_local'
+           AND m.scope_source_kind = 'conversation'
+           AND m.scope_source_id IN (SELECT value FROM json_each(?))
+           AND m.visibility = 'normal' AND m.invalid_at IS NULL
+           AND COALESCE(json_extract(m.metadata_json, '$.lifecycle.status'), 'active')
+               NOT IN ('archived', 'archive-candidate')
+           AND NOT EXISTS (
+               SELECT 1 FROM memory_records newer WHERE newer.bear_id = m.bear_id
+                 AND newer.supersedes_memory_id = m.memory_id
+           )
+           AND NOT EXISTS (
+               SELECT 1 FROM memory_access_rules rules
+               WHERE rules.bear_id = m.bear_id AND rules.src_memory_id = m.memory_id
+                                AND rules.state = 'active'
+           )
+         ORDER BY m.sequence_no DESC, m.memory_id DESC LIMIT ?",
+    )
+    .bind(store.bear_id().to_string())
+    .bind(ids)
+    .bind(limit.clamp(1, 8))
+    .fetch_all(store.pool())
+    .await
+    .map_err(|err| DenError::System(format!("owned conversation notes read failed: {err}")))?;
+    rows.into_iter()
+        .map(|(source_id, memory_id, kind, content_text, created_at)| {
+            Ok(OwnConversationNote {
+                conversation_id: Uuid::parse_str(&source_id).map_err(|err| {
+                    DenError::System(format!("decode canonical note source: {err}"))
+                })?,
+                memory_id,
+                kind,
+                content_text,
+                created_at,
+            })
+        })
+        .collect()
 }
 
 /// Newest current notes from this verified source only, for its human owner.

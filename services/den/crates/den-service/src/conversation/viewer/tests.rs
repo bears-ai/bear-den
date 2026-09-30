@@ -209,6 +209,72 @@ async fn list_filters_before_limit_and_rechecks_membership(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn private_note_sources_require_active_hat_owner_and_current_membership(pool: PgPool) {
+    let (bear, _, one, two, admin) = setup(&pool).await;
+    let hat = crate::bears::hats::create_hat(&pool, bear, admin, "Notes", "Test owner-only notes")
+        .await
+        .unwrap();
+    let own = ensure(&pool, bear, Some(one), "conv-own", "session-a").await;
+    let other = ensure(&pool, bear, Some(two), "conv-other", "session-b").await;
+    let admin_own = ensure(&pool, bear, Some(admin), "conv-admin", "session-c").await;
+    let ownerless = ensure(&pool, bear, None, "conv-ownerless", "session-d").await;
+    let archived = ensure(&pool, bear, Some(one), "conv-archived", "session-e").await;
+    let legacy = ensure(&pool, bear, Some(one), "conv-legacy", "session-f").await;
+    for id in [own, other, admin_own, ownerless, archived] {
+        crate::bears::hats::bindings::bind_conversation_hat(&pool, bear, id, hat.id)
+            .await
+            .unwrap();
+    }
+    sqlx::query!(
+        "UPDATE conversations SET status = 'archived' WHERE id = $1",
+        archived
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let first = ConversationViewer::resolve(&pool, bear, one)
+        .await
+        .unwrap()
+        .unwrap();
+    let administrator = ConversationViewer::resolve(&pool, bear, admin)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        first
+            .recent_own_note_sources(&pool)
+            .await
+            .unwrap()
+            .iter()
+            .map(|s| s.id)
+            .collect::<Vec<_>>(),
+        vec![own]
+    );
+    assert_eq!(
+        administrator
+            .recent_own_note_sources(&pool)
+            .await
+            .unwrap()
+            .iter()
+            .map(|s| s.id)
+            .collect::<Vec<_>>(),
+        vec![admin_own]
+    );
+    assert!(administrator.may_access_id(&pool, other).await.unwrap());
+    assert!(administrator.may_access_id(&pool, ownerless).await.unwrap());
+    assert!(!first.may_read_own_source(&pool, archived).await.unwrap());
+    assert!(first.may_read_own_source(&pool, legacy).await.unwrap());
+    revoke_membership(&pool, one.get(), bear.as_uuid())
+        .await
+        .unwrap();
+    assert!(first
+        .recent_own_note_sources(&pool)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn ensure_conflict_never_transfers_ownership(pool: PgPool) {
     let (bear, _, one, two, admin) = setup(&pool).await;
     let original = ensure(&pool, bear, Some(one), "same-external", "session-one").await;

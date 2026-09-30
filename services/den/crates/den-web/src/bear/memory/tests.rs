@@ -441,6 +441,150 @@ async fn memory_routes_enforce_curated_member_and_admin_inspection_boundaries() 
     }
 }
 
+#[tokio::test]
+async fn dashboard_separates_own_notes_from_shared_library_for_members_and_admins() {
+    let _guard = TEST_DB_LOCK.lock().await;
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let sqlite_dir = TestSqliteDir::new();
+    let slug = format!("own-notes-{}", Uuid::new_v4());
+    let bear_id = bears_db::create_bear(
+        &pool,
+        bears_db::BearParams {
+            slug: &slug,
+            name: "Own Notes Bear",
+            description: "",
+            system_prompt: "",
+            default_model: None,
+            tools_enabled: None::<sqlx::types::Json<serde_json::Value>>,
+            context_profile: None,
+        },
+    )
+    .await
+    .unwrap();
+    let owner = seed_user(&pool, bear_id, bears_db::BEAR_ROLE_MEMBER).await;
+    let other = seed_user(&pool, bear_id, bears_db::BEAR_ROLE_MEMBER).await;
+    let admin = seed_user(&pool, bear_id, bears_db::BEAR_ROLE_ADMIN).await;
+    let hat = hats::create_hat(
+        &pool,
+        BearId::new(bear_id),
+        UserId::new(admin),
+        "Note hat",
+        "Private notes",
+    )
+    .await
+    .unwrap();
+    let mut conversations = Vec::new();
+    for (creator, name) in [
+        (Some(owner), "owner-one"),
+        (Some(owner), "owner-two"),
+        (Some(other), "other-owner"),
+        (None, "ownerless"),
+        (Some(admin), "admin-own"),
+    ] {
+        let external = format!("conv-{}", Uuid::new_v4().simple());
+        let row = den_service::conversation::persistence::ensure_conversation_for_external_id(
+            &pool, bear_id, creator, &external, None, None,
+        )
+        .await
+        .unwrap();
+        hats::bindings::bind_conversation_hat(&pool, BearId::new(bear_id), row.id, hat.id)
+            .await
+            .unwrap();
+        conversations.push((name, row.id, external));
+    }
+    let (app, manager) = test_app(pool.clone(), &sqlite_dir).await;
+    let store = manager.store_for_bear(bear_id).await.unwrap();
+    let mut notes = Vec::new();
+    for (label, id, _) in &conversations {
+        let note = add_record(
+            &store,
+            &LogicalMemoryPath::source_local(MemorySource::Conversation(*id), label),
+            &format!("secret-{label}"),
+        )
+        .await;
+        notes.push(note);
+    }
+    let legacy = add_record(
+        &store,
+        &LogicalMemoryPath::profile_local("pair", "legacy"),
+        "secret-legacy",
+    )
+    .await;
+    sqlx::query("UPDATE memory_records SET logical_path = ? WHERE memory_id = ?")
+        .bind(&notes[0].logical_path)
+        .bind(&legacy.memory_id)
+        .execute(store.pool())
+        .await
+        .unwrap();
+    let (status, member_body) = get_page(
+        &app,
+        &login_cookie(&app, owner).await,
+        &format!("/bear/{slug}/memory"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{member_body}");
+    assert!(member_body.contains("Your conversation notes"));
+    for label in ["secret-owner-one", "secret-owner-two"] {
+        assert!(member_body.contains(label));
+    }
+    for label in [
+        "secret-other-owner",
+        "secret-ownerless",
+        "secret-admin-own",
+        "secret-legacy",
+    ] {
+        assert!(!member_body.contains(label), "private note leaked: {label}");
+    }
+    assert!(member_body.contains(&format!("conversation_id={}", conversations[0].2)));
+    let (status, other_body) = get_page(
+        &app,
+        &login_cookie(&app, other).await,
+        &format!("/bear/{slug}/memory"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{other_body}");
+    assert!(other_body.contains("secret-other-owner"));
+    for label in [
+        "secret-owner-one",
+        "secret-owner-two",
+        "secret-ownerless",
+        "secret-admin-own",
+    ] {
+        assert!(!other_body.contains(label), "private note leaked: {label}");
+    }
+    let (status, admin_body) = get_page(
+        &app,
+        &login_cookie(&app, admin).await,
+        &format!("/bear/{slug}/memory"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{admin_body}");
+    let own_section = admin_body
+        .split("Your conversation notes")
+        .nth(1)
+        .unwrap()
+        .split("Review queue")
+        .next()
+        .unwrap();
+    assert!(own_section.contains("secret-admin-own"));
+    assert!(!own_section.contains("secret-owner-one"));
+    assert!(!own_section.contains("secret-other-owner"));
+    let (status, feed) = get_page(
+        &app,
+        &login_cookie(&app, owner).await,
+        &format!("/bear/{slug}/memory/recent"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{feed}");
+    assert_ids(
+        &feed,
+        &[],
+        &[&notes[0], &notes[1], &notes[2], &notes[3], &notes[4]],
+    );
+}
+
 /// Axum panics on path conflicts at merge time. Merging the memory router alongside the
 /// settings and management routers guards against regressions like the old
 /// `/memory/browse` redirect colliding with the real browse page.
@@ -463,6 +607,7 @@ fn memory_templates_compile() {
         "bear/memory/_memory_nav.html",
         "bear/memory/dashboard.html",
         "bear/memory/member_dashboard.html",
+        "bear/memory/_own_notes.html",
         "bear/memory/member_record.html",
         "bear/memory/recent.html",
         "bear/memory/search.html",

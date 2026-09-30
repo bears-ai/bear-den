@@ -1,0 +1,18 @@
+<div class="box">
+  <h3>Your conversation notes</h3>
+  <p class="form-hint">Private to their conversations until reviewed for sharing. Showing up to 8 recent notes from your 200 most recently updated active hat conversations. These are not in the shared library.</p>
+  {% if own_notes %}
+  <ul>
+    {% for note in own_notes %}
+    <li>
+      <strong>{{ note.conversation_title | e }}</strong>
+      <span class="form-hint">· {{ note.kind | e }} · {{ note.created_at | e }}</span><br>
+      <span>{{ note.snippet | e }}{% if note.snippet | length == 240 %}…{% endif %}</span>
+      {% if note.chat_id %}<br><a href="/bear/{{ bear.slug | urlencode }}?conversation_id={{ note.chat_id | urlencode }}">Open conversation →</a>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="form-hint">No private notes in your recent conversations.</p>
+  {% endif %}
+</div>

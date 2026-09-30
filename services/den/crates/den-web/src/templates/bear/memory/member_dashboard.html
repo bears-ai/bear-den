@@ -5,7 +5,7 @@
 {% include "bear/memory/_memory_nav.html" %}
 <div class="box">
   <h2>Shared memory</h2>
-  <p class="form-hint">Browse what this Bear has kept in its shared memory and hats. Notes from individual sessions are not part of this library until they are reviewed and promoted.</p>
+  <p class="form-hint">Browse what this Bear has kept in its shared memory and hats. Your private conversation notes appear separately below; they are not part of this library until reviewed and promoted.</p>
   <p><strong>{{ head_count }}</strong> current {{ head_count == 1 and "entry" or "entries" }}. <a href="/bear/{{ bear.slug | e }}/memory/browse">Browse the library →</a></p>
 </div>
 <div class="box">
@@ -21,4 +21,5 @@
   <p class="form-hint">No shared entries yet.</p>
   {% endif %}
 </div>
+{% include "bear/memory/_own_notes.html" %}
 {% endblock %}

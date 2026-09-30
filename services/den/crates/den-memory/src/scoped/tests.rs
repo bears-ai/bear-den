@@ -130,6 +130,130 @@ async fn recent_source_is_source_only_even_with_newer_curated_or_colliding_rows(
 }
 
 #[tokio::test]
+async fn owned_note_preview_filters_scope_lifecycle_and_access_before_limit() {
+    let store = new_test_store().await;
+    let own = Uuid::new_v4();
+    let another = Uuid::new_v4();
+    let foreign = Uuid::new_v4();
+    let add = |source: Uuid, label: &str| {
+        let path = LogicalMemoryPath::source_local(MemorySource::Conversation(source), label);
+        (path, label.to_string())
+    };
+    let (path, label) = add(own, "visible-first");
+    let first = append_memory_record(&store, &path, "note", "pair", None, &label, &json!({}))
+        .await
+        .unwrap();
+    let (path, label) = add(another, "visible-second");
+    let second = append_memory_record(&store, &path, "note", "pair", None, &label, &json!({}))
+        .await
+        .unwrap();
+    for index in 0..12 {
+        let (path, label) = add(foreign, &format!("foreign-{index}"));
+        append_memory_record(&store, &path, "note", "pair", None, &label, &json!({}))
+            .await
+            .unwrap();
+    }
+    for (label, metadata, visibility) in [
+        (
+            "archived",
+            json!({"lifecycle": {"status": "archived"}}),
+            "normal",
+        ),
+        (
+            "candidate",
+            json!({"lifecycle": {"status": "archive-candidate"}}),
+            "normal",
+        ),
+        ("hidden", json!({}), "hidden"),
+    ] {
+        let (path, _) = add(own, label);
+        store
+            .append_record(&path, "note", "pair", None, label, &metadata, visibility)
+            .await
+            .unwrap();
+    }
+    let (path, _) = add(own, "restricted");
+    let restricted = append_memory_record(
+        &store,
+        &path,
+        "note",
+        "pair",
+        None,
+        "restricted",
+        &json!({}),
+    )
+    .await
+    .unwrap();
+    // A rule must exclude the row even without an access context.
+    sqlx::query("INSERT INTO memory_access_rules (link_id, bear_id, sequence_no, src_memory_id, relation, entity_id, author_profile, created_at) VALUES (?, ?, ?, ?, 'confined_to', ?, 'curate', '2026-01-01T00:00:00Z')")
+        .bind(Uuid::new_v4().to_string())
+        .bind(store.bear_id().to_string())
+        .bind(store.next_sequence().await.unwrap())
+        .bind(&restricted.memory_id)
+        .bind(Uuid::new_v4().to_string())
+        .execute(store.pool()).await.unwrap();
+    let (path, _) = add(own, "superseded");
+    let superseded = append_memory_record(&store, &path, "note", "pair", None, "old", &json!({}))
+        .await
+        .unwrap();
+    let replacement = append_memory_record(
+        &store,
+        &path,
+        "note",
+        "pair",
+        None,
+        "replacement",
+        &json!({}),
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE memory_records SET supersedes_memory_id = ? WHERE memory_id = ?")
+        .bind(&superseded.memory_id)
+        .bind(&replacement.memory_id)
+        .execute(store.pool())
+        .await
+        .unwrap();
+    let collision = append_memory_record(
+        &store,
+        &LogicalMemoryPath::profile_local("pair", "not-a-source"),
+        "note",
+        "pair",
+        None,
+        "colliding path",
+        &json!({}),
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE memory_records SET logical_path = ? WHERE memory_id = ?")
+        .bind(first.logical_path.as_ref().unwrap())
+        .bind(&collision.memory_id)
+        .execute(store.pool())
+        .await
+        .unwrap();
+    let notes = recent_own_conversation_notes(&store, &[own, another], 8)
+        .await
+        .unwrap();
+    let ids: Vec<_> = notes.iter().map(|note| note.memory_id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec![
+            replacement.memory_id.as_str(),
+            second.memory_id.as_str(),
+            first.memory_id.as_str()
+        ]
+    );
+    assert_eq!(notes[0].conversation_id, own);
+    assert_eq!(notes[1].conversation_id, another);
+    assert!(recent_own_conversation_notes(&store, &[], 8)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(recent_own_conversation_notes(&store, &vec![own; 201], 8)
+        .await
+        .is_err());
+}
+
+#[tokio::test]
 async fn path_collision_cannot_read_legacy_record_through_visible_scope() {
     let store = new_test_store().await;
     let source = MemorySource::Conversation(Uuid::new_v4());
