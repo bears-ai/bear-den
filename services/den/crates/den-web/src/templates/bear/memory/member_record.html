@@ -6,7 +6,7 @@
 <div class="box">
   <h2>Shared memory entry</h2>
   <p><a href="/bear/{{ bear.slug | e }}/memory/browse">← Back to library</a></p>
-  <p><code>{{ record.logical_path or record.memory_id | e }}</code> · {{ record.scope_type | e }} · {{ record.kind | e }} · {{ record.created_at | e }}</p>
+  <p>{{ scope_label | e }} · {{ record.kind | e }} · {{ record.created_at | e }}</p>
   <pre style="white-space: pre-wrap; max-height: 32rem; overflow: auto;">{{ record.content_text | e }}</pre>
 </div>
 {% if history %}

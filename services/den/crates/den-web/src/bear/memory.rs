@@ -16,8 +16,9 @@ use bearwire_protocol::wire::BearWireEvent;
 use minijinja::context;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sqlx::Row;
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
     path::{Path as FsPath, PathBuf},
 };
 use time::{Duration, OffsetDateTime};
@@ -29,7 +30,7 @@ use crate::{
 };
 
 use super::settings::{bear_nav_context, load_session_bear, session_user};
-use den_core::ids::BearId;
+use den_core::ids::{BearId, HatId};
 use den_memory::library::{self, CuratedMemoryGrant};
 use den_memory::{
     self as store, bear_memory_admin_stats, count_memory_proposals, count_records_by_kind,
@@ -1575,6 +1576,67 @@ async fn count_dashboard_proposals(
     postgres_count + sqlite_count
 }
 
+// Labels are presentation only. Read the stored scope columns, not a logical path or
+// vector payload; the member library has already authorized each displayed ID.
+async fn member_scope_labels(
+    state: &AppState,
+    bear_id: Uuid,
+    memory_ids: &[String],
+) -> Result<HashMap<String, String>, CustomError> {
+    if memory_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let names: HashMap<_, _> = hats::list_hats(state.sqlx_pool(), BearId::new(bear_id))
+        .await?
+        .into_iter()
+        .map(|hat| (hat.id, hat.name))
+        .collect();
+    let store = state.memory_stores.store_for_bear(bear_id).await?;
+    let ids = serde_json::to_string(memory_ids)
+        .map_err(|err| CustomError::System(format!("serialize memory IDs: {err}")))?;
+    let rows = sqlx::query(
+        "SELECT memory_id, scope_type, scope_hat_id FROM memory_records
+         WHERE bear_id = ? AND memory_id IN (SELECT value FROM json_each(?))",
+    )
+    .bind(bear_id.to_string())
+    .bind(ids)
+    .fetch_all(store.pool())
+    .await?;
+    let mut labels = HashMap::new();
+    for row in rows {
+        let memory_id: String = row.try_get("memory_id")?;
+        let scope: String = row.try_get("scope_type")?;
+        let label = match store::MemoryScopeType::parse(&scope) {
+            Some(store::MemoryScopeType::Shared) => Some("Bear-wide".to_string()),
+            Some(store::MemoryScopeType::Hat) => {
+                let id: Option<String> = row.try_get("scope_hat_id")?;
+                id.and_then(|id| Uuid::parse_str(&id).ok())
+                    .and_then(|id| names.get(&HatId::new(id)))
+                    .map(|name| format!("Hat: {name}"))
+            }
+            _ => None,
+        };
+        if let Some(label) = label {
+            labels.insert(memory_id, label);
+        }
+    }
+    Ok(labels)
+}
+
+async fn label_member_items(
+    state: &AppState,
+    bear_id: Uuid,
+    items: &mut Vec<RecordListItem>,
+) -> Result<(), CustomError> {
+    let ids: Vec<_> = items.iter().map(|item| item.memory_id.clone()).collect();
+    let labels = member_scope_labels(state, bear_id, &ids).await?;
+    items.retain(|item| labels.contains_key(&item.memory_id));
+    for item in items {
+        item.scope_label = labels[&item.memory_id].clone();
+    }
+    Ok(())
+}
+
 fn record_list_item(row: MemoryRecordRow, score: Option<f32>) -> RecordListItem {
     RecordListItem {
         scope_label: scope_label(row.scope_type, row.scope_profile.as_deref()),
@@ -1857,12 +1919,13 @@ async fn dashboard_view(
     let manager = state.memory_stores.clone();
 
     if let MemoryLibraryViewer::Curated(ref grant) = viewer {
-        let recent: Vec<_> = viewer
+        let mut recent: Vec<_> = viewer
             .recent(&manager, id, 8)
             .await?
             .into_iter()
             .map(|r| record_list_item(r, None))
             .collect();
+        label_member_items(&state, id, &mut recent).await?;
         let head_count =
             library::count_current_entries(&manager.store_for_bear(id).await?, grant).await?;
         return web::render_template(
@@ -2047,12 +2110,15 @@ async fn recent_view(
     };
     let manager = state.memory_stores.clone();
     let viewer = MemoryLibraryViewer::resolve(&state, bear.id, can_manage_bear).await?;
-    let records: Vec<RecordListItem> = viewer
+    let mut records: Vec<RecordListItem> = viewer
         .recent(&manager, bear.id, 50)
         .await?
         .into_iter()
         .map(|r| record_list_item(r, None))
         .collect();
+    if !can_manage_bear {
+        label_member_items(&state, bear.id, &mut records).await?;
+    }
     web::render_template(
         &state,
         "bear/memory/recent.html",
@@ -2186,6 +2252,9 @@ async fn search_view(
         }
     }
 
+    if !can_manage_bear {
+        label_member_items(&state, bear.id, &mut results).await?;
+    }
     let result_count = results.len();
     web::render_template(
         &state,
@@ -2570,6 +2639,10 @@ async fn record_view(
         .unwrap_or(true);
 
     if !can_manage_bear {
+        let scope_label = member_scope_labels(&state, bear.id, &[record.memory_id.clone()])
+            .await?
+            .remove(&record.memory_id)
+            .ok_or_else(|| CustomError::NotFound("shared memory entry unavailable".into()))?;
         return web::render_template(
             &state,
             "bear/memory/member_record.html",
@@ -2578,6 +2651,7 @@ async fn record_view(
                 record,
                 history,
                 is_head,
+                scope_label,
                 can_manage_bear,
                 native_runtime => true,
                 ..bear_nav_context(&bear, "memory"),

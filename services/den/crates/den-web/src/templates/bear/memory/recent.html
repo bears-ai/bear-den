@@ -20,7 +20,7 @@
       <tr>
         <td class="form-hint">{{ r.sequence_no }}</td>
         <td>
-          <a href="/bear/{{ bear.slug | e }}/memory/records/{{ r.memory_id | urlencode }}"><code>{{ r.logical_path or r.memory_id | e }}</code></a>
+          <a href="/bear/{{ bear.slug | e }}/memory/records/{{ r.memory_id | urlencode }}">{% if can_manage_bear %}<code>{{ r.logical_path or r.memory_id | e }}</code>{% else %}{{ r.kind | e }} #{{ r.sequence_no }}{% endif %}</a>
           <div class="form-hint">{{ r.snippet | e }}</div>
         </td>
         <td>{{ r.kind | e }}</td>

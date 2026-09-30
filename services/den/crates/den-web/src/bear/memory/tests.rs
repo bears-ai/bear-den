@@ -261,6 +261,14 @@ async fn memory_routes_enforce_curated_member_and_admin_inspection_boundaries() 
         "boundaryneedle curated hat",
     )
     .await;
+    // Presentation must use the canonical hat ID, not a locator that claims core.
+    sqlx::query(
+        "UPDATE memory_records SET logical_path = 'core/pretend-core.md' WHERE memory_id = ?",
+    )
+    .bind(&hat_record.memory_id)
+    .execute(memory.pool())
+    .await
+    .expect("set misleading hat locator");
     let source = add_record(
         &memory,
         &LogicalMemoryPath::source_local(
@@ -317,6 +325,9 @@ async fn memory_routes_enforce_curated_member_and_admin_inspection_boundaries() 
         );
 
         assert_ids(&body, &curated, &raw);
+        assert!(body.contains("Hat: Memory route hat"), "{route}: {body}");
+        assert!(body.contains("Bear-wide"), "{route}: {body}");
+        assert!(!body.contains("core/pretend-core.md"), "{route}: {body}");
         assert!(
             !body.contains(&shared_old.memory_id),
             "superseded row in {route}"
@@ -335,6 +346,9 @@ async fn memory_routes_enforce_curated_member_and_admin_inspection_boundaries() 
         assert_eq!(status, StatusCode::OK, "{route}: {body}");
 
         assert_ids(&body, &curated, &raw);
+        assert!(body.contains("Hat: Memory route hat"), "{route}: {body}");
+        assert!(body.contains("Bear-wide"), "{route}: {body}");
+        assert!(!body.contains("core/pretend-core.md"), "{route}: {body}");
         assert!(!body.contains(&shared_old.memory_id));
         if mode == "semantic" {
             assert!(body.contains("showing curated keyword results"), "{body}");
@@ -352,6 +366,15 @@ async fn memory_routes_enforce_curated_member_and_admin_inspection_boundaries() 
         assert_eq!(status, StatusCode::OK, "{route}: {body}");
         assert!(body.contains(&row.content_text), "{route}: {body}");
     }
+    let (status, body) = get_page(
+        &app,
+        &member,
+        &format!("{base}/records/{}", hat_record.memory_id),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.contains("Hat: Memory route hat"), "{body}");
+    assert!(!body.contains("core/pretend-core.md"), "{body}");
     let (status, body) = get_page(
         &app,
         &member,

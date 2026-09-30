@@ -13,7 +13,7 @@
   {% if recent %}
   <ul>
     {% for r in recent %}
-    <li><a href="/bear/{{ bear.slug | e }}/memory/records/{{ r.memory_id | urlencode }}"><code>{{ r.logical_path or r.memory_id | e }}</code></a> <span class="form-hint">· {{ r.kind | e }} · {{ r.scope_label | e }} · {{ r.created_at | e }}</span></li>
+    <li><a href="/bear/{{ bear.slug | e }}/memory/records/{{ r.memory_id | urlencode }}">{{ r.kind | e }} #{{ r.sequence_no }}</a> <span class="form-hint">· {{ r.scope_label | e }} · {{ r.created_at | e }}</span></li>
     {% endfor %}
   </ul>
   <p><a href="/bear/{{ bear.slug | e }}/memory/recent">See full feed →</a></p>
