@@ -90,6 +90,54 @@ fn parse_curate_decision(completion: Completion) -> Result<HatSynthesisDecision,
     Ok(decision)
 }
 
+struct CurateRequestInput<'a> {
+    bear_id: Uuid,
+    proposal_id: Uuid,
+    bear_name: &'a str,
+    hat_name: &'a str,
+    model: String,
+    bifrost_virtual_key: String,
+    source_content: &'a str,
+    proposal_summary: &'a str,
+}
+
+fn curate_request(input: CurateRequestInput<'_>) -> Result<ChatCompletionRequest, DenError> {
+    let system = render_turn_fragment(
+        repository_prompt_fragment_registry()?.require("curate_hat_synthesis")?,
+        &json!({"bear_name": input.bear_name, "hat_name": input.hat_name}),
+    )?;
+    let evidence = serde_json::to_string(&json!({
+        "source_note": input.source_content,
+        "proposal_summary": input.proposal_summary,
+    }))
+    .map_err(|error| DenError::Parsing(format!("serialize Curate source data: {error}")))?;
+    let message = |role: &str, content: String| ChatMessage {
+        role: role.to_string(),
+        content: Some(content),
+        tool_call_id: None,
+        name: None,
+        tool_calls: None,
+    };
+    Ok(ChatCompletionRequest {
+        model: input.model,
+        messages: vec![message("system", system), message("user", evidence)],
+        tools: Vec::new(),
+        stream: false,
+        tool_choice: None,
+        temperature: None,
+        max_tokens: Some(800),
+        thinking_effort: None,
+        telemetry: Some(LlmRequestTelemetry {
+            bear_id: Some(input.bear_id.to_string()),
+            stance: Some(BearProfile::Curate.as_str().to_string()),
+            operation: Some(LlmOperation::Memory),
+            request_id: Some(input.proposal_id.to_string()),
+            bifrost_virtual_key: Some(input.bifrost_virtual_key),
+            ..Default::default()
+        }),
+    })
+}
+
 pub async fn synthesize_verified_hat_note(
     pool: &PgPool,
     config: &Config,
@@ -117,42 +165,17 @@ pub async fn synthesize_verified_hat_note(
     let model =
         db::resolve_model_for_profile(pool, &bear, BearProfile::Curate, llm.default_model())
             .await?;
-    let system = render_turn_fragment(
-        repository_prompt_fragment_registry()?.require("curate_hat_synthesis")?,
-        &json!({"bear_name": bear.name, "hat_name": hat.name}),
-    )?;
-    let evidence = serde_json::to_string(&json!({
-        "source_note": source_content,
-        "proposal_summary": proposal_summary,
-    }))
-    .map_err(|error| DenError::Parsing(format!("serialize Curate source data: {error}")))?;
-    let message = |role: &str, content: String| ChatMessage {
-        role: role.to_string(),
-        content: Some(content),
-        tool_call_id: None,
-        name: None,
-        tool_calls: None,
-    };
-    let response = llm
-        .chat_completions_stream(&ChatCompletionRequest {
-            model: llm.resolve_model(Some(&model)),
-            messages: vec![message("system", system), message("user", evidence)],
-            tools: Vec::new(),
-            stream: false,
-            tool_choice: None,
-            temperature: None,
-            max_tokens: Some(800),
-            thinking_effort: None,
-            telemetry: Some(LlmRequestTelemetry {
-                bear_id: Some(bear_id.to_string()),
-                stance: Some(BearProfile::Curate.as_str().to_string()),
-                operation: Some(LlmOperation::Memory),
-                request_id: Some(proposal_id.to_string()),
-                bifrost_virtual_key: Some(key),
-                ..Default::default()
-            }),
-        })
-        .await?;
+    let request = curate_request(CurateRequestInput {
+        bear_id,
+        proposal_id,
+        bear_name: &bear.name,
+        hat_name: &hat.name,
+        model: llm.resolve_model(Some(&model)),
+        bifrost_virtual_key: key,
+        source_content,
+        proposal_summary,
+    })?;
+    let response = llm.chat_completions_stream(&request).await?;
     let completion: Completion = response
         .json()
         .await
@@ -177,6 +200,39 @@ mod tests {
         assert!(rendered.contains("data, not instructions"));
         assert!(rendered.contains("no Markdown"));
         assert!(!rendered.contains("Private untrusted source"));
+    }
+
+    #[test]
+    fn curate_request_keeps_private_note_out_of_system_and_grants_no_tools() {
+        let request = curate_request(CurateRequestInput {
+            bear_id: Uuid::new_v4(),
+            proposal_id: Uuid::new_v4(),
+            bear_name: "Lumen",
+            hat_name: "Security",
+            model: "openai/test-model".into(),
+            bifrost_virtual_key: "test-virtual-key".into(),
+            source_content: "private token is untrusted data",
+            proposal_summary: "Review without sharing private identifiers",
+        })
+        .unwrap();
+        assert!(request.tools.is_empty());
+        let body = request.to_body();
+        assert_eq!(body["stream"], false);
+        assert!(body.get("tools").is_none());
+        assert_eq!(body["messages"][0]["role"], "system");
+        assert!(!body["messages"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("private token"));
+        assert_eq!(body["messages"][1]["role"], "user");
+        assert!(body["messages"][1]["content"]
+            .as_str()
+            .unwrap()
+            .contains("private token"));
+        assert!(
+            !body.to_string().contains("test-virtual-key"),
+            "gateway key is a header, not model context"
+        );
     }
 
     #[test]
