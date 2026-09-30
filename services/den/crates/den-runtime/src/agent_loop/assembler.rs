@@ -10,7 +10,11 @@ use den_memory::MemoryStoreManager;
 use den_service::{
     bears::{
         db as bears_db,
-        hats::memory_binding::{self, ResolvedMemoryBinding},
+        hats::{
+            self,
+            identity::bound_prompt_text,
+            memory_binding::{self, ResolvedMemoryBinding},
+        },
         model::BearProfile,
         provision::profile_prompt_text,
         Bear,
@@ -331,6 +335,21 @@ fn active_orientation_task_ref(plan: &TaskListProjection) -> Option<OrientationT
     Some(orientation_task_ref_from_item(plan, item))
 }
 
+async fn shared_only_without_configured_hats(
+    ctx: &AssembleTurnContext<'_>,
+) -> Result<MemoryProjectionScope, DenError> {
+    if hats::list_hats(ctx.pool, BearId::new(ctx.bear_id))
+        .await?
+        .is_empty()
+    {
+        Ok(MemoryProjectionScope::SharedOnly)
+    } else {
+        Err(DenError::Authorization(
+            "a configured Bear requires a canonical hat-bound conversation or Work run".into(),
+        ))
+    }
+}
+
 async fn resolve_memory_projection_scope(
     ctx: &AssembleTurnContext<'_>,
 ) -> Result<MemoryProjectionScope, DenError> {
@@ -341,17 +360,17 @@ async fn resolve_memory_projection_scope(
                 get_conversation_for_external_id(ctx.pool, ctx.bear_id, ctx.conversation_id)
                     .await?
             else {
-                return Ok(MemoryProjectionScope::SharedOnly);
+                return shared_only_without_configured_hats(ctx).await;
             };
             memory_binding::for_conversation(ctx.pool, bear_id, conversation.id).await?
         }
         BearProfile::Work => {
             let Some(session_id) = ctx.session_id else {
-                return Ok(MemoryProjectionScope::SharedOnly);
+                return shared_only_without_configured_hats(ctx).await;
             };
             let Some(run) = work_runs::get_live_work_run_by_session(ctx.pool, session_id).await?
             else {
-                return Ok(MemoryProjectionScope::SharedOnly);
+                return shared_only_without_configured_hats(ctx).await;
             };
             memory_binding::for_work_run(ctx.pool, bear_id, run.id).await?
         }
@@ -517,11 +536,29 @@ pub async fn assemble_native_turn_for_bear(
     let memory_scope = match resolve_memory_projection_scope(&ctx).await {
         Ok(scope) => scope,
         Err(error) => {
-            tracing::warn!(bear_id = %ctx.bear_id, %error, "memory binding unavailable; suppressing local memory and recall");
-            MemoryProjectionScope::SharedOnly
+            if matches!(ctx.profile, BearProfile::Curate | BearProfile::Watch)
+                || hats::list_hats(ctx.pool, BearId::new(ctx.bear_id))
+                    .await?
+                    .is_empty()
+            {
+                tracing::warn!(bear_id = %ctx.bear_id, %error, "memory binding unavailable; suppressing local memory and recall");
+                MemoryProjectionScope::SharedOnly
+            } else {
+                return Err(error);
+            }
         }
     };
-    let compiled_prompt = profile_prompt_text(ctx.pool, bear, ctx.profile).await?;
+    let compiled_prompt = match memory_scope {
+        MemoryProjectionScope::Bound(grant) => {
+            let hat_id = grant.hat_id().ok_or_else(|| {
+                DenError::Authorization("bound conversation has no hat identity".into())
+            })?;
+            bound_prompt_text(ctx.pool, bear, ctx.profile, hat_id).await?
+        }
+        MemoryProjectionScope::Legacy | MemoryProjectionScope::SharedOnly => {
+            profile_prompt_text(ctx.pool, bear, ctx.profile).await?
+        }
+    };
     let mut budget_components = AssembledTurnBudgetComponents {
         compiled_prompt_chars: compiled_prompt.chars().count() as u32,
         ..Default::default()
@@ -793,6 +830,10 @@ pub async fn assemble_native_turn_for_bear(
         objective_orientation,
     })
 }
+
+#[cfg(test)]
+#[path = "identity_tests.rs"]
+mod identity_tests;
 
 #[cfg(test)]
 mod tests {

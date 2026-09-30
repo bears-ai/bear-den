@@ -188,7 +188,7 @@ async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.contains("Security review"));
     assert!(body.contains("None selected"));
-    assert!(body.contains("Preview hat identity draft"));
+    assert!(body.contains("Preview compiled hat identity"));
     assert!(body.contains("Review repo"));
     assert_eq!(
         request(

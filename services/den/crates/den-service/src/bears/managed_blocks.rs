@@ -510,6 +510,30 @@ pub fn compile_managed_config_for_bear(
         rendered_prompts.insert(role_key, json!(role_prompt));
     }
 
+    let bound_base = context_composition::render_bound_base_prompt_with_registry(
+        bear,
+        Some(&resolved),
+        &prompt_registry,
+    )?;
+    rendered_prompt_hashes.insert("bound_base".into(), json!(content_hash(&bound_base)));
+    rendered_prompts.insert("bound_base".into(), json!(bound_base));
+    rendered_prompts.insert(
+        "bound_source_version".into(),
+        json!(repository_prompt_source_version()),
+    );
+    for mode in ["bound_chat_mode", "bound_pair_mode", "bound_work_mode"] {
+        let fragment = prompt_registry.require(mode)?;
+        let rendered = super::prompt_fragments::render_compile_time_fragment(
+            fragment,
+            &super::prompt_fragments::CompileTimePromptContext {
+                bear_name: &bear.name,
+                bear_slug: &bear.slug,
+            },
+        )?;
+        rendered_prompt_hashes.insert(mode.into(), json!(content_hash(&rendered)));
+        rendered_prompts.insert(mode.into(), json!(rendered));
+    }
+
     let resolved_json = serde_json::to_value(&resolved)
         .map_err(|e| DenError::Parsing(format!("serialize resolved managed blocks: {e}")))?;
     let rendered_prompts_value = serde_json::Value::Object(rendered_prompts);

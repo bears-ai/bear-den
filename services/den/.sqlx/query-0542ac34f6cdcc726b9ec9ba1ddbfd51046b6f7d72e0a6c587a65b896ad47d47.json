@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO users (email, username) VALUES ('identitymanaged@example.test', 'identitymanaged') RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "0542ac34f6cdcc726b9ec9ba1ddbfd51046b6f7d72e0a6c587a65b896ad47d47"
+}

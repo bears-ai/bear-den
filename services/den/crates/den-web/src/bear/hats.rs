@@ -167,6 +167,7 @@ async fn detail(
     let bear_id = BearId::new(bear.id);
     let hat_id = HatId::new(hat_id);
     let hat = manage::get_hat(state.sqlx_pool(), bear_id, hat_id).await?;
+    let identity_preview = hats::identity::render_hat_identity_component(&bear, &hat)?;
     let ide_default_hat_id = hats::ide_default_hat(state.sqlx_pool(), bear_id).await?;
     let is_ide_default = ide_default_hat_id == Some(hat_id);
     let ide_default_hat_name = hats::list_hats(state.sqlx_pool(), bear_id)
@@ -202,7 +203,7 @@ async fn detail(
         "bear/manage/hat.jinja",
         auth,
         context! {
-            hat, is_ide_default, ide_default_hat_name, choices, grant_count => granted.len(), historical_hat_records, work_reviews, message => query.message,
+            hat, identity_preview, is_ide_default, ide_default_hat_name, choices, grant_count => granted.len(), historical_hat_records, work_reviews, message => query.message,
             can_manage_bear => true, native_runtime => true,
             ..bear_nav_context(&bear, "hats"),
         },

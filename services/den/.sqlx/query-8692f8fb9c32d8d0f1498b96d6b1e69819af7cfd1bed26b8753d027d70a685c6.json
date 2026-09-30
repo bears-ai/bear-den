@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO bear_jobs (bear_id, hat_id, created_by_user_id, created_by_role, goal)\n         VALUES ($1, $2, $3, 'ui', 'Review code') RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "8692f8fb9c32d8d0f1498b96d6b1e69819af7cfd1bed26b8753d027d70a685c6"
+}

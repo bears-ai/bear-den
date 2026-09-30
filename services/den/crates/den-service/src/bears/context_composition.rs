@@ -208,6 +208,63 @@ pub fn render_managed_role_prompt_with_registry(
     Ok(composed)
 }
 
+/// Common identity/steering for hat-bound turns. Stance contracts are
+/// intentionally absent: their legacy identity prose must not override a
+/// selected hat. Execution-mode instructions are compiled separately from
+/// trusted repository fragments.
+pub fn render_bound_base_prompt_with_registry(
+    bear: &Bear,
+    resolved: Option<&ResolvedManagedBlockSet>,
+    registry: &PromptFragmentRegistry,
+) -> Result<String, DenError> {
+    let Some(profile) = context_profile_from_json(&bear.context_profile)? else {
+        return Ok(bear.system_prompt.trim().to_string());
+    };
+    let context = CompileTimePromptContext {
+        bear_name: &bear.name,
+        bear_slug: &bear.slug,
+    };
+    let baseline = resolved
+        .and_then(|resolved| {
+            resolved
+                .blocks
+                .iter()
+                .find(|block| block.key == "den_baseline")
+                .map(|block| block.effective_content.clone())
+        })
+        .or_else(|| {
+            registry
+                .get("den_baseline")
+                .map(|fragment| fragment.body.clone())
+        })
+        .unwrap_or_else(|| den_baseline().to_string());
+    let mut composed = String::new();
+    push_section(
+        &mut composed,
+        "Den baseline",
+        &render_compile_time_text("den_baseline", &baseline, &context)?,
+    );
+    push_section(
+        &mut composed,
+        "User steering",
+        &render_compile_time_text(
+            "context_profile.user_steering",
+            profile.user_steering.trim(),
+            &context,
+        )?,
+    );
+    push_section(
+        &mut composed,
+        "Bear context",
+        &render_compile_time_text(
+            "context_profile.bear_context",
+            profile.bear_context.trim(),
+            &context,
+        )?,
+    );
+    Ok(composed)
+}
+
 pub fn compose_role_context(
     bear: &Bear,
     role: BearProfile,

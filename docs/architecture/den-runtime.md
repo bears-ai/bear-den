@@ -108,7 +108,7 @@ Every turn builds **Turn Context** by projecting the Bear Operating Environment 
 
 ### Layer 1 — Compiled system prompt (`bear_compiled_configs`)
 
-For Bears with a managed `context_profile`, the **system message base** comes from **`bear_compiled_configs.rendered_prompts_json[profile]`** — the same materialized prompt Letta provisioning already uses via `profile_prompt_text`.
+For legacy/no-hat turns and internal `curate`/`watch` roles, the **system message base** comes from **`bear_compiled_configs.rendered_prompts_json[profile]`** when a managed `context_profile` exists (or `bears.system_prompt` for an unmigrated Bear). For hat-bound `chat`/`pair`/`work` turns, Den instead composes compiled `bound_base` (Bear-wide baseline and steering), a repository-owned `bound_*_mode` fragment, and the currently verified Bear-owned hat's identity text via the repository-owned `bound_hat_identity` fragment. Hat text is not a permission grant; a configured Bear without a verified binding cannot fall back to a per-stance identity.
 
 Compilation merges:
 
@@ -124,9 +124,9 @@ Under [ADR-0046](../decisions/adr-0046-file-backed-prompt-fragments-and-compiled
 
 The architecture and rollout details live in [prompt-fragment-registry.md](prompt-fragment-registry.md) and the [Prompt Fragment Registry implementation plan](../roadmap/PROMPT_FRAGMENT_REGISTRY_IMPLEMENTATION_PLAN.md).
 
-The row is written by `compile_and_store_managed_config_for_bear` and keyed by `config_hash` / per-stance `rendered_prompt_hashes_json` for drift checks on stance bindings (`bear_profile_bindings` during the compatibility migration).
+The row is written by `compile_and_store_managed_config_for_bear` and keyed by `config_hash` / per-stance `rendered_prompt_hashes_json` for drift checks on stance bindings (`bear_profile_bindings` during the compatibility migration). Bound base/mode components also have hashes and a prompt-source version; missing or stale compiled components are regenerated before a bound turn. The hat-identity component reads the current hat record per turn, so changing its authored text does not require copying or editing stance contracts.
 
-**Target invariant:** the native agent loop **must** read compiled prompts from `bear_compiled_configs`. It must **not** recompose prompts via `compose_role_context(..., resolved: None)`, which bypasses managed-block resolution and diverges from Letta-era behavior.
+**Target invariant:** the native agent loop **must** read managed Bear-wide and mode components from `bear_compiled_configs` (plus the current canonical hat identity for bound turns). It must **not** recompose prompts via `compose_role_context(..., resolved: None)`, which bypasses managed-block resolution and diverges from Letta-era behavior.
 
 Additional invariant from ADR-0046: the turn hot path must not parse frontmatter, read prompt files from disk, or render runtime-authored database templates. Runtime-authored prompt content is compile-time-only; turn-time templating is reserved for explicitly approved repository-owned fragments.
 
@@ -144,7 +144,7 @@ This is distinct from:
 
 | Mechanism | Purpose |
 |-----------|------|
-| **Compiled system prompt** | Identity, stance contract, operator steering — from `bear_compiled_configs` |
+| **Compiled system prompt** | Bound turns: Bear-wide base and mode from `bear_compiled_configs`, plus current hat identity; legacy/internal turns: per-stance compiled prompt |
 | **Prompt memory blocks** | Editable in-context state in Den Postgres — session/work-surface/stance scoped ([prompt-memory contract](den-prompt-memory-block-contract.md)) |
 | **Key memory projection** | Read-only proactive slice of **canonical SQLite memory** (path anchors) |
 | **Derived recall** | Vector search over chunked passages ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)); bounded turn-start + hybrid `memory_search` |

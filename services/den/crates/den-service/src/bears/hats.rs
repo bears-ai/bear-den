@@ -15,6 +15,7 @@ use uuid::Uuid;
 
 pub mod bindings;
 pub mod curation;
+pub mod identity;
 pub mod manage;
 pub mod memory_binding;
 pub mod work_review;

@@ -9,6 +9,22 @@ const REPOSITORY_PROMPT_SOURCES: &[(&str, &str)] = &[
         include_str!("../../../../../prompts/fragments/base/den_baseline.md"),
     ),
     (
+        "fragments/base/bound_hat_identity.md",
+        include_str!("../../../../../prompts/fragments/base/bound_hat_identity.md"),
+    ),
+    (
+        "fragments/stances/bound_chat_mode.md",
+        include_str!("../../../../../prompts/fragments/stances/bound_chat_mode.md"),
+    ),
+    (
+        "fragments/stances/bound_pair_mode.md",
+        include_str!("../../../../../prompts/fragments/stances/bound_pair_mode.md"),
+    ),
+    (
+        "fragments/stances/bound_work_mode.md",
+        include_str!("../../../../../prompts/fragments/stances/bound_work_mode.md"),
+    ),
+    (
         "fragments/stances/pair.md",
         include_str!("../../../../../prompts/fragments/stances/pair.md"),
     ),

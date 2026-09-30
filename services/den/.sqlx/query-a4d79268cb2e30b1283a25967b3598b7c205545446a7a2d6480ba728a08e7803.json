@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO bear_work_runs (bear_id, job_id, job_run_id, state, bearwire_session_id)\n         VALUES ($1, $2, $3, 'claimed', 'hat-work-session')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a4d79268cb2e30b1283a25967b3598b7c205545446a7a2d6480ba728a08e7803"
+}
