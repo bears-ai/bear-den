@@ -142,7 +142,7 @@ Future tools:
 | `den.memory.recall` | `memory_recall` | role-scoped by recall-scope/policy | Hybrid semantic recall over the derived Qdrant index ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)). May be folded into a hybrid `memory_search` instead of a separate tool. |
 | `den.memory.index_curated_summary` | `memory_index_curated_summary` | `curate` / Den internal | Request recall indexing of selected curated summaries/pointers. |
 
-`den.memory.request_review` supersedes narrower producer-side names such as `den.memory.propose_core_write` or `den.memory.propose_core_update`. `propose_hat` intake records a Den-verified source/hat link in SQLite; the worker may now call a tool-free Curate model and apply its bounded typed decision to an opted-in Work-off hat. Missing keys, model failure, or a denied publication leave the private proposal pending; automatic retry is still open ([hats plan](HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md)); no path or model-supplied JSON grants publication.
+`den.memory.request_review` supersedes narrower producer-side names such as `den.memory.propose_core_write` or `den.memory.propose_core_update`. `propose_hat` intake records a Den-verified source/hat link in SQLite; the worker may now call a tool-free Curate model and apply its bounded typed decision to an opted-in Work-off hat. Missing keys or synthesis failure leave the private proposal pending with two bounded delayed retries; a denied publication leaves it pending without retry. Recovery after three attempts remains open ([hats plan](HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md)); no path or model-supplied JSON grants publication.
 
 ### P5 — Derived recall (Qdrant)
 

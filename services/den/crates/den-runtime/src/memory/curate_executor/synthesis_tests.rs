@@ -237,6 +237,10 @@ async fn verified_curate_synthesis_publishes_work_off_but_never_work_on(pool: Pg
     .await
     .unwrap();
     assert_eq!(unavailable.outcomes[0].status, "pending");
+    assert_eq!(
+        unavailable.outcomes[0].retry_reason,
+        Some(CurateRetryReason::SynthesisUnavailable)
+    );
     assert!(unavailable.briefing.is_empty());
     assert!(
         !unavailable.outcomes[0]
@@ -262,6 +266,7 @@ async fn verified_curate_synthesis_publishes_work_off_but_never_work_on(pool: Pg
     .await
     .unwrap();
     assert_eq!(without_opt_in.outcomes[0].status, "pending");
+    assert_eq!(without_opt_in.outcomes[0].retry_reason, None);
     assert_eq!(
         calls.load(Ordering::SeqCst),
         2,
@@ -290,6 +295,7 @@ async fn verified_curate_synthesis_publishes_work_off_but_never_work_on(pool: Pg
     .await
     .unwrap();
     assert_eq!(withheld.outcomes[0].status, "pending");
+    assert_eq!(withheld.outcomes[0].retry_reason, None);
     assert_eq!(
         calls.load(Ordering::SeqCst),
         2,

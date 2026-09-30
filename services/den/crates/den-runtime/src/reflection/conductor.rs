@@ -28,6 +28,7 @@ use crate::{
         bind_memory_curate_run_conversation, ensure_memory_curate_conversation,
         touch_memory_curate_conversation,
     },
+    reflection::curate_retry,
 };
 use std::str::FromStr;
 
@@ -446,7 +447,7 @@ pub async fn list_queued_memory_curate_runs(
         WHERE bear_id = $1
           AND lane = 'memory_curate'
           AND status = 'queued'
-        ORDER BY created_at ASC
+        ORDER BY available_at ASC, created_at ASC
         LIMIT $2
         ",
         bear_id,
@@ -470,7 +471,8 @@ pub async fn claim_next_memory_curate_run(
             WHERE bear_id = $1
               AND lane = 'memory_curate'
               AND status = 'queued'
-            ORDER BY created_at ASC
+              AND available_at <= NOW()
+            ORDER BY available_at ASC, created_at ASC
             LIMIT 1
             FOR UPDATE SKIP LOCKED
         )
@@ -669,14 +671,26 @@ pub async fn run_next_memory_curate_once(
         maybe_run_native_curate_briefing_turn(pool, config, stores, bear_id, &run, &output).await;
     }
 
-    let completed_run = mark_memory_curate_completed(
+    let completion = curate_retry::complete_and_schedule(
         pool,
-        run.bear_id,
-        run.id,
+        &run,
         memory_curate_output_summary(&output),
+        &output.outcomes,
     )
     .await?;
-    Ok(Some(completed_run))
+    project_memory_curate_completed(
+        pool,
+        &completion.completed,
+        proposal_ids_from_summary(&completion.completed.input_summary),
+    );
+    if let Some(retry) = completion.retry_run {
+        project_memory_curate_enqueued(
+            pool,
+            &retry,
+            proposal_ids_from_summary(&retry.input_summary),
+        );
+    }
+    Ok(Some(completion.completed))
 }
 
 async fn execute_memory_curate_run(
@@ -867,6 +881,7 @@ async fn list_bears_with_queued_memory_curate_runs(pool: &PgPool) -> Result<Vec<
         FROM bear_reflection_runs
         WHERE lane = 'memory_curate'
           AND status = 'queued'
+          AND available_at <= NOW()
         ORDER BY bear_id
         "
     )

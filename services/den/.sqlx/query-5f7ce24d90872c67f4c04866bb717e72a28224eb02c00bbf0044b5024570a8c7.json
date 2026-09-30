@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT count(*) AS \"count!: i64\" FROM bear_reflection_runs\n         WHERE bear_id = $1 AND lane = 'memory_curate'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!: i64",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "5f7ce24d90872c67f4c04866bb717e72a28224eb02c00bbf0044b5024570a8c7"
+}

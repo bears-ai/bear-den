@@ -1,0 +1,106 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH next_run AS (\n            SELECT id\n            FROM bear_reflection_runs\n            WHERE bear_id = $1\n              AND lane = 'memory_curate'\n              AND status = 'queued'\n              AND available_at <= NOW()\n            ORDER BY available_at ASC, created_at ASC\n            LIMIT 1\n            FOR UPDATE SKIP LOCKED\n        )\n        UPDATE bear_reflection_runs runs\n        SET status = 'running',\n            started_at = COALESCE(started_at, NOW())\n        FROM next_run\n        WHERE runs.id = next_run.id\n        RETURNING runs.id, runs.bear_id, runs.lane, runs.trigger, runs.status,\n                  runs.role_agent_id, runs.conversation_id, runs.conversation_key,\n                  runs.conversation_date, runs.input_summary, runs.output_summary,\n                  runs.error, runs.started_at, runs.completed_at, runs.created_at\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "bear_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "lane",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "trigger",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "role_agent_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "conversation_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "conversation_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "conversation_date",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 9,
+        "name": "input_summary",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 10,
+        "name": "output_summary",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 11,
+        "name": "error",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "started_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "completed_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 14,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "03ce0755a4b68ea296ea426d8b1fc4855fbbcf9b5e3c37b4f9228813d4c99df4"
+}

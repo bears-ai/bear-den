@@ -54,6 +54,12 @@ impl HatSynthesizer for LiveHatSynthesizer<'_> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CurateRetryReason {
+    SynthesisUnavailable,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CurateProposalOutcome {
     pub proposal_id: Uuid,
@@ -64,6 +70,8 @@ pub struct CurateProposalOutcome {
     pub result_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_reason: Option<CurateRetryReason>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -433,6 +441,7 @@ async fn resolve_curate_proposal<S: HatSynthesizer>(
             triage: triage_label,
             result_path: None,
             error: None,
+            retry_reason: None,
         };
         if !canonical_safe {
             return Ok(outcome);
@@ -457,6 +466,7 @@ async fn resolve_curate_proposal<S: HatSynthesizer>(
                     error_kind = ?std::mem::discriminant(&error),
                     "Curate synthesis unavailable; keeping private candidate pending");
                 outcome.error = Some("Curate synthesis unavailable; no memory was shared".into());
+                outcome.retry_reason = Some(CurateRetryReason::SynthesisUnavailable);
                 None
             }
         };
@@ -524,7 +534,11 @@ async fn resolve_curate_proposal<S: HatSynthesizer>(
                     }
                 }
             }
-            None => {}
+            None => {
+                if outcome.error.is_none() {
+                    outcome.retry_reason = Some(CurateRetryReason::SynthesisUnavailable);
+                }
+            }
         }
         return Ok(outcome);
     }
@@ -555,6 +569,7 @@ async fn resolve_curate_proposal<S: HatSynthesizer>(
         triage: triage_label,
         result_path: resolved.result_path,
         error: None,
+        retry_reason: None,
     })
 }
 
@@ -709,6 +724,7 @@ mod tests {
                 triage: "retain_profile_local".to_string(),
                 result_path: None,
                 error: None,
+                retry_reason: None,
             },
             CurateProposalOutcome {
                 proposal_id: Uuid::new_v4(),
@@ -717,6 +733,7 @@ mod tests {
                 triage: "defer".to_string(),
                 result_path: None,
                 error: None,
+                retry_reason: None,
             },
         ]);
         assert_eq!(status, "mixed");
