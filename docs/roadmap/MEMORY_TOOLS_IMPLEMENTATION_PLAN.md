@@ -142,7 +142,7 @@ Future tools:
 | `den.memory.recall` | `memory_recall` | role-scoped by recall-scope/policy | Hybrid semantic recall over the derived Qdrant index ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)). May be folded into a hybrid `memory_search` instead of a separate tool. |
 | `den.memory.index_curated_summary` | `memory_index_curated_summary` | `curate` / Den internal | Request recall indexing of selected curated summaries/pointers. |
 
-`den.memory.request_review` supersedes narrower producer-side names such as `den.memory.propose_core_write` or `den.memory.propose_core_update`. Internal `propose_hat` intake records a Den-verified source/hat link in SQLite; the current deterministic worker keeps normal candidates pending. It is not model-advertised until an autonomous synthesis-and-apply path exists ([hats plan](HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md)); no path or model-supplied JSON grants publication.
+`den.memory.request_review` supersedes narrower producer-side names such as `den.memory.propose_core_write` or `den.memory.propose_core_update`. Internal `propose_hat` intake records a Den-verified source/hat link in SQLite; the current deterministic worker keeps normal candidates pending. An internal Work-off publisher exists but is not connected to the worker or model. The action remains unadvertised until a trusted autonomous synthesis-and-apply path exists ([hats plan](HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md)); no path or model-supplied JSON grants publication.
 
 ### P5 — Derived recall (Qdrant)
 

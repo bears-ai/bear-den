@@ -15,8 +15,10 @@ use crate::{
     BearMemoryStore,
 };
 
+mod curate;
 #[cfg(test)]
 mod tests;
+pub use curate::promote_curated_proposal_to_hat;
 
 #[derive(Debug, Clone)]
 pub struct ReviewCandidate {

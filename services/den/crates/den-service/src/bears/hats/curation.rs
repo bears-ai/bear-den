@@ -15,9 +15,11 @@ use uuid::Uuid;
 
 use super::manage::get_hat;
 
+mod curate;
 #[cfg(test)]
 mod tests;
 use crate::bears::db::{membership_role_for_user, role_is_bear_admin};
+pub use curate::promote_curated_proposal;
 
 #[derive(Debug, Clone)]
 pub struct ReviewedHatEntry {
