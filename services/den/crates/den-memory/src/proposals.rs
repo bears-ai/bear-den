@@ -1,12 +1,16 @@
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use den_core::DenError;
+use den_core::{ids::HatId, DenError};
 
 use super::{
     clock::now_rfc3339,
     records::{head_record_for_logical_path, BearMemoryStore},
 };
+
+#[cfg(test)]
+#[path = "proposals/verified_hat_tests.rs"]
+mod verified_hat_tests;
 
 #[derive(Debug, sqlx::FromRow)]
 struct ProposalSqlRow {
@@ -15,17 +19,35 @@ struct ProposalSqlRow {
     status: String,
     payload_json: String,
     created_at: String,
+    source_memory_id: Option<String>,
+    target_hat_id: Option<String>,
 }
 
 impl ProposalSqlRow {
-    fn into_proposal(self) -> SqliteMemoryProposal {
-        SqliteMemoryProposal {
+    fn into_proposal(self) -> Result<SqliteMemoryProposal, DenError> {
+        let verified_hat_source = match (self.source_memory_id, self.target_hat_id) {
+            (None, None) | (Some(_), None) => None, // Older proposals may have a source but no verified hat.
+            (Some(memory_id), Some(hat_id)) => Some(VerifiedHatProposalSource {
+                memory_id: Uuid::parse_str(&memory_id)
+                    .map_err(|_| DenError::System("invalid verified proposal source ID".into()))?,
+                hat_id: hat_id
+                    .parse::<HatId>()
+                    .map_err(|_| DenError::System("invalid verified proposal hat ID".into()))?,
+            }),
+            (None, Some(_)) => {
+                return Err(DenError::System(
+                    "verified proposal hat has no source".into(),
+                ))
+            }
+        };
+        Ok(SqliteMemoryProposal {
             proposal_id: self.proposal_id,
             sequence_no: self.sequence_no,
             status: self.status,
             payload_json: serde_json::from_str(&self.payload_json).unwrap_or_else(|_| json!({})),
             created_at: self.created_at,
-        }
+            verified_hat_source,
+        })
     }
 }
 
@@ -36,6 +58,17 @@ pub struct SqliteMemoryProposal {
     pub status: String,
     pub payload_json: Value,
     pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verified_hat_source: Option<VerifiedHatProposalSource>,
+}
+
+/// Only constructed after Den checks the current source record and canonical
+/// conversation/Job binding. These SQLite columns, not proposal JSON or paths,
+/// are the basis for any future publication decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct VerifiedHatProposalSource {
+    pub memory_id: Uuid,
+    pub hat_id: HatId,
 }
 
 pub async fn create_memory_proposal(
@@ -45,8 +78,54 @@ pub async fn create_memory_proposal(
     requires_human: bool,
     payload: &Value,
 ) -> Result<SqliteMemoryProposal, DenError> {
-    let enriched = enrich_payload_with_freshness(store, payload).await?;
-    let enriched = enrich_payload_with_consolidation_review(store, &enriched).await?;
+    create_proposal_with_verified_source(
+        store,
+        suggested_action,
+        sensitivity,
+        requires_human,
+        payload,
+        None,
+    )
+    .await
+}
+
+pub async fn create_verified_hat_proposal(
+    store: &BearMemoryStore,
+    sensitivity: &str,
+    requires_human: bool,
+    payload: &Value,
+    verified: VerifiedHatProposalSource,
+) -> Result<SqliteMemoryProposal, DenError> {
+    // Recheck canonical source columns at write time; a guessed UUID and a
+    // model-supplied path alone never establish a verified proposal link.
+    crate::hat_promotion::review_candidate(store, verified.memory_id).await?;
+    create_proposal_with_verified_source(
+        store,
+        "propose_hat",
+        sensitivity,
+        requires_human,
+        payload,
+        Some(verified),
+    )
+    .await
+}
+
+async fn create_proposal_with_verified_source(
+    store: &BearMemoryStore,
+    suggested_action: &str,
+    sensitivity: &str,
+    requires_human: bool,
+    payload: &Value,
+    verified: Option<VerifiedHatProposalSource>,
+) -> Result<SqliteMemoryProposal, DenError> {
+    // A verified hat intake does not claim a target head yet. Legacy path-based
+    // freshness and consolidation heuristics must not decide its audience.
+    let enriched = if verified.is_some() {
+        payload.clone()
+    } else {
+        let payload = enrich_payload_with_freshness(store, payload).await?;
+        enrich_payload_with_consolidation_review(store, &payload).await?
+    };
     let enriched = enrich_payload_with_archive_lane(&enriched, suggested_action);
     let enriched = enrich_payload_with_sensitivity_gate(&enriched, sensitivity);
     let payload = payload_with_dedupe_key(&enriched, suggested_action, sensitivity);
@@ -55,13 +134,15 @@ pub async fn create_memory_proposal(
             .get("requires_human")
             .and_then(Value::as_bool)
             .unwrap_or(false);
-    if let Some(key) = payload
-        .pointer("/dedupe/key")
-        .and_then(Value::as_str)
-        .filter(|key| !key.is_empty())
-    {
-        if let Some(existing) = pending_proposal_for_dedupe_key(store, key).await? {
-            return Ok(existing);
+    if verified.is_none() {
+        if let Some(key) = payload
+            .pointer("/dedupe/key")
+            .and_then(Value::as_str)
+            .filter(|key| !key.is_empty())
+        {
+            if let Some(existing) = pending_proposal_for_dedupe_key(store, key).await? {
+                return Ok(existing);
+            }
         }
     }
 
@@ -71,14 +152,16 @@ pub async fn create_memory_proposal(
     sqlx::query(
         r"
         INSERT INTO memory_proposals (
-            proposal_id, bear_id, sequence_no, suggested_action, sensitivity,
-            requires_human, status, payload_json, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+            proposal_id, bear_id, sequence_no, source_memory_id, target_hat_id,
+            suggested_action, sensitivity, requires_human, status, payload_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
         ",
     )
     .bind(&proposal_id)
     .bind(store.bear_id().to_string())
     .bind(sequence_no)
+    .bind(verified.map(|source| source.memory_id.to_string()))
+    .bind(verified.map(|source| source.hat_id.to_string()))
     .bind(suggested_action)
     .bind(sensitivity)
     .bind(i32::from(effective_requires_human))
@@ -93,6 +176,7 @@ pub async fn create_memory_proposal(
         status: "pending".to_string(),
         payload_json: payload,
         created_at,
+        verified_hat_source: verified,
     })
 }
 
@@ -296,7 +380,7 @@ async fn pending_proposal_for_dedupe_key(
 ) -> Result<Option<SqliteMemoryProposal>, DenError> {
     let row = sqlx::query_as::<_, ProposalSqlRow>(
         r"
-        SELECT proposal_id, sequence_no, status, payload_json, created_at
+        SELECT proposal_id, sequence_no, status, payload_json, created_at, source_memory_id, target_hat_id
         FROM memory_proposals
         WHERE bear_id = ?
           AND status = 'pending'
@@ -310,7 +394,7 @@ async fn pending_proposal_for_dedupe_key(
     .fetch_optional(store.pool())
     .await
     .map_err(|e| DenError::System(format!("sqlite find duplicate proposal failed: {e}")))?;
-    Ok(row.map(ProposalSqlRow::into_proposal))
+    row.map(ProposalSqlRow::into_proposal).transpose()
 }
 
 fn payload_with_dedupe_key(payload: &Value, suggested_action: &str, sensitivity: &str) -> Value {
@@ -372,7 +456,7 @@ pub async fn get_memory_proposal(
 ) -> Result<Option<SqliteMemoryProposal>, DenError> {
     let row = sqlx::query_as::<_, ProposalSqlRow>(
         r"
-        SELECT proposal_id, sequence_no, status, payload_json, created_at
+        SELECT proposal_id, sequence_no, status, payload_json, created_at, source_memory_id, target_hat_id
         FROM memory_proposals
         WHERE bear_id = ? AND proposal_id = ?
         ",
@@ -382,7 +466,7 @@ pub async fn get_memory_proposal(
     .fetch_optional(store.pool())
     .await
     .map_err(|e| DenError::System(format!("sqlite get proposal failed: {e}")))?;
-    Ok(row.map(ProposalSqlRow::into_proposal))
+    row.map(ProposalSqlRow::into_proposal).transpose()
 }
 
 pub async fn list_memory_proposals(
@@ -393,7 +477,7 @@ pub async fn list_memory_proposals(
     let rows = if let Some(status) = status {
         sqlx::query_as::<_, ProposalSqlRow>(
             r"
-            SELECT proposal_id, sequence_no, status, payload_json, created_at
+            SELECT proposal_id, sequence_no, status, payload_json, created_at, source_memory_id, target_hat_id
             FROM memory_proposals
             WHERE bear_id = ? AND status = ?
             ORDER BY sequence_no DESC
@@ -408,7 +492,7 @@ pub async fn list_memory_proposals(
     } else {
         sqlx::query_as::<_, ProposalSqlRow>(
             r"
-            SELECT proposal_id, sequence_no, status, payload_json, created_at
+            SELECT proposal_id, sequence_no, status, payload_json, created_at, source_memory_id, target_hat_id
             FROM memory_proposals
             WHERE bear_id = ?
             ORDER BY sequence_no DESC
@@ -421,10 +505,9 @@ pub async fn list_memory_proposals(
         .await
     }
     .map_err(|e| DenError::System(format!("sqlite list proposals failed: {e}")))?;
-    Ok(rows
-        .into_iter()
+    rows.into_iter()
         .map(ProposalSqlRow::into_proposal)
-        .collect())
+        .collect()
 }
 
 pub async fn count_memory_proposals(
@@ -464,7 +547,7 @@ pub async fn list_reviewable_memory_proposals(
 ) -> Result<Vec<SqliteMemoryProposal>, DenError> {
     let rows = sqlx::query_as::<_, ProposalSqlRow>(
         r"
-        SELECT proposal_id, sequence_no, status, payload_json, created_at
+        SELECT proposal_id, sequence_no, status, payload_json, created_at, source_memory_id, target_hat_id
         FROM memory_proposals
         WHERE bear_id = ?
           AND status IN ('pending', 'needs_human_review')
@@ -475,10 +558,9 @@ pub async fn list_reviewable_memory_proposals(
     .fetch_all(store.pool())
     .await
     .map_err(|e| DenError::System(format!("sqlite list reviewable proposals failed: {e}")))?;
-    Ok(rows
-        .into_iter()
+    rows.into_iter()
         .map(ProposalSqlRow::into_proposal)
-        .collect())
+        .collect()
 }
 
 pub async fn resolve_memory_proposal(
@@ -520,7 +602,7 @@ pub async fn resolve_memory_proposal(
     .map_err(|e| DenError::System(format!("sqlite resolve proposal failed: {e}")))?;
     let row = sqlx::query_as::<_, ProposalSqlRow>(
         r"
-        SELECT proposal_id, sequence_no, status, payload_json, created_at
+        SELECT proposal_id, sequence_no, status, payload_json, created_at, source_memory_id, target_hat_id
         FROM memory_proposals WHERE bear_id = ? AND proposal_id = ?
         ",
     )
@@ -529,7 +611,7 @@ pub async fn resolve_memory_proposal(
     .fetch_one(store.pool())
     .await
     .map_err(|e| DenError::System(format!("sqlite fetch proposal failed: {e}")))?;
-    Ok(row.into_proposal())
+    row.into_proposal()
 }
 
 #[cfg(test)]

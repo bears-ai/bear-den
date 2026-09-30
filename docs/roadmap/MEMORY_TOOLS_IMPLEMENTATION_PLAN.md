@@ -131,7 +131,7 @@ Future tools:
 
 | Canonical | Provider-safe | Roles | Purpose |
 |---|---|---|---|
-| `den.memory.request_review` | `memory_request_review` | `chat`, `pair`, `work`, `watch` | Request curation of role-local memory without choosing the final outcome. |
+| `den.memory.request_review` | `memory_request_review` | currently `pair` | Advertised tool still accepts legacy role-local paths; an internal, not-yet-advertised intake verifies a bound Pair's canonical `source_memory_id`. Neither publishes memory. |
 | `den.memory.list_proposals` | `memory_list_proposals` | `curate` | List memory review proposals. |
 | `den.memory.read_proposal` | `memory_read_proposal` | `curate` | Read one memory review proposal with source pointers and status. |
 | `den.memory.resolve_proposal` | `memory_resolve_proposal` | `curate` | Resolve a proposal as approved, rejected, retained local, deferred, superseded, or human-review-needed. |
@@ -142,7 +142,7 @@ Future tools:
 | `den.memory.recall` | `memory_recall` | role-scoped by recall-scope/policy | Hybrid semantic recall over the derived Qdrant index ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)). May be folded into a hybrid `memory_search` instead of a separate tool. |
 | `den.memory.index_curated_summary` | `memory_index_curated_summary` | `curate` / Den internal | Request recall indexing of selected curated summaries/pointers. |
 
-`den.memory.request_review` supersedes narrower producer-side names such as `den.memory.propose_core_write` or `den.memory.propose_core_update`. The caller may provide a `suggested_action`, but `curate` decides the final outcome.
+`den.memory.request_review` supersedes narrower producer-side names such as `den.memory.propose_core_write` or `den.memory.propose_core_update`. Internal `propose_hat` intake records a Den-verified source/hat link in SQLite; the current deterministic worker keeps normal candidates pending. It is not model-advertised until an autonomous synthesis-and-apply path exists ([hats plan](HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md)); no path or model-supplied JSON grants publication.
 
 ### P5 — Derived recall (Qdrant)
 

@@ -1,4 +1,5 @@
 use den_core::DenError;
+use den_memory::VerifiedHatProposalSource;
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use time::OffsetDateTime;
@@ -20,6 +21,8 @@ pub struct MemoryProposalRow {
     pub source_agent_id: Option<String>,
     pub source_paths: Vec<String>,
     pub source_refs: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verified_hat_source: Option<VerifiedHatProposalSource>,
     pub proposal_type: String,
     pub suggested_action: String,
     pub target_ref: Option<String>,
@@ -314,6 +317,7 @@ fn row_from_sql(row: sqlx::postgres::PgRow) -> MemoryProposalRow {
         source_agent_id: row.get("source_agent_id"),
         source_paths: row.get("source_paths"),
         source_refs: row.get("source_refs"),
+        verified_hat_source: None,
         proposal_type: row.get("proposal_type"),
         suggested_action: row.get("suggested_action"),
         target_ref: row.get("target_ref"),

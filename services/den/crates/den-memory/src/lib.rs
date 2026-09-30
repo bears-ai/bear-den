@@ -67,8 +67,9 @@ pub use observations::{
 };
 
 pub use proposals::{
-    count_memory_proposals, create_memory_proposal, get_memory_proposal, list_memory_proposals,
-    list_reviewable_memory_proposals, resolve_memory_proposal, SqliteMemoryProposal,
+    count_memory_proposals, create_memory_proposal, create_verified_hat_proposal,
+    get_memory_proposal, list_memory_proposals, list_reviewable_memory_proposals,
+    resolve_memory_proposal, SqliteMemoryProposal, VerifiedHatProposalSource,
 };
 pub use records::{
     append_memory_record, effective_time_by_ids, fetch_record_by_id, fetch_records_min,

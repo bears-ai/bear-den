@@ -9,7 +9,7 @@ pub mod extraction;
 mod store_round_trip_tests;
 
 pub use curation::{
-    create_observation, create_proposal, get_observation, get_proposal, list_proposals,
-    mark_observation_review_queued_for_bear, record_reflection_outcome_complete,
+    create_observation, create_proposal, create_verified_proposal, get_observation, get_proposal,
+    list_proposals, mark_observation_review_queued_for_bear, record_reflection_outcome_complete,
     record_reflection_outcome_start, resolve_proposal,
 };

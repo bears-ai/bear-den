@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use den_memory::MemoryStoreManager;
+use den_memory::{hat_promotion, MemorySource, MemoryStoreManager, VerifiedHatProposalSource};
 use den_service::memory_proposals::{MemoryProposalRow, ProposalResolutionParams};
 
 use crate::memory::{get_proposal, resolve_proposal};
@@ -45,6 +45,7 @@ pub struct MemoryCurateRunOutput {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CurateTriage {
+    AwaitCurator,
     RetainProfileLocal {
         review_notes: &'static str,
         decision_summary: &'static str,
@@ -66,6 +67,7 @@ enum CurateTriage {
 impl CurateTriage {
     fn triage_label(&self) -> &'static str {
         match self {
+            Self::AwaitCurator => "await_curator",
             Self::RetainProfileLocal { .. } => "retain_profile_local",
             Self::Reject { .. } => "reject",
             Self::Defer { .. } => "defer",
@@ -75,6 +77,7 @@ impl CurateTriage {
 
     fn resolution_status(&self) -> &'static str {
         match self {
+            Self::AwaitCurator => "pending",
             Self::RetainProfileLocal { .. } => "retained_local",
             Self::Reject { .. } => "rejected",
             Self::Defer { .. } => "deferred",
@@ -84,6 +87,7 @@ impl CurateTriage {
 
     fn review_notes(&self) -> &'static str {
         match self {
+            Self::AwaitCurator => "Verified hat candidate is pending autonomous curation; no shared-memory write occurred.",
             Self::RetainProfileLocal { review_notes, .. }
             | Self::Reject { review_notes, .. }
             | Self::Defer { review_notes, .. }
@@ -93,6 +97,7 @@ impl CurateTriage {
 
     fn decision_summary(&self) -> &'static str {
         match self {
+            Self::AwaitCurator => "Pending a verified autonomous Curate synthesis and apply path.",
             Self::RetainProfileLocal {
                 decision_summary, ..
             }
@@ -120,6 +125,13 @@ fn decide_curate_triage(proposal: &MemoryProposalRow, trigger: Option<&str>) -> 
             review_notes:
                 "Legacy proposal-to-core publication is retired; no shared-memory write was made.",
             decision_summary: "Rejected retired core promotion action; source memory is unchanged.",
+        };
+    }
+    if proposal.suggested_action == "propose_hat" && proposal.verified_hat_source.is_none() {
+        return CurateTriage::Reject {
+            review_notes:
+                "A model-supplied path or JSON reference is not a canonical source/hat binding.",
+            decision_summary: "Rejected unverified hat proposal without publishing memory.",
         };
     }
     if proposal.requires_human {
@@ -153,6 +165,7 @@ fn decide_curate_triage(proposal: &MemoryProposalRow, trigger: Option<&str>) -> 
             decision_summary: "Autonomous curate rejected the proposal per delete_after_review.",
         },
 
+        "propose_hat" => CurateTriage::AwaitCurator,
         "cabinet_update" | "skill_review" | "archive_index" | "task_context" => {
             CurateTriage::Defer {
                 review_notes:
@@ -219,6 +232,7 @@ pub async fn execute_memory_curate_proposals(
 
     let resolved_proposal_ids = outcomes
         .iter()
+        .filter(|outcome| outcome.status != "pending")
         .map(|outcome| outcome.proposal_id.to_string())
         .collect::<Vec<_>>();
     let mut status_counts = std::collections::HashMap::<String, u64>::new();
@@ -269,6 +283,34 @@ async fn build_curate_briefing(
     Ok(briefing)
 }
 
+async fn verified_hat_candidate_is_current(
+    pool: &PgPool,
+    stores: &MemoryStoreManager,
+    bear_id: Uuid,
+    verified: VerifiedHatProposalSource,
+) -> Result<bool, DenError> {
+    let store = stores.store_for_bear(bear_id).await?;
+    let candidate = match hat_promotion::review_candidate(&store, verified.memory_id).await {
+        Ok(candidate) => candidate,
+        Err(DenError::NotFound(_)) => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    let MemorySource::Conversation(conversation_id) = candidate.source else {
+        return Ok(false);
+    };
+    Ok(sqlx::query_scalar!(
+        "SELECT EXISTS (SELECT 1 FROM conversations c JOIN bear_hats h
+         ON h.bear_id = c.bear_id AND h.id = c.hat_id
+         WHERE c.bear_id = $1 AND c.id = $2 AND c.hat_id = $3
+           AND c.status = 'active' AND c.created_by_user_id IS NOT NULL) AS \"current!\"",
+        bear_id,
+        conversation_id,
+        verified.hat_id.as_uuid(),
+    )
+    .fetch_one(pool)
+    .await?)
+}
+
 async fn resolve_curate_proposal(
     pool: &PgPool,
     config: &Config,
@@ -277,8 +319,34 @@ async fn resolve_curate_proposal(
     proposal: &MemoryProposalRow,
     trigger: Option<&str>,
 ) -> Result<CurateProposalOutcome, DenError> {
-    let triage = decide_curate_triage(proposal, trigger);
+    let mut triage = decide_curate_triage(proposal, trigger);
+    if matches!(triage, CurateTriage::AwaitCurator)
+        && !verified_hat_candidate_is_current(
+            pool,
+            stores,
+            bear_id,
+            proposal.verified_hat_source.ok_or_else(|| {
+                DenError::System("verified hat candidate lost its source link".into())
+            })?,
+        )
+        .await?
+    {
+        triage = CurateTriage::Reject {
+            review_notes: "The canonical source or its Bear-owned hat binding is no longer current; no shared-memory write occurred.",
+            decision_summary: "Rejected stale verified hat candidate.",
+        };
+    }
     let triage_label = triage.triage_label().to_string();
+    if matches!(triage, CurateTriage::AwaitCurator) {
+        return Ok(CurateProposalOutcome {
+            proposal_id: proposal.id,
+            status: "pending".into(),
+            suggested_action: proposal.suggested_action.clone(),
+            triage: triage_label,
+            result_path: None,
+            error: None,
+        });
+    }
 
     let resolved = resolve_proposal(
         pool,
@@ -347,6 +415,7 @@ mod tests {
             source_agent_id: Some("pair-agent".to_string()),
             source_paths: vec!["pair/summaries/example.md".to_string()],
             source_refs: serde_json::json!({}),
+            verified_hat_source: None,
             proposal_type: "memory_review".to_string(),
             suggested_action: suggested_action.to_string(),
             target_ref: None,
@@ -414,6 +483,22 @@ mod tests {
                 assert_eq!(triage.triage_label(), "reject");
             }
         }
+    }
+
+    #[test]
+    fn only_canonically_linked_hat_candidates_remain_pending_without_publication() {
+        let mut proposal = sample_proposal("propose_hat", "normal", false);
+        assert_eq!(
+            decide_curate_triage(&proposal, None).resolution_status(),
+            "rejected"
+        );
+        proposal.verified_hat_source = Some(den_memory::VerifiedHatProposalSource {
+            memory_id: Uuid::new_v4(),
+            hat_id: den_core::ids::HatId::new(Uuid::new_v4()),
+        });
+        let decision = decide_curate_triage(&proposal, None);
+        assert_eq!(decision.resolution_status(), "pending");
+        assert_eq!(decision.triage_label(), "await_curator");
     }
 
     #[test]

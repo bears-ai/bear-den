@@ -68,6 +68,54 @@ async fn source_and_hat_records_have_distinct_canonical_scopes() {
     assert_eq!(hat_scope.3.as_deref(), Some(hat.to_string().as_str()));
 }
 
+#[tokio::test]
+async fn upgrades_existing_proposal_table_without_inventing_a_verified_hat() {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .expect("connect old SQLite");
+    sqlx::query(
+        "CREATE TABLE memory_proposals (
+        proposal_id TEXT PRIMARY KEY, bear_id TEXT NOT NULL, sequence_no INTEGER NOT NULL,
+        source_memory_id TEXT NULL, suggested_action TEXT NOT NULL,
+        sensitivity TEXT NOT NULL DEFAULT 'normal', requires_human INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'pending', payload_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL, reviewed_at TEXT NULL)",
+    )
+    .execute(&pool)
+    .await
+    .expect("create pre-hat proposal table");
+    let bear_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO memory_proposals
+        (proposal_id, bear_id, sequence_no, source_memory_id, suggested_action, payload_json, created_at)
+        VALUES ('old-proposal', ?, 1, 'legacy-source:not-a-uuid', 'unspecified',
+        '{\"source_memory_id\":\"forged\",\"target_hat_id\":\"forged\"}',
+        '2026-01-01T00:00:00Z')",
+    )
+    .bind(bear_id.to_string())
+    .execute(&pool)
+    .await
+    .unwrap();
+    for statement in include_str!("schema.sql")
+        .split(';')
+        .map(str::trim)
+        .filter(|sql| !sql.is_empty())
+    {
+        sqlx::query(statement).execute(&pool).await.unwrap();
+    }
+    migrate_bear_sqlite_schema(&pool).await.unwrap();
+    migrate_bear_sqlite_schema(&pool).await.unwrap();
+    let store = BearMemoryStore::new(bear_id, pool);
+    let old = crate::get_memory_proposal(&store, "old-proposal")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(old.status, "pending");
+    assert!(old.verified_hat_source.is_none());
+}
+
 async fn stored_scope(
     store: &BearMemoryStore,
     memory_id: &str,

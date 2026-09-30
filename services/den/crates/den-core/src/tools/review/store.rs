@@ -15,7 +15,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemorySuggestedAction {
     Unspecified,
-
+    ProposeHat,
     CabinetUpdate,
     SkillReview,
     RetainProfileLocal,
@@ -29,7 +29,7 @@ impl MemorySuggestedAction {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Unspecified => "unspecified",
-
+            Self::ProposeHat => "propose_hat",
             Self::CabinetUpdate => "cabinet_update",
             Self::SkillReview => "skill_review",
             Self::RetainProfileLocal => "retain_profile_local",
@@ -43,7 +43,7 @@ impl MemorySuggestedAction {
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "unspecified" => Some(Self::Unspecified),
-
+            "propose_hat" => Some(Self::ProposeHat),
             "cabinet_update" => Some(Self::CabinetUpdate),
             "skill_review" => Some(Self::SkillReview),
             "retain_profile_local" => Some(Self::RetainProfileLocal),
@@ -247,6 +247,9 @@ pub struct RequestReviewRequest {
     pub source_profile: BearProfile,
     pub binding_id: Option<String>,
     pub source_paths: Vec<String>,
+    /// Locator supplied by a model; the Den store verifies it against the bound
+    /// canonical source and derives the hat before persisting any trusted link.
+    pub source_memory_id: Option<Uuid>,
     pub source_refs: Value,
     pub suggested_action: MemorySuggestedAction,
     pub target_ref: Option<String>,

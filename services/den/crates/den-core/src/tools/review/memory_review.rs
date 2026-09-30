@@ -55,7 +55,10 @@ pub struct MemoryMarkLifecycleArguments {
 
 #[derive(Debug, Deserialize)]
 pub struct MemoryRequestReviewArguments {
+    #[serde(default)]
     pub source_paths: Vec<String>,
+    #[serde(default)]
+    pub source_memory_id: Option<Uuid>,
     pub title: String,
     pub summary: String,
     #[serde(default)]
@@ -278,9 +281,9 @@ pub async fn request_memory_review(
         .map(|path| path.trim().to_string())
         .filter(|path| !path.is_empty())
         .collect::<Vec<_>>();
-    if source_paths.is_empty() {
+    if source_paths.is_empty() == args.source_memory_id.is_none() {
         return Err(DenError::ValidationError(
-            "source_paths must include at least one path".to_string(),
+            "provide either one canonical source_memory_id or source_paths, not both".into(),
         ));
     }
     if source_paths.len() > 20 {
@@ -308,6 +311,23 @@ pub async fn request_memory_review(
         validate_optional_review_text("proposed_patch", args.proposed_patch.as_deref(), 20_000)?;
     validate_optional_object("refs", &args.refs)?;
     let suggested_action = normalize_suggested_action(args.suggested_action.as_deref())?;
+    if (suggested_action == MemorySuggestedAction::ProposeHat) != args.source_memory_id.is_some() {
+        return Err(DenError::ValidationError(
+            "propose_hat requires a canonical source_memory_id; path proposals cannot select a hat"
+                .into(),
+        ));
+    }
+    if args.source_memory_id.is_some()
+        && (args
+            .target_ref
+            .as_deref()
+            .is_some_and(|path| !path.trim().is_empty())
+            || proposed_patch.is_some())
+    {
+        return Err(DenError::ValidationError(
+            "verified hat proposals cannot name a target path or supply a patch".into(),
+        ));
+    }
     let sensitivity = normalize_memory_sensitivity(args.sensitivity.as_deref())?;
     let source_refs = json!({
         "conversation_id": clean_optional(&context.conversation_id),
@@ -321,6 +341,7 @@ pub async fn request_memory_review(
             source_profile: role,
             binding_id: clean_optional(&context.binding_id),
             source_paths,
+            source_memory_id: args.source_memory_id,
             source_refs,
             suggested_action,
             target_ref: args

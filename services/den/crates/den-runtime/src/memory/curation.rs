@@ -8,9 +8,9 @@ use uuid::Uuid;
 
 use den_memory::{
     self as store, complete_reflection_run_outcome, create_memory_observation,
-    create_memory_proposal, create_reflection_run_outcome, get_memory_proposal,
-    list_memory_proposals, mark_observation_review_queued, resolve_memory_proposal,
-    MemoryStoreManager, SqliteMemoryProposal,
+    create_memory_proposal, create_reflection_run_outcome, create_verified_hat_proposal,
+    get_memory_proposal, list_memory_proposals, mark_observation_review_queued,
+    resolve_memory_proposal, MemoryStoreManager, SqliteMemoryProposal, VerifiedHatProposalSource,
 };
 use den_service::bears::BearProfile;
 use den_service::memory_proposals::{
@@ -48,6 +48,51 @@ pub async fn create_proposal(
         params.sensitivity,
         params.requires_human,
         &payload,
+    )
+    .await?;
+    sqlite_proposal_to_row(params.bear_id, &sqlite, params.source_profile)
+}
+
+/// Store Den-verified canonical source/hat columns independently of model-provided
+/// proposal text. There is intentionally no publication in this intake path.
+pub async fn create_verified_proposal(
+    stores: &MemoryStoreManager,
+    params: CreateMemoryProposal<'_>,
+    verified: VerifiedHatProposalSource,
+) -> Result<MemoryProposalRow, DenError> {
+    if params.source_profile != BearProfile::Pair
+        || params.suggested_action != "propose_hat"
+        || !params.source_paths.is_empty()
+        || params.target_ref.is_some()
+        || params.proposed_patch.is_some()
+    {
+        return Err(DenError::ValidationError(
+            "verified hat intake requires a Pair source and no path or patch".into(),
+        ));
+    }
+    let store = stores.store_for_bear(params.bear_id).await?;
+    let payload = json!({
+        "source_profile": params.source_profile.as_str(),
+        "source_agent_id": params.source_agent_id,
+        "source_paths": params.source_paths,
+        "source_refs": params.source_refs,
+        "target_ref": params.target_ref,
+        "title": params.title,
+        "summary": params.summary,
+        "rationale": params.rationale,
+        "proposed_content": params.proposed_content,
+        "proposed_patch": params.proposed_patch,
+        "refs": params.refs,
+        "suggested_action": "propose_hat",
+        "sensitivity": params.sensitivity,
+        "requires_human": params.requires_human,
+    });
+    let sqlite = create_verified_hat_proposal(
+        &store,
+        params.sensitivity,
+        params.requires_human,
+        &payload,
+        verified,
     )
     .await?;
     sqlite_proposal_to_row(params.bear_id, &sqlite, params.source_profile)
@@ -225,6 +270,7 @@ fn sqlite_proposal_to_row(
         source_agent_id: payload.source_agent_id,
         source_paths: payload.source_paths,
         source_refs: payload.source_refs,
+        verified_hat_source: sqlite.verified_hat_source,
         proposal_type: "memory_review".to_string(),
         suggested_action: payload
             .suggested_action

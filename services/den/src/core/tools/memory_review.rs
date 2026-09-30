@@ -11,24 +11,32 @@ use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+use den_core::ids::BearId;
 use den_core::tools::review::{
     MarkMemoryLifecycleRequest, MemoryProposalStatus, MemoryReviewStore, ObservationRecord,
     ObservationWriteRequest, ProposalProjection, RequestReviewRequest, ResolveProposalRequest,
 };
 
 use crate::{config::Config, errors::DenError};
-use den_memory::{mark_memory_record_lifecycle, MemoryStoreManager};
+use den_memory::{
+    hat_promotion, mark_memory_record_lifecycle, MemorySource, MemoryStoreManager,
+    VerifiedHatProposalSource,
+};
 use den_runtime::{
     bear_observations::{self, BearObservationRow},
     memory::{
-        create_observation, create_proposal, get_observation, get_proposal as db_get_proposal,
-        list_proposals as db_list_proposals, mark_observation_review_queued_for_bear,
-        resolve_proposal as db_resolve_proposal,
+        create_observation, create_proposal, create_verified_proposal, get_observation,
+        get_proposal as db_get_proposal, list_proposals as db_list_proposals,
+        mark_observation_review_queued_for_bear, resolve_proposal as db_resolve_proposal,
     },
     reflection_conductor::{self, ProposalEnqueueParams},
 };
 use den_service::{
-    bears::BearProfile,
+    bears::{
+        hats,
+        hats::memory_binding::{self, ResolvedMemoryBinding},
+        BearProfile,
+    },
     conversation::events::{
         memory_proposal_resolved_projection, memory_review_requested_projection,
         project_to_conversation, ProjectionProvenance, ProjectionSource,
@@ -269,30 +277,94 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
     }
 
     async fn request_review(&self, request: RequestReviewRequest) -> Result<Value, DenError> {
-        let proposal = create_proposal(
-            self.pool,
-            self.config,
-            self.stores,
-            CreateMemoryProposal {
-                bear_id: request.bear_id,
-                source_profile: request.source_profile,
-                source_agent_id: request.binding_id.clone(),
-                source_paths: request.source_paths.clone(),
-                source_refs: request.source_refs.clone(),
-                suggested_action: request.suggested_action.as_str(),
-                target_ref: request.target_ref.as_deref(),
-                title: &request.title,
-                summary: &request.summary,
-                rationale: &request.rationale,
-                proposed_content: request.proposed_content.as_deref(),
-                proposed_patch: request.proposed_patch.as_deref(),
-                refs: request.refs.clone(),
-                sensitivity: request.sensitivity.as_str(),
-                requires_human: request.requires_human,
-                project_to_conversation: false,
-            },
-        )
-        .await?;
+        let verified = if let Some(memory_id) = request.source_memory_id {
+            let conversation_id =
+                request
+                    .projection
+                    .conversation_id
+                    .as_deref()
+                    .ok_or_else(|| {
+                        DenError::Authorization(
+                            "canonical conversation required for hat review".into(),
+                        )
+                    })?;
+            let binding = memory_binding::for_external_conversation(
+                self.pool,
+                BearId::new(request.bear_id),
+                conversation_id,
+            )
+            .await?;
+            let ResolvedMemoryBinding::Bound(grant) = binding else {
+                return Err(DenError::Authorization(
+                    "a bound hat conversation is required".into(),
+                ));
+            };
+            let MemorySource::Conversation(source_id) = grant.source() else {
+                return Err(DenError::Authorization(
+                    "Pair hat review requires a conversation source".into(),
+                ));
+            };
+            let hat_id = grant
+                .hat_id()
+                .ok_or_else(|| DenError::Authorization("bound conversation has no hat".into()))?;
+            let owned = sqlx::query_scalar!(
+                "SELECT EXISTS (SELECT 1 FROM conversations WHERE bear_id = $1 AND id = $2
+                 AND hat_id = $3 AND status = 'active' AND created_by_user_id = $4) AS \"owned!\"",
+                request.bear_id,
+                source_id,
+                hat_id.as_uuid(),
+                request.projection.user_id,
+            )
+            .fetch_one(self.pool)
+            .await?;
+            if !owned {
+                return Err(DenError::Authorization(
+                    "source conversation does not belong to the current human".into(),
+                ));
+            }
+            let store = self.stores.store_for_bear(request.bear_id).await?;
+            let candidate = hat_promotion::review_candidate(&store, memory_id).await?;
+            if candidate.source != grant.source() {
+                return Err(DenError::Authorization(
+                    "source note belongs to a different conversation".into(),
+                ));
+            }
+            Some(VerifiedHatProposalSource { memory_id, hat_id })
+        } else {
+            if !hats::list_hats(self.pool, BearId::new(request.bear_id))
+                .await?
+                .is_empty()
+            {
+                return Err(DenError::Authorization(
+                    "configured Bears require a canonical source_memory_id for hat proposals"
+                        .into(),
+                ));
+            }
+            None
+        };
+        let params = CreateMemoryProposal {
+            bear_id: request.bear_id,
+            source_profile: request.source_profile,
+            source_agent_id: request.binding_id.clone(),
+            source_paths: request.source_paths.clone(),
+            source_refs: request.source_refs.clone(),
+            suggested_action: request.suggested_action.as_str(),
+            target_ref: request.target_ref.as_deref(),
+            title: &request.title,
+            summary: &request.summary,
+            rationale: &request.rationale,
+            proposed_content: request.proposed_content.as_deref(),
+            proposed_patch: request.proposed_patch.as_deref(),
+            refs: request.refs.clone(),
+            sensitivity: request.sensitivity.as_str(),
+            requires_human: request.requires_human,
+            project_to_conversation: false,
+        };
+        let proposal = if let Some(verified) = verified {
+            create_verified_proposal(self.stores, params, verified).await?
+        } else {
+            create_proposal(self.pool, self.config, self.stores, params).await?
+        };
         project_to_conversation(
             self.pool,
             proposal.bear_id,

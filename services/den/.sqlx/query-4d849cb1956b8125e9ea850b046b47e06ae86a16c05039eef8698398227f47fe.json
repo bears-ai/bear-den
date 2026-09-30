@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (SELECT 1 FROM conversations c JOIN bear_hats h\n         ON h.bear_id = c.bear_id AND h.id = c.hat_id\n         WHERE c.bear_id = $1 AND c.id = $2 AND c.hat_id = $3\n           AND c.status = 'active' AND c.created_by_user_id IS NOT NULL) AS \"current!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "current!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "4d849cb1956b8125e9ea850b046b47e06ae86a16c05039eef8698398227f47fe"
+}

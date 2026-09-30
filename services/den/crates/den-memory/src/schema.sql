@@ -147,6 +147,7 @@ CREATE TABLE IF NOT EXISTS memory_proposals (
     bear_id TEXT NOT NULL,
     sequence_no INTEGER NOT NULL,
     source_memory_id TEXT NULL,
+    target_hat_id TEXT NULL,
     suggested_action TEXT NOT NULL,
     sensitivity TEXT NOT NULL DEFAULT 'normal',
     requires_human INTEGER NOT NULL DEFAULT 0,

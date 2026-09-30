@@ -25,6 +25,7 @@ pub async fn migrate_bear_sqlite_schema(pool: &SqlitePool) -> Result<(), DenErro
 
     // Additive bi-temporal event-time columns (ADR-0041 / DERIVED_RECALL Phase 3.5).
     add_adr0041_record_columns_if_missing(pool, &columns).await?;
+    add_verified_proposal_hat_column_if_missing(pool).await?;
     ensure_memory_harvest_marks(pool).await?;
 
     // Retire the legacy record→record `memory_links` base table; relations now live in
@@ -65,6 +66,21 @@ pub async fn migrate_bear_sqlite_schema(pool: &SqlitePool) -> Result<(), DenErro
     // imports such as `summaries/`, `logs/`, and `decisions/` keep their richer kind.
     normalize_legacy_import_hashed_kinds(pool).await?;
 
+    Ok(())
+}
+
+async fn add_verified_proposal_hat_column_if_missing(pool: &SqlitePool) -> Result<(), DenError> {
+    let columns =
+        sqlx::query_scalar::<_, String>("SELECT name FROM pragma_table_info('memory_proposals')")
+            .fetch_all(pool)
+            .await
+            .map_err(|err| DenError::System(format!("inspect memory proposal columns: {err}")))?;
+    if !columns.iter().any(|column| column == "target_hat_id") {
+        sqlx::query("ALTER TABLE memory_proposals ADD COLUMN target_hat_id TEXT NULL")
+            .execute(pool)
+            .await
+            .map_err(|err| DenError::System(format!("add verified proposal hat column: {err}")))?;
+    }
     Ok(())
 }
 
