@@ -9,9 +9,8 @@ use uuid::Uuid;
 use den_memory::{
     self as store, complete_reflection_run_outcome, create_memory_observation,
     create_memory_proposal, create_reflection_run_outcome, get_memory_proposal,
-    list_memory_proposals, mark_observation_review_queued, promote_to_shared_core,
-    promote_to_shared_core_at_path, resolve_memory_proposal, MemoryStoreManager,
-    SqliteMemoryProposal,
+    list_memory_proposals, mark_observation_review_queued, resolve_memory_proposal,
+    MemoryStoreManager, SqliteMemoryProposal,
 };
 use den_service::bears::BearProfile;
 use den_service::memory_proposals::{
@@ -149,44 +148,6 @@ pub async fn resolve_proposal(
     )
     .await?;
     sqlite_proposal_to_row(params.bear_id, &sqlite, params.reviewer_profile)
-}
-
-pub async fn promote_core_content(
-    stores: &MemoryStoreManager,
-    bear_id: Uuid,
-    source_memory_id: &str,
-    kind: &str,
-    content_text: &str,
-    author_profile: &str,
-) -> Result<(String, String), DenError> {
-    let store = stores.store_for_bear(bear_id).await?;
-    let outcome =
-        promote_to_shared_core(&store, source_memory_id, kind, content_text, author_profile)
-            .await?;
-    Ok((outcome.memory_id, outcome.promotion_id))
-}
-
-pub async fn promote_core_content_at_path(
-    stores: &MemoryStoreManager,
-    bear_id: Uuid,
-    source_memory_id: &str,
-    target_path: &str,
-    kind: &str,
-    content_text: &str,
-    author_profile: &str,
-) -> Result<(String, String), DenError> {
-    let store = stores.store_for_bear(bear_id).await?;
-    let outcome = promote_to_shared_core_at_path(
-        &store,
-        source_memory_id,
-        target_path,
-        kind,
-        content_text,
-        author_profile,
-        None,
-    )
-    .await?;
-    Ok((outcome.memory_id, outcome.promotion_id))
 }
 
 pub async fn record_reflection_outcome_start(

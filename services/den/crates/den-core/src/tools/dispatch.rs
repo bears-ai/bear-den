@@ -21,7 +21,7 @@ use crate::tools::{
         DEN_ENTITY_MERGE, DEN_ENTITY_MERGE_PROVIDER, DEN_ENTITY_RESOLVE,
         DEN_ENTITY_RESOLVE_PROVIDER, DEN_ENTITY_SPLIT, DEN_ENTITY_SPLIT_PROVIDER,
         DEN_ENTITY_WRITE_ACCESS_RULE, DEN_ENTITY_WRITE_ACCESS_RULE_PROVIDER,
-        DEN_ENTITY_WRITE_ANCHOR, DEN_ENTITY_WRITE_ANCHOR_PROVIDER, DEN_MEMORY_APPLY_CORE_UPDATE,
+        DEN_ENTITY_WRITE_ANCHOR, DEN_ENTITY_WRITE_ANCHOR_PROVIDER,
         DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD, DEN_MEMORY_LIST_PROPOSALS,
         DEN_MEMORY_MARK_LIFECYCLE, DEN_MEMORY_ORIENT_WORK_SURFACE, DEN_MEMORY_READ,
         DEN_MEMORY_READ_PROPOSAL, DEN_MEMORY_REQUEST_REVIEW, DEN_MEMORY_RESOLVE_PROPOSAL,
@@ -164,7 +164,6 @@ pub fn has_native_session_executor(tool_name: &str) -> bool {
             | DEN_MEMORY_LIST_PROPOSALS
             | DEN_MEMORY_READ_PROPOSAL
             | DEN_MEMORY_RESOLVE_PROPOSAL
-            | DEN_MEMORY_APPLY_CORE_UPDATE
             | DEN_MEMORY_MARK_LIFECYCLE
             | DEN_PLAN_MODE_ENTER
             | DEN_PLAN_MODE_STATUS
@@ -286,9 +285,7 @@ pub async fn invoke_den_tool(
         DEN_MEMORY_RESOLVE_PROPOSAL => {
             review::resolve_memory_proposal(ctx, &context, role, arguments).await
         }
-        DEN_MEMORY_APPLY_CORE_UPDATE => {
-            review::apply_core_update(ctx, &context, role, arguments).await
-        }
+
         DEN_MEMORY_MARK_LIFECYCLE => {
             review::mark_memory_lifecycle(ctx, &context, role, arguments).await
         }

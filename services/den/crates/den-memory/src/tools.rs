@@ -28,7 +28,7 @@ pub async fn sqlite_write_at_path(
     metadata_obj.insert("title".to_string(), json!(title));
     metadata_obj.insert(
         "claim_fingerprint".to_string(),
-        json!(crate::promotions::memory_claim_fingerprint(&content)),
+        json!(crate::claim_fingerprint::memory_claim_fingerprint(&content)),
     );
     metadata_obj.insert("storage".to_string(), json!("sqlite"));
     metadata_obj.insert("runtime".to_string(), json!("native"));
@@ -143,7 +143,7 @@ async fn write_semantic_entry(
         "lifecycle": lifecycle,
         "source": source,
         "author": author,
-        "claim_fingerprint": crate::promotions::memory_claim_fingerprint(&content),
+        "claim_fingerprint": crate::claim_fingerprint::memory_claim_fingerprint(&content),
         "storage": "sqlite",
         "runtime": "native",
     });

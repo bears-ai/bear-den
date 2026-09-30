@@ -1,6 +1,6 @@
 # Memory Automation Roadmap
 
-> **Direction changed (2026-06).** Canonical memory is per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)); Letta Archives and `pair/` MemFS branches are removed. Long-term recall is a **derived Qdrant index** over canonical SQLite ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)); the engine that *fills* it (extraction-first **harvest** + **consolidation** by supersession) and recall scoring are defined in [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md). Canonical target: [Den runtime](../architecture/den-runtime.md) ([runtime plan](DEN_RUNTIME_PLAN.md)).
+> **Direction changed (2026-09).** The legacy proposal→`core/` auto-promotion and model-facing `memory_apply_core_update` tool are retired on all Bears; historical core-action proposals are rejected without publication or a human-review queue. Future autonomous sharing must verify canonical source and hat/Work audience ([hats plan](HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md)). Canonical memory is per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)); Letta Archives and `pair/` MemFS branches are removed. Long-term recall is a **derived Qdrant index** over canonical SQLite ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)); the engine that *fills* it (extraction-first **harvest** + **consolidation** by supersession) and recall scoring are defined in [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md). Canonical target: [Den runtime](../architecture/den-runtime.md) ([runtime plan](DEN_RUNTIME_PLAN.md)).
 
 For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
 Status: implementation roadmap; P0 pair-reflection proposal enqueue and P2 compaction-summary-assisted pair reflection proposals are implemented for ACP close. Remaining automation must now prioritize proving positive memory quality over adding more queue plumbing: compaction may schedule and scope harvest, but reflection must perform memory-specific extraction over evidence (ADR-0041 2026-07 amendment).
@@ -350,7 +350,7 @@ Turn closed session archives into durable memory candidates, not just the active
 
 - 🟡 Compaction-artifact harvest is implemented as a conservative stopgap: scan **un-mined** compaction artifacts, keep only durable-looking decisions/constraints/goals, and discard transient follow-up/workflow/artifact-only residue. This reduces junk but is not the target architecture.
 - Next target: use compaction artifacts only to schedule/scope candidate spans, then run a memory-specific extractor over episodic evidence from the underlying session/messages/artifacts.
-- ✅ Emit memory proposals (candidate durable entries) with harvest provenance (`source_hash`, `run_id`, source refs); do not write `core/` (that is `memory_curate`).
+- ✅ Emit memory proposals (candidate durable entries) with harvest provenance (`source_hash`, `run_id`, source refs); do not write `core/`. The former proposal→core `memory_curate` write path is retired; a future verified-source/audience path is required.
 - 🟡 Apply a deterministic quality/risk filter before a candidate becomes a proposal: transient follow-up-only artifacts and goal/workflow-only summaries are marked harvested without a proposal; durable decisions/constraints receive confidence metadata; artifact-only candidates are discarded unless a semantic claim can be stated; person/secret/external-risk signals set proposal sensitivity for human review. Fixture coverage exists for each deterministic branch. Richer model-assisted extraction is no longer deferred on "proposal quality metrics" alone; it is required to prove positive meaningful memory.
 
 ### Triggers
@@ -481,7 +481,7 @@ Keep shared memory clean and searchable.
 
 ### Deliverables
 
-1. `memory_apply_core_update` supports bounded append/create/replace workflows, writing new SQLite records and setting `supersedes_memory_id` on replace ([ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md)).
+1. **Revised:** replace the retired model-facing `memory_apply_core_update` path with typed, canonically sourced promotions to a verified hat and, separately, reviewed hat→`core/` publication. No proposal path/sensitivity label grants a shared write ([hats plan](HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md)).
 2. Curate can compact `core/` records/sections via supersession (not destructive overwrite).
 3. Curate can request recall indexing of curated summaries (`archive_index`).
 4. UI shows source proposal → `core/` record → recall passage mapping.

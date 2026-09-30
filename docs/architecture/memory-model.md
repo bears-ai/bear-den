@@ -119,7 +119,7 @@ For a hat-bound conversation or Work run, the reviewed flow is:
 1. a source writes private, canonical source-local notes;
 2. a Bear admin may inspect a verifiable current note and write new hat-safe content; the SQLite source→hat promotion is atomic;
 3. an admin may separately inspect a current, visible hat entry and write new Bear/Work-safe content; the SQLite hat→`core/` promotion is atomic;
-4. routine autonomous curation of these scopes remains open. Legacy proposal auto-promotion cannot write to core once the Bear has hats.
+4. routine autonomous curation of these scopes remains open. Legacy proposal-to-core auto-promotion and its model-facing core-update tool have been retired for all Bears, including no-hat Bears. Historical core-action proposals resolve as rejected without a human-review queue; they do not publish shared memory.
 
 No ordinary turn reads another source's raw notes, and a hat's reviewed knowledge is not automatically suitable for all other hats or autonomous Work.
 

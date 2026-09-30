@@ -1,4 +1,4 @@
-use den_core::{config::Config, ids::BearId, DenError};
+use den_core::{config::Config, DenError};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -6,8 +6,8 @@ use uuid::Uuid;
 use den_memory::MemoryStoreManager;
 use den_service::memory_proposals::{MemoryProposalRow, ProposalResolutionParams};
 
-use crate::memory::{get_proposal, promote_core_content_at_path, resolve_proposal};
-use den_service::bears::{hats, BearProfile};
+use crate::memory::{get_proposal, resolve_proposal};
+use den_service::bears::BearProfile;
 
 pub const MEMORY_CURATE_RUNNER_AGENT_ID: &str = "memory_curate_runner";
 
@@ -61,10 +61,6 @@ enum CurateTriage {
         review_notes: &'static str,
         decision_summary: &'static str,
     },
-    PromoteToCore {
-        review_notes: &'static str,
-        decision_summary: &'static str,
-    },
 }
 
 impl CurateTriage {
@@ -74,7 +70,6 @@ impl CurateTriage {
             Self::Reject { .. } => "reject",
             Self::Defer { .. } => "defer",
             Self::EscalateHuman { .. } => "escalate_human",
-            Self::PromoteToCore { .. } => "promote_to_core",
         }
     }
 
@@ -84,7 +79,6 @@ impl CurateTriage {
             Self::Reject { .. } => "rejected",
             Self::Defer { .. } => "deferred",
             Self::EscalateHuman { .. } => "needs_human_review",
-            Self::PromoteToCore { .. } => "approved",
         }
     }
 
@@ -93,8 +87,7 @@ impl CurateTriage {
             Self::RetainProfileLocal { review_notes, .. }
             | Self::Reject { review_notes, .. }
             | Self::Defer { review_notes, .. }
-            | Self::EscalateHuman { review_notes, .. }
-            | Self::PromoteToCore { review_notes, .. } => review_notes,
+            | Self::EscalateHuman { review_notes, .. } => review_notes,
         }
     }
 
@@ -111,15 +104,24 @@ impl CurateTriage {
             }
             | Self::EscalateHuman {
                 decision_summary, ..
-            }
-            | Self::PromoteToCore {
-                decision_summary, ..
             } => decision_summary,
         }
     }
 }
 
 fn decide_curate_triage(proposal: &MemoryProposalRow, trigger: Option<&str>) -> CurateTriage {
+    // Resolve historical core-action proposals without publishing or creating a
+    // new human-review backlog. They remain auditable as rejected proposals.
+    if matches!(
+        proposal.suggested_action.as_str(),
+        "promote_to_core" | "summarize_into_core"
+    ) {
+        return CurateTriage::Reject {
+            review_notes:
+                "Legacy proposal-to-core publication is retired; no shared-memory write was made.",
+            decision_summary: "Rejected retired core promotion action; source memory is unchanged.",
+        };
+    }
     if proposal.requires_human {
         return CurateTriage::EscalateHuman {
             review_notes: "Proposal was flagged requires_human=true.",
@@ -150,20 +152,7 @@ fn decide_curate_triage(proposal: &MemoryProposalRow, trigger: Option<&str>) -> 
             review_notes: "Proposal requested deletion after review.",
             decision_summary: "Autonomous curate rejected the proposal per delete_after_review.",
         },
-        "promote_to_core" | "summarize_into_core" => {
-            if can_auto_promote_to_core(proposal) {
-                CurateTriage::PromoteToCore {
-                    review_notes: "Low-risk core promotion candidate with bounded summary content.",
-                    decision_summary:
-                        "Autonomous curate applied a distilled summary to core memory.",
-                }
-            } else {
-                CurateTriage::Defer {
-                    review_notes: "Core promotion requires curate-agent review or additional proposal content; no silent core write was applied.",
-                    decision_summary: "Deferred core promotion until curate can review with richer context.",
-                }
-            }
-        }
+
         "cabinet_update" | "skill_review" | "archive_index" | "task_context" => {
             CurateTriage::Defer {
                 review_notes:
@@ -203,59 +192,6 @@ fn sensitivity_requires_human(sensitivity: &str) -> bool {
     matches!(
         sensitivity,
         "person" | "secret_risk" | "external_untrusted" | "unknown"
-    )
-}
-
-fn can_auto_promote_to_core(proposal: &MemoryProposalRow) -> bool {
-    if proposal.requires_human || sensitivity_requires_human(&proposal.sensitivity) {
-        return false;
-    }
-    if proposal
-        .proposed_patch
-        .as_deref()
-        .is_some_and(|value| !value.trim().is_empty())
-    {
-        return false;
-    }
-    if proposal
-        .refs
-        .get("archive_harvest")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false)
-    {
-        return false;
-    }
-    let has_body = proposal
-        .proposed_content
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|value| !value.is_empty())
-        || proposal.summary.trim().len() >= 16;
-    has_body && !proposal.source_paths.is_empty()
-}
-
-fn core_target_path(proposal: &MemoryProposalRow) -> String {
-    proposal
-        .target_ref
-        .as_deref()
-        .map(str::trim)
-        .filter(|path| path.starts_with("core/"))
-        .map(str::to_string)
-        .unwrap_or_else(|| "core/knowledge.md".to_string())
-}
-
-fn promotion_body(proposal: &MemoryProposalRow) -> String {
-    let distilled = proposal
-        .proposed_content
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| proposal.summary.trim());
-    format!(
-        "{distilled}\n\n---\nSource proposal: `{}`\nSource role: `{}`\nSource paths: {}\n",
-        proposal.id,
-        proposal.source_profile,
-        proposal.source_paths.join(", ")
     )
 }
 
@@ -341,65 +277,8 @@ async fn resolve_curate_proposal(
     proposal: &MemoryProposalRow,
     trigger: Option<&str>,
 ) -> Result<CurateProposalOutcome, DenError> {
-    let mut triage = decide_curate_triage(proposal, trigger);
-    if matches!(triage, CurateTriage::PromoteToCore { .. })
-        && !hats::list_hats(pool, BearId::new(bear_id))
-            .await?
-            .is_empty()
-    {
-        triage = CurateTriage::EscalateHuman {
-            review_notes: "Configured hats require a Bear-admin review of canonical hat knowledge before Bear-wide core publication.",
-            decision_summary: "Escalated core promotion: a legacy proposal cannot prove the hat and Work audience for this Bear.",
-        };
-    }
+    let triage = decide_curate_triage(proposal, trigger);
     let triage_label = triage.triage_label().to_string();
-
-    if matches!(triage, CurateTriage::PromoteToCore { .. }) {
-        match apply_core_promotion(pool, config, stores, bear_id, proposal, &triage).await {
-            Ok((result_path, _result_commit)) => {
-                return Ok(CurateProposalOutcome {
-                    proposal_id: proposal.id,
-                    status: "approved".to_string(),
-                    suggested_action: proposal.suggested_action.clone(),
-                    triage: triage_label,
-                    result_path: Some(result_path),
-                    error: None,
-                });
-            }
-            Err(error) => {
-                let deferred = resolve_proposal(
-                    pool,
-                    config,
-                    stores,
-                    ProposalResolutionParams {
-                        bear_id,
-                        proposal_id: proposal.id,
-                        reviewer_profile: BearProfile::Curate,
-                        reviewer_agent_id: Some(MEMORY_CURATE_RUNNER_AGENT_ID),
-                        status: "deferred",
-                        review_notes: Some(&format!(
-                            "Autonomous core promotion failed; deferred for curate review: {error}"
-                        )),
-                        decision_summary: Some(
-                            "Deferred after autonomous core promotion attempt failed.",
-                        ),
-                        result_path: None,
-                        result_commit: None,
-                        project_to_conversation: true,
-                    },
-                )
-                .await?;
-                return Ok(CurateProposalOutcome {
-                    proposal_id: deferred.id,
-                    status: deferred.status,
-                    suggested_action: deferred.suggested_action,
-                    triage: "defer_after_error".to_string(),
-                    result_path: None,
-                    error: Some(error.to_string()),
-                });
-            }
-        }
-    }
 
     let resolved = resolve_proposal(
         pool,
@@ -428,63 +307,6 @@ async fn resolve_curate_proposal(
         result_path: resolved.result_path,
         error: None,
     })
-}
-
-async fn apply_core_promotion(
-    pool: &PgPool,
-    config: &Config,
-    stores: &MemoryStoreManager,
-    bear_id: Uuid,
-    proposal: &MemoryProposalRow,
-    triage: &CurateTriage,
-) -> Result<(String, Option<String>), DenError> {
-    let target_path = core_target_path(proposal);
-    let kind = target_path
-        .split('/')
-        .next_back()
-        .unwrap_or("note")
-        .trim_end_matches(".md");
-    let (memory_id, _promotion_id) = promote_core_content_at_path(
-        stores,
-        bear_id,
-        &proposal.id.to_string(),
-        &target_path,
-        kind,
-        &promotion_body(proposal),
-        BearProfile::Curate.as_str(),
-    )
-    .await?;
-
-    // Derived recall is updated asynchronously (ADR-0038 Phase 1b): enqueue a reconcile so the
-    // recall_index worker re-indexes this Bear's canonical heads. Best-effort.
-    crate::reflection::conductor::enqueue_recall_index_if_enabled(
-        pool,
-        config,
-        bear_id,
-        "memory_curate_core_promotion",
-    )
-    .await;
-
-    let (result_path, result_commit) = (target_path, Some(memory_id));
-    resolve_proposal(
-        pool,
-        config,
-        stores,
-        ProposalResolutionParams {
-            bear_id,
-            proposal_id: proposal.id,
-            reviewer_profile: BearProfile::Curate,
-            reviewer_agent_id: Some(MEMORY_CURATE_RUNNER_AGENT_ID),
-            status: "approved",
-            review_notes: Some(triage.review_notes()),
-            decision_summary: Some(triage.decision_summary()),
-            result_path: Some(result_path.as_str()),
-            result_commit: result_commit.as_deref(),
-            project_to_conversation: true,
-        },
-    )
-    .await?;
-    Ok((result_path, result_commit))
 }
 
 fn aggregate_resolution_status(outcomes: &[CurateProposalOutcome]) -> String {
@@ -572,7 +394,7 @@ mod tests {
     #[test]
     fn risky_sensitivity_escalates_to_human_review() {
         for sensitivity in ["person", "secret_risk", "external_untrusted", "unknown"] {
-            let proposal = sample_proposal("promote_to_core", sensitivity, false);
+            let proposal = sample_proposal("unspecified", sensitivity, false);
             let triage = decide_curate_triage(&proposal, None);
             assert_eq!(
                 triage.resolution_status(),
@@ -583,26 +405,15 @@ mod tests {
     }
 
     #[test]
-    fn promote_to_core_with_summary_is_promotable() {
-        let proposal = sample_proposal("promote_to_core", "normal", false);
-        let triage = decide_curate_triage(&proposal, None);
-        assert_eq!(triage.triage_label(), "promote_to_core");
-    }
-
-    #[test]
-    fn archive_harvest_candidates_are_not_auto_promoted() {
-        let mut proposal = sample_proposal("promote_to_core", "normal", false);
-        proposal.refs = serde_json::json!({ "archive_harvest": true });
-        let triage = decide_curate_triage(&proposal, None);
-        assert_eq!(triage.resolution_status(), "deferred");
-    }
-
-    #[test]
-    fn proposed_patches_are_not_auto_promoted() {
-        let mut proposal = sample_proposal("promote_to_core", "normal", false);
-        proposal.proposed_patch = Some("@@ questionable patch @@".to_string());
-        let triage = decide_curate_triage(&proposal, None);
-        assert_eq!(triage.resolution_status(), "deferred");
+    fn retired_core_actions_are_rejected_even_when_risky_or_flagged_for_review() {
+        for action in ["promote_to_core", "summarize_into_core"] {
+            for sensitivity in ["normal", "secret_risk"] {
+                let proposal = sample_proposal(action, sensitivity, true);
+                let triage = decide_curate_triage(&proposal, None);
+                assert_eq!(triage.resolution_status(), "rejected");
+                assert_eq!(triage.triage_label(), "reject");
+            }
+        }
     }
 
     #[test]

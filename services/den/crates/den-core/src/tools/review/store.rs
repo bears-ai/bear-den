@@ -15,8 +15,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemorySuggestedAction {
     Unspecified,
-    SummarizeIntoCore,
-    PromoteToCore,
+
     CabinetUpdate,
     SkillReview,
     RetainProfileLocal,
@@ -30,8 +29,7 @@ impl MemorySuggestedAction {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Unspecified => "unspecified",
-            Self::SummarizeIntoCore => "summarize_into_core",
-            Self::PromoteToCore => "promote_to_core",
+
             Self::CabinetUpdate => "cabinet_update",
             Self::SkillReview => "skill_review",
             Self::RetainProfileLocal => "retain_profile_local",
@@ -45,8 +43,7 @@ impl MemorySuggestedAction {
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "unspecified" => Some(Self::Unspecified),
-            "summarize_into_core" => Some(Self::SummarizeIntoCore),
-            "promote_to_core" => Some(Self::PromoteToCore),
+
             "cabinet_update" => Some(Self::CabinetUpdate),
             "skill_review" => Some(Self::SkillReview),
             "retain_profile_local" => Some(Self::RetainProfileLocal),
@@ -230,7 +227,7 @@ pub struct ProposalProjection {
     pub scope_id: String,
 }
 
-/// A validated proposal resolution (`resolve_proposal` / part of `apply_core_update`).
+/// A validated proposal resolution (`resolve_proposal`).
 #[derive(Debug, Clone)]
 pub struct ResolveProposalRequest {
     pub bear_id: Uuid,
@@ -261,23 +258,6 @@ pub struct RequestReviewRequest {
     pub refs: Value,
     pub sensitivity: MemorySensitivity,
     pub requires_human: bool,
-    pub projection: ProposalProjection,
-}
-
-/// A validated core-update application (`apply_core_update`).
-#[derive(Debug, Clone)]
-pub struct ApplyCoreUpdateRequest {
-    pub bear_id: Uuid,
-    pub reviewer_profile: BearProfile,
-    pub binding_id: String,
-    pub proposal_id: Uuid,
-    pub target_path: String,
-    pub mode: String,
-    pub title: Option<String>,
-    pub body: Option<String>,
-    pub old_text: Option<String>,
-    pub new_text: Option<String>,
-    pub review_notes: Option<String>,
     pub projection: ProposalProjection,
 }
 
@@ -329,10 +309,6 @@ pub trait MemoryReviewStore: Send + Sync {
 
     /// Create a review-request proposal and project the event; returns the proposal JSON.
     async fn request_review(&self, request: RequestReviewRequest) -> Result<Value, DenError>;
-
-    /// Promote a reviewed proposal to core, resolve it, and project the event;
-    /// returns the full `{bear_id, proposal, core_update}` payload JSON.
-    async fn apply_core_update(&self, request: ApplyCoreUpdateRequest) -> Result<Value, DenError>;
 
     /// Mark an existing memory record's lifecycle status; returns the updated record JSON.
     async fn mark_memory_lifecycle(

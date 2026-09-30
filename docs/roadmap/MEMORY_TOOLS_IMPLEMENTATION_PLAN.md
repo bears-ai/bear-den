@@ -135,7 +135,7 @@ Future tools:
 | `den.memory.list_proposals` | `memory_list_proposals` | `curate` | List memory review proposals. |
 | `den.memory.read_proposal` | `memory_read_proposal` | `curate` | Read one memory review proposal with source pointers and status. |
 | `den.memory.resolve_proposal` | `memory_resolve_proposal` | `curate` | Resolve a proposal as approved, rejected, retained local, deferred, superseded, or human-review-needed. |
-| `den.memory.apply_core_update` | `memory_apply_core_update` | `curate` | Apply a reviewed `core/` update with provenance. |
+| ~~`den.memory.apply_core_update`~~ | ~~`memory_apply_core_update`~~ | — | **Retired:** not advertised or executable; use the verified-source/audience replacement in the [hats plan](HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md). |
 | `den.memory.supersede_entry` | `memory_supersede_entry` | `curate` | Mark or record that source memory has been superseded by a `core`/Cabinet outcome. |
 | `den.memory.history` | `memory_history` | role-scoped, curate broader | Inspect record/supersession history. |
 | `den.memory.diff` | `memory_diff` | role-scoped, curate broader | Inspect diffs between record versions or proposal states. |
@@ -551,7 +551,7 @@ Deliverables:
 1. `den.memory.request_review` for producer roles, starting with `pair`.
 2. Review proposal list/read.
 3. Review proposal resolution through `den.memory.resolve_proposal`.
-4. Constrained `core/` updates through `den.memory.apply_core_update` or equivalent structured core-write tools.
+4. **Revised:** verified-source/audience hat promotion and separate hat→`core/` publication, not the retired proposal-based `den.memory.apply_core_update` path.
 5. History/diff APIs.
 6. UI-ready audit trail.
 

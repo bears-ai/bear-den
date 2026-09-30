@@ -5,6 +5,7 @@
 
 pub mod access;
 pub mod admin_inspect;
+mod claim_fingerprint;
 mod clock;
 mod conflicts;
 pub mod descriptors;
@@ -19,7 +20,6 @@ mod logical_path;
 mod manager;
 mod migrate;
 mod observations;
-mod promotions;
 mod proposals;
 mod records;
 pub mod reflection_outcomes;
@@ -65,10 +65,7 @@ pub use observations::{
     create_memory_observation, get_memory_observation, mark_observation_review_queued,
     MemoryObservationStatus, SqliteMemoryObservation,
 };
-pub use promotions::{
-    append_memory_promotion, promote_to_shared_core, promote_to_shared_core_at_path,
-    CorePromotionOutcome,
-};
+
 pub use proposals::{
     count_memory_proposals, create_memory_proposal, get_memory_proposal, list_memory_proposals,
     list_reviewable_memory_proposals, resolve_memory_proposal, SqliteMemoryProposal,

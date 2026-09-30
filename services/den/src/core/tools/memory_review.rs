@@ -2,8 +2,8 @@
 //!
 //! Orchestration (gating, validation, projection-scope computation) lives in
 //! `den-tools`; this module provides the concrete [`MemoryReviewStore`] —
-//! composing proposal/observation persistence, the native/legacy core-update
-//! paths, the memory-curate enqueue, and `conversation_events` projections —
+//! composing proposal/observation persistence, the memory-curate enqueue,
+//! and `conversation_events` projections —
 //! wired into the dispatcher via `DenToolContext`.
 
 use serde_json::{json, Value};
@@ -11,11 +11,9 @@ use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use den_core::ids::BearId;
 use den_core::tools::review::{
-    ApplyCoreUpdateRequest, MarkMemoryLifecycleRequest, MemoryProposalStatus, MemoryReviewStore,
-    MemorySensitivity, ObservationRecord, ObservationWriteRequest, ProposalProjection,
-    RequestReviewRequest, ResolveProposalRequest,
+    MarkMemoryLifecycleRequest, MemoryProposalStatus, MemoryReviewStore, ObservationRecord,
+    ObservationWriteRequest, ProposalProjection, RequestReviewRequest, ResolveProposalRequest,
 };
 
 use crate::{config::Config, errors::DenError};
@@ -25,12 +23,12 @@ use den_runtime::{
     memory::{
         create_observation, create_proposal, get_observation, get_proposal as db_get_proposal,
         list_proposals as db_list_proposals, mark_observation_review_queued_for_bear,
-        promote_core_content_at_path, resolve_proposal as db_resolve_proposal,
+        resolve_proposal as db_resolve_proposal,
     },
     reflection_conductor::{self, ProposalEnqueueParams},
 };
 use den_service::{
-    bears::{hats, BearProfile},
+    bears::BearProfile,
     conversation::events::{
         memory_proposal_resolved_projection, memory_review_requested_projection,
         project_to_conversation, ProjectionProvenance, ProjectionSource,
@@ -53,10 +51,6 @@ fn observation_record(row: &BearObservationRow) -> ObservationRecord {
 
 fn observation_requires_human(salience: &str) -> bool {
     matches!(salience, "high" | "critical")
-}
-
-fn sensitivity_requires_human(sensitivity: MemorySensitivity) -> bool {
-    sensitivity != MemorySensitivity::Normal
 }
 
 /// Concrete [`MemoryReviewStore`] over the runtime pool/config/stores.
@@ -347,100 +341,6 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
             "freshness_trend": record.freshness_trend,
             "reviewer_profile": request.reviewer_profile.as_str(),
             "reviewer_agent_id": request.binding_id,
-        }))
-    }
-
-    async fn apply_core_update(&self, request: ApplyCoreUpdateRequest) -> Result<Value, DenError> {
-        // A legacy proposal can name a profile path but cannot prove ownership
-        // of canonical conversation/run notes or review the Core/Work audience.
-        // Configured Bears use the explicit, human-reviewed hat → core path.
-        if !hats::list_hats(self.pool, BearId::new(request.bear_id))
-            .await?
-            .is_empty()
-        {
-            return Err(DenError::Authorization(
-                "Bear-wide core updates for configured hats require an explicit Bear-admin review of canonical hat knowledge".into(),
-            ));
-        }
-        let proposal = db_get_proposal(
-            self.pool,
-            self.config,
-            self.stores,
-            request.bear_id,
-            request.proposal_id,
-        )
-        .await?
-        .ok_or_else(|| DenError::NotFound("memory proposal not found".to_string()))?;
-
-        if proposal.requires_human
-            || MemorySensitivity::parse(&proposal.sensitivity)
-                .map(sensitivity_requires_human)
-                .unwrap_or(true)
-        {
-            return Err(DenError::ValidationError(
-                "proposal requires human review; resolve as needs_human_review instead of applying a core update autonomously".to_string(),
-            ));
-        }
-        if !request.target_path.trim().starts_with("core/") {
-            return Err(DenError::ValidationError(
-                "target_path must be under core/".to_string(),
-            ));
-        }
-        if request.mode != "append_section" && request.mode != "create_file" {
-            return Err(DenError::ValidationError(
-                "native SQLite core updates currently support append_section or create_file; replace_text must be proposed for human review".to_string(),
-            ));
-        }
-
-        let content = request.body.clone().unwrap_or_else(|| {
-            format!(
-                "Applied from proposal `{}` via native SQLite promotion.",
-                proposal.id
-            )
-        });
-        let kind = request
-            .target_path
-            .split('/')
-            .next_back()
-            .unwrap_or("note")
-            .trim_end_matches(".md");
-        let (memory_id, promotion_id) = promote_core_content_at_path(
-            self.stores,
-            request.bear_id,
-            &proposal.id.to_string(),
-            request.target_path.as_str(),
-            kind,
-            &content,
-            request.reviewer_profile.as_str(),
-        )
-        .await?;
-        let resolved = db_resolve_proposal(
-            self.pool,
-            self.config,
-            self.stores,
-            ProposalResolutionParams {
-                bear_id: request.bear_id,
-                proposal_id: proposal.id,
-                reviewer_profile: request.reviewer_profile,
-                reviewer_agent_id: Some(request.binding_id.as_str()),
-                status: "approved",
-                review_notes: request.review_notes.as_deref(),
-                decision_summary: Some("Applied reviewed memory proposal to core (SQLite)."),
-                result_path: Some(request.target_path.as_str()),
-                result_commit: None,
-                project_to_conversation: false,
-            },
-        )
-        .await?;
-        self.project_resolved(&request.projection, &resolved);
-        Ok(json!({
-            "bear_id": request.bear_id,
-            "proposal": resolved,
-            "core_update": {
-                "path": request.target_path,
-                "memory_id": memory_id,
-                "promotion_id": promotion_id,
-            },
         }))
     }
 }

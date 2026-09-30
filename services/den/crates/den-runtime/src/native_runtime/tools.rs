@@ -501,7 +501,7 @@ mod tests {
     }
 
     #[test]
-    fn curate_profile_includes_proposal_and_core_tools() {
+    fn curate_profile_keeps_proposal_tools_but_not_retired_core_update() {
         let config = native_test_config();
         let merged =
             merge_den_and_client_tools(&config, BearProfile::Curate, true, true, true, None, None)
@@ -509,7 +509,7 @@ mod tests {
         let names: Vec<_> = merged.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"memory_list_proposals"));
         assert!(names.contains(&"memory_read_proposal"));
-        assert!(names.contains(&"memory_apply_core_update"));
+        assert!(!names.contains(&"memory_apply_core_update"));
         assert!(names.contains(&"memory_read"));
         assert!(!names.contains(&"enter_plan_mode"));
     }

@@ -2,7 +2,7 @@
 
 > **Direction changed (2026-06).** The curation lanes stand, but the canonical store is per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)) — `memory_records`/`memory_promotions`/`memory_proposals` — not MemFS `core/`/stance branches or Letta Archives. Semantic recall is a **derived Qdrant index** over SQLite ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)); harvest, consolidation by supersession, and recall scoring are defined in [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md). Canonical target: [Den runtime](../architecture/den-runtime.md) ([runtime plan](DEN_RUNTIME_PLAN.md)).
 >
-> **Note.** `core/` paths denote logical-path projections over SQLite records, not files on a branch.
+> **Note.** `core/` paths denote logical-path projections over SQLite records, not files on a branch. The legacy proposal→`core/` auto-promotion and model-facing `memory_apply_core_update` tool are retired for both hat and no-hat Bears. See the [hats plan](HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md) for the verified source/audience replacement; do not interpret the older tool table below as deployed behavior.
 
 For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
 Status: focused design plan. Implementation status and sequencing live in [Memory Automation Roadmap](MEMORY_AUTOMATION_ROADMAP.md).
@@ -165,7 +165,7 @@ Non-curate roles should not write `core/` or Cabinet directly. They can request 
 |---|---|---|---|
 | `den.memory.request_review` | `memory_request_review` | `chat`, `pair`, `work`, `watch` | Request curation of role-local memory without choosing the final outcome. |
 
-`den.memory.request_review` supersedes narrower producer-side names such as `den.memory.propose_core_update`, `den.memory.propose_core_write`, and `den.memory.propose_cabinet_update`. The request may include a `suggested_action`, such as `summarize_into_core`, `promote_to_core`, `cabinet_update`, `skill_review`, `retain_role_local`, `delete_after_review`, `human_review`, or `unspecified`.
+`den.memory.request_review` supersedes narrower producer-side names such as `den.memory.propose_core_update`, `den.memory.propose_core_write`, and `den.memory.propose_cabinet_update`. The request may include supported hints such as `cabinet_update`, `skill_review`, `retain_profile_local`, `delete_after_review`, `human_review`, or `unspecified`. The former `summarize_into_core` and `promote_to_core` hints are rejected for new model requests; historical proposals with those actions are resolved as rejected without publication or a human-review queue.
 
 Review requests should reference source memory paths rather than embedding all source content.
 
@@ -188,9 +188,9 @@ Initial `den.memory.request_review` input shape:
 | `den.memory.list_proposals` | `memory_list_proposals` | List pending memory proposals. |
 | `den.memory.read_proposal` | `memory_read_proposal` | Read one proposal with source pointers and status. |
 | `den.memory.resolve_proposal` | `memory_resolve_proposal` | Resolve a proposal as approved, rejected, retained local, deferred, superseded, or human-review-needed. |
-| `den.memory.apply_core_update` | `memory_apply_core_update` | Apply a reviewed shared memory update into `core/` with provenance. |
+| ~~`den.memory.apply_core_update`~~ | ~~`memory_apply_core_update`~~ | **Retired:** not advertised/executable; see the [hats plan](HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md) for replacement. |
 | `den.memory.mark_lifecycle` | `memory_mark_lifecycle` | Mark an existing memory record as `stale`, `superseded`, `archived`, `archive-candidate`, or back to `active` without rewriting content. |
-| `den.memory.supersede_entry` | `memory_supersede_entry` | Future specialized helper; current reviewed core updates write `supersedes_memory_id`, and `memory_mark_lifecycle` covers explicit lifecycle marking. |
+| `den.memory.supersede_entry` | `memory_supersede_entry` | Future specialized helper; admin-reviewed hat→core writes use `supersedes_memory_id`, and `memory_mark_lifecycle` covers explicit lifecycle marking. |
 
 ### Cabinet tools
 

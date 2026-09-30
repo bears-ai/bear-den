@@ -1,7 +1,7 @@
 //! Memory review/curation tools — orchestration layer.
 //!
-//! `list_proposals` / `read_proposal` / `resolve_proposal` / `request_review` /
-//! `apply_core_update`. Runtime-agnostic: role gating, argument validation, and
+//! `list_proposals` / `read_proposal` / `resolve_proposal` / `request_review`.
+//! Runtime-agnostic: role gating, argument validation, and
 //! projection-scope computation over the [`MemoryReviewStore`] seam; the `den`
 //! impl owns the capability calls and `conversation_events` projections.
 
@@ -17,9 +17,9 @@ use crate::tools::{
 };
 
 use super::store::{
-    ApplyCoreUpdateRequest, MarkMemoryLifecycleRequest, MemoryLifecycleStatus,
-    MemoryProposalResolution, MemoryProposalStatus, MemoryReviewStore, MemorySensitivity,
-    MemorySuggestedAction, ProposalProjection, RequestReviewRequest, ResolveProposalRequest,
+    MarkMemoryLifecycleRequest, MemoryLifecycleStatus, MemoryProposalResolution,
+    MemoryProposalStatus, MemoryReviewStore, MemorySensitivity, MemorySuggestedAction,
+    ProposalProjection, RequestReviewRequest, ResolveProposalRequest,
 };
 
 #[derive(Debug, Deserialize)]
@@ -33,23 +33,6 @@ pub struct MemoryListProposalsArguments {
 #[derive(Debug, Deserialize)]
 pub struct MemoryReadProposalArguments {
     pub proposal_id: Uuid,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct MemoryApplyCoreUpdateArguments {
-    pub proposal_id: Uuid,
-    pub target_path: String,
-    pub mode: String,
-    #[serde(default)]
-    pub title: Option<String>,
-    #[serde(default)]
-    pub body: Option<String>,
-    #[serde(default)]
-    pub old_text: Option<String>,
-    #[serde(default)]
-    pub new_text: Option<String>,
-    #[serde(default)]
-    pub review_notes: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -165,36 +148,6 @@ fn projection(
         conversation_id: clean_optional(&context.conversation_id),
         scope_id: projection_scope_id(context, bear_id, role),
     }
-}
-
-pub async fn apply_core_update(
-    store: &impl MemoryReviewStore,
-    context: &DenToolInvocationContext,
-    role: BearProfile,
-    arguments: Value,
-) -> Result<Value, DenError> {
-    if role != BearProfile::Curate {
-        return Err(DenError::Authorization(
-            "den.memory.apply_core_update is available only to curate".to_string(),
-        ));
-    }
-    let args: MemoryApplyCoreUpdateArguments = serde_json::from_value(arguments)?;
-    store
-        .apply_core_update(ApplyCoreUpdateRequest {
-            bear_id: context.bear_id,
-            reviewer_profile: role,
-            binding_id: context.binding_id.clone(),
-            proposal_id: args.proposal_id,
-            target_path: args.target_path,
-            mode: args.mode,
-            title: args.title,
-            body: args.body,
-            old_text: args.old_text,
-            new_text: args.new_text,
-            review_notes: args.review_notes,
-            projection: projection(context, context.bear_id, role),
-        })
-        .await
 }
 
 pub async fn mark_memory_lifecycle(

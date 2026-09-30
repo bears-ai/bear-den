@@ -5,13 +5,13 @@ pub mod observations;
 pub mod store;
 
 pub use memory_review::{
-    apply_core_update, list_memory_proposals, mark_memory_lifecycle, read_memory_proposal,
-    request_memory_review, resolve_memory_proposal,
+    list_memory_proposals, mark_memory_lifecycle, read_memory_proposal, request_memory_review,
+    resolve_memory_proposal,
 };
 pub use observations::{write_observation, ObservationWriteArguments};
 pub use store::{
-    ApplyCoreUpdateRequest, MarkMemoryLifecycleRequest, MemoryLifecycleStatus,
-    MemoryProposalResolution, MemoryProposalStatus, MemoryReviewStore, MemorySensitivity,
-    MemorySuggestedAction, ObservationRecord, ObservationWriteRequest, ProposalProjection,
-    RequestReviewRequest, ResolveProposalRequest,
+    MarkMemoryLifecycleRequest, MemoryLifecycleStatus, MemoryProposalResolution,
+    MemoryProposalStatus, MemoryReviewStore, MemorySensitivity, MemorySuggestedAction,
+    ObservationRecord, ObservationWriteRequest, ProposalProjection, RequestReviewRequest,
+    ResolveProposalRequest,
 };

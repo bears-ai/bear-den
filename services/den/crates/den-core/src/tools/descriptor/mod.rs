@@ -544,15 +544,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             CURATE_PROFILES,
             json!({"type":"object","properties":{"proposal_id":{"type":"string","format":"uuid"},"status":{"enum":["rejected","retained_local","deferred","superseded","needs_human_review"]},"review_notes":{"type":"string"},"decision_summary":{"type":"string"}},"required":["proposal_id","status"],"additionalProperties":false}),
         ),
-        descriptor(
-            DEN_MEMORY_APPLY_CORE_UPDATE,
-            "Apply core memory update",
-            "Apply a reviewed update to allowed core memory paths with provenance.",
-            "bear.memory",
-            &["memory.core.write"],
-            CURATE_PROFILES,
-            json!({"type":"object","properties":{"proposal_id":{"type":"string","format":"uuid"},"target_path":{"type":"string"},"mode":{"enum":["append_section","create_file","replace_text"]},"title":{"type":"string"},"body":{"type":"string"},"old_text":{"type":"string"},"new_text":{"type":"string"},"review_notes":{"type":"string"}},"required":["proposal_id","target_path","mode"],"additionalProperties":false}),
-        ),
+
         descriptor(
             DEN_MEMORY_MARK_LIFECYCLE,
             "Mark memory lifecycle",
@@ -2050,7 +2042,7 @@ fn memory_request_review_schema() -> Value {
             "title": { "type": "string", "minLength": 1, "maxLength": 200 },
             "summary": { "type": "string", "minLength": 1, "maxLength": 4000 },
             "rationale": { "type": "string", "maxLength": 4000 },
-            "suggested_action": { "type": "string", "enum": ["unspecified", "summarize_into_core", "promote_to_core", "cabinet_update", "skill_review", "retain_profile_local", "delete_after_review", "human_review", "archive_index", "task_context"] },
+            "suggested_action": { "type": "string", "enum": ["unspecified", "cabinet_update", "skill_review", "retain_profile_local", "delete_after_review", "human_review", "archive_index", "task_context"] },
             "target_ref": { "type": "string", "maxLength": 500 },
             "refs": { "type": "object" },
             "sensitivity": { "type": "string", "enum": ["normal", "person", "secret_risk", "external_untrusted", "unknown"] },
@@ -2186,27 +2178,6 @@ mod tests {
         );
         assert_eq!(display["subtitle"], "Improve ACP tool card summaries");
         assert_eq!(display["category"], "work");
-    }
-
-    #[test]
-    fn den_tool_display_uses_short_display_paths_for_target_paths() {
-        let display = den_tool_display_json_for_provider(
-            "memory_apply_core_update",
-            &json!({
-                "target_path": "/workspace/project/core/decisions.md",
-                "mode": "append_section"
-            }),
-        )
-        .expect("display");
-
-        assert_eq!(
-            display["title"],
-            "Applying core memory update …/project/core/decisions.md → append_section"
-        );
-        assert_eq!(
-            display["subtitle"],
-            "…/project/core/decisions.md → append_section"
-        );
     }
 }
 

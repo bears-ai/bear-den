@@ -158,7 +158,7 @@ async fn enrich_payload_with_freshness(
     let Some(head) = head_record_for_logical_path(store, target_ref).await? else {
         return Ok(payload.clone());
     };
-    let head_fingerprint = super::promotions::memory_claim_fingerprint(&head.content_text);
+    let head_fingerprint = super::claim_fingerprint::memory_claim_fingerprint(&head.content_text);
     if head_fingerprint.is_empty() || head_fingerprint == new_fingerprint {
         return Ok(payload.clone());
     }
@@ -264,13 +264,12 @@ async fn active_record_with_claim_fingerprint(
         if row.logical_path.as_deref() == Some(target_ref) {
             return None;
         }
-        (super::promotions::memory_claim_fingerprint(&row.content_text) == fingerprint).then_some(
-            ConsolidationCandidate {
+        (super::claim_fingerprint::memory_claim_fingerprint(&row.content_text) == fingerprint)
+            .then_some(ConsolidationCandidate {
                 memory_id: row.memory_id,
                 logical_path: row.logical_path,
                 sequence_no: row.sequence_no,
-            },
-        )
+            })
     }))
 }
 
@@ -287,7 +286,7 @@ fn payload_claim_fingerprint(payload: &Value) -> Option<String> {
         .get("proposed_content")
         .and_then(Value::as_str)
         .or_else(|| payload.get("summary").and_then(Value::as_str))
-        .map(super::promotions::memory_claim_fingerprint)
+        .map(super::claim_fingerprint::memory_claim_fingerprint)
         .filter(|value| !value.is_empty())
 }
 
@@ -354,7 +353,7 @@ fn proposal_dedupe_key(
         .get("proposed_content")
         .and_then(Value::as_str)
         .or_else(|| payload.get("summary").and_then(Value::as_str))
-        .map(super::promotions::memory_claim_fingerprint)
+        .map(super::claim_fingerprint::memory_claim_fingerprint)
         .filter(|value| !value.is_empty());
     let evidence = source_hash.map(str::to_string).or(claim)?;
     // ponytail: deterministic proposal dedupe only; upgrade path is semantic match proposals.

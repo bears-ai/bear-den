@@ -103,6 +103,23 @@ async fn memory_request_review_projects_typed_conversation_records(
 
     let config = crate::config::Config::test_stub();
     let stores = den_memory::MemoryStoreManager::new(&config);
+    for action in ["promote_to_core", "summarize_into_core"] {
+        let retired = invoke_den_tool(
+            &pool,
+            &config,
+            &stores,
+            DEN_MEMORY_REQUEST_REVIEW,
+            json!({
+                "source_paths": ["pair/notes/test.md"],
+                "title": "Retired promotion",
+                "summary": "Candidate memory summary",
+                "suggested_action": action,
+            }),
+            context.clone(),
+        )
+        .await;
+        assert!(matches!(retired, Err(crate::errors::CustomError::ValidationError(_))), "retired action {action}: {retired:?}");
+    }
     let payload = invoke_den_tool(
         &pool,
         &config,
@@ -112,7 +129,7 @@ async fn memory_request_review_projects_typed_conversation_records(
             "source_paths": ["pair/notes/test.md"],
             "title": "Promote memory",
             "summary": "Candidate memory summary",
-            "suggested_action": "promote_to_core"
+            "suggested_action": "unspecified"
         }),
         context,
     )
@@ -143,7 +160,7 @@ async fn memory_request_review_projects_typed_conversation_records(
                     proposal_id,
                     source_profile: "pair".to_string(),
                     title: "Promote memory".to_string(),
-                    suggested_action: "promote_to_core".to_string(),
+                    suggested_action: "unspecified".to_string(),
                     status: "pending".to_string(),
                     source_paths: vec!["pair/notes/test.md".to_string()],
                 },

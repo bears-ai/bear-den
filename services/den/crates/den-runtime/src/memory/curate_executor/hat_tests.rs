@@ -10,33 +10,11 @@ use den_service::{
 use serde_json::json;
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn autonomous_curate_does_not_publish_legacy_proposals_to_core_for_configured_bears(
-    pool: PgPool,
-) {
+async fn retired_core_proposals_are_rejected_without_publication_or_human_queue(pool: PgPool) {
     let user = sqlx::query_scalar!(
         "INSERT INTO users (email, username) VALUES ('curatehat@example.test', 'curatehat') RETURNING id"
-    ).fetch_one(&pool).await.unwrap();
-    let bear_id = db::create_bear(
-        &pool,
-        BearParams {
-            slug: "curatehatbear",
-            name: "Hat curation",
-            description: "",
-            system_prompt: "",
-            default_model: None,
-            tools_enabled: None,
-            context_profile: None,
-        },
     )
-    .await
-    .unwrap();
-    hats::create_hat(
-        &pool,
-        BearId::new(bear_id),
-        UserId::new(user),
-        "Review",
-        "Review facts",
-    )
+    .fetch_one(&pool)
     .await
     .unwrap();
     let mut config = Config::test_stub();
@@ -45,45 +23,104 @@ async fn autonomous_curate_does_not_publish_legacy_proposals_to_core_for_configu
         .to_string_lossy()
         .to_string();
     let stores = MemoryStoreManager::new(&config);
-    let proposal = crate::memory::create_proposal(
-        &pool,
-        &config,
-        &stores,
-        CreateMemoryProposal {
-            bear_id,
-            source_profile: BearProfile::Pair,
-            source_agent_id: None,
-            source_paths: vec!["pair/private.md".into()],
-            source_refs: json!({}),
-            suggested_action: "promote_to_core",
-            target_ref: Some("core/knowledge.md".into()),
-            title: "Potentially private candidate",
-            summary: "A summary long enough to trigger legacy automatic curation",
-            rationale: "not verified",
-            proposed_content: Some("Do not disclose this to Work"),
-            proposed_patch: None,
-            refs: json!({}),
-            sensitivity: "normal",
-            requires_human: false,
-            project_to_conversation: false,
-        },
-    )
-    .await
-    .unwrap();
-    let run =
-        execute_memory_curate_proposals(&pool, &config, &stores, bear_id, None, &[proposal.id])
+
+    for has_hat in [false, true] {
+        let bear_id = db::create_bear(
+            &pool,
+            BearParams {
+                slug: if has_hat {
+                    "curatehatbear"
+                } else {
+                    "curatenohatbear"
+                },
+                name: "Hat curation",
+                description: "",
+                system_prompt: "",
+                default_model: None,
+                tools_enabled: None,
+                context_profile: None,
+            },
+        )
+        .await
+        .unwrap();
+        if has_hat {
+            hats::create_hat(
+                &pool,
+                BearId::new(bear_id),
+                UserId::new(user),
+                "Review",
+                "Review facts",
+            )
             .await
             .unwrap();
-    assert_eq!(run.outcomes.len(), 1);
-    assert_eq!(run.outcomes[0].status, "needs_human_review");
-    assert_eq!(run.outcomes[0].triage, "escalate_human");
-    let store = stores.store_for_bear(bear_id).await.unwrap();
-    let shared: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM memory_records WHERE bear_id = ? AND scope_type = 'shared'",
-    )
-    .bind(bear_id.to_string())
-    .fetch_one(store.pool())
-    .await
-    .unwrap();
-    assert_eq!(shared, 0);
+        }
+        for action in ["promote_to_core", "summarize_into_core"] {
+            let proposal = crate::memory::create_proposal(
+                &pool,
+                &config,
+                &stores,
+                CreateMemoryProposal {
+                    bear_id,
+                    source_profile: BearProfile::Pair,
+                    source_agent_id: None,
+                    source_paths: vec!["pair/private.md".into()],
+                    source_refs: json!({}),
+                    suggested_action: action,
+                    target_ref: Some("core/knowledge.md".into()),
+                    title: "Potentially private candidate",
+                    summary: "A summary long enough to trigger legacy automatic curation",
+                    rationale: "not verified",
+                    proposed_content: Some("Do not disclose this to Work"),
+                    proposed_patch: None,
+                    refs: json!({}),
+                    sensitivity: "normal",
+                    requires_human: false,
+                    project_to_conversation: false,
+                },
+            )
+            .await
+            .unwrap();
+            let run = execute_memory_curate_proposals(
+                &pool,
+                &config,
+                &stores,
+                bear_id,
+                None,
+                &[proposal.id],
+            )
+            .await
+            .unwrap();
+            assert_eq!(run.outcomes.len(), 1);
+            assert_eq!(run.outcomes[0].status, "rejected");
+            assert_eq!(run.outcomes[0].triage, "reject");
+            assert!(run.briefing.is_empty(), "no human or deferred review queue");
+            let saved = crate::memory::get_proposal(&pool, &config, &stores, bear_id, proposal.id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(saved.status, "rejected");
+            let store = stores.store_for_bear(bear_id).await.unwrap();
+            let sqlite = den_memory::get_memory_proposal(&store, &proposal.id.to_string())
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(sqlite.payload_json["review_notes"]
+                .as_str()
+                .unwrap_or("")
+                .contains("retired"));
+            assert!(sqlite.payload_json["result_path"].is_null());
+        }
+        let store = stores.store_for_bear(bear_id).await.unwrap();
+        let shared: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM memory_records WHERE bear_id = ? AND scope_type = 'shared'",
+        )
+        .bind(bear_id.to_string())
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+        assert_eq!(
+            shared, 0,
+            "no-hat and hat Bears must both block publication"
+        );
+    }
 }
