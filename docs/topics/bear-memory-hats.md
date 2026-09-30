@@ -53,5 +53,6 @@ Stance names may eventually be derived labels rather than authority inputs if ty
 
 - [Memory architecture](../architecture/memory-model.md)
 - [Work surfaces and conversations](../guides/work-surfaces-and-conversations.md)
+- [Bear management UI design](../design/bear-management-ui-design.md) — selected ownership-led target design, not current behavior.
 - [State-machine inventory](../architecture/den-state-machine-inventory.md)
 - [Active plan and acceptance gates](../roadmap/HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md)

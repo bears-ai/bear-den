@@ -1,0 +1,75 @@
+# Bear management UI design
+
+**Status:** Selected product design direction — complete target web experience, not a claim about currently available controls.
+**Topic:** [Bear memory and hats](../topics/bear-memory-hats.md) (Bear management; Docket and Cabinet contracts are linked below).
+**Companion:** [Bear management information architecture](bear-management-model.md) — navigation, canonical owners, reach and portability boundaries.
+**Implementation evidence:** [Bear memory and hats](../topics/bear-memory-hats.md), [Docket and task execution](../topics/docket.md), [Cabinet implementation plan](../roadmap/CABINET_IMPLEMENTATION_PLAN.md), [bear package](../guides/bear-package.md).
+
+## The promise on screen
+
+A person should be able to **see, understand, and change** what their Bear is, knows, can reach, and has done. The UI is a working control surface, not a read-only dashboard wrapped around chat. It should feel obvious to a non-technical person without paragraphs of in-page instruction: familiar labels, concrete state, a next action, and a natural path to open the covers.
+
+The Bear has a single visible navigation list, softly grouped under **Yours** and **This Den**. Yours contains Purpose, Hats, Memory and Skills; This Den contains Tools, Connections, What it can use, Jobs, Cabinet, Activity and People. Overview, Chat and Backup & move remain outside those groups. The Den header gives direct access to Bears, the one shared Cabinet, reusable Connections and Reviews. Bear links to Cabinet and Connections open those **same** Den-wide web destinations, not copies. See the [navigation model](bear-management-model.md#navigation-and-destinations) for the exact map.
+
+The labels themselves do most of the explaining. “Jobs” is work to direct; “Activity” is a record to inspect. “Memory” is what the Bear knows; “Cabinet” is shared pages that humans and authorized Bears edit together. “What it can use” shows concrete repositories, documents, designs and servers rather than asking people to learn “work surfaces” or “resources.” The grouping suggests what can travel with the Bear; a short what-moves preview provides precision when it matters.
+
+## Design rules
+
+1. **Show state before exposition.** Every area leads with a name, status, provenance and available action. Explanations belong in optional details, not as a substitute for discoverable navigation. Overview exposes links to knowledge, reach, work and history at every screen size.
+2. **Inspection leads to control.** A readable memory has a correction or review route; a grant has a revoke route; a Job has its authorized work controls; a shared page has edit/history/access controls. Where a user lacks authority, show the state without implying they can change it.
+3. **Make authority visible, not magical.** Show what a hat is used for, what access it restricts, where a tool runs and which Connection enables it. A hat or skill cannot confer a credential, tool or approval. Flag risky configurations as questions to review, never as a “safe” guarantee.
+4. **Keep ownership honest.** Bear identity, reviewed knowledge and owned procedures are distinct from host credentials, conversations, Docket work, Cabinet pages and membership. Preview actual export contents; never smuggle secrets or transcripts into a Bear package or present a remembered link as if it exported the linked thing.
+5. **Trace cause and effect with permissions.** Link a permitted conversation to its Jobs and reviewed memories, a Job to runs/evidence and its Cabinet page, and a memory to a readable source. Hide unauthorized records and source details, not just their edit buttons.
+6. **No irreversible surprises.** Preview the affected audience and active work before widening access or enabling Work; explain the effect of forget, revoke, archive and delete before confirming. Show an actionable conflict when a version changed while someone was editing.
+
+## Screen contract
+
+All destinations and actions below are **target** behavior. They should work as Den web pages; a link may change Den scope but never require a CLI, editor or separate Cabinet app. Show only authorized data in summaries as well as detail views.
+
+### Entry, Purpose, Hats and Chat
+
+- **Bears / setup:** Create or select a Bear in the Den header. Ask for a name, charter and usable model with conservative starting access; show the initial effective reach before any real-world action. The charter is a property of the Bear, not a separately managed object.
+- **Overview:** Compact at every size: Bear identity, health, direct Chat action, current responsibilities, active permitted Jobs, a permission-filtered review count and recent visible activity. “Memory,” “What it can use,” and “Jobs” are direct links to inspect the Bear. On larger screens add model/context usage and trends only if backed by real data and accessible to this viewer; the small-screen core is complete.
+- **Purpose:** Edit name, slug, charter and model choices. Preview the effective Bear-wide identity and say when a change will affect the next turn. Do not frame a model change as upgrading the Bear's mind.
+- **Hats:** Create, rename and edit a named responsibility, its authored identity and allowed subset of already Bear-granted things. Show which hat a chat or Job uses, the IDE default, and whether Work is off or eligible. Enabling Work is an **admin-reviewed audience change**: show hat identity and the entire required historical hat-memory snapshot, request the right acknowledgement/rationale, and refuse stale or incomplete review. Even after enablement, a Job and current policy must authorize execution. Never present hat prose as a permission grant.
+- **Chat:** Start a conversation with a chosen hat when required, and resume only authorized threads. Keep the transcript, own source-local notes, Docket task-list projection, linked Jobs and reviewable memory distinct. An unbound historical thread that cannot run remains visibly read-only, not silently rebound. Web chat does not inherit editor-local tools.
+
+### Yours: Memory and Skills
+
+- **Memory:** Browse and search by understandable scope: Bear-wide, reviewed hat knowledge, and (in its owner's conversation) own notes. A record opens content, author/audience, dates, source and promotion lineage, history, and the permitted **correct**, **forget** or **request review** action. Correct by superseding the canonical record; forgetting must stop it being used, not just hide a row. Keep derived recall visibly distinct from canonical records, and do not claim semantic results are permission-safe until they are checked against canonical scope. Private conversation/Work notes never become shared merely because they use the same hat. Admin-only evidence/entity detail remains admin-only until a safe member projection exists.
+- **Skills:** List owned procedures with source, trust, applicable uses and review state. A Bear-authored or tool-bearing proposal waits for the appropriate review before being made effective. Attach/edit/remove where authorized; show if a skill supplies tools as well as instructing their use. Owning a procedure does not bypass Tools or access policy.
+
+### This Den: live reach and work
+
+- **Tools:** One origin-tagged catalog (Den-hosted, armature-local, remote/MCP). Show which tool is available in which verified context, what it can expose, its enabling Connection where applicable, and controls to grant/revoke or request approval. Local editor tools are not offered in browser chat just because they appear in the Bear's inventory.
+- **Connections:** Show reusable external accounts, provider, owner, named secret status and affected Bears. Set up/revoke at the single Den-wide destination; the Bear view shows only its attachments and links to the shared record. Never render secret values. Losing a connection or grant must invalidate affected reach, not just change a badge.
+- **What it can use:** Typed cards for repositories, documents, designs and servers; show web policy and internal Cabinet reach separately. Each card says what is readable/writable, which Connection/policy enables it and what each hat/use can actually access. Grant/revoke in the web UI; explain the combined data-read/outbound/untrusted-input risk where relevant. A link to Cabinet access does not duplicate Cabinet page membership.
+- **Jobs (Docket):** Bear-filtered queue with create/edit, task tree, criteria, priority and assignment/hat; dispatch, pause/cancel or resolve when authorized. Open run status, approvals, evidence, output and settlement history. Link an optional Cabinet Mission page as supporting shared knowledge, not as a Job container. Conversation task lists project Docket rather than storing another independently editable work plan. Include recurring work or schedules under Jobs when those controls become available, with their own authority and run history.
+- **Cabinet:** Open the **one Den-wide shared page tree**: browse/search, create/edit a page, inspect immutable versions and sources, and archive/restore or person-delete when permitted. A Mission is a page with child pages, not a separate collection. As Cabinet phases land, add move/reorder, effective inherited page access, membership, conditional Bear-write review and artifact attachments at that page. Do not show later-phase controls as if the Phase 1 `/cabinet` UI already supports them. Direct page edits publish unless a configured future policy requires review; Cabinet content is not Bear memory.
+- **Activity:** Permission-filtered conversations, Job/run events and Cabinet edits, each linking to its canonical detail and provenance. This is an inspection projection, not a separate event store or a place to edit a Job/page. Keep admin-only diagnostics out of member activity and Overview.
+- **People:** Add/remove Bear members and manage Bear roles when authorized. Show effective access before changes; Cabinet page membership/policy belongs to Cabinet, not to the Bear's People screen.
+
+### Across the boundary: Reviews and Backup & move
+
+- **Reviews:** The Den header and Overview offer a permission-filtered inbox with memory/skill proposals, hat Work enablement, Job approvals and (where page policy supports it) pending Cabinet versions. Each item opens its owning record to decide it. Routine curation or Cabinet direct edit is not made approval-gated solely to populate an inbox.
+- **Backup & move:** Show what the chosen export actually includes and excludes before download; provide export/import in the browser with version checks, reviewed recent-knowledge curation, model remapping and a re-attach checklist for host credentials, resource grants and membership. A cognition package is not a Den backup: conversations, Docket state, Cabinet pages, raw secrets and derived indexes do not come along. Do not promise a curation flush or package tier unless the backing implementation exists; use honest unavailable states until then.
+
+## End-to-end journeys to validate
+
+Use non-technical participants, without in-page tutorials, on both narrow and wide screens. Completion means the person can find the destination **and** finish the authorized action in the browser:
+
+| Task | Success observation |
+|------|---------------------|
+| Start and understand a Bear | Create it, reach Chat, then find its charter, active hat, memory and effective access from Overview without guessing what “stance” means. |
+| Audit and correct | From an assertion, open an authorized source and memory, correct/forget it, and see the resulting canonical status; another person's raw conversation stays hidden. |
+| Bound reach | Find which account enables a repository and which tool uses it; revoke access and see the affected hat/use and active work. No need to inspect a config file. |
+| Review Work | See what will become available to Work when enabling a hat, inspect the required identity and memory, and decline or confirm; changing the reviewed state does not silently authorize a Job. |
+| Direct a Job | Create a Job and task criteria, select an eligible hat, dispatch/stop when permitted, and find run evidence and settlement from its Job page. |
+| Manage a Mission | Find Cabinet, create/edit a Mission page and children, inspect versions and effective page access, restrict access and follow a linked Job back to Docket. Where later Cabinet phases are unavailable, the UI says so rather than pretending the task is complete. |
+| Move without surprise | Before export, correctly predict whether conversations, Cabinet pages, credentials, grants and memories will follow the Bear; import with a clear re-attachment path. |
+
+## Build posture and delivery boundary
+
+Build semantic, responsive HTML first. All basic navigation and authorized forms should work without JavaScript; JavaScript can improve transitions, not supply missing core actions. Reveal extra *breadth* on large screens, but retain health, reviews, Chat, Jobs, Memory and reach on small screens. Depth-on-demand shows provenance or effective policy when opened; it must not bury the only way to inspect or change something.
+
+This design is a **target**. The [memory/hats topic](../topics/bear-memory-hats.md) records current visibility and review boundaries; the [Docket topic](../topics/docket.md) distinguishes implemented work state from remaining UX; the [Cabinet plan](../roadmap/CABINET_IMPLEMENTATION_PLAN.md) identifies Phase 1 versus later hierarchy, policy/review and attachments. Skills, shared Connections and portability need their own backing contracts and authorization before their target controls are called available. Update the maintained topic/plan and this design as each screen becomes real; do not turn intended behavior into a current claim by changing only the label.
