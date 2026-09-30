@@ -41,8 +41,8 @@ export AGENT_RUNTIME="${AGENT_RUNTIME:-native}"
 export BIFROST_IMAGE="${BIFROST_IMAGE:-bears-bifrost-dev:latest}"
 export DEN_IMAGE="${DEN_IMAGE:-bears-den-dev:latest}"
 
-# Opt-in derived-recall (Qdrant) profile: set SMOKE_RECALL=1 to bring up bears-qdrant and
-# exercise the full recall path end-to-end.
+# Opt-in derived-recall (Qdrant) service: SMOKE_RECALL=1 starts bears-qdrant, but
+# the smoke suite does not exercise retrieval. Use the opt-in den-service live-Qdrant test.
 export SMOKE_RECALL="${SMOKE_RECALL:-0}"
 
 recall_enabled() {

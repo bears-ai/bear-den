@@ -15,6 +15,8 @@ use super::{
 };
 
 #[cfg(test)]
+mod live_qdrant_tests;
+#[cfg(test)]
 mod tests;
 
 fn curated_scope_filter(

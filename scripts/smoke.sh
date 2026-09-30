@@ -13,7 +13,7 @@ export JWT_SECRET="${JWT_SECRET:-dev-placeholder}"
 export OPENAI_API_KEY="${OPENAI_API_KEY:-dev-placeholder}"
 export AGENT_RUNTIME="${AGENT_RUNTIME:-native}"
 export BEARS_LIVE_MODEL_SMOKE="${BEARS_LIVE_MODEL_SMOKE:-auto}"
-# When set, the Qdrant recall assertion in tests/smoke is active.
+# This smoke suite does not exercise vector recall; use the opt-in den-service live-Qdrant test.
 export QDRANT_URL="${QDRANT_URL:-}"
 export EMBEDDING_MODEL="${EMBEDDING_MODEL:-text-embedding-3-small}"
 export EMBEDDING_DIMENSIONS="${EMBEDDING_DIMENSIONS:-1536}"
