@@ -428,13 +428,18 @@ async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
             .unwrap(),
         vec![surface.id]
     );
+    let current = manage::get_hat(&pool, BearId::new(bear_id), hat.id)
+        .await
+        .unwrap();
+    let identity_hash =
+        hats::identity::identity_fingerprint(&current.name, &current.identity_prompt);
     assert_eq!(
         request(
             &app,
             &admin_cookie,
             "POST",
             &format!("{detail}/work"),
-            "action=enable&confirmation=enable+work"
+            &format!("action=enable&confirmation=enable+work&expected_identity_sha256={identity_hash}&confirm_identity_audience=true")
         )
         .await
         .0,
@@ -546,13 +551,18 @@ async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
         .await
         .unwrap();
     }
+    let current = manage::get_hat(&pool, BearId::new(bear_id), hat.id)
+        .await
+        .unwrap();
+    let identity_hash =
+        hats::identity::identity_fingerprint(&current.name, &current.identity_prompt);
     assert_eq!(
         request(
             &app,
             &admin_cookie,
             "POST",
             &format!("{detail}/work"),
-            "action=enable&confirmation=enable+work"
+            &format!("action=enable&confirmation=enable+work&expected_identity_sha256={identity_hash}&confirm_identity_audience=true")
         )
         .await
         .0,
@@ -567,6 +577,7 @@ async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
     let review_url = format!("{detail}/work-review");
     let (status, page, _) = request(&app, &admin_cookie, "GET", &review_url, "").await;
     assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("Hat identity shared with Work"));
     assert!(page.contains("Page 1 of 2"));
     assert!(page.contains("Continue to page 2"));
     assert!(!page.contains("Record the review decision"));
@@ -587,6 +598,7 @@ async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
     .await
     .unwrap();
     let old_sha = snapshot.sha256.unwrap();
+    let reviewed_identity_sha = snapshot.identity_sha256.clone();
     den_memory::append_memory_record(
         &memory,
         &den_memory::LogicalMemoryPath::hat(hat.id, "changed-between-pages"),
@@ -603,7 +615,7 @@ async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
             &app,
             &admin_cookie,
             "GET",
-            &format!("{review_url}?page=2&expected_sha256={old_sha}"),
+            &format!("{review_url}?page=2&expected_sha256={old_sha}&expected_identity_sha256={reviewed_identity_sha}"),
             "",
         )
         .await
@@ -633,7 +645,7 @@ async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
         &app,
         &admin_cookie,
         "GET",
-        &format!("{review_url}?page=2&expected_sha256={reviewed_sha}"),
+        &format!("{review_url}?page=2&expected_sha256={reviewed_sha}&expected_identity_sha256={reviewed_identity_sha}"),
         "",
     )
     .await;
@@ -642,8 +654,8 @@ async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
     assert!(last_page.contains("curated hat knowledge"));
     assert!(last_page.contains("Record the review decision"));
     let decision = format!(
-        "expected_sha256={}&expected_record_count={}&rationale=Reviewed+the+existing+knowledge+for+Work&confirm_work_audience=true",
-        reviewed_sha, snapshot.total_records,
+        "expected_sha256={}&expected_record_count={}&expected_identity_sha256={}&rationale=Reviewed+the+existing+knowledge+for+Work&confirm_work_audience=true",
+        reviewed_sha, snapshot.total_records, reviewed_identity_sha,
     );
     assert_eq!(
         request(&app, &member_cookie, "POST", &review_url, &decision)

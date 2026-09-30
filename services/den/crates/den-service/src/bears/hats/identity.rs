@@ -14,7 +14,9 @@ use sqlx::PgPool;
 use super::{manage::get_hat, BearHat};
 use crate::bears::{
     context_composition::render_bound_base_prompt_with_registry,
-    managed_blocks::{compile_and_store_managed_config_for_bear, get_compiled_bear_config},
+    managed_blocks::{
+        compile_and_store_managed_config_for_bear, content_hash, get_compiled_bear_config,
+    },
     prompt_fragments::{
         render_compile_time_fragment, render_turn_fragment, CompileTimePromptContext,
     },
@@ -40,6 +42,13 @@ fn mode_key(profile: BearProfile) -> Result<&'static str, DenError> {
             "internal roles do not inherit a conversation or IDE hat".into(),
         )),
     }
+}
+
+/// Fingerprint the authored fields displayed by the repository-owned identity
+/// component. The name is model-visible too, so a rename invalidates a Work
+/// audience review just as an identity-text edit does.
+pub fn identity_fingerprint(name: &str, identity_prompt: &str) -> String {
+    content_hash(&json!([name, identity_prompt]).to_string())
 }
 
 fn component(map: &serde_json::Value, key: &str) -> Option<String> {

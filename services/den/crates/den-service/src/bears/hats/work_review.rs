@@ -15,6 +15,7 @@ use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use super::identity::identity_fingerprint;
 use super::manage::get_hat;
 use crate::bears::db::{membership_role_for_user, role_is_bear_admin};
 
@@ -27,6 +28,7 @@ pub struct WorkMemoryReviewSnapshot {
     pub records: Vec<HatReviewRecord>,
     pub complete: bool,
     pub sha256: Option<String>,
+    pub identity_sha256: String,
     pub page: u32,
     pub page_count: u32,
 }
@@ -40,6 +42,7 @@ fn fingerprint(records: &[HatReviewRecord]) -> Result<String, DenError> {
 fn review_snapshot(
     snapshot: hat_review::HatReviewSnapshot,
     page: u32,
+    identity_sha256: String,
 ) -> Result<WorkMemoryReviewSnapshot, DenError> {
     let complete = snapshot.complete();
     let sha256 = if complete {
@@ -63,6 +66,7 @@ fn review_snapshot(
         records,
         complete,
         sha256,
+        identity_sha256,
         page,
         page_count,
     })
@@ -83,6 +87,7 @@ pub struct WorkReviewHistoryEntry {
     pub id: Uuid,
     pub reviewed_by: String,
     pub record_count: i64,
+    pub identity_sha256: Option<String>,
     pub rationale: String,
     pub reviewed_at: String,
 }
@@ -96,7 +101,7 @@ pub async fn list_receipts(
     require_admin(pool, bear_id, reviewer).await?;
     get_hat(pool, bear_id, hat_id).await?;
     let rows = sqlx::query!(
-        "SELECT r.id, r.record_count, r.rationale, r.reviewed_at, u.username AS \"reviewed_by!\"
+        "SELECT r.id, r.record_count, r.identity_sha256, r.rationale, r.reviewed_at, u.username AS \"reviewed_by!\"
          FROM bear_hat_work_reviews r JOIN users u ON u.id = r.reviewed_by_user_id
          WHERE r.bear_id = $1 AND r.hat_id = $2 ORDER BY r.reviewed_at DESC LIMIT 20",
         bear_id.as_uuid(),
@@ -110,6 +115,7 @@ pub async fn list_receipts(
             id: row.id,
             reviewed_by: row.reviewed_by,
             record_count: row.record_count,
+            identity_sha256: row.identity_sha256,
             rationale: row.rationale,
             reviewed_at: row.reviewed_at.to_string(),
         })
@@ -124,9 +130,13 @@ pub async fn snapshot_for_admin(
     reviewer: UserId,
 ) -> Result<WorkMemoryReviewSnapshot, DenError> {
     require_admin(pool, bear_id, reviewer).await?;
-    get_hat(pool, bear_id, hat_id).await?;
+    let hat = get_hat(pool, bear_id, hat_id).await?;
     let store = stores.store_for_bear(bear_id.as_uuid()).await?;
-    review_snapshot(hat_review::snapshot_for_hat(&store, hat_id).await?, 1)
+    review_snapshot(
+        hat_review::snapshot_for_hat(&store, hat_id).await?,
+        1,
+        identity_fingerprint(&hat.name, &hat.identity_prompt),
+    )
 }
 
 pub async fn snapshot_page_for_admin(
@@ -138,15 +148,20 @@ pub async fn snapshot_page_for_admin(
     page: u32,
 ) -> Result<WorkMemoryReviewSnapshot, DenError> {
     require_admin(pool, bear_id, reviewer).await?;
-    get_hat(pool, bear_id, hat_id).await?;
+    let hat = get_hat(pool, bear_id, hat_id).await?;
     let store = stores.store_for_bear(bear_id.as_uuid()).await?;
-    review_snapshot(hat_review::snapshot_for_hat(&store, hat_id).await?, page)
+    review_snapshot(
+        hat_review::snapshot_for_hat(&store, hat_id).await?,
+        page,
+        identity_fingerprint(&hat.name, &hat.identity_prompt),
+    )
 }
 
 #[derive(Debug, Clone)]
 pub struct WorkReviewDecision {
     pub expected_sha256: String,
     pub expected_record_count: i64,
+    pub expected_identity_sha256: String,
     pub rationale: String,
 }
 
@@ -175,14 +190,19 @@ pub async fn review_and_enable(
             .expected_sha256
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit())
+        || decision.expected_identity_sha256.len() != 64
+        || !decision
+            .expected_identity_sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
     {
         return Err(DenError::ValidationError(
             "invalid hat memory review fingerprint".into(),
         ));
     }
     let mut tx = pool.begin().await?;
-    let enabled = sqlx::query_scalar!(
-        r#"SELECT h.work_enabled FROM bear_hats h
+    let hat_state = sqlx::query!(
+        r#"SELECT h.work_enabled, h.name, h.identity_prompt FROM bear_hats h
            JOIN user_bear membership ON membership.bear_id = h.bear_id
            WHERE h.bear_id = $1 AND h.id = $2 AND membership.user_id = $3
              AND lower(btrim(coalesce(membership.role, ''))) = $4
@@ -195,9 +215,16 @@ pub async fn review_and_enable(
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| DenError::Authorization("Bear admin or hat grant unavailable".into()))?;
-    if enabled {
+    if hat_state.work_enabled {
         return Err(DenError::ValidationError(
             "Work is already enabled for this hat".into(),
+        ));
+    }
+    if identity_fingerprint(&hat_state.name, &hat_state.identity_prompt)
+        != decision.expected_identity_sha256
+    {
+        return Err(DenError::ValidationError(
+            "hat identity changed since review; refresh and inspect it again".into(),
         ));
     }
     let surfaces = sqlx::query_scalar!(
@@ -222,7 +249,7 @@ pub async fn review_and_enable(
         .await
         .map_err(|err| DenError::System(format!("begin hat review fence: {err}")))?;
     let outcome: Result<WorkReviewReceipt, DenError> = async {
-        let snapshot = review_snapshot(hat_review::snapshot_for_hat_on(&mut sqlite, bear_id.as_uuid(), hat_id).await?, 1)?;
+        let snapshot = review_snapshot(hat_review::snapshot_for_hat_on(&mut sqlite, bear_id.as_uuid(), hat_id).await?, 1, identity_fingerprint(&hat_state.name, &hat_state.identity_prompt))?;
         if !snapshot.complete || snapshot.total_records == 0 {
             return Err(DenError::Authorization("this hat is empty or exceeds the bounded historical review limit".into()));
         }
@@ -232,10 +259,10 @@ pub async fn review_and_enable(
             return Err(DenError::ValidationError("hat memory changed since review; refresh and inspect it again".into()));
         }
         let receipt_id = sqlx::query_scalar!(
-            "INSERT INTO bear_hat_work_reviews (bear_id, hat_id, reviewed_by_user_id, memory_sha256, record_count, rationale)
-             VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+            "INSERT INTO bear_hat_work_reviews (bear_id, hat_id, reviewed_by_user_id, memory_sha256, record_count, rationale, identity_sha256)
+             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
             bear_id.as_uuid(), hat_id.as_uuid(), reviewer.get(), &decision.expected_sha256,
-            snapshot.total_records, rationale,
+            snapshot.total_records, rationale, &decision.expected_identity_sha256,
         ).fetch_one(&mut *tx).await?;
         sqlx::query!(
             "UPDATE bear_hats SET work_enabled = true, updated_at = NOW() WHERE bear_id = $1 AND id = $2",

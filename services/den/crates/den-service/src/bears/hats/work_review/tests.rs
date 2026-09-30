@@ -79,8 +79,9 @@ async fn populated_hat_requires_a_fresh_complete_admin_review_before_work(pool: 
     )
     .await
     .unwrap();
+    let identity_hash = identity_fingerprint(&hat.name, &hat.identity_prompt);
     assert!(
-        hats::manage::enable_work_if_empty(&pool, &stores, bear, hat.id)
+        hats::manage::enable_work_if_empty(&pool, &stores, bear, hat.id, &identity_hash)
             .await
             .is_err()
     );
@@ -96,6 +97,7 @@ async fn populated_hat_requires_a_fresh_complete_admin_review_before_work(pool: 
     let decision = WorkReviewDecision {
         expected_sha256: snapshot.sha256.unwrap(),
         expected_record_count: 1,
+        expected_identity_sha256: snapshot.identity_sha256,
         rationale: "Reviewed every historical entry for autonomous Work".into(),
     };
     assert!(
@@ -122,6 +124,36 @@ async fn populated_hat_requires_a_fresh_complete_admin_review_before_work(pool: 
             .unwrap()
             .work_enabled
     );
+    hats::manage::update_hat(
+        &pool,
+        bear,
+        hat.id,
+        "Renamed security",
+        "Review code",
+        "Review code",
+        false,
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        review_and_enable(&pool, &stores, bear, hat.id, user, decision.clone()).await,
+        Err(DenError::ValidationError(_))
+    ));
+    hats::manage::update_hat(
+        &pool,
+        bear,
+        hat.id,
+        "Security",
+        "Review code",
+        "Changed identity before Work review",
+        false,
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        review_and_enable(&pool, &stores, bear, hat.id, user, decision.clone()).await,
+        Err(DenError::ValidationError(_))
+    ));
     append_memory_record(
         &store,
         &LogicalMemoryPath::hat(hat.id, "second"),
@@ -142,6 +174,7 @@ async fn populated_hat_requires_a_fresh_complete_admin_review_before_work(pool: 
     let fresh = snapshot_for_admin(&pool, &stores, bear, hat.id, user)
         .await
         .unwrap();
+    let reviewed_identity_hash = fresh.identity_sha256.clone();
     let receipt = review_and_enable(
         &pool,
         &stores,
@@ -151,6 +184,7 @@ async fn populated_hat_requires_a_fresh_complete_admin_review_before_work(pool: 
         WorkReviewDecision {
             expected_sha256: fresh.sha256.unwrap(),
             expected_record_count: fresh.total_records,
+            expected_identity_sha256: fresh.identity_sha256,
             rationale: "Reviewed both entries for sandbox Work and egress risk".into(),
         },
     )
@@ -164,11 +198,15 @@ async fn populated_hat_requires_a_fresh_complete_admin_review_before_work(pool: 
             .work_enabled
     );
     let stored = sqlx::query!(
-        "SELECT reviewed_by_user_id, record_count FROM bear_hat_work_reviews WHERE id = $1 AND bear_id = $2 AND hat_id = $3",
+        "SELECT reviewed_by_user_id, record_count, identity_sha256 FROM bear_hat_work_reviews WHERE id = $1 AND bear_id = $2 AND hat_id = $3",
         receipt.id, bear.as_uuid(), hat.id.as_uuid(),
     ).fetch_one(&pool).await.unwrap();
     assert_eq!(stored.reviewed_by_user_id, user.get());
     assert_eq!(stored.record_count, 2);
+    assert_eq!(
+        stored.identity_sha256.as_deref(),
+        Some(reviewed_identity_hash.as_str())
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -275,6 +313,7 @@ async fn too_many_historical_records_cannot_be_approved_from_a_truncated_page(po
             WorkReviewDecision {
                 expected_sha256: "0".repeat(64),
                 expected_record_count: snapshot.total_records,
+                expected_identity_sha256: snapshot.identity_sha256,
                 rationale: "I reviewed all the historical entries for Work".into(),
             },
         )

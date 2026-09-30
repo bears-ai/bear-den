@@ -79,6 +79,10 @@ struct WorkForm {
     action: WorkAction,
     #[serde(default)]
     confirmation: String,
+    #[serde(default)]
+    expected_identity_sha256: String,
+    #[serde(default)]
+    confirm_identity_audience: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -168,6 +172,7 @@ async fn detail(
     let hat_id = HatId::new(hat_id);
     let hat = manage::get_hat(state.sqlx_pool(), bear_id, hat_id).await?;
     let identity_preview = hats::identity::render_hat_identity_component(&bear, &hat)?;
+    let identity_sha256 = hats::identity::identity_fingerprint(&hat.name, &hat.identity_prompt);
     let ide_default_hat_id = hats::ide_default_hat(state.sqlx_pool(), bear_id).await?;
     let is_ide_default = ide_default_hat_id == Some(hat_id);
     let ide_default_hat_name = hats::list_hats(state.sqlx_pool(), bear_id)
@@ -203,7 +208,7 @@ async fn detail(
         "bear/manage/hat.jinja",
         auth,
         context! {
-            hat, identity_preview, is_ide_default, ide_default_hat_name, choices, grant_count => granted.len(), historical_hat_records, work_reviews, message => query.message,
+            hat, identity_preview, identity_sha256, is_ide_default, ide_default_hat_name, choices, grant_count => granted.len(), historical_hat_records, work_reviews, message => query.message,
             can_manage_bear => true, native_runtime => true,
             ..bear_nav_context(&bear, "hats"),
         },
@@ -284,13 +289,19 @@ async fn set_work(
     let id = HatId::new(hat_id);
     match form.action {
         WorkAction::Enable => {
-            if form.confirmation.trim() != "enable work" {
+            if form.confirmation.trim() != "enable work" || !form.confirm_identity_audience {
                 return Err(CustomError::ValidationError(
-                    "type enable work to confirm this wider audience".into(),
+                    "confirm the hat identity and autonomous Work audience".into(),
                 ));
             }
-            manage::enable_work_if_empty(state.sqlx_pool(), &state.memory_stores, bear_id, id)
-                .await?;
+            manage::enable_work_if_empty(
+                state.sqlx_pool(),
+                &state.memory_stores,
+                bear_id,
+                id,
+                &form.expected_identity_sha256,
+            )
+            .await?;
         }
         WorkAction::Disable => manage::disable_work(state.sqlx_pool(), bear_id, id).await?,
     }

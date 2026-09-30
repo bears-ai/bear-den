@@ -11,7 +11,7 @@ use den_memory::MemoryStoreManager;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use super::{list_hats, BearHat};
+use super::{identity::identity_fingerprint, list_hats, BearHat};
 
 #[cfg(test)]
 mod tests;
@@ -155,18 +155,25 @@ pub async fn enable_work_if_empty(
     stores: &MemoryStoreManager,
     bear_id: BearId,
     hat_id: HatId,
+    expected_identity_sha256: &str,
 ) -> Result<(), DenError> {
     let mut tx = pool.begin().await?;
-    let already_enabled = sqlx::query_scalar!(
-        "SELECT work_enabled FROM bear_hats WHERE bear_id = $1 AND id = $2 FOR UPDATE",
+    let hat_state = sqlx::query!(
+        "SELECT work_enabled, name, identity_prompt FROM bear_hats WHERE bear_id = $1 AND id = $2 FOR UPDATE",
         bear_id.as_uuid(),
         hat_id.as_uuid(),
     )
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| DenError::NotFound("hat not found for this Bear".into()))?;
-    if already_enabled {
+    if hat_state.work_enabled {
         return Ok(());
+    }
+    if identity_fingerprint(&hat_state.name, &hat_state.identity_prompt) != expected_identity_sha256
+    {
+        return Err(DenError::ValidationError(
+            "hat identity changed since review; refresh and inspect it again".into(),
+        ));
     }
     let surfaces = sqlx::query_scalar!(
         "SELECT count(*) AS \"count!: i64\" FROM bear_hat_work_surfaces WHERE bear_id = $1 AND hat_id = $2",

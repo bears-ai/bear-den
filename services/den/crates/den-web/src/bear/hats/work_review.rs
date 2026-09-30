@@ -34,6 +34,7 @@ pub(super) fn router() -> Router<AppState> {
 struct WorkReviewForm {
     expected_sha256: String,
     expected_record_count: i64,
+    expected_identity_sha256: String,
     rationale: String,
     #[serde(default)]
     confirm_work_audience: bool,
@@ -44,6 +45,7 @@ struct ReviewPageQuery {
     #[serde(default = "first_review_page")]
     page: u32,
     expected_sha256: Option<String>,
+    expected_identity_sha256: Option<String>,
 }
 
 fn first_review_page() -> u32 {
@@ -75,18 +77,21 @@ async fn review_get(
     .await?;
     if query.page > 1
         && (snapshot.sha256.is_none()
-            || query.expected_sha256.as_deref() != snapshot.sha256.as_deref())
+            || query.expected_sha256.as_deref() != snapshot.sha256.as_deref()
+            || query.expected_identity_sha256.as_deref() != Some(snapshot.identity_sha256.as_str()))
     {
         return Err(CustomError::ValidationError(
-            "hat memory changed during review; start again at page 1".into(),
+            "hat memory or identity changed during review; start again at page 1".into(),
         ));
     }
+    let identity_preview =
+        den_service::bears::hats::identity::render_hat_identity_component(&bear, &hat)?;
     web::render_template(
         &state,
         "bear/manage/hat_work_review.jinja",
         auth,
         context! {
-            hat, snapshot, can_manage_bear => true, native_runtime => true,
+            hat, snapshot, identity_preview, can_manage_bear => true, native_runtime => true,
             ..bear_nav_context(&bear, "hats"),
         },
     )
@@ -117,6 +122,7 @@ async fn review_post(
         WorkReviewDecision {
             expected_sha256: form.expected_sha256,
             expected_record_count: form.expected_record_count,
+            expected_identity_sha256: form.expected_identity_sha256,
             rationale: form.rationale,
         },
     )

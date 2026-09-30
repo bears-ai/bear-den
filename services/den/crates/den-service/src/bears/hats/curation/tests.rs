@@ -189,7 +189,9 @@ async fn work_enabled_hat_requires_explicit_audience_review_and_canonical_source
         .to_string_lossy()
         .to_string();
     let stores = MemoryStoreManager::new(&config);
-    hats::manage::enable_work_if_empty(&pool, &stores, bear, hat.id)
+    let identity_hash =
+        crate::bears::hats::identity::identity_fingerprint(&hat.name, &hat.identity_prompt);
+    hats::manage::enable_work_if_empty(&pool, &stores, bear, hat.id, &identity_hash)
         .await
         .unwrap();
     let store = stores.store_for_bear(bear.as_uuid()).await.unwrap();
@@ -274,7 +276,7 @@ async fn work_enabled_hat_requires_explicit_audience_review_and_canonical_source
     .unwrap();
     assert_eq!(detail.metadata_json["work_audience_reviewed"], true);
     assert!(
-        hats::manage::enable_work_if_empty(&pool, &stores, bear, hat.id)
+        hats::manage::enable_work_if_empty(&pool, &stores, bear, hat.id, &identity_hash)
             .await
             .is_ok(),
         "already enabled remains idempotent"

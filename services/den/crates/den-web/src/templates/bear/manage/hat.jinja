@@ -38,11 +38,13 @@
 </div>
 <div class="box">
   <h3>Autonomous Work: {{ hat.work_enabled and "on" or "off" }}</h3>
-  <p class="form-hint">Turning Work on changes who may read this hat's curated memory: future approved Work runs wearing it can use that memory, including entries curated after Work was enabled. This does not start a run or grant sandbox tools, credentials, or access. Each run still needs an authorized Job and permitted surfaces. The memory check happens when turning Work on, not each time a run starts.</p>
+  <p class="form-hint">Turning Work on changes the audience for this hat's identity text and curated memory: future approved Work runs wearing it can use both, including memory curated after Work was enabled. This does not start a run or grant sandbox tools, credentials, or access. Each run still needs an authorized Job and permitted surfaces. The memory check happens when turning Work on, not each time a run starts.</p>
   {% if hat.work_enabled %}
   <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/work"><button type="submit" name="action" value="disable">Disable autonomous Work</button></form>
   {% else %}
   <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/work">
+    <input type="hidden" name="expected_identity_sha256" value="{{ identity_sha256 | e }}">
+    <label><input type="checkbox" name="confirm_identity_audience" value="true" required> I reviewed the identity text above for autonomous Work in an untrusted workspace.</label>
     <label>Type <code>enable work</code> to confirm <input name="confirmation" autocomplete="off" required></label>
     <button type="submit" name="action" value="enable"{% if grant_count == 0 or historical_hat_records > 0 %} disabled{% endif %}>Enable Work for an empty hat</button>
   </form>
@@ -51,7 +53,7 @@
   {% if work_reviews %}
   <details><summary>Past Work memory reviews ({{ work_reviews | length }})</summary>
     <ul>{% for review in work_reviews %}
-      <li>{{ review.reviewed_at | e }} · {{ review.reviewed_by | e }} reviewed {{ review.record_count }} record{% if review.record_count != 1 %}s{% endif %}: {{ review.rationale | e }} <code>{{ review.id }}</code></li>
+      <li>{{ review.reviewed_at | e }} · {{ review.reviewed_by | e }} reviewed {{ review.record_count }} record{% if review.record_count != 1 %}s{% endif %}: {{ review.rationale | e }} <code>{{ review.id }}</code>{% if review.identity_sha256 %} · identity fingerprint <code>{{ review.identity_sha256 | e }}</code>{% endif %}</li>
     {% endfor %}</ul>
   </details>
   {% endif %}

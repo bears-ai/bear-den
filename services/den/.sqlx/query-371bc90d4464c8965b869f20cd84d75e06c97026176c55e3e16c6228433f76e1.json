@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO bear_hat_work_reviews (bear_id, hat_id, reviewed_by_user_id, memory_sha256, record_count, rationale, identity_sha256)\n             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int4",
+        "Text",
+        "Int8",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "371bc90d4464c8965b869f20cd84d75e06c97026176c55e3e16c6228433f76e1"
+}

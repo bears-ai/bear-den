@@ -99,7 +99,15 @@ async fn admin_configuration_narrows_surfaces_and_requires_empty_memory_before_w
         .to_string_lossy()
         .to_string();
     let stores = MemoryStoreManager::new(&config);
-    enable_work_if_empty(&pool, &stores, bear, hat.id)
+    let current = get_hat(&pool, bear, hat.id).await.unwrap();
+    let identity_hash =
+        super::super::identity::identity_fingerprint(&current.name, &current.identity_prompt);
+    assert!(
+        enable_work_if_empty(&pool, &stores, bear, hat.id, &"0".repeat(64))
+            .await
+            .is_err()
+    );
+    enable_work_if_empty(&pool, &stores, bear, hat.id, &identity_hash)
         .await
         .unwrap();
     assert!(get_hat(&pool, bear, hat.id).await.unwrap().work_enabled);
@@ -157,9 +165,14 @@ async fn admin_configuration_narrows_surfaces_and_requires_empty_memory_before_w
     )
     .await
     .unwrap();
-    assert!(enable_work_if_empty(&pool, &stores, bear, hat.id)
-        .await
-        .is_err());
+    let current = get_hat(&pool, bear, hat.id).await.unwrap();
+    let identity_hash =
+        super::super::identity::identity_fingerprint(&current.name, &current.identity_prompt);
+    assert!(
+        enable_work_if_empty(&pool, &stores, bear, hat.id, &identity_hash)
+            .await
+            .is_err()
+    );
     assert!(!get_hat(&pool, bear, hat.id).await.unwrap().work_enabled);
     replace_surfaces(&pool, bear, hat.id, &[]).await.unwrap();
     assert!(allowed_surfaces(&pool, bear, hat.id)
