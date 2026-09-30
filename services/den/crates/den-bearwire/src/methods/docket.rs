@@ -742,11 +742,9 @@ async fn execution_result(
         if let (Some(client_session_id), Some(task_id)) =
             (client_session_id, outcome.control.task.selected_task_id)
         {
-            let policy = den_core::EffectivePolicy::compile(
-                den_core::TrustProfile::Pair,
-                den_core::Governance::Interactive,
-                den_core::ArmatureAvailability::Connected,
-            );
+            // This path follows authenticated BearWire session/Job checks, not a
+            // client-provided stance or the presence of forwarded tool names.
+            let policy = super::session::interactive_session_policy();
             let execution = start_or_reconcile_session_task_execution(
                 state,
                 user_id,
@@ -902,6 +900,41 @@ async fn source_conversation_id(
 mod tests {
     use super::*;
     use den_docket::model::DocketExecutionTaskControl;
+
+    #[test]
+    fn focused_execution_uses_armature_origin_without_expanding_channel_grants() {
+        use den_core::{
+            ArmatureAvailability, BearCapability, EffectivePolicy, Governance, TurnExecutionOrigin,
+        };
+
+        let policy = super::super::session::interactive_session_policy();
+        let expected = EffectivePolicy::compile_for_origin(
+            TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+            Governance::Interactive,
+        );
+        assert_eq!(policy, expected);
+        assert!(policy
+            .capabilities
+            .contains(BearCapability::ExecuteFocusedTask));
+        assert!(policy
+            .capabilities
+            .contains(BearCapability::UseArmatureTools));
+        for origin in [
+            TurnExecutionOrigin::ChannelConversation,
+            TurnExecutionOrigin::BrowserTaskSession,
+        ] {
+            let other = EffectivePolicy::compile_for_origin(origin, Governance::Interactive);
+            assert!(!other
+                .capabilities
+                .contains(BearCapability::UseArmatureTools));
+        }
+        assert!(!EffectivePolicy::compile_for_origin(
+            TurnExecutionOrigin::ChannelConversation,
+            Governance::Interactive,
+        )
+        .capabilities
+        .contains(BearCapability::ExecuteFocusedTask));
+    }
 
     #[test]
     fn execution_session_prefers_the_explicit_client_session_id() {
