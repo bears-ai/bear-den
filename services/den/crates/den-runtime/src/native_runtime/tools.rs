@@ -257,7 +257,13 @@ pub fn merge_den_and_client_tools(
     if !may_define_task {
         merged.retain(|tool| !is_task_definition_or_delegation_tool_provider_name(&tool.name));
     }
-    if role == BearProfile::Chat {
+    // A client-supplied descriptor list cannot turn an internal curation or
+    // channel run into a trusted armature. Effective policy is the grant, not
+    // the mere presence of `client_tools` or the hat's identity text.
+    if !effective_policy
+        .capabilities
+        .contains(den_core::BearCapability::UseArmatureTools)
+    {
         return Ok(merged);
     }
     let filtered_client_tools = filter_client_tools_for_native_runtime(client_tools);
@@ -506,6 +512,32 @@ mod tests {
         assert!(names.contains(&"memory_apply_core_update"));
         assert!(names.contains(&"memory_read"));
         assert!(!names.contains(&"enter_plan_mode"));
+    }
+
+    #[test]
+    fn untrusted_client_descriptors_cannot_grant_armature_tools_to_chat_curate_or_watch() {
+        let config = native_test_config();
+        let fake = serde_json::json!([
+            {"name": "fs_edit_file", "parameters": {"type": "object"}},
+            {"name": "terminal_run_command", "parameters": {"type": "object"}},
+            {"name": "mcp__outside__send", "parameters": {"type": "object"}},
+        ]);
+        for profile in [BearProfile::Chat, BearProfile::Curate, BearProfile::Watch] {
+            let tools = merge_den_and_client_tools(
+                &config,
+                profile,
+                true,
+                true,
+                true,
+                Some(&fake),
+                Some("edit the workspace"),
+            )
+            .unwrap();
+            let names: Vec<_> = tools.iter().map(|tool| tool.name.as_str()).collect();
+            assert!(!names.contains(&"fs_edit_file"), "{profile:?}");
+            assert!(!names.contains(&"terminal_run_command"), "{profile:?}");
+            assert!(!names.contains(&"mcp__outside__send"), "{profile:?}");
+        }
     }
 
     #[test]
