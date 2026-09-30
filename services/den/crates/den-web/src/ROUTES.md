@@ -57,7 +57,7 @@ Bear management at `/bear/{slug}/…` is membership-gated. Raw inspection (Bear-
 
 - `GET /bear/{slug}/memory` — ordinary members see only shared/hat-curated recent entries and their count; Bear admins see broad inspection stats, review queue, reflection, and derived-recall diagnostics.
 - `GET /bear/{slug}/memory/recent` — curated current shared and Bear-owned hat entries for members; all records for Bear admins.
-- `GET /bear/{slug}/memory/search?q=&mode=` — members use curated canonical keyword search, even if semantic mode is requested. Bear admins may use broad keyword and, when configured, broad semantic inspection; Qdrant payloads are not member-authorized.
+- `GET /bear/{slug}/memory/search?q=&mode=` — members use curated canonical keyword search by default; semantic mode, when Qdrant/embeddings are configured, filters Bear-owned hat/core candidates and reconstructs every current result from authorized SQLite records, never Qdrant text. Unavailable or stale recall falls back to keyword. Bear admins retain broad keyword and configured semantic inspection.
 - `GET|POST /bear/{slug}/memory/browse` — curated paths for members; all paths for Bear admins. POST deletes/requests review (Bear admins only).
 - `GET /bear/{slug}/memory/records/{memory_id}` — direct ID lookup and history enforce curated eligibility for members, including canonical scope and access-bearing restrictions; Bear admins may inspect all versions, entity links, and recall status.
 - `GET /bear/{slug}/memory/proposals/{proposal_id}` and `GET /bear/{slug}/memory/reflection/{run_id}[/evidence]` — raw review/evidence reads for Bear admins only; proposal resolution POST is admin-only.

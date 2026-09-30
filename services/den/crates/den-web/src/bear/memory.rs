@@ -42,7 +42,10 @@ use den_memory::{
     PathSummary, SqliteMemoryProposal,
 };
 use den_service::bears::{db as bears_db, hats, BearProfile};
-use den_service::recall::{registry as recall_registry, semantic_search_for_bear};
+use den_service::recall::{
+    query::{retain_curated_candidates, search_curated_library},
+    registry as recall_registry, semantic_search_for_bear,
+};
 use den_service::{
     memory_proposals::{self, CreateMemoryProposal},
     pair_reflection,
@@ -2082,46 +2085,93 @@ async fn search_view(
     let manager = state.memory_stores.clone();
     let viewer = MemoryLibraryViewer::resolve(&state, bear.id, can_manage_bear).await?;
     let q = query.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    // Qdrant stores broad, potentially stale passage text. Members must only search
-    // the curated canonical SQLite library until semantic candidates are rechecked.
-    let semantic_available =
-        can_manage_bear && config.qdrant_url.is_some() && !config.llm_api_url.trim().is_empty();
+    // Qdrant only proposes IDs. Member scopes and displayed snippets must be
+    // rechecked and rebuilt from canonical SQLite before a result is rendered.
+    let semantic_available = config.qdrant_url.is_some() && !config.llm_api_url.trim().is_empty();
     let want_semantic = query.mode.as_deref() == Some("semantic") && semantic_available;
 
     let mut mode_used = "keyword";
-    let mut notice: Option<String> = (query.mode.as_deref() == Some("semantic") && !can_manage_bear)
-        .then(|| "Semantic search is available only in Bear admin inspection; showing curated keyword results.".to_string());
+    let mut notice: Option<String> = (query.mode.as_deref() == Some("semantic")
+        && !semantic_available)
+        .then(|| "Semantic search is unavailable; showing curated keyword results.".to_string());
     let mut results: Vec<RecordListItem> = Vec::new();
 
     if let Some(q) = q {
         if want_semantic {
-            match semantic_search_for_bear(config, bear.id, q, 25).await {
-                Ok(projection) if !projection.passages.is_empty() => {
-                    mode_used = "semantic";
-                    results = projection
-                        .passages
-                        .into_iter()
-                        .map(|p| RecordListItem {
-                            memory_id: p.memory_id,
-                            kind: p.kind.unwrap_or_else(|| "memory".to_string()),
-                            scope_label: String::new(),
-                            logical_path: p.logical_path,
-                            created_at: String::new(),
-                            sequence_no: 0,
-                            snippet: snippet(&p.text, 240),
-                            score: Some(p.score),
-                        })
-                        .collect();
+            let semantic = match &viewer {
+                MemoryLibraryViewer::AdminInspection => {
+                    semantic_search_for_bear(config, bear.id, q, 25).await
+                }
+                MemoryLibraryViewer::Curated(grant) => {
+                    search_curated_library(config, bear.id, grant, q, 25).await
+                }
+            };
+            match semantic {
+                Ok(mut projection) if !projection.passages.is_empty() => {
+                    if let MemoryLibraryViewer::Curated(grant) = &viewer {
+                        let store = manager.store_for_bear(bear.id).await?;
+                        retain_curated_candidates(&store, grant, &mut projection, 25).await?;
+                    }
+                    for passage in projection.passages {
+                        match &viewer {
+                            MemoryLibraryViewer::AdminInspection => results.push(RecordListItem {
+                                memory_id: passage.memory_id,
+                                kind: passage.kind.unwrap_or_else(|| "memory".to_string()),
+                                scope_label: String::new(),
+                                logical_path: passage.logical_path,
+                                created_at: String::new(),
+                                sequence_no: 0,
+                                snippet: snippet(&passage.text, 240),
+                                score: Some(passage.score),
+                            }),
+                            MemoryLibraryViewer::Curated(grant) => {
+                                let store = manager.store_for_bear(bear.id).await?;
+                                let Some(record) =
+                                    library::current_detail(&store, grant, &passage.memory_id)
+                                        .await?
+                                else {
+                                    continue;
+                                };
+                                let Some(scope) = store::MemoryScopeType::parse(&record.scope_type)
+                                else {
+                                    continue;
+                                };
+                                results.push(RecordListItem {
+                                    memory_id: record.memory_id,
+                                    kind: record.kind,
+                                    scope_label: scope_label(
+                                        scope,
+                                        record.scope_profile.as_deref(),
+                                    ),
+                                    logical_path: record.logical_path,
+                                    created_at: record.created_at,
+                                    sequence_no: record.sequence_no,
+                                    snippet: snippet(&record.content_text, 240),
+                                    score: Some(passage.score),
+                                });
+                            }
+                        }
+                    }
+                    if results.is_empty() {
+                        notice = Some(
+                            "No current curated semantic matches; showing curated keyword results."
+                                .into(),
+                        );
+                    } else {
+                        mode_used = "semantic";
+                    }
                 }
                 Ok(_) => {
                     notice = Some(
-                        "Semantic search returned no matches; showing keyword results.".to_string(),
+                        "Semantic search returned no matches; showing curated keyword results."
+                            .to_string(),
                     );
                 }
                 Err(err) => {
                     tracing::warn!(bear_id = %bear.id, error = %err, "semantic search failed; keyword fallback");
                     notice = Some(
-                        "Semantic search is unavailable; showing keyword results.".to_string(),
+                        "Semantic search is unavailable; showing curated keyword results."
+                            .to_string(),
                     );
                 }
             }

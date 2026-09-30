@@ -146,6 +146,13 @@ async fn review_post(
         },
     )
     .await?;
+    den_runtime::reflection::conductor::enqueue_recall_index_if_enabled(
+        state.sqlx_pool(),
+        state.config.as_ref(),
+        bear.id,
+        "reviewed_legacy_to_hat",
+    )
+    .await;
     Ok(Redirect::to(&format!(
         "/bear/{}/memory/records/{}",
         bear.slug, result.memory_id,

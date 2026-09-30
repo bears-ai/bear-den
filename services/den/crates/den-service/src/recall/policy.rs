@@ -4,6 +4,7 @@
 //! filterable Qdrant point payload and a deterministic point id so re-indexing the same
 //! (bear, memory, chunk) tuple overwrites rather than duplicates.
 
+use den_core::ids::HatId;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -30,6 +31,7 @@ pub struct IndexRequest {
     pub logical_path: Option<String>,
     pub scope_type: String,
     pub scope_profile: Option<String>,
+    pub scope_hat_id: Option<HatId>,
     pub work_surface_ref: Option<String>,
     pub kind: String,
     pub visibility: String,
@@ -48,7 +50,8 @@ pub struct IndexRequest {
 /// - Only `visibility = normal`.
 /// - Never index ephemeral kinds (`scratch`, `log`).
 /// - `shared` records: indexed.
-/// - `profile_local` records: only `note` / `decision` / `summary`.
+/// - `hat` records: indexed only with a canonical typed hat ID.
+/// - `profile_local` records: only `note` / `decision` / `summary` (legacy).
 pub fn is_indexable(scope_type: &str, kind: &str, visibility: &str) -> bool {
     if visibility != "normal" {
         return false;
@@ -57,7 +60,7 @@ pub fn is_indexable(scope_type: &str, kind: &str, visibility: &str) -> bool {
         return false;
     }
     match scope_type {
-        "shared" => true,
+        "shared" | "hat" => true,
         "profile_local" => PROFILE_LOCAL_INDEXABLE_KINDS.contains(&kind),
         _ => false,
     }
@@ -66,6 +69,7 @@ pub fn is_indexable(scope_type: &str, kind: &str, visibility: &str) -> bool {
 impl IndexRequest {
     pub fn is_indexable(&self) -> bool {
         is_indexable(&self.scope_type, &self.kind, &self.visibility)
+            && (self.scope_type == "hat") == self.scope_hat_id.is_some()
             && !matches!(self.lifecycle_status.as_str(), "archived" | "superseded")
     }
 }
@@ -106,6 +110,7 @@ pub fn build_payload(req: &IndexRequest, chunk: &Chunk, embedding_standard: &str
         "memory_id": req.memory_id,
         "scope_type": req.scope_type,
         "scope_profile": req.scope_profile,
+        "scope_hat_id": req.scope_hat_id,
         "work_surface_ref": req.work_surface_ref,
         "logical_path": req.logical_path,
         "kind": req.kind,
@@ -143,6 +148,51 @@ mod tests {
         assert!(!is_indexable("shared", "scratch", "normal"));
         assert!(!is_indexable("shared", "log", "normal"));
         assert!(!is_indexable("unknown_scope", "note", "normal"));
+        assert!(is_indexable("hat", "note", "normal"));
+        assert!(!is_indexable("source_local", "note", "normal"));
+    }
+
+    #[test]
+    fn hat_index_requires_canonical_hat_id_and_never_indexes_raw_sources() {
+        let hat = HatId::new(Uuid::new_v4());
+        let req = IndexRequest {
+            bear_id: Uuid::new_v4(),
+            memory_id: Uuid::new_v4().to_string(),
+            sequence_no: 1,
+            logical_path: Some(format!("hat_memory/{hat}/note.md")),
+            scope_type: "hat".into(),
+            scope_profile: None,
+            scope_hat_id: Some(hat),
+            work_surface_ref: None,
+            kind: "note".into(),
+            visibility: "normal".into(),
+            content_text: "reviewed knowledge".into(),
+            salience: "normal".into(),
+            lifecycle_status: "active".into(),
+            freshness_trend: "stable".into(),
+            entity_ids: vec![],
+        };
+        assert!(req.is_indexable());
+        let payload = build_payload(
+            &req,
+            &Chunk {
+                index: 0,
+                text: "reviewed knowledge".into(),
+                content_hash: "x".into(),
+            },
+            "test-standard",
+        );
+        assert_eq!(payload["scope_hat_id"], hat.to_string());
+        assert!(!IndexRequest {
+            scope_hat_id: None,
+            ..req.clone()
+        }
+        .is_indexable());
+        assert!(!IndexRequest {
+            scope_type: "source_local".into(),
+            ..req
+        }
+        .is_indexable());
     }
 
     #[test]
@@ -168,6 +218,7 @@ mod tests {
             logical_path: Some("core/old.md".into()),
             scope_type: "shared".into(),
             scope_profile: None,
+            scope_hat_id: None,
             work_surface_ref: None,
             kind: "note".into(),
             visibility: "normal".into(),
@@ -189,6 +240,7 @@ mod tests {
             logical_path: Some("core/work_surfaces/x/overview.md".into()),
             scope_type: "shared".into(),
             scope_profile: None,
+            scope_hat_id: None,
             work_surface_ref: Some("x".into()),
             kind: "overview".into(),
             visibility: "normal".into(),
@@ -210,6 +262,7 @@ mod tests {
         assert_eq!(payload["chunk_index"], 0);
         assert_eq!(payload["content_hash"], "abc");
         assert_eq!(payload["work_surface_ref"], "x");
+        assert!(payload["scope_hat_id"].is_null());
         assert_eq!(payload["kind"], "overview");
         assert_eq!(payload["salience"], "high");
         assert_eq!(payload["lifecycle_status"], "active");

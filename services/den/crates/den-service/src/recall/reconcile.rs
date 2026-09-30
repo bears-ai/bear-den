@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use den_core::{config::Config, DenError};
+use den_core::{config::Config, ids::HatId, DenError};
 use den_llm::EmbeddingClient;
 
 use den_memory::MemoryStoreManager;
@@ -17,6 +17,9 @@ use super::indexer::{PassageEmbedder, RecallIndexer};
 use super::policy::{is_indexable, IndexRequest};
 use super::qdrant::QdrantRecall;
 use super::registry;
+
+#[cfg(test)]
+mod tests;
 
 /// Aggregate result of a reconcile pass (diagnostics + tests).
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -36,6 +39,7 @@ struct HeadRow {
     sequence_no: i64,
     scope_type: String,
     scope_profile: Option<String>,
+    scope_hat_id: Option<String>,
     kind: String,
     visibility: String,
     salience: String,
@@ -51,7 +55,7 @@ pub async fn list_indexable_heads(store: &BearMemoryStore) -> Result<Vec<IndexRe
     let bear_id = store.bear_id();
     let rows = sqlx::query_as::<_, HeadRow>(
         r"
-        SELECT m.memory_id, m.sequence_no, m.scope_type, m.scope_profile, m.kind, m.visibility,
+        SELECT m.memory_id, m.sequence_no, m.scope_type, m.scope_profile, m.scope_hat_id, m.kind, m.visibility,
                m.salience, m.metadata_json, m.supersedes_memory_id, m.invalid_at,
                m.logical_path, m.work_surface_ref, m.content_text
         FROM memory_records m
@@ -59,6 +63,10 @@ pub async fn list_indexable_heads(store: &BearMemoryStore) -> Result<Vec<IndexRe
           AND m.visibility = 'normal'
           AND m.invalid_at IS NULL
           AND m.logical_path IS NOT NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM memory_access_rules rules
+              WHERE rules.bear_id = m.bear_id AND rules.src_memory_id = m.memory_id
+          )
           AND NOT EXISTS (
               SELECT 1 FROM memory_records n
               WHERE n.bear_id = m.bear_id AND n.supersedes_memory_id = m.memory_id
@@ -86,6 +94,13 @@ pub async fn list_indexable_heads(store: &BearMemoryStore) -> Result<Vec<IndexRe
             if !is_indexable(&head.scope_type, &head.kind, &head.visibility) {
                 return None;
             }
+            let scope_hat_id = match head.scope_hat_id {
+                Some(ref id) => Some(id.parse::<HatId>().ok()?),
+                None => None,
+            };
+            if (head.scope_type == "hat") != scope_hat_id.is_some() {
+                return None;
+            }
             let entity_ids = entity_ids_by_source
                 .get(&head.memory_id)
                 .cloned()
@@ -99,13 +114,14 @@ pub async fn list_indexable_heads(store: &BearMemoryStore) -> Result<Vec<IndexRe
             );
             let freshness_trend =
                 den_memory::freshness_trend(&lifecycle_status, head.invalid_at.as_deref());
-            Some(IndexRequest {
+            let req = IndexRequest {
                 bear_id,
                 memory_id: head.memory_id,
                 sequence_no: head.sequence_no,
                 logical_path: head.logical_path,
                 scope_type: head.scope_type,
                 scope_profile: head.scope_profile,
+                scope_hat_id,
                 work_surface_ref: head.work_surface_ref,
                 kind: head.kind,
                 visibility: head.visibility,
@@ -114,7 +130,8 @@ pub async fn list_indexable_heads(store: &BearMemoryStore) -> Result<Vec<IndexRe
                 lifecycle_status,
                 freshness_trend,
                 entity_ids,
-            })
+            };
+            req.is_indexable().then_some(req)
         })
         .collect())
 }

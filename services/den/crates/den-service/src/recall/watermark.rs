@@ -210,6 +210,7 @@ mod tests {
             logical_path: Some(format!("core/{memory_id}.md")),
             scope_type: "shared".into(),
             scope_profile: None,
+            scope_hat_id: None,
             work_surface_ref: None,
             kind: "note".into(),
             visibility: "normal".into(),

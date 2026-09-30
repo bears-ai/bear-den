@@ -28,6 +28,10 @@ impl CuratedMemoryGrant {
     pub fn new(hat_ids: Vec<HatId>) -> Self {
         Self { hat_ids }
     }
+
+    pub fn hat_ids(&self) -> &[HatId] {
+        &self.hat_ids
+    }
 }
 
 // sqlx-dynamic: the number of Bear-owned hat IDs varies; every ID is bound before
@@ -304,7 +308,21 @@ pub async fn detail(
     grant: &CuratedMemoryGrant,
     memory_id: &str,
 ) -> Result<Option<MemoryRecordDetail>, DenError> {
-    authorized_detail_row(store, grant, memory_id)
+    authorized_detail_row(store, grant, memory_id, false)
+        .await?
+        .map(decode_detail)
+        .transpose()
+}
+
+/// A semantic candidate is only usable if it is still the current canonical
+/// head. Qdrant's ID, scope, path, text and lifecycle payload are untrusted
+/// locators; callers reconstruct all displayed content from this SQLite row.
+pub async fn current_detail(
+    store: &BearMemoryStore,
+    grant: &CuratedMemoryGrant,
+    memory_id: &str,
+) -> Result<Option<MemoryRecordDetail>, DenError> {
+    authorized_detail_row(store, grant, memory_id, true)
         .await?
         .map(decode_detail)
         .transpose()
@@ -314,6 +332,7 @@ async fn authorized_detail_row(
     store: &BearMemoryStore,
     grant: &CuratedMemoryGrant,
     memory_id: &str,
+    require_current: bool,
 ) -> Result<Option<SqliteRow>, DenError> {
     let mut builder = QueryBuilder::<Sqlite>::new(
         "SELECT memory_id, sequence_no, scope_type, scope_hat_id, scope_profile, kind, author_profile,
@@ -322,6 +341,9 @@ async fn authorized_detail_row(
     );
     builder.push_bind(store.bear_id().to_string());
     push_eligible(&mut builder, grant);
+    if require_current {
+        push_current(&mut builder);
+    }
     builder.push(" AND memory_id = ").push_bind(memory_id);
     let row = builder
         .build()
@@ -370,7 +392,7 @@ pub async fn history(
     memory_id: &str,
     limit: i64,
 ) -> Result<Vec<MemoryRecordRow>, DenError> {
-    let Some(anchor) = authorized_detail_row(store, grant, memory_id).await? else {
+    let Some(anchor) = authorized_detail_row(store, grant, memory_id, false).await? else {
         return Ok(Vec::new());
     };
     let decode = |e: sqlx::Error| DenError::System(format!("decode library history anchor: {e}"));

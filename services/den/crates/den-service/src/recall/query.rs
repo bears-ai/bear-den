@@ -18,7 +18,9 @@ use super::qdrant::QdrantRecall;
 use super::temporal::{parse_time_expression, TemporalQuery};
 
 mod grant;
+mod library;
 pub use grant::{recall_for_turn_with_grant, search_bear_memory_with_grant};
+pub use library::{retain_curated_candidates, search_curated_library};
 
 /// Total character budget for the rendered recall section (ADR-0038 Phase 2: ~2–3k).
 const RECALL_CHAR_BUDGET: usize = 2_600;

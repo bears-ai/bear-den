@@ -22,10 +22,17 @@ pub(super) async fn retain_canonical_passages(
             continue;
         };
         let records = scoped::read_path(store, grant, &AccessContext::empty(), path, 64).await?;
-        if records
-            .iter()
-            .any(|record| record.memory_id == passage.memory_id)
+        if let Some(record) = records
+            .into_iter()
+            .find(|record| record.memory_id == passage.memory_id)
         {
+            let mut passage = passage;
+            passage.logical_path = record.logical_path;
+            passage.kind = Some(record.kind);
+            passage.salience = record.salience;
+            passage.lifecycle_status = record.lifecycle_status;
+            passage.freshness_trend = record.freshness_trend;
+            passage.text = record.content_text.chars().take(480).collect();
             admitted.push(passage);
         }
     }

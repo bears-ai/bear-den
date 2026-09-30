@@ -92,6 +92,18 @@ async fn stale_or_other_source_passages_are_removed_before_prompt_render() {
     assert_eq!(projection.passages.len(), 2);
     assert!(projection.passages.iter().any(|p| p.memory_id == owner_id));
     assert!(projection.passages.iter().any(|p| p.memory_id == hat_id));
+    assert!(projection
+        .passages
+        .iter()
+        .any(|p| p.memory_id == owner_id && p.text == "owner data"));
+    assert!(projection
+        .passages
+        .iter()
+        .any(|p| p.memory_id == hat_id && p.text == "hat data"));
+    assert!(projection
+        .passages
+        .iter()
+        .all(|p| !p.text.contains("stale index text")));
 
     den_memory::mark_memory_record_lifecycle(&store, &hat_id, "archived", None)
         .await

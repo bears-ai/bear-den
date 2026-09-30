@@ -163,6 +163,22 @@ async fn every_version_must_pass_lifecycle_visibility_and_access_gates() {
         .execute(store.pool())
         .await
         .unwrap();
+    assert!(detail(&store, &grant, &old.memory_id)
+        .await
+        .unwrap()
+        .is_some());
+    assert!(current_detail(&store, &grant, &old.memory_id)
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        current_detail(&store, &grant, &head.memory_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .content_text,
+        "eligible head"
+    );
     let hidden = store
         .append_record(
             &path,
