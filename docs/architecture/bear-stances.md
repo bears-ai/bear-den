@@ -1,10 +1,10 @@
 # Bear stances: chat, pair, curate, work, and watch
 
-This document describes the five internal stances Bear Den uses. It is the core reference for stance names, stance responsibilities, cross-stance cooperation, and stance-facing product language. Other current architecture and guide docs should prefer linking here rather than restating the full stance model. A partial [session-scoped memory and hats cutover](../topics/bear-memory-hats.md) changes memory access for explicitly bound turns; unbound sessions still use the stance-local branches described here. See the [active plan](../roadmap/HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md) for remaining work rather than treating this conceptual reference as a claim that the new model is fully deployed.
+This document describes the five **current internal** stances and their operating-mode boundaries; it is not the ordinary Bear-admin identity model. [Bear memory and hats](../topics/bear-memory-hats.md) is the current contract for bound conversations and Jobs: verified hat identity, private source notes, reviewed hat knowledge, and Bear `core/`. A configured Bear cannot start an unbound ordinary turn; only a Bear with no hats retains legacy per-stance prompts and profile-local memory. Some sections below describe those legacy branches or intended internal roles, not the behavior of a hat-bound turn. See the [active plan](../roadmap/HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md) before collapsing any stance boundary.
 
-A Bear should feel like one coherent assistant to a user. The preferred conceptual model is **stances, channels, and work surfaces**, not Spaces or separate provider-managed agents. Internally, Bear Den uses a multi-stance runtime. Each stance has a distinct job, trust contract, memory branch, and relationship to external systems.
+A Bear should feel like one coherent assistant to a user. For Bear admins the useful concepts are **the Bear, its hats, conversations/Jobs, channels, and work surfaces**, not Spaces or separate provider-managed agents. Internally, Den still uses stances for operating modes and trust policy; bound turns take identity and memory scope from their verified hat/source, not from a stance-local persona or memory branch.
 
-Stances are the preferred conceptual vocabulary. They are useful for code, schemas, routing, provisioning, diagnostics, architecture discussion, and user-facing explanation when a boundary matters. The Bear should still identify as the Bear rather than as a separate stance runtime or sub-agent.
+Stances remain internal implementation vocabulary for code, schemas, routing, provisioning, diagnostics, and architecture discussion. Explain a concrete safety boundary to users when it matters rather than requiring them to configure a stance. The Bear should still identify as the Bear rather than as a separate stance runtime or sub-agent.
 
 ## Status and relationship to other docs
 
@@ -12,7 +12,7 @@ This is the durable conceptual source for the five Bear stances: what they are, 
 
 For the post-Letta split between **trust**, **armature**, and **work surfaces** (especially `chat` vs `pair`), see [`interactive-stances-and-role-axes.md`](interactive-stances-and-role-axes.md).
 
-The five stances are durable trust-and-memory contracts (`BearStance` in code; `BearProfile` remains a temporary compatibility alias). How a particular run is *supervised right now* (live, disconnected, autonomous, inspected, frozen) is a separate, orthogonal **governance** (`Governance` in code) on the run / workspace session. A Bear going offline mid-session is a governance transition, not a switch from `pair` to `work`. See [ADR-0039](../decisions/adr-0039-trust-profiles-and-governance.md).
+The five stances still participate in trust and runtime policy (`BearStance` in code; `BearProfile` remains a compatibility alias), but a bound turn's private memory source and reusable identity are the canonical conversation/Work run and Bear-owned hat, not a stance branch. How a particular run is *supervised right now* (live, disconnected, autonomous, inspected, frozen) is a separate, orthogonal **governance** (`Governance` in code) on the run / workspace session. A Bear going offline mid-session is a governance transition, not a switch from `pair` to `work`. See [ADR-0039](../decisions/adr-0039-trust-profiles-and-governance.md).
 
 Long-running continuation also has an objective axis: the **focused Job**. `work` normally requires a designated Docket Job and drives the next logical incomplete task for that Job under autonomous-continuation governance. `pair` normally has no focused Job, but can enter focused-Job behavior explicitly through Bear conversation or client command while keeping the `pair` trust stance. The loop-control details live in [ADR-0050](../decisions/adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md).
 
@@ -40,7 +40,7 @@ A Bear is one assistant that can operate through five coordinated stances:
 | `work` | Outbound executor | Carry out approved scheduled or event-triggered work against external systems. | Not conversational; invoked by Den task dispatch. |
 | `watch` | Inbound observer | Receive external events and turn them into structured observations for review. | Webhooks, polling, queues, subscriptions, streams. |
 
-The split lets a Bear be conversational, collaborative, reflective, autonomous, and observant without giving every capability to one all-powerful runtime. The stance is the operating mode and trust boundary; the channel is the concrete touchpoint; the work surface is the durable work context the Bear may be acting on.
+The split lets a Bear be conversational, collaborative, reflective, autonomous, and observant without giving every capability to one all-powerful runtime. The stance is an internal operating mode and trust-policy input; the hat is the Bear's selected responsibility and identity; the channel is the conversation touchpoint; the work surface is the durable context in which approved work may occur.
 
 ## Why five stances?
 
@@ -48,9 +48,9 @@ The five-stance model supports five product and safety goals at once:
 
 1. **One coherent Bear, many contexts.** Users experience one assistant, while the system routes different contexts to the right internal stance.
 2. **Better concurrency.** Chat, IDE collaboration, background work, and inbound events can proceed without all traffic bottlenecking through one stateful agent.
-3. **Cleaner memory.** Raw interactions stay in stance-specific branches until `curate` promotes durable knowledge into shared `core/` memory.
+3. **Cleaner memory.** Bound turns keep raw notes in their own conversation or Work run. Explicit review may promote safe knowledge to their hat and then to Bear `core/`; legacy no-hat turns retain profile-local branches.
 4. **Safer autonomy.** No single stance combines broad private data, outbound external communication, and unrestricted durable state mutation.
-5. **Clearer product language.** Each stance has a stable purpose that can guide UI, documentation, onboarding, data modeling, and marketing.
+5. **Clearer boundaries.** Each internal mode has a defined policy role, while hat identity and concrete authorization are legible in the Bear-admin experience.
 
 ## Stance summaries
 
@@ -67,7 +67,7 @@ The five-stance model supports five product and safety goals at once:
 **Primary responsibilities:**
 
 - Hold synchronous conversations in chat-like surfaces.
-- Use the Bear's shared `core/` knowledge and its own `chat/` memory.
+- On bound turns, use own conversation notes, reviewed knowledge for the selected hat, and Bear `core/`; the legacy no-hat path retains `chat/` profile memory.
 - Capture external-effect requests as task intents.
 - Propose durable skill changes instead of installing them directly.
 - Keep the user's experience coherent: the user is talking to the Bear, not to a random sub-agent.
@@ -75,7 +75,7 @@ The five-stance model supports five product and safety goals at once:
 **Intentional limits:**
 
 - No direct autonomous outbound work.
-- No access to `pair`, `curate`, `work`, or `watch` branches.
+- No access to another conversation's or Work run's raw notes, even when wearing the same hat.
 - No unilateral promotion of memories into shared `core/`.
 
 ### `pair`: collaborative agent
@@ -92,13 +92,13 @@ The five-stance model supports five product and safety goals at once:
 
 - Collaborate through ACP-speaking clients such as IDEs and future design/productivity tools.
 - Use client-mediated tools with user approval where appropriate.
-- Write durable notes to its own `pair/` branch.
+- On bound turns, write private notes to the canonical conversation; the legacy no-hat path retains `pair/` profile memory.
 - Capture external-effect requests as task intents.
 - Propose durable skill changes instead of installing them directly.
 
 **Intentional limits:**
 
-- No direct access to chat-channel memory branches.
+- No direct access to another source's raw notes, including a different chat-channel conversation.
 - No autonomous outbound work outside the client-mediated permission model.
 - No unilateral promotion of memories into shared `core/`.
 
@@ -144,13 +144,13 @@ It is the primary semantic authority for what becomes shared Bear memory or shar
 
 - Execute approved tasks dispatched by Den.
 - Use only the tools and scopes allowed by the task definition and run context.
-- Read shared `core/` knowledge and its own `work/` memory.
-- Write task results and execution notes to `work/`.
+- On a Job-bound run, read its own Work-run notes, reviewed knowledge for the eligible Job hat, and Bear `core/`.
+- Record task results and run-local notes in their canonical Work/Docket owners; the no-hat legacy path retains `work/` profile memory.
 - Propose reusable execution procedures as skill proposals.
 
 **Intentional limits:**
 
-- No raw access to `chat`, `pair`, `review`, or `watch` branches.
+- No raw access to interactive conversations or other Work-run sources.
 - No self-approval of tasks.
 - No use of tools outside the approved task scope.
 - No direct conversational surface.
@@ -206,27 +206,26 @@ A Bear is powerful because it can remember, collaborate, observe, and act. The s
 
 | Stance | Private/raw context | External communication | Durable state |
 |--------|---------------------|------------------------|---------------|
-| `chat` | Chat/channel context | Conversation only | Own branch |
-| `pair` | Client/session context | Client-mediated and user-gated | Own branch |
-| `review` | Broad Bear context | None | Own branch and shared `core/` |
-| `work` | Reviewed context only | Outbound approved work | Own branch |
-| `watch` | Inbound payloads and curated context | Inbound only | Own branch |
+| `chat` | Own conversation notes + bound hat/core (legacy: `chat/`) | Conversation only | Own source; reviewed promotion is separate |
+| `pair` | Own conversation notes + bound hat/core (legacy: `pair/`) | Client-mediated and user-gated | Own source; reviewed promotion is separate |
+| `curate` | Privileged Bear review context | No arbitrary outbound work | Review and curation; routine hat/core promotion remains planned |
+| `work` | Own run notes + eligible Job hat/core (legacy: `work/`) | Job-approved outbound work | Own run and Docket outcome |
+| `watch` | Inbound payloads and curated context | Inbound only | Observations and role-local records |
 
-This lets us say, accurately, that Bears can support autonomy while keeping raw inputs, memory integration, and external action separated by stance and policy.
+Autonomy remains bounded by verified source/hat, Job, armature, and execution policy—not merely by the stance label or what a prompt says.
 
 ## Messaging guidance
 
 ### Preferred language
 
-Use stance/channel/work-surface language for ordinary explanation:
+Use Bear/hat/conversation/Job/channel/work-surface language for ordinary explanation:
 
-- “A Bear feels like one assistant, and Den routes different kinds of work through different stances.”
-- “Each stance has a clear job and a clear trust boundary.”
-- “The `chat` stance is where the Bear talks with people in chat-like channels.”
-- “The `pair` stance is where the Bear works alongside a person in a client or workspace.”
-- “The `curate` stance reviews what becomes shared memory.”
-- “The `work` stance performs approved external tasks.”
-- “The `watch` stance receives external events and records observations.”
+- “Your Bear wears a chosen hat for this conversation or approved Job.”
+- “Private notes stay with their conversation or run until reviewed; approved knowledge may be shared with the hat or Bear.”
+- “A hat describes responsibility; it never grants tools, credentials, or autonomous Work.”
+- “Background Work still requires an authorized Job and permitted work surface.”
+
+When someone needs to understand an internal trust boundary, explain the relevant stance and concrete permission checks without presenting it as another Bear identity.
 
 Use implementation detail carefully:
 
@@ -250,7 +249,7 @@ Avoid language that implies:
 
 ### User-facing naming
 
-The stance names `chat`, `pair`, `curate`, `work`, and `watch` are the preferred stable vocabulary.
+The names `chat`, `pair`, `curate`, `work`, and `watch` remain useful as internal diagnostic and architecture vocabulary; they are not ordinary Bear-admin identity controls.
 
 In normal user-facing behavior, a Bear should identify itself as the Bear rather than volunteering its internal stance label. The internal stance split is primarily an implementation and trust-boundary model, not the default self-description users should hear.
 
@@ -273,14 +272,14 @@ For example:
 
 ## Design and data-model implications
 
-The five stances should shape product and data design:
+Stances still inform runtime-policy design; source and hat boundaries now shape the ordinary product experience:
 
 - User-facing conversation history belongs primarily to `chat` or `pair` channels, not to `work` or `watch`.
 - Background tasks should be represented as reviewed work, not as hidden chat side effects.
 - Subscription events should become observations before they become actions.
 - Durable shared memory should be explainable as something `curate` promoted, not something every stance writes freely.
 - Skill learning should be proposal-and-review based, with stance applicability chosen deliberately.
-- UI should preserve the feeling of one Bear while making stance-specific status understandable when needed.
+- UI should preserve the feeling of one Bear, show its selected hat and memory audience, and surface technical stance status only when needed.
 
 ## Future roles
 

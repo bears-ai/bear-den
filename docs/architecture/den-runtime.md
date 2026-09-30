@@ -213,17 +213,17 @@ Primary slug selection uses the same session signals as tools today (`work_surfa
 
 #### v1 rendering
 
-Keep compiled prompts hash-stable. Append projection as a separate block after `bear_compiled_configs.rendered_prompts_json[stance]`:
+Keep compiled Bear-wide/mode components hash-stable. Append projection as a separate block after the selected hat identity and compiled base/mode for a bound turn; no-hat legacy and internal roles retain `bear_compiled_configs.rendered_prompts_json[stance]`:
 
 ```text
-<compiled stance prompt>
+<compiled Bear-wide base + verified hat identity + mode, or legacy stance prompt>
 
 # Projected memory
 ## Shared anchors
 …
 ## Work surface: <slug>    (omit section if tier 2 skipped)
 …
-## Stance highlights (<stance>)
+## Own-source and hat highlights (bound) or stance highlights (legacy)
 …
 ## Situation                  (omit if empty)
 …
@@ -252,7 +252,7 @@ These supplements remain distinct from the compiled prompt base even after file-
 Order target:
 
 ```text
-system:  [compiled stance prompt]
+system:  [compiled Bear-wide base + verified hat identity + mode, or legacy stance prompt]
        + [key memory projection — path anchors]
        + [derived recall — optional vector passages]
        + [runtime supplements: prompt-memory, compaction, channel reminders]

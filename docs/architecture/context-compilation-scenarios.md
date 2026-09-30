@@ -53,10 +53,10 @@ Exception, current ACP adapter direct-tool descriptors:
 | Normal web chat | Bear-wide base and platform chat mode for a bound hat; legacy stance prompt without hats | Verified hat identity, optional runtime fragments | transcript, memory, recall | Usually no | hidden prompt drift or over-including memory |
 | ACP/pair with tools | Bear-wide base and platform pair mode for a bound hat; legacy stance prompt without hats | Verified hat identity, tool/runtime reminders | client tools, Den tools, prompt memory | Yes, by tool policy | hiding/revealing tools by heuristics |
 | Docket execution active | Bear-wide base and platform Work mode for a bound Job hat | Verified hat identity and Docket runtime fragment | canonical execution-attempt state | Yes, permission mode | asking model to decide Write vs Ask/Plan |
-| Prompt memory block present | Stance prompt | prompt-memory block context | selected blocks | Selection done by Den | stale or overbroad block inclusion |
-| Key memory projection | Stance prompt | projection block | SQLite latest heads | Selection done by Den | exposing raw branches or too much history |
-| Derived recall | Stance prompt | recall block | vector/keyword hits | Selection done by Den | treating recall as canonical memory |
-| Compaction active | Stance prompt | compaction block | compacted summary | Policy decides inclusion | flattening summary into raw transcript |
+| Prompt memory block present | Bound Bear base/mode or legacy stance prompt | verified hat identity and prompt-memory block context | selected blocks | Selection done by Den | stale or overbroad block inclusion |
+| Key memory projection | Bound Bear base/mode or legacy stance prompt | verified hat identity and projection block | SQLite latest heads | Selection done by Den | exposing raw branches or too much history |
+| Derived recall | Bound Bear base/mode or legacy stance prompt | verified hat identity and recall block | vector/keyword hits | Selection done by Den | treating recall as canonical memory |
+| Compaction active | Bound Bear base/mode or legacy stance prompt | verified hat identity and compaction block | compacted summary | Policy decides inclusion | flattening summary into raw transcript |
 | Overflow retry | Recompiled same base | compaction recovery block | compacted transcript state | Yes, one retry | losing tool/approval continuity |
 | Admin prompt edit | Recompile required | none from raw DB template | compiled output only | Compile-time validation | rendering DB templates per turn |
 | Repo prompt edit | Rebuild/restart or registry reload | possible turn fragments | prompt source hash | Registry versioning | stale compiled prompt hashes |

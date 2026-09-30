@@ -6,7 +6,7 @@ It complements [den runtime](den-runtime.md) by focusing on Bear identity, stanc
 
 ## Scope
 
-A Bear is a durable assistant identity hosted by Den. A Bear operates through a fixed set of stances, each of which is a capability profile over the same in-process runtime model.
+A Bear is a durable assistant identity hosted by Den. Its current internal stances are operating-mode and policy inputs, not separate personas. A hat supplies the selected responsibility and identity for a bound conversation or approved Job; neither the hat nor its prompt grants capabilities. See [Bear memory and hats](../topics/bear-memory-hats.md) for the verified bound path and legacy exceptions.
 
 This spec covers:
 
@@ -83,7 +83,7 @@ The exact vocabulary may differ between documents where `review` and `curate` ar
 Stances do not share one undifferentiated memory pool.
 
 - shared canonical knowledge lives in curated Bear-global memory
-- stance-local knowledge remains scoped until reviewed/promoted
+- bound turns retain raw notes in their own conversation or Work run; reviewed material may become hat knowledge or Bear-wide `core/` (no-hat legacy turns retain stance-local memory)
 - transcript history is not itself the Bear's canonical knowledge store
 - tasks and jobs are infrastructure, not Bear cognition
 
@@ -93,7 +93,7 @@ Tool access is descriptor-owned and policy-owned.
 
 - Den-hosted tools execute inside Den
 - armature-local tools execute through trusted clients
-- stance capability profiles decide which tools are visible and under what approval posture
+- effective runtime policy, verified armature/channel, approved Job, and current surface grants decide tool visibility and approvals; the selected hat can narrow resources but cannot grant them
 - durable changes and high-risk actions should remain reviewable and auditable
 
 ## Work-surface boundary
