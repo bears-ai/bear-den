@@ -1,4 +1,4 @@
-//! Bounded, durable retry for transient Curate synthesis failures. The original
+//! Rate-limited, durable recovery for transient Curate synthesis failures. The original
 //! run completion and its delayed successor are one Postgres transaction; SQLite
 //! remains the only owner of the proposal's pending/published state.
 
@@ -17,6 +17,10 @@ mod tests;
 
 const FIRST_RETRY_DELAY: Duration = Duration::minutes(1);
 const SECOND_RETRY_DELAY: Duration = Duration::minutes(10);
+const THIRD_RETRY_DELAY: Duration = Duration::hours(1);
+const FOURTH_RETRY_DELAY: Duration = Duration::hours(6);
+const DAILY_RETRY_DELAY: Duration = Duration::days(1);
+const DAILY_ATTEMPT: u8 = 5;
 
 #[derive(Deserialize)]
 struct RetryInput {
@@ -40,7 +44,9 @@ fn retry_plan(
     let (next_attempt, delay) = match attempt {
         0 => (1, FIRST_RETRY_DELAY),
         1 => (2, SECOND_RETRY_DELAY),
-        _ => return None,
+        2 => (3, THIRD_RETRY_DELAY),
+        3 => (4, FOURTH_RETRY_DELAY),
+        _ => (DAILY_ATTEMPT, DAILY_RETRY_DELAY),
     };
     let proposal_ids = outcomes
         .iter()

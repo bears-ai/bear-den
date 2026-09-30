@@ -19,7 +19,7 @@ fn retryable(id: Uuid) -> CurateProposalOutcome {
 }
 
 #[test]
-fn retry_plan_is_typed_bounded_and_only_for_synthesis_failures() {
+fn retry_plan_is_typed_rate_limited_and_only_for_synthesis_failures() {
     let id = Uuid::new_v4();
     let initial = json!({"proposal_ids": [id]});
     let first = retry_plan(&initial, &[retryable(id)]).unwrap();
@@ -32,7 +32,17 @@ fn retry_plan_is_typed_bounded_and_only_for_synthesis_failures() {
             .attempt,
         2
     );
-    assert!(retry_plan(&json!({"retry_attempt": 2}), &[retryable(id)]).is_none());
+    for (attempt, next, delay) in [
+        (2, 3, Duration::hours(1)),
+        (3, 4, Duration::hours(6)),
+        (4, 5, Duration::days(1)),
+        (5, 5, Duration::days(1)),
+        (255, 5, Duration::days(1)),
+    ] {
+        let plan = retry_plan(&json!({"retry_attempt": attempt}), &[retryable(id)]).unwrap();
+        assert_eq!(plan.attempt, next);
+        assert_eq!(plan.delay, delay);
+    }
     assert!(retry_plan(&json!({"retry_attempt": "invalid"}), &[retryable(id)]).is_none());
     let mut denied = retryable(id);
     denied.retry_reason = None;
@@ -43,7 +53,7 @@ fn retry_plan_is_typed_bounded_and_only_for_synthesis_failures() {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn retry_run_is_durable_not_due_early_and_stops_after_three_attempts(pool: PgPool) {
+async fn retry_run_is_durable_not_due_early_and_cools_down_to_daily(pool: PgPool) {
     let bear_id = db::create_bear(
         &pool,
         db::BearParams {
@@ -131,21 +141,39 @@ async fn retry_run_is_durable_not_due_early_and_stops_after_three_attempts(pool:
         .await
         .unwrap()
         .unwrap();
-    let finished = complete_and_schedule(&pool, &second_retry, json!({}), &[retryable(id)])
+    let mut current = second_retry;
+    for expected_attempt in [3, 4, 5, 5] {
+        let finished = complete_and_schedule(&pool, &current, json!({}), &[retryable(id)])
+            .await
+            .unwrap();
+        let delayed = finished.retry_run.unwrap();
+        assert_eq!(delayed.input_summary["retry_attempt"], expected_attempt);
+
+        assert!(claim_next_memory_curate_run(&pool, bear_id)
+            .await
+            .unwrap()
+            .is_none());
+        sqlx::query!(
+            "UPDATE bear_reflection_runs SET available_at = NOW() WHERE id = $1",
+            delayed.id
+        )
+        .execute(&pool)
         .await
         .unwrap();
-    assert!(finished.retry_run.is_none());
+        current = claim_next_memory_curate_run(&pool, bear_id)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    let finished = complete_and_schedule(&pool, &current, json!({}), &[])
+        .await
+        .unwrap();
+    assert!(
+        finished.retry_run.is_none(),
+        "a completed decision does not poll again"
+    );
     assert!(list_queued_memory_curate_runs(&pool, bear_id, 10)
         .await
         .unwrap()
         .is_empty());
-    let attempts: i64 = sqlx::query_scalar!(
-        "SELECT count(*) AS \"count!: i64\" FROM bear_reflection_runs
-         WHERE bear_id = $1 AND lane = 'memory_curate'",
-        bear_id,
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(attempts, 3);
 }
