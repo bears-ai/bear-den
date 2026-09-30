@@ -13,7 +13,13 @@
     {% if hat.work_enabled %}<label><input type="checkbox" name="confirm_work_audience" value="true" required> I understand future approved autonomous Work will also receive this hat identity text.</label>{% endif %}
     <button type="submit">Save hat description and identity</button>
   </form>
-  <details><summary>Preview compiled hat identity</summary><pre>{{ identity_preview | e }}</pre></details>
+  <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/summary">
+    <label>Short role summary <input name="short_summary" maxlength="160" value="{{ (hat.short_summary or '') | e }}" placeholder="Describe this role in one sentence"></label>
+    <p class="form-hint">Shown alongside this hat's name to all conversations and authorized Work wearing <em>any</em> hat. Existing purposes were not copied into this field. Leave it empty to remove it; this summary is descriptive, not an instruction or permission.</p>
+    <label><input type="checkbox" name="confirm_bear_audience" value="true" required> I understand every hat and authorized Work can see this short summary.</label>
+    <button type="submit">Save short summary</button>
+  </form>
+  <details><summary>Preview compiled hat identity and directory</summary><pre>{{ identity_preview | e }}</pre></details>
   {% if previous_instructions %}
   <details>
     <summary>Review older stance instructions before transferring identity</summary>

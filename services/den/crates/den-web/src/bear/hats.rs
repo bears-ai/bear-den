@@ -43,6 +43,10 @@ pub fn router() -> Router<AppState> {
         .route_with_tsr("/bear/{slug}/hats", get(index).post(create))
         .route_with_tsr("/bear/{slug}/hats/{hat_id}", get(detail).post(update))
         .route_with_tsr(
+            "/bear/{slug}/hats/{hat_id}/summary",
+            post(set_short_summary),
+        )
+        .route_with_tsr(
             "/bear/{slug}/hats/{hat_id}/ide-default",
             post(set_ide_default),
         )
@@ -62,6 +66,17 @@ pub fn router() -> Router<AppState> {
 struct HatForm {
     name: String,
     purpose: String,
+    short_summary: String,
+    #[serde(default)]
+    confirm_bear_audience: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct HatSummaryForm {
+    #[serde(default)]
+    short_summary: String,
+    #[serde(default)]
+    confirm_bear_audience: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -152,12 +167,18 @@ async fn create(
         Err(redirect) => return Ok(redirect.into_response()),
     };
     let user_id = session_user(&auth).await?.id;
-    let hat = hats::create_hat(
+    if !form.confirm_bear_audience {
+        return Err(CustomError::ValidationError(
+            "confirm the shared audience for this hat summary".into(),
+        ));
+    }
+    let hat = hats::create_hat_with_summary(
         state.sqlx_pool(),
         BearId::new(bear.id),
         UserId::new(user_id),
         &form.name,
         &form.purpose,
+        Some(&form.short_summary),
     )
     .await?;
     // The first hat closes legacy profile recall for ordinary runs. Reconcile
@@ -185,8 +206,11 @@ async fn detail(
     let bear_id = BearId::new(bear.id);
     let hat_id = HatId::new(hat_id);
     let hat = manage::get_hat(state.sqlx_pool(), bear_id, hat_id).await?;
-    let identity_preview = hats::identity::render_hat_identity_component(&bear, &hat)?;
-    let identity_sha256 = hats::identity::identity_fingerprint(&hat.name, &hat.identity_prompt);
+    let available_hats = hats::list_hats(state.sqlx_pool(), bear_id).await?;
+    let identity_preview =
+        hats::identity::render_hat_identity_component(&bear, &hat, &available_hats)?;
+    let identity_sha256 =
+        hats::identity::identity_fingerprint(&hat.name, &hat.purpose, &hat.identity_prompt);
     let previous_instructions = legacy_instructions::for_bear(state.sqlx_pool(), &bear).await?;
     let ide_default_hat_id = hats::ide_default_hat(state.sqlx_pool(), bear_id).await?;
     let is_ide_default = ide_default_hat_id == Some(hat_id);
@@ -250,6 +274,28 @@ async fn update(
         &form.purpose,
         &form.identity_prompt,
         form.confirm_work_audience,
+    )
+    .await?;
+    Ok(Redirect::to(&hat_url(&bear.slug, id)).into_response())
+}
+
+async fn set_short_summary(
+    Path((slug, hat_id)): Path<(String, Uuid)>,
+    State(state): State<AppState>,
+    auth: AuthSession,
+    Form(form): Form<HatSummaryForm>,
+) -> Result<Response, CustomError> {
+    let bear = match load_session_bear_manage(&state, &auth, &slug).await? {
+        Ok(bear) => bear,
+        Err(redirect) => return Ok(redirect.into_response()),
+    };
+    let id = HatId::new(hat_id);
+    manage::set_short_summary(
+        state.sqlx_pool(),
+        BearId::new(bear.id),
+        id,
+        (!form.short_summary.trim().is_empty()).then_some(form.short_summary.as_str()),
+        form.confirm_bear_audience,
     )
     .await?;
     Ok(Redirect::to(&hat_url(&bear.slug, id)).into_response())

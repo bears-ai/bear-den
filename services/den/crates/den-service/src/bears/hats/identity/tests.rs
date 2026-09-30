@@ -45,6 +45,61 @@ async fn bound_identity_is_selected_by_hat_and_not_by_interaction_mode(pool: PgP
     )
     .await
     .unwrap();
+    let before_summary = bound_prompt_text(&pool, &bear, BearProfile::Pair, security.id)
+        .await
+        .unwrap();
+    assert!(before_summary.contains("Support: No short summary has been configured."));
+    assert!(!before_summary.contains("Help customers"));
+    let other_bear = db::create_bear(
+        &pool,
+        BearParams {
+            slug: "foreignidentityhatbear",
+            name: "Other Bear",
+            description: "",
+            system_prompt: "",
+            default_model: None,
+            tools_enabled: None,
+            context_profile: None,
+        },
+    )
+    .await
+    .unwrap();
+    let foreign = hats::create_hat(
+        &pool,
+        BearId::new(other_bear),
+        UserId::new(user),
+        "Foreign hat",
+        "Never share this purpose",
+    )
+    .await
+    .unwrap();
+    hats::manage::set_short_summary(
+        &pool,
+        BearId::new(other_bear),
+        foreign.id,
+        Some("Other Bear's directory summary"),
+        true,
+    )
+    .await
+    .unwrap();
+    hats::manage::set_short_summary(
+        &pool,
+        BearId::new(bear_id),
+        security.id,
+        Some("Assesses security risks"),
+        true,
+    )
+    .await
+    .unwrap();
+    hats::manage::set_short_summary(
+        &pool,
+        BearId::new(bear_id),
+        support.id,
+        Some("Assists customers"),
+        true,
+    )
+    .await
+    .unwrap();
     let pair = bound_prompt_text(&pool, &bear, BearProfile::Pair, security.id)
         .await
         .unwrap();
@@ -57,8 +112,13 @@ async fn bound_identity_is_selected_by_hat_and_not_by_interaction_mode(pool: PgP
     for selected in [&pair, &work] {
         assert!(selected.contains("Bear-wide steering only"));
         assert!(selected.contains("Lumen, wearing the Security hat"));
+        assert!(selected.contains("A hat is the Bear's metaphor for a role or responsibility"));
+        assert!(selected.contains("Assesses security risks"));
+        assert!(selected.contains("Support: Assists customers"));
         assert!(selected.contains("Review risks"));
         assert!(!selected.contains("Help customers"));
+        assert!(!selected.contains("Foreign hat"));
+        assert!(!selected.contains("Other Bear's directory summary"));
         assert!(!selected.contains("Collaboration Space"));
         assert!(!selected.contains("Execution Space"));
     }
@@ -67,6 +127,7 @@ async fn bound_identity_is_selected_by_hat_and_not_by_interaction_mode(pool: PgP
     assert!(work.contains("Authorized Work mode"));
     assert!(!work.contains("Interactive collaboration mode"));
     assert!(other.contains("Help customers"));
+    assert!(other.contains("Security: Assesses security risks"));
     assert!(!other.contains("Review risks"));
     assert!(matches!(
         bound_prompt_text(&pool, &bear, BearProfile::Curate, security.id).await,
@@ -96,6 +157,21 @@ async fn bound_identity_is_selected_by_hat_and_not_by_interaction_mode(pool: PgP
         .unwrap();
     assert!(refreshed.contains("Inspect new risks {{ untrusted }}"));
     assert!(!refreshed.contains("Help customers"));
+    assert!(refreshed.contains("Support: Assists customers"));
+    hats::manage::set_short_summary(
+        &pool,
+        BearId::new(bear_id),
+        support.id,
+        Some("Answers customer questions"),
+        true,
+    )
+    .await
+    .unwrap();
+    let next_turn = bound_prompt_text(&pool, &bear, BearProfile::Pair, security.id)
+        .await
+        .unwrap();
+    assert!(next_turn.contains("Support: Answers customer questions"));
+    assert!(!next_turn.contains("Support: Assists customers"));
 }
 
 #[sqlx::test(migrations = "../../migrations")]

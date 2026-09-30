@@ -11,7 +11,7 @@ use den_memory::MemoryStoreManager;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use super::{identity::identity_fingerprint, list_hats, BearHat};
+use super::{identity::identity_fingerprint, list_hats, validate_short_summary, BearHat};
 
 #[cfg(test)]
 mod tests;
@@ -68,6 +68,35 @@ pub async fn update_hat(
         return Err(DenError::Authorization(
             "confirm the autonomous Work audience before changing this hat's identity".into(),
         ));
+    }
+    Ok(())
+}
+
+/// Short description shown in every bound hat's directory, including authorized
+/// Work runs. Never derive it from the longer, previously private purpose text.
+pub async fn set_short_summary(
+    pool: &PgPool,
+    bear_id: BearId,
+    hat_id: HatId,
+    summary: Option<&str>,
+    confirm_bear_audience: bool,
+) -> Result<(), DenError> {
+    if !confirm_bear_audience {
+        return Err(DenError::ValidationError(
+            "confirm that all conversations and authorized Work can read this summary".into(),
+        ));
+    }
+    let summary = validate_short_summary(summary)?;
+    let updated = sqlx::query!(
+        "UPDATE bear_hats SET short_summary = $3, updated_at = NOW() WHERE bear_id = $1 AND id = $2",
+        bear_id.as_uuid(),
+        hat_id.as_uuid(),
+        summary,
+    )
+    .execute(pool)
+    .await?;
+    if updated.rows_affected() == 0 {
+        return Err(DenError::NotFound("hat not found for this Bear".into()));
     }
     Ok(())
 }
@@ -159,7 +188,7 @@ pub async fn enable_work_if_empty(
 ) -> Result<(), DenError> {
     let mut tx = pool.begin().await?;
     let hat_state = sqlx::query!(
-        "SELECT work_enabled, name, identity_prompt FROM bear_hats WHERE bear_id = $1 AND id = $2 FOR UPDATE",
+        "SELECT work_enabled, name, purpose, identity_prompt FROM bear_hats WHERE bear_id = $1 AND id = $2 FOR UPDATE",
         bear_id.as_uuid(),
         hat_id.as_uuid(),
     )
@@ -169,7 +198,11 @@ pub async fn enable_work_if_empty(
     if hat_state.work_enabled {
         return Ok(());
     }
-    if identity_fingerprint(&hat_state.name, &hat_state.identity_prompt) != expected_identity_sha256
+    if identity_fingerprint(
+        &hat_state.name,
+        &hat_state.purpose,
+        &hat_state.identity_prompt,
+    ) != expected_identity_sha256
     {
         return Err(DenError::ValidationError(
             "hat identity changed since review; refresh and inspect it again".into(),

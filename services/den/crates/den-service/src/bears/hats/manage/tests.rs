@@ -93,6 +93,36 @@ async fn admin_configuration_narrows_surfaces_and_requires_empty_memory_before_w
         get_hat(&pool, bear, hat.id).await.unwrap().identity_prompt,
         "Inspect dependency versions"
     );
+    assert_eq!(
+        get_hat(&pool, bear, hat.id).await.unwrap().short_summary,
+        None
+    );
+    assert!(
+        set_short_summary(&pool, bear, hat.id, Some("Shared role"), false)
+            .await
+            .is_err()
+    );
+    assert!(
+        set_short_summary(&pool, bear, hat.id, Some("a\nnew line"), true)
+            .await
+            .is_err()
+    );
+    assert!(
+        set_short_summary(&pool, bear, hat.id, Some(&"a".repeat(161)), true)
+            .await
+            .is_err()
+    );
+    set_short_summary(&pool, bear, hat.id, Some("  Audits dependencies  "), true)
+        .await
+        .unwrap();
+    assert_eq!(
+        get_hat(&pool, bear, hat.id)
+            .await
+            .unwrap()
+            .short_summary
+            .as_deref(),
+        Some("Audits dependencies")
+    );
     let mut config = Config::test_stub();
     config.bear_sqlite_data_dir = std::env::temp_dir()
         .join(format!("hat-config-{}", Uuid::new_v4()))
@@ -100,8 +130,11 @@ async fn admin_configuration_narrows_surfaces_and_requires_empty_memory_before_w
         .to_string();
     let stores = MemoryStoreManager::new(&config);
     let current = get_hat(&pool, bear, hat.id).await.unwrap();
-    let identity_hash =
-        super::super::identity::identity_fingerprint(&current.name, &current.identity_prompt);
+    let identity_hash = super::super::identity::identity_fingerprint(
+        &current.name,
+        &current.purpose,
+        &current.identity_prompt,
+    );
     assert!(
         enable_work_if_empty(&pool, &stores, bear, hat.id, &"0".repeat(64))
             .await
@@ -166,8 +199,11 @@ async fn admin_configuration_narrows_surfaces_and_requires_empty_memory_before_w
     .await
     .unwrap();
     let current = get_hat(&pool, bear, hat.id).await.unwrap();
-    let identity_hash =
-        super::super::identity::identity_fingerprint(&current.name, &current.identity_prompt);
+    let identity_hash = super::super::identity::identity_fingerprint(
+        &current.name,
+        &current.purpose,
+        &current.identity_prompt,
+    );
     assert!(
         enable_work_if_empty(&pool, &stores, bear, hat.id, &identity_hash)
             .await

@@ -31,6 +31,8 @@ pub struct BearHat {
     pub bear_id: BearId,
     pub name: String,
     pub purpose: String,
+    /// Explicitly shared, short directory description; not inferred from purpose.
+    pub short_summary: Option<String>,
     pub identity_prompt: String,
     pub work_enabled: bool,
     pub created_by_user_id: UserId,
@@ -43,6 +45,7 @@ struct BearHatRow {
     bear_id: Uuid,
     name: String,
     purpose: String,
+    short_summary: Option<String>,
     identity_prompt: String,
     work_enabled: bool,
     created_by_user_id: i32,
@@ -57,6 +60,7 @@ impl From<BearHatRow> for BearHat {
             bear_id: BearId::new(row.bear_id),
             name: row.name,
             purpose: row.purpose,
+            short_summary: row.short_summary,
             identity_prompt: row.identity_prompt,
             work_enabled: row.work_enabled,
             created_by_user_id: UserId::new(row.created_by_user_id),
@@ -66,6 +70,19 @@ impl From<BearHatRow> for BearHat {
     }
 }
 
+pub(super) fn validate_short_summary(summary: Option<&str>) -> Result<Option<&str>, DenError> {
+    let Some(value) = summary else {
+        return Ok(None);
+    };
+    let value = value.trim();
+    if value.is_empty() || value.chars().count() > 160 || value.chars().any(char::is_control) {
+        return Err(DenError::ValidationError(
+            "short hat summary must be one line of 1–160 characters".into(),
+        ));
+    }
+    Ok(Some(value))
+}
+
 pub async fn create_hat(
     pool: &PgPool,
     bear_id: BearId,
@@ -73,6 +90,18 @@ pub async fn create_hat(
     name: &str,
     purpose: &str,
 ) -> Result<BearHat, DenError> {
+    create_hat_with_summary(pool, bear_id, created_by_user_id, name, purpose, None).await
+}
+
+pub async fn create_hat_with_summary(
+    pool: &PgPool,
+    bear_id: BearId,
+    created_by_user_id: UserId,
+    name: &str,
+    purpose: &str,
+    short_summary: Option<&str>,
+) -> Result<BearHat, DenError> {
+    let short_summary = validate_short_summary(short_summary)?;
     let name = name.trim();
     let purpose = purpose.trim();
     if name.is_empty() || purpose.is_empty() || purpose.len() > 4_000 {
@@ -82,13 +111,14 @@ pub async fn create_hat(
     }
     let row = sqlx::query_as!(
         BearHatRow,
-        r#"INSERT INTO bear_hats (bear_id, name, purpose, identity_prompt, created_by_user_id)
-           VALUES ($1, $2, $3, $3, $4)
-           RETURNING id, bear_id, name, purpose, identity_prompt, work_enabled, created_by_user_id, created_at, updated_at"#,
+        r#"INSERT INTO bear_hats (bear_id, name, purpose, identity_prompt, created_by_user_id, short_summary)
+           VALUES ($1, $2, $3, $3, $4, $5)
+           RETURNING id, bear_id, name, purpose, short_summary, identity_prompt, work_enabled, created_by_user_id, created_at, updated_at"#,
         bear_id.as_uuid(),
         name,
         purpose,
         created_by_user_id.get(),
+        short_summary,
     )
     .fetch_one(pool)
     .await
@@ -137,7 +167,7 @@ pub async fn set_ide_default_hat(
 pub async fn list_hats(pool: &PgPool, bear_id: BearId) -> Result<Vec<BearHat>, DenError> {
     let rows = sqlx::query_as!(
         BearHatRow,
-        r#"SELECT id, bear_id, name, purpose, identity_prompt, work_enabled, created_by_user_id, created_at, updated_at
+        r#"SELECT id, bear_id, name, purpose, short_summary, identity_prompt, work_enabled, created_by_user_id, created_at, updated_at
            FROM bear_hats WHERE bear_id = $1 ORDER BY name, id"#,
         bear_id.as_uuid(),
     )

@@ -11,7 +11,7 @@ use den_core::{
 use serde_json::json;
 use sqlx::PgPool;
 
-use super::{manage::get_hat, BearHat};
+use super::{list_hats, BearHat};
 use crate::bears::{
     context_composition::render_bound_base_prompt_with_registry,
     managed_blocks::{
@@ -44,11 +44,13 @@ fn mode_key(profile: BearProfile) -> Result<&'static str, DenError> {
     }
 }
 
-/// Fingerprint the authored fields displayed by the repository-owned identity
-/// component. The name is model-visible too, so a rename invalidates a Work
-/// audience review just as an identity-text edit does.
-pub fn identity_fingerprint(name: &str, identity_prompt: &str) -> String {
-    content_hash(&json!([name, identity_prompt]).to_string())
+/// Fingerprint the selected hat's authored name, purpose, and identity.
+/// Including purpose guards Work enablement if that admin description changes;
+/// it is not itself added to a model prompt. The separate directory summary
+/// has its own explicit Bear/Work publication
+/// acknowledgement, including changes to other hats' summaries.
+pub fn identity_fingerprint(name: &str, purpose: &str, identity_prompt: &str) -> String {
+    content_hash(&json!([name, purpose, identity_prompt]).to_string())
 }
 
 fn component(map: &serde_json::Value, key: &str) -> Option<String> {
@@ -60,13 +62,38 @@ fn component(map: &serde_json::Value, key: &str) -> Option<String> {
 /// Preview the exact hat-specific component selected by a bound turn. Author
 /// text is passed as a value to a repository-owned template, never parsed as
 /// a template or interpreted as a tool grant.
-pub fn render_hat_identity_component(bear: &Bear, hat: &BearHat) -> Result<String, DenError> {
+pub fn render_hat_identity_component(
+    bear: &Bear,
+    hat: &BearHat,
+    available: &[BearHat],
+) -> Result<String, DenError> {
+    if hat.bear_id != BearId::new(bear.id)
+        || !available.iter().any(|candidate| candidate.id == hat.id)
+        || available
+            .iter()
+            .any(|candidate| candidate.bear_id != hat.bear_id)
+    {
+        return Err(DenError::Authorization(
+            "hat directory does not belong to the selected Bear".into(),
+        ));
+    }
+    let catalog: Vec<_> = available
+        .iter()
+        .map(|candidate| {
+            json!({
+                "name": candidate.name,
+                "short_summary": candidate.short_summary,
+            })
+        })
+        .collect();
     render_turn_fragment(
         prompts()?.require("bound_hat_identity")?,
         &json!({
             "bear_name": bear.name,
             "hat_name": hat.name,
+
             "identity_prompt": hat.identity_prompt,
+            "available_hats": catalog,
         }),
     )
 }
@@ -78,7 +105,11 @@ pub async fn bound_prompt_text(
     hat_id: HatId,
 ) -> Result<String, DenError> {
     let mode_key = mode_key(profile)?;
-    let hat = get_hat(pool, BearId::new(bear.id), hat_id).await?;
+    let available_hats = list_hats(pool, BearId::new(bear.id)).await?;
+    let hat = available_hats
+        .iter()
+        .find(|candidate| candidate.id == hat_id)
+        .ok_or_else(|| DenError::NotFound("hat not found for this Bear".into()))?;
     let registry = prompts()?;
     let (base, mode) = if bear.context_profile.is_some() {
         let cached = get_compiled_bear_config(pool, bear.id).await?;
@@ -118,7 +149,7 @@ pub async fn bound_prompt_text(
         )?;
         (base, mode)
     };
-    let identity = render_hat_identity_component(bear, &hat)?;
+    let identity = render_hat_identity_component(bear, hat, &available_hats)?;
     Ok([base.as_str(), identity.as_str(), mode.as_str()]
         .into_iter()
         .filter(|section| !section.trim().is_empty())

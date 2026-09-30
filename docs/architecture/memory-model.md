@@ -164,7 +164,7 @@ At turn time, the runtime does not dump all Bear memory into the prompt.
 
 Instead it assembles:
 
-- compiled role prompt
+- for hat-bound turns, compiled Bear-wide identity + selected hat identity and a short, explicitly authored Bear-hat directory; for unbound legacy turns, the compiled role prompt
 - key memory projection
 - optional derived recall passages
 - prompt-memory blocks

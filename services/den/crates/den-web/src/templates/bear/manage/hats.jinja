@@ -8,7 +8,7 @@
   {% if hats %}
   <ul>
     {% for hat in hats %}
-    <li><a href="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}">{{ hat.name | e }}</a> — {{ hat.purpose | e }} · autonomous Work {{ hat.work_enabled and "on" or "off" }}
+    <li><a href="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}">{{ hat.name | e }}</a> — {% if hat.short_summary %}{{ hat.short_summary | e }}{% else %}Short summary not set{% endif %} · autonomous Work {{ hat.work_enabled and "on" or "off" }}
       {% if hat.id == ide_default_hat_id %}<strong>· IDE default</strong>{% else %}
       <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/ide-default"><button type="submit">Make IDE default</button></form>
       {% endif %}
@@ -22,6 +22,9 @@
   <form method="post" action="/bear/{{ bear.slug | e }}/hats">
     <label>Responsibility <input name="name" required maxlength="120" placeholder="Security review"></label>
     <label>Purpose <textarea name="purpose" required rows="3" placeholder="Review the security of this repository"></textarea></label>
+    <label>Short role summary <input name="short_summary" required maxlength="160" placeholder="Reviews security risks in this repository"></label>
+    <p class="form-hint">The short summary appears in every conversation's hat directory, including authorized Work. Do not put private notes, credentials, or instructions here. The longer purpose stays admin-facing; the identity text is included only when this hat is worn.</p>
+    <label><input type="checkbox" name="confirm_bear_audience" value="true" required> I understand every hat and authorized Work can see this short summary.</label>
     <button type="submit">Create hat</button>
   </form>
   <p class="form-hint">Autonomous Work starts off. Configure permitted surfaces before considering Work.</p>

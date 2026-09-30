@@ -259,7 +259,7 @@ async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
             &member_cookie,
             "POST",
             path,
-            "name=Injected&purpose=No"
+            "name=Injected&purpose=No&short_summary=Injected&confirm_bear_audience=true"
         )
         .await
         .0,
@@ -272,7 +272,7 @@ async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
         &admin_cookie,
         "POST",
         path,
-        "name=Security+review&purpose=Review+repo",
+        "name=Security+review&purpose=Review+repo&short_summary=Reviews+repository+security&confirm_bear_audience=true",
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
@@ -287,7 +287,12 @@ async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.contains("Security review"));
     assert!(body.contains("None selected"));
-    assert!(body.contains("Preview compiled hat identity"));
+    assert!(body.contains("Preview compiled hat identity and directory"));
+    assert!(body.contains("Reviews repository security"));
+    assert_eq!(
+        hat.short_summary.as_deref(),
+        Some("Reviews repository security")
+    );
     assert!(body.contains("Review repo"));
     assert_eq!(
         request(
@@ -313,8 +318,47 @@ async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
         .0,
         StatusCode::SEE_OTHER
     );
+    let summary_path = format!("{detail}/summary");
+    assert_eq!(
+        request(
+            &app,
+            &member_cookie,
+            "POST",
+            &summary_path,
+            "short_summary=Injected&confirm_bear_audience=true"
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        request(
+            &app,
+            &admin_cookie,
+            "POST",
+            &summary_path,
+            "short_summary=Unacknowledged"
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        request(
+            &app,
+            &admin_cookie,
+            "POST",
+            &summary_path,
+            "short_summary=Examines+%3Cscript%3Eunsafe%3C%2Fscript%3E&confirm_bear_audience=true"
+        )
+        .await
+        .0,
+        StatusCode::SEE_OTHER
+    );
     let (_, preview, _) = request(&app, &admin_cookie, "GET", &detail, "").await;
     assert!(preview.contains("Inspect &lt;script&gt;alert(1)&lt;"));
+    assert!(preview.contains("Examines &lt;script&gt;unsafe&lt;"));
+    assert!(!preview.contains("Examines <script>"));
     assert!(!preview.contains("Inspect <script>"));
     assert!(body.contains("Make IDE default"));
     assert_eq!(
@@ -530,8 +574,11 @@ async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
     let current = manage::get_hat(&pool, BearId::new(bear_id), hat.id)
         .await
         .unwrap();
-    let identity_hash =
-        hats::identity::identity_fingerprint(&current.name, &current.identity_prompt);
+    let identity_hash = hats::identity::identity_fingerprint(
+        &current.name,
+        &current.purpose,
+        &current.identity_prompt,
+    );
     assert_eq!(
         request(
             &app,
@@ -653,8 +700,11 @@ async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
     let current = manage::get_hat(&pool, BearId::new(bear_id), hat.id)
         .await
         .unwrap();
-    let identity_hash =
-        hats::identity::identity_fingerprint(&current.name, &current.identity_prompt);
+    let identity_hash = hats::identity::identity_fingerprint(
+        &current.name,
+        &current.purpose,
+        &current.identity_prompt,
+    );
     assert_eq!(
         request(
             &app,

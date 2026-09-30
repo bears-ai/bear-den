@@ -189,8 +189,11 @@ async fn work_enabled_hat_requires_explicit_audience_review_and_canonical_source
         .to_string_lossy()
         .to_string();
     let stores = MemoryStoreManager::new(&config);
-    let identity_hash =
-        crate::bears::hats::identity::identity_fingerprint(&hat.name, &hat.identity_prompt);
+    let identity_hash = crate::bears::hats::identity::identity_fingerprint(
+        &hat.name,
+        &hat.purpose,
+        &hat.identity_prompt,
+    );
     hats::manage::enable_work_if_empty(&pool, &stores, bear, hat.id, &identity_hash)
         .await
         .unwrap();

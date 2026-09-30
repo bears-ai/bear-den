@@ -84,8 +84,12 @@ async fn review_get(
             "hat memory or identity changed during review; start again at page 1".into(),
         ));
     }
-    let identity_preview =
-        den_service::bears::hats::identity::render_hat_identity_component(&bear, &hat)?;
+    let available_hats = den_service::bears::hats::list_hats(state.sqlx_pool(), bear_id).await?;
+    let identity_preview = den_service::bears::hats::identity::render_hat_identity_component(
+        &bear,
+        &hat,
+        &available_hats,
+    )?;
     web::render_template(
         &state,
         "bear/manage/hat_work_review.jinja",

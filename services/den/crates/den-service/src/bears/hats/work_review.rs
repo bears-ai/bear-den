@@ -135,7 +135,7 @@ pub async fn snapshot_for_admin(
     review_snapshot(
         hat_review::snapshot_for_hat(&store, hat_id).await?,
         1,
-        identity_fingerprint(&hat.name, &hat.identity_prompt),
+        identity_fingerprint(&hat.name, &hat.purpose, &hat.identity_prompt),
     )
 }
 
@@ -153,7 +153,7 @@ pub async fn snapshot_page_for_admin(
     review_snapshot(
         hat_review::snapshot_for_hat(&store, hat_id).await?,
         page,
-        identity_fingerprint(&hat.name, &hat.identity_prompt),
+        identity_fingerprint(&hat.name, &hat.purpose, &hat.identity_prompt),
     )
 }
 
@@ -202,7 +202,7 @@ pub async fn review_and_enable(
     }
     let mut tx = pool.begin().await?;
     let hat_state = sqlx::query!(
-        r#"SELECT h.work_enabled, h.name, h.identity_prompt FROM bear_hats h
+        r#"SELECT h.work_enabled, h.name, h.purpose, h.identity_prompt FROM bear_hats h
            JOIN user_bear membership ON membership.bear_id = h.bear_id
            WHERE h.bear_id = $1 AND h.id = $2 AND membership.user_id = $3
              AND lower(btrim(coalesce(membership.role, ''))) = $4
@@ -220,8 +220,11 @@ pub async fn review_and_enable(
             "Work is already enabled for this hat".into(),
         ));
     }
-    if identity_fingerprint(&hat_state.name, &hat_state.identity_prompt)
-        != decision.expected_identity_sha256
+    if identity_fingerprint(
+        &hat_state.name,
+        &hat_state.purpose,
+        &hat_state.identity_prompt,
+    ) != decision.expected_identity_sha256
     {
         return Err(DenError::ValidationError(
             "hat identity changed since review; refresh and inspect it again".into(),
@@ -249,7 +252,7 @@ pub async fn review_and_enable(
         .await
         .map_err(|err| DenError::System(format!("begin hat review fence: {err}")))?;
     let outcome: Result<WorkReviewReceipt, DenError> = async {
-        let snapshot = review_snapshot(hat_review::snapshot_for_hat_on(&mut sqlite, bear_id.as_uuid(), hat_id).await?, 1, identity_fingerprint(&hat_state.name, &hat_state.identity_prompt))?;
+        let snapshot = review_snapshot(hat_review::snapshot_for_hat_on(&mut sqlite, bear_id.as_uuid(), hat_id).await?, 1, identity_fingerprint(&hat_state.name, &hat_state.purpose, &hat_state.identity_prompt))?;
         if !snapshot.complete || snapshot.total_records == 0 {
             return Err(DenError::Authorization("this hat is empty or exceeds the bounded historical review limit".into()));
         }

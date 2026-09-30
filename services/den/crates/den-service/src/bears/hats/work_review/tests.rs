@@ -79,7 +79,7 @@ async fn populated_hat_requires_a_fresh_complete_admin_review_before_work(pool: 
     )
     .await
     .unwrap();
-    let identity_hash = identity_fingerprint(&hat.name, &hat.identity_prompt);
+    let identity_hash = identity_fingerprint(&hat.name, &hat.purpose, &hat.identity_prompt);
     assert!(
         hats::manage::enable_work_if_empty(&pool, &stores, bear, hat.id, &identity_hash)
             .await
@@ -130,6 +130,21 @@ async fn populated_hat_requires_a_fresh_complete_admin_review_before_work(pool: 
         hat.id,
         "Renamed security",
         "Review code",
+        "Review code",
+        false,
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        review_and_enable(&pool, &stores, bear, hat.id, user, decision.clone()).await,
+        Err(DenError::ValidationError(_))
+    ));
+    hats::manage::update_hat(
+        &pool,
+        bear,
+        hat.id,
+        "Security",
+        "Changed purpose before Work review",
         "Review code",
         false,
     )

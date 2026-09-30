@@ -79,6 +79,24 @@ async fn model_turn_uses_verified_hat_identity_without_cross_hat_or_stance_ident
     )
     .await
     .unwrap();
+    hats::manage::set_short_summary(
+        &pool,
+        BearId::new(bear_id),
+        security.id,
+        Some("Reviews security posture"),
+        true,
+    )
+    .await
+    .unwrap();
+    hats::manage::set_short_summary(
+        &pool,
+        BearId::new(bear_id),
+        support.id,
+        Some("Assists customers"),
+        true,
+    )
+    .await
+    .unwrap();
     let conversation_a = persistence::ensure_conversation_for_external_id(
         &pool,
         bear_id,
@@ -186,6 +204,8 @@ async fn model_turn_uses_verified_hat_identity_without_cross_hat_or_stance_ident
         .and_then(|message| message.content.as_deref())
         .unwrap();
     assert!(first_system.contains("Lumen, wearing the Security hat"));
+    assert!(first_system.contains("A hat is the Bear's metaphor for a role or responsibility"));
+    assert!(first_system.contains("Support: Assists customers"));
     assert!(first_system.contains("Review secrets"));
     assert!(first_system.contains("Shared Bear voice"));
     assert!(first_system.contains("Interactive collaboration mode"));
@@ -201,6 +221,7 @@ async fn model_turn_uses_verified_hat_identity_without_cross_hat_or_stance_ident
     assert!(same_chat_system.contains("Review secrets"));
     assert!(same_chat_system.contains("Conversation mode"));
     assert!(!same_chat_system.contains("Help customers"));
+    assert!(second_system.contains("Security: Reviews security posture"));
     assert!(second_system.contains("Help customers"));
     assert!(second_system.contains("Conversation mode"));
     assert!(!second_system.contains("Review secrets"));
@@ -338,6 +359,7 @@ async fn model_turn_uses_verified_hat_identity_without_cross_hat_or_stance_ident
         .unwrap();
     assert!(work_system.contains("Lumen, wearing the Security hat"));
     assert!(work_system.contains("Authorized Work mode"));
+    assert!(work_system.contains("Support: Assists customers"));
     assert!(work_system.contains("Review secrets"));
     assert!(!work_system.contains("Help customers"));
     assert!(!work_system.contains("OLD WORK IDENTITY"));
@@ -346,7 +368,7 @@ async fn model_turn_uses_verified_hat_identity_without_cross_hat_or_stance_ident
         BearId::new(bear_id),
         security.id,
         "Security",
-        "Review secrets",
+        "Review updated security risks",
         "Inspect newly scoped secrets",
         true,
     )

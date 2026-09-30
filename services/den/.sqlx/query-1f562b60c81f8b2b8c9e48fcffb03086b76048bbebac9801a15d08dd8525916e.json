@@ -1,0 +1,43 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT h.work_enabled, h.name, h.purpose, h.identity_prompt FROM bear_hats h\n           JOIN user_bear membership ON membership.bear_id = h.bear_id\n           WHERE h.bear_id = $1 AND h.id = $2 AND membership.user_id = $3\n             AND lower(btrim(coalesce(membership.role, ''))) = $4\n           FOR UPDATE OF h",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "work_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "purpose",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "identity_prompt",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int4",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "1f562b60c81f8b2b8c9e48fcffb03086b76048bbebac9801a15d08dd8525916e"
+}
