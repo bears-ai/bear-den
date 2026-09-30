@@ -25,6 +25,7 @@ use crate::{
     web::{self, AppState},
 };
 
+mod legacy_instructions;
 mod review;
 mod work_review;
 
@@ -173,6 +174,7 @@ async fn detail(
     let hat = manage::get_hat(state.sqlx_pool(), bear_id, hat_id).await?;
     let identity_preview = hats::identity::render_hat_identity_component(&bear, &hat)?;
     let identity_sha256 = hats::identity::identity_fingerprint(&hat.name, &hat.identity_prompt);
+    let previous_instructions = legacy_instructions::for_bear(state.sqlx_pool(), &bear).await?;
     let ide_default_hat_id = hats::ide_default_hat(state.sqlx_pool(), bear_id).await?;
     let is_ide_default = ide_default_hat_id == Some(hat_id);
     let ide_default_hat_name = hats::list_hats(state.sqlx_pool(), bear_id)
@@ -208,7 +210,7 @@ async fn detail(
         "bear/manage/hat.jinja",
         auth,
         context! {
-            hat, identity_preview, identity_sha256, is_ide_default, ide_default_hat_name, choices, grant_count => granted.len(), historical_hat_records, work_reviews, message => query.message,
+            hat, identity_preview, identity_sha256, previous_instructions, is_ide_default, ide_default_hat_name, choices, grant_count => granted.len(), historical_hat_records, work_reviews, message => query.message,
             can_manage_bear => true, native_runtime => true,
             ..bear_nav_context(&bear, "hats"),
         },

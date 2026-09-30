@@ -14,6 +14,18 @@
     <button type="submit">Save hat description and identity</button>
   </form>
   <details><summary>Preview compiled hat identity</summary><pre>{{ identity_preview | e }}</pre></details>
+  {% if previous_instructions %}
+  <details>
+    <summary>Review older stance instructions before transferring identity</summary>
+    <p class="form-hint">These are effective legacy stance sources; hat-bound turns do not select them. Read them for identity or responsibility wording you want to rewrite in this hat. Do not copy tool, approval, or sandbox claims into hat identity: those limits come from verified runtime policy.</p>
+    {% for instruction in previous_instructions %}
+    <details>
+      <summary>{{ instruction.profile | e }} · {{ instruction.source | e }}</summary>
+      <pre>{{ instruction.content | e }}</pre>
+    </details>
+    {% endfor %}
+  </details>
+  {% endif %}
   <p class="form-hint">The hat limits the Bear's work; it does not grant authority. An IDE conversation can choose a different hat only before its first interaction; after that, its hat is fixed.</p>
   <p><strong>IDE default for this Bear:</strong> {% if ide_default_hat_name %}{{ ide_default_hat_name | e }}{% else %}None selected{% endif %}</p>
   {% if not is_ide_default %}<form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/ide-default"><button type="submit">Make IDE default</button></form>{% endif %}

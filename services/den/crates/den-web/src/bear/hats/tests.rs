@@ -90,6 +90,105 @@ async fn request(
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn admin_can_review_old_custom_stance_text_without_copying_it_into_a_hat(pool: PgPool) {
+    use den_service::bears::{
+        compile_and_store_managed_config_for_bear, upsert_bear_block_binding, BearBlockBindingMode,
+    };
+    let bear_id = bears_db::create_bear(
+        &pool,
+        BearParams {
+            slug: "hatmigrationbear",
+            name: "Prompt review",
+            description: "",
+            system_prompt: "",
+            default_model: None,
+            tools_enabled: None,
+            context_profile: Some(sqlx::types::Json(serde_json::json!({
+                "composition_version": 1,
+                "role_contracts": {
+                    "chat": "Old chat", "pair": "Old pair", "curate": "Old curate",
+                    "work": "Old work", "watch": "Old watch"
+                },
+                "user_steering": "", "bear_context": ""
+            }))),
+        },
+    )
+    .await
+    .unwrap();
+    let admin = user(&pool, bear_id, "hatmigrationadmin", BEAR_ROLE_ADMIN).await;
+    let member = user(&pool, bear_id, "hatmigrationmember", BEAR_ROLE_MEMBER).await;
+    let bear = bears_db::get_bear(&pool, bear_id).await.unwrap().unwrap();
+    compile_and_store_managed_config_for_bear(&pool, &bear)
+        .await
+        .unwrap();
+    upsert_bear_block_binding(
+        &pool,
+        bear_id,
+        "space_instruction.pair",
+        BearBlockBindingMode::Custom,
+        Some("Prior identity <script>alert(1)</script>"),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let hat = hats::create_hat(
+        &pool,
+        BearId::new(bear_id),
+        UserId::new(admin),
+        "Security",
+        "Review code",
+    )
+    .await
+    .unwrap();
+    let mut config = Config::test_stub();
+    config.templates_dir = format!("{}/src/templates", env!("CARGO_MANIFEST_DIR"));
+    config.bear_sqlite_data_dir = std::env::temp_dir()
+        .join(format!("hat-migration-ui-{}", Uuid::new_v4()))
+        .to_string_lossy()
+        .to_string();
+    let config = Arc::new(config);
+    let state = AppState::test_with_template_env(
+        pool.clone(),
+        crate::template_environment(&config),
+        config,
+    );
+    let sessions = PostgresStore::new(pool.clone());
+    sessions.migrate().await.unwrap();
+    let app = Router::new()
+        .merge(router())
+        .route("/test-login/{user_id}", get(login))
+        .with_state(state)
+        .layer(
+            axum_login::AuthManagerLayerBuilder::new(
+                Backend::new(pool.clone()),
+                axum_login::tower_sessions::SessionManagerLayer::new(sessions),
+            )
+            .build(),
+        );
+    let path = format!("/bear/hatmigrationbear/hats/{}", hat.id);
+    let member_cookie = cookie(&app, member).await;
+    assert_eq!(
+        request(&app, &member_cookie, "GET", &path, "").await.0,
+        StatusCode::FORBIDDEN
+    );
+    let admin_cookie = cookie(&app, admin).await;
+    let (status, page, _) = request(&app, &admin_cookie, "GET", &path, "").await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("Review older stance instructions before transferring identity"));
+    assert!(page.contains("pair · Bear customization"));
+    assert!(page.contains("Prior identity &lt;script&gt;alert(1)&lt;"));
+    assert!(!page.contains("Prior identity <script>"));
+    assert_eq!(
+        hats::manage::get_hat(&pool, BearId::new(bear_id), hat.id)
+            .await
+            .unwrap()
+            .identity_prompt,
+        "Review code"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
     let bear_id = bears_db::create_bear(
         &pool,
