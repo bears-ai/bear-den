@@ -1031,4 +1031,87 @@ async fn reviewed_hat_promotion_is_admin_only_and_does_not_copy_raw_notes(pool: 
             .0,
         StatusCode::BAD_REQUEST
     );
+
+    let legacy = append_memory_record(
+        &memory,
+        &LogicalMemoryPath::profile_local("pair", "legacy"),
+        "legacy",
+        "pair",
+        None,
+        "Old untrusted <script>SECRET</script> context",
+        &json!({}),
+    )
+    .await
+    .unwrap();
+    let imported_id = "legacy-memory-import:pair:commit:pair/legacy.md";
+    sqlx::query("UPDATE memory_records SET memory_id = ? WHERE bear_id = ? AND memory_id = ?")
+        .bind(imported_id)
+        .bind(bear_id.to_string())
+        .bind(&legacy.memory_id)
+        .execute(memory.pool())
+        .await
+        .unwrap();
+    let legacy_url = format!("/bear/hatreviewui/hats/{}/legacy-review", hat.id);
+    let legacy_form = format!(
+        "source_memory_id={}&kind=legacy&reviewed_content=A+safe+reworded+historical+fact&review_notes=Discarded+all+private+and+untrusted+material&acknowledge_unverified_source_and_members=true",
+        urlencoding::encode(imported_id),
+    );
+    assert_eq!(
+        request(&app, &member_cookie, "GET", &legacy_url, "")
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        request(&app, &member_cookie, "POST", &legacy_url, &legacy_form)
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    let (status, inventory, _) = request(&app, &admin_cookie, "GET", &legacy_url, "").await;
+    assert_eq!(status, StatusCode::OK, "{inventory}");
+    assert!(inventory.contains("Unattributed legacy memory"));
+    let (status, preview, _) = request(
+        &app,
+        &admin_cookie,
+        "GET",
+        &format!(
+            "{legacy_url}?source_id={}",
+            urlencoding::encode(imported_id)
+        ),
+        "",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert!(preview.contains("Old untrusted &lt;script&gt;SECRET&lt;"));
+    assert!(!preview.contains("Old untrusted <script>"));
+    assert_eq!(
+        request(
+            &app,
+            &admin_cookie,
+            "POST",
+            &legacy_url,
+            &legacy_form.replace("&acknowledge_unverified_source_and_members=true", "")
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    let (status, _, location) =
+        request(&app, &admin_cookie, "POST", &legacy_url, &legacy_form).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(location.unwrap().contains("/memory/records/"));
+    let curated = library::search(
+        &memory,
+        &CuratedMemoryGrant::new(vec![hat.id]),
+        "safe reworded",
+        10,
+    )
+    .await
+    .unwrap();
+    assert_eq!(curated.len(), 1);
+    assert!(curated[0]
+        .content_text
+        .contains("A safe reworded historical fact"));
+    assert!(!curated[0].content_text.contains("SECRET"));
 }

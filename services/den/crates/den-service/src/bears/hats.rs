@@ -17,6 +17,7 @@ pub mod bindings;
 pub mod core_review;
 pub mod curation;
 pub mod identity;
+pub mod legacy_review;
 pub mod manage;
 pub mod memory_binding;
 pub mod work_review;

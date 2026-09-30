@@ -13,6 +13,7 @@ pub mod harvest;
 pub mod hat_promotion;
 pub mod hat_review;
 pub mod import;
+pub mod legacy_review;
 pub mod library;
 mod logical_path;
 mod manager;

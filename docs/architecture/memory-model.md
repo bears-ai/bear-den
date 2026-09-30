@@ -21,7 +21,7 @@ In the current architecture, canonical Bear cognition lives in **per-Bear SQLite
 
 Shared memory is durable Bear knowledge that should be usable across stances and surfaces.
 
-Stance-local memory is scoped knowledge that may remain local indefinitely or later be promoted in legacy unbound sessions. Bound conversations and Work runs instead write raw notes under their canonical source ID; promotion to a hat uses explicit Bear-admin source review, and subsequent hat→`core/` publication requires another admin review of the wider Bear/Work audience. Neither step copies untrusted source text automatically.
+Stance-local memory is scoped knowledge that may remain local indefinitely or later be promoted in legacy unbound sessions. Bound conversations and Work runs instead write raw notes under their canonical source ID; promotion to a hat uses explicit Bear-admin source review, and subsequent hat→`core/` publication requires another admin review of the wider Bear/Work audience. Neither step copies untrusted source text automatically. An admin-only legacy inventory separately offers explicit reauthoring of eligible unattributed profile-local notes into new hat records, with source→target provenance; the old record retains its unverified owner and profile scope.
 
 ### Bear-global vs work-surface-local memory
 
