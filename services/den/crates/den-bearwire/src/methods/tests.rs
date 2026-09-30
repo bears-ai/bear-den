@@ -64,7 +64,10 @@ use den_service::{
 
 use crate::{
     events::{events_page, EventPageQuery},
-    methods::run::{normalized_workspace_roots, persist_run_failed, RunFailureReason},
+    methods::run::{
+        client_tool_descriptors_from_context_with_authority, normalized_workspace_roots,
+        persist_run_failed, RunFailureReason,
+    },
     rpc::rpc,
 };
 use bearwire_protocol::{rpc::JsonRpcRequest, surface::SurfaceHistoryEvent, wire::BearWireEvent};
@@ -474,6 +477,30 @@ fn normalized_workspace_roots_uses_cwd_when_roots_are_not_declared() {
             .expect("cwd fallback should be accepted"),
         vec!["/workspace"]
     );
+}
+
+#[test]
+fn injected_client_and_mcp_descriptors_do_not_advertise_without_armature_authority() {
+    use den_core::{client_tools::TurnAuthority, BearStance};
+    let context = json!({
+        "mcp": {"client_tools": [{"name": "mcp__untrusted__send", "parameters": {"type": "object"}}]},
+        "adapter": {"direct_tools": [{"name": "fs_read_text_file", "parameters": {"type": "object"}}]},
+    });
+    for stance in [BearStance::Chat, BearStance::Curate, BearStance::Watch] {
+        let authority = TurnAuthority::for_session_mode(stance, "write", None);
+        assert_eq!(
+            client_tool_descriptors_from_context_with_authority(Some(&context), &authority),
+            json!([]),
+            "{stance:?} must not acquire tools from supplied descriptors",
+        );
+    }
+    let pair = TurnAuthority::for_session_mode(BearStance::Pair, "ask", None);
+    let advertised = client_tool_descriptors_from_context_with_authority(Some(&context), &pair);
+    assert!(advertised
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|tool| tool["name"] == "mcp__untrusted__send"));
 }
 
 #[test]

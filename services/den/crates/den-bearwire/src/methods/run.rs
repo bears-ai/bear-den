@@ -250,7 +250,7 @@ async fn persist_visible_runtime_marker(
     .await;
 }
 
-fn client_tool_descriptors_from_context_with_authority(
+pub(super) fn client_tool_descriptors_from_context_with_authority(
     client_context: Option<&Value>,
     authority: &den_core::client_tools::TurnAuthority,
 ) -> Value {
@@ -271,10 +271,13 @@ fn client_tool_descriptors_from_context_with_authority(
     if let Some(mcp_tools) = context
         .pointer("/mcp/client_tools")
         .and_then(Value::as_array)
+        .filter(|_| authority.has_armature_tools())
     {
         descriptors.extend(mcp_tools.iter().cloned());
     }
-    if descriptors.is_empty() {
+    if descriptors.is_empty()
+        && authority.allows_tool(den_core::client_tools::ClientToolName::ReadTextFile)
+    {
         descriptors.push(den_core::client_tools::provider_tool_descriptor(
             den_core::client_tools::ClientToolName::ReadTextFile,
         ));

@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use crate::BearStance;
+use crate::{ArmatureAvailability, BearCapability, BearStance, EffectivePolicy, Governance};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolClass {
@@ -80,8 +80,18 @@ impl TurnAuthority {
         }
     }
 
+    pub fn has_armature_tools(&self) -> bool {
+        EffectivePolicy::compile(
+            self.stance,
+            Governance::Interactive,
+            ArmatureAvailability::Connected,
+        )
+        .capabilities
+        .contains(BearCapability::UseArmatureTools)
+    }
+
     pub fn allows_tool(&self, tool: ClientToolName) -> bool {
-        self.session_policy.allows_tool(tool)
+        self.has_armature_tools() && self.session_policy.allows_tool(tool)
     }
 
     pub fn mode_label(&self) -> &'static str {
@@ -93,14 +103,30 @@ impl TurnAuthority {
     }
 
     pub fn allowed_tool_classes(&self) -> Vec<&'static str> {
-        self.session_policy.allowed_tool_classes()
+        if self.has_armature_tools() {
+            self.session_policy.allowed_tool_classes()
+        } else {
+            Vec::new()
+        }
     }
 
     pub fn denied_tool_classes(&self) -> Vec<&'static str> {
-        self.session_policy.denied_tool_classes()
+        if self.has_armature_tools() {
+            self.session_policy.denied_tool_classes()
+        } else {
+            vec!["read_only", "workspace_mutation", "execution", "browser"]
+        }
     }
 
     pub fn read_only_runtime_context(&self) -> Option<serde_json::Value> {
+        if !self.has_armature_tools() {
+            return Some(serde_json::json!({
+                "permission_mode": self.mode_label(),
+                "tool_enablement": "unavailable",
+                "allowed_tool_classes": self.allowed_tool_classes(),
+                "denied_tool_classes": self.denied_tool_classes(),
+            }));
+        }
         if self.tool_enablement().enables_non_read_tools() {
             return None;
         }

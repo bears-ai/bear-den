@@ -132,6 +132,33 @@ fn submitted_plan_keeps_write_tools_locked() {
 }
 
 #[test]
+fn session_write_mode_cannot_turn_non_armature_stances_into_local_tool_providers() {
+    for stance in [BearStance::Chat, BearStance::Curate, BearStance::Watch] {
+        let authority = TurnAuthority::for_session_mode(stance, "write", None);
+        assert!(
+            !authority.allows_tool(ClientToolName::ReadTextFile),
+            "{stance:?}"
+        );
+        assert!(
+            !authority.allows_tool(ClientToolName::EditFile),
+            "{stance:?}"
+        );
+        assert!(
+            !authority.allows_tool(ClientToolName::TerminalRunCommand),
+            "{stance:?}"
+        );
+        assert!(authority.allowed_tool_classes().is_empty());
+        assert!(authority.denied_tool_classes().contains(&"read_only"));
+        let context = authority.read_only_runtime_context().unwrap();
+        assert_eq!(context["tool_enablement"], "unavailable");
+    }
+    let pair = TurnAuthority::for_session_mode(BearStance::Pair, "write", None);
+    let work = TurnAuthority::for_session_mode(BearStance::Work, "write", None);
+    assert!(pair.allows_tool(ClientToolName::EditFile));
+    assert!(work.allows_tool(ClientToolName::EditFile));
+}
+
+#[test]
 fn turn_authority_is_single_derived_permission_surface() {
     let authority = TurnAuthority::for_session_mode(BearStance::Pair, "write", Some("submitted"));
 
