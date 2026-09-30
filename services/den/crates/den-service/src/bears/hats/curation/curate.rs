@@ -49,9 +49,11 @@ pub async fn promote_curated_proposal(
     let work_enabled = sqlx::query!(
         "SELECT h.work_enabled, h.auto_curate_enabled FROM bear_hats h JOIN conversations c
          ON c.hat_id = h.id AND c.bear_id = h.bear_id
+         JOIN user_bear member ON member.bear_id = c.bear_id
+           AND member.user_id = c.created_by_user_id
          WHERE h.bear_id = $1 AND h.id = $2 AND c.id = $3
-           AND c.status = 'active' AND c.created_by_user_id IS NOT NULL
-         FOR UPDATE OF h, c",
+           AND c.status = 'active'
+         FOR UPDATE OF h, c, member",
         bear_id.as_uuid(),
         verified.hat_id.as_uuid(),
         conversation_id,

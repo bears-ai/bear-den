@@ -381,8 +381,10 @@ pub(crate) async fn verified_hat_candidate_is_current(
     Ok(sqlx::query_scalar!(
         "SELECT EXISTS (SELECT 1 FROM conversations c JOIN bear_hats h
          ON h.bear_id = c.bear_id AND h.id = c.hat_id
+         JOIN user_bear member ON member.bear_id = c.bear_id
+           AND member.user_id = c.created_by_user_id
          WHERE c.bear_id = $1 AND c.id = $2 AND c.hat_id = $3
-           AND c.status = 'active' AND c.created_by_user_id IS NOT NULL) AS \"current!\"",
+           AND c.status = 'active') AS \"current!\"",
         bear_id,
         conversation_id,
         verified.hat_id.as_uuid(),

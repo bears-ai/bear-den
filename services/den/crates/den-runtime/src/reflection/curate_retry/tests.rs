@@ -82,6 +82,9 @@ async fn exhausted_verified_candidate_is_recovered_once_without_a_model_call(poo
     )
     .await
     .unwrap();
+    db::grant_membership(&pool, user, bear_id, Some(db::BEAR_ROLE_MEMBER))
+        .await
+        .unwrap();
     let hat = hats::create_hat(
         &pool,
         BearId::new(bear_id),

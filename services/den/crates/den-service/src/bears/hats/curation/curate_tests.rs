@@ -52,6 +52,9 @@ async fn internal_curate_publication_is_atomic_verified_and_work_off_only(pool: 
     let user = sqlx::query_scalar!(
         "INSERT INTO users (email, username) VALUES ('curateproposal@example.test', 'curateproposal') RETURNING id"
     ).fetch_one(&pool).await.unwrap();
+    db::grant_membership(&pool, user, bear_id, Some(db::BEAR_ROLE_MEMBER))
+        .await
+        .unwrap();
     let hat = hats::create_hat(&pool, bear, UserId::new(user), "Security", "Review facts")
         .await
         .unwrap();
@@ -419,4 +422,56 @@ async fn internal_curate_publication_is_atomic_verified_and_work_off_only(pool: 
     .await
     .unwrap()
     .is_some());
+
+    let departed_source = append_memory_record(
+        &store,
+        &LogicalMemoryPath::source_local(MemorySource::Conversation(conversation.id), "departed"),
+        "note",
+        "pair",
+        None,
+        "Private note from former member",
+        &json!({}),
+    )
+    .await
+    .unwrap();
+    let departed = create_verified_hat_proposal(
+        &store,
+        "normal",
+        false,
+        &json!({"summary":"Do not share after departure"}),
+        VerifiedHatProposalSource {
+            memory_id: Uuid::parse_str(&departed_source.memory_id).unwrap(),
+            hat_id: hat.id,
+        },
+    )
+    .await
+    .unwrap();
+    db::revoke_membership(&pool, user, bear_id).await.unwrap();
+    assert!(promote_curated_proposal(
+        &pool,
+        &stores,
+        bear,
+        Uuid::parse_str(&departed.proposal_id).unwrap(),
+        "A newly published fact",
+        "curate-runner",
+    )
+    .await
+    .is_err());
+    assert_eq!(
+        get_memory_proposal(&store, &departed.proposal_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        "pending"
+    );
+    assert!(library::search(
+        &store,
+        &CuratedMemoryGrant::new(vec![hat.id]),
+        "newly published",
+        10
+    )
+    .await
+    .unwrap()
+    .is_empty());
 }

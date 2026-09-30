@@ -72,6 +72,9 @@ async fn verified_curate_synthesis_publishes_work_off_but_never_work_on(pool: Pg
     )
     .await
     .unwrap();
+    db::grant_membership(&pool, user, bear_id, Some(db::BEAR_ROLE_MEMBER))
+        .await
+        .unwrap();
     let hat = hats::create_hat(
         &pool,
         BearId::new(bear_id),
@@ -315,5 +318,33 @@ async fn verified_curate_synthesis_publishes_work_off_but_never_work_on(pool: Pg
             .unwrap()
             .len(),
         1
+    );
+
+    sqlx::query!(
+        "UPDATE bear_hats SET work_enabled = false WHERE id = $1",
+        hat.id.as_uuid()
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let departed = make_candidate("departed").await.1;
+    db::revoke_membership(&pool, user, bear_id).await.unwrap();
+    let rejected = execute_memory_curate_proposals_with_synth(
+        &pool,
+        &config,
+        &stores,
+        bear_id,
+        None,
+        &[departed.id],
+        &curator,
+    )
+    .await
+    .unwrap();
+    assert_eq!(rejected.outcomes[0].status, "rejected");
+    assert_eq!(rejected.outcomes[0].retry_reason, None);
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        2,
+        "former members' notes never reach the model"
     );
 }
