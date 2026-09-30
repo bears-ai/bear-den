@@ -11,6 +11,7 @@ use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+use den_core::ids::BearId;
 use den_core::tools::review::{
     ApplyCoreUpdateRequest, MarkMemoryLifecycleRequest, MemoryProposalStatus, MemoryReviewStore,
     MemorySensitivity, ObservationRecord, ObservationWriteRequest, ProposalProjection,
@@ -29,7 +30,7 @@ use den_runtime::{
     reflection_conductor::{self, ProposalEnqueueParams},
 };
 use den_service::{
-    bears::BearProfile,
+    bears::{hats, BearProfile},
     conversation::events::{
         memory_proposal_resolved_projection, memory_review_requested_projection,
         project_to_conversation, ProjectionProvenance, ProjectionSource,
@@ -350,6 +351,17 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
     }
 
     async fn apply_core_update(&self, request: ApplyCoreUpdateRequest) -> Result<Value, DenError> {
+        // A legacy proposal can name a profile path but cannot prove ownership
+        // of canonical conversation/run notes or review the Core/Work audience.
+        // Configured Bears use the explicit, human-reviewed hat → core path.
+        if !hats::list_hats(self.pool, BearId::new(request.bear_id))
+            .await?
+            .is_empty()
+        {
+            return Err(DenError::Authorization(
+                "Bear-wide core updates for configured hats require an explicit Bear-admin review of canonical hat knowledge".into(),
+            ));
+        }
         let proposal = db_get_proposal(
             self.pool,
             self.config,

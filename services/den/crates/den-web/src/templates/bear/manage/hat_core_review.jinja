@@ -1,0 +1,33 @@
+{% extends "bear/_manage.html" %}
+{% block title %}Review hat knowledge for Bear core · {{ bear.slug }}{% endblock %}
+{% block manage %}
+<p><a href="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}">← {{ hat.name | e }}</a></p>
+<div class="box">
+  <h2>Review knowledge for the whole Bear</h2>
+  <p>These entries are already reviewed for the {{ hat.name | e }} hat, not for every responsibility. Core knowledge will be available to every Bear member and to future authorized Work Jobs regardless of hat. Rewrite only the safe, generally useful fact; do not copy hat-specific secrets, raw private context, or untrusted instructions.</p>
+  {% if sources %}<ul>{% for source in sources %}
+    <li><a href="?source_id={{ source.id | urlencode }}">{{ source.kind | e }} · {{ source.id | e }}</a> — {{ source.preview | e }}</li>
+  {% endfor %}</ul>{% else %}<p>No current, reviewable entries in this hat's most recent knowledge.</p>{% endif %}
+</div>
+{% if selected %}
+<div class="box">
+  <h3>Hat knowledge (data to review)</h3>
+  <p>Entry <code>{{ selected.id | e }}</code></p><pre>{{ selected.content_text | e }}</pre>
+  {% if current_head %}
+  <h3>Existing Bear-core entry at this path</h3>
+  <pre>{{ current_head.content_text | e }}</pre>
+  <p class="form-hint">Publishing replaces this version only if it remains current. Hidden or archived core targets cannot be replaced here.</p>
+  {% endif %}
+  <h3>Write a new Bear-wide entry</h3>
+  <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/core-review">
+    <input type="hidden" name="source_memory_id" value="{{ selected.id | e }}">
+    {% if current_head %}<input type="hidden" name="expected_head" value="{{ current_head.memory_id | e }}">{% endif %}
+    <label>Kind (lowercase identifier) <input name="kind" value="{{ selected.kind | e }}" required maxlength="64"></label>
+    <label>Newly written, Bear-wide content <textarea name="reviewed_content" required rows="8" maxlength="16000"></textarea></label>
+    <label>What did you verify, omit, or rewrite? <textarea name="review_notes" required rows="3" maxlength="4000"></textarea></label>
+    <label><input type="checkbox" name="acknowledge_bear_and_work_audience" value="true" required> This is safe for all Bear members and future authorized autonomous Work Jobs, not just this hat.</label>
+    <button type="submit">Publish reviewed knowledge to Bear core</button>
+  </form>
+</div>
+{% endif %}
+{% endblock %}

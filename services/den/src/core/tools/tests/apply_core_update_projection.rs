@@ -129,6 +129,41 @@ async fn memory_apply_core_update_projects_typed_conversation_records(
 
     let config = crate::config::Config::test_stub();
     let stores = den_memory::MemoryStoreManager::new(&config);
+    den_service::bears::hats::create_hat(
+        &pool,
+        den_core::ids::BearId::new(bear_id),
+        den_core::ids::UserId::new(user_id),
+        "Review",
+        "Review source provenance",
+    )
+    .await?;
+    let blocked = invoke_den_tool(
+        &pool,
+        &config,
+        &stores,
+        DEN_MEMORY_APPLY_CORE_UPDATE,
+        json!({
+            "proposal_id": proposal.id,
+            "target_path": "core/notes.md",
+            "mode": "create_file",
+            "body": "This unverified proposal must not become Bear-wide memory",
+        }),
+        context.clone(),
+    )
+    .await;
+    assert!(matches!(
+        blocked,
+        Err(crate::errors::CustomError::Authorization(ref message))
+            if message.contains("canonical hat knowledge")
+    ), "configured hats must require canonical admin review: {blocked:?}");
+    let store = stores.store_for_bear(bear_id).await?;
+    let core_records: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM memory_records WHERE bear_id = ? AND scope_type = 'shared'",
+    )
+    .bind(bear_id.to_string())
+    .fetch_one(store.pool())
+    .await?;
+    assert_eq!(core_records, 0);
     let payload = invoke_den_tool(
         &pool,
         &config,

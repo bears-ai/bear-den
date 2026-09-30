@@ -965,4 +965,70 @@ async fn reviewed_hat_promotion_is_admin_only_and_does_not_copy_raw_notes(pool: 
         request(&app, &admin_cookie, "POST", &url, &form).await.0,
         StatusCode::BAD_REQUEST
     );
+
+    let core_url = format!("/bear/hatreviewui/hats/{}/core-review", hat.id);
+    let core_form = format!(
+        "source_memory_id={}&kind=note&reviewed_content=All+Bears+should+review+releases&review_notes=Rewrote+the+hat+fact+for+all+Bear+members+and+Work&acknowledge_bear_and_work_audience=true",
+        shared[0].memory_id,
+    );
+    assert_eq!(
+        request(&app, &member_cookie, "GET", &core_url, "").await.0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        request(&app, &member_cookie, "POST", &core_url, &core_form)
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        request(
+            &app,
+            &admin_cookie,
+            "GET",
+            &format!("{core_url}?source_id={}", raw.memory_id),
+            ""
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    let (status, page, _) = request(
+        &app,
+        &admin_cookie,
+        "GET",
+        &format!("{core_url}?source_id={}", shared[0].memory_id),
+        "",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("Release requires security review"));
+    assert!(!page.contains("SECRET"));
+    assert!(page.contains("future authorized autonomous Work Jobs"));
+    assert_eq!(
+        request(
+            &app,
+            &admin_cookie,
+            "POST",
+            &core_url,
+            &core_form.replace("&acknowledge_bear_and_work_audience=true", "")
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    let (status, _, location) = request(&app, &admin_cookie, "POST", &core_url, &core_form).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(location.unwrap().contains("/memory/records/"));
+    let core = library::search(&memory, &CuratedMemoryGrant::new(vec![]), "All Bears", 10)
+        .await
+        .unwrap();
+    assert_eq!(core.len(), 1);
+    assert!(!core[0].content_text.contains("SECRET"));
+    assert_eq!(
+        request(&app, &admin_cookie, "POST", &core_url, &core_form)
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
 }

@@ -21,7 +21,7 @@ In the current architecture, canonical Bear cognition lives in **per-Bear SQLite
 
 Shared memory is durable Bear knowledge that should be usable across stances and surfaces.
 
-Stance-local memory is scoped knowledge that may remain local indefinitely or later be promoted in legacy unbound sessions. Bound conversations and Work runs instead write raw notes under their canonical source ID; promotion to a hat requires a separate review path, which is not yet wired.
+Stance-local memory is scoped knowledge that may remain local indefinitely or later be promoted in legacy unbound sessions. Bound conversations and Work runs instead write raw notes under their canonical source ID; promotion to a hat uses explicit Bear-admin source review, and subsequent hat→`core/` publication requires another admin review of the wider Bear/Work audience. Neither step copies untrusted source text automatically.
 
 ### Bear-global vs work-surface-local memory
 
@@ -114,12 +114,14 @@ Important conceptual areas:
 
 Memory does not automatically become shared truth.
 
-Typical flow:
+For a hat-bound conversation or Work run, the reviewed flow is:
 
-1. a stance writes local memory, an observation, or a proposal
-2. review/curation examines it
-3. it is retained locally, summarized, promoted, superseded, or rejected
-4. if promoted, shared memory is updated in canonical Bear cognition
+1. a source writes private, canonical source-local notes;
+2. a Bear admin may inspect a verifiable current note and write new hat-safe content; the SQLite source→hat promotion is atomic;
+3. an admin may separately inspect a current, visible hat entry and write new Bear/Work-safe content; the SQLite hat→`core/` promotion is atomic;
+4. routine autonomous curation of these scopes remains open. Legacy proposal auto-promotion cannot write to core once the Bear has hats.
+
+No ordinary turn reads another source's raw notes, and a hat's reviewed knowledge is not automatically suitable for all other hats or autonomous Work.
 
 ## Derived recall
 

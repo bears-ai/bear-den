@@ -1,0 +1,36 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT reviewed_by_user_id, record_count, identity_sha256 FROM bear_hat_work_reviews WHERE id = $1 AND bear_id = $2 AND hat_id = $3",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "reviewed_by_user_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "record_count",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "identity_sha256",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "9e87821a6620b26d5f6212888b019ebff7c3d031adef7d53b6bf5e1e393c626a"
+}

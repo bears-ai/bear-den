@@ -25,6 +25,7 @@ use crate::{
     web::{self, AppState},
 };
 
+mod core_review;
 mod legacy_instructions;
 mod review;
 mod work_review;
@@ -35,6 +36,7 @@ mod tests;
 pub fn router() -> Router<AppState> {
     Router::new()
         .merge(review::router())
+        .merge(core_review::router())
         .merge(work_review::router())
         .route_with_tsr("/bear/{slug}/hats", get(index).post(create))
         .route_with_tsr("/bear/{slug}/hats/{hat_id}", get(detail).post(update))

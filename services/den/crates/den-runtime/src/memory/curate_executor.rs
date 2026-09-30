@@ -1,4 +1,4 @@
-use den_core::{config::Config, DenError};
+use den_core::{config::Config, ids::BearId, DenError};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -7,7 +7,7 @@ use den_memory::MemoryStoreManager;
 use den_service::memory_proposals::{MemoryProposalRow, ProposalResolutionParams};
 
 use crate::memory::{get_proposal, promote_core_content_at_path, resolve_proposal};
-use den_service::bears::BearProfile;
+use den_service::bears::{hats, BearProfile};
 
 pub const MEMORY_CURATE_RUNNER_AGENT_ID: &str = "memory_curate_runner";
 
@@ -341,7 +341,17 @@ async fn resolve_curate_proposal(
     proposal: &MemoryProposalRow,
     trigger: Option<&str>,
 ) -> Result<CurateProposalOutcome, DenError> {
-    let triage = decide_curate_triage(proposal, trigger);
+    let mut triage = decide_curate_triage(proposal, trigger);
+    if matches!(triage, CurateTriage::PromoteToCore { .. })
+        && !hats::list_hats(pool, BearId::new(bear_id))
+            .await?
+            .is_empty()
+    {
+        triage = CurateTriage::EscalateHuman {
+            review_notes: "Configured hats require a Bear-admin review of canonical hat knowledge before Bear-wide core publication.",
+            decision_summary: "Escalated core promotion: a legacy proposal cannot prove the hat and Work audience for this Bear.",
+        };
+    }
     let triage_label = triage.triage_label().to_string();
 
     if matches!(triage, CurateTriage::PromoteToCore { .. }) {
@@ -493,6 +503,10 @@ fn aggregate_resolution_status(outcomes: &[CurateProposalOutcome]) -> String {
         "mixed".to_string()
     }
 }
+
+#[cfg(test)]
+#[path = "curate_executor/hat_tests.rs"]
+mod hat_tests;
 
 #[cfg(test)]
 mod tests {
