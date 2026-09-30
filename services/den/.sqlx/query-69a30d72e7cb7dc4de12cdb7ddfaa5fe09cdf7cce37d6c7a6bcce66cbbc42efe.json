@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT r.id, r.bear_id,\n                  (outcome.value ->> 'proposal_id')::uuid AS \"proposal_id!: Uuid\"\n           FROM bear_reflection_runs r\n           CROSS JOIN LATERAL jsonb_array_elements(\n               CASE WHEN jsonb_typeof(r.output_summary -> 'outcomes') = 'array'\n                    THEN r.output_summary -> 'outcomes' ELSE '[]'::jsonb END\n           ) AS outcome(value)\n           WHERE r.lane = 'memory_curate' AND r.status = 'completed'\n             AND r.input_summary ->> 'retry_attempt' = '2'\n             AND outcome.value ->> 'status' = 'pending'\n             AND outcome.value ->> 'retry_reason' = 'synthesis_unavailable'\n           ORDER BY r.id, r.bear_id, \"proposal_id!: Uuid\"\n           LIMIT 100 OFFSET $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "bear_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "proposal_id!: Uuid",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "69a30d72e7cb7dc4de12cdb7ddfaa5fe09cdf7cce37d6c7a6bcce66cbbc42efe"
+}

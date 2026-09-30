@@ -363,7 +363,7 @@ async fn build_curate_briefing(
     Ok(briefing)
 }
 
-async fn verified_hat_candidate_is_current(
+pub(crate) async fn verified_hat_candidate_is_current(
     pool: &PgPool,
     stores: &MemoryStoreManager,
     bear_id: Uuid,

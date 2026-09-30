@@ -846,6 +846,8 @@ pub async fn run_memory_curate_worker_loop(
     worker_token: tokio_util::sync::CancellationToken,
     poll_interval: std::time::Duration,
 ) -> Result<(), DenError> {
+    let mut next_recovery_scan = OffsetDateTime::now_utc();
+    let mut recovery_offset = 0_i64;
     loop {
         tokio::select! {
             () = worker_token.cancelled() => {
@@ -854,6 +856,28 @@ pub async fn run_memory_curate_worker_loop(
             () = tokio::time::sleep(poll_interval) => {}
         }
 
+        if OffsetDateTime::now_utc() >= next_recovery_scan {
+            match curate_retry::recover_exhausted_once(&pool, &stores, recovery_offset).await {
+                Ok(progress) => {
+                    recovery_offset = if progress.inspected == 100 {
+                        recovery_offset + 100
+                    } else {
+                        0
+                    };
+                    next_recovery_scan = OffsetDateTime::now_utc() + time::Duration::days(1);
+                    if progress.queued > 0 {
+                        tracing::info!(
+                            queued = progress.queued,
+                            "recovered exhausted private Curate candidates for delayed retry"
+                        );
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(error = %error, "exhausted Curate candidate sweep failed; retrying later");
+                    next_recovery_scan = OffsetDateTime::now_utc() + time::Duration::minutes(10);
+                }
+            }
+        }
         let bear_ids = list_bears_with_queued_memory_curate_runs(&pool).await?;
         for bear_id in bear_ids {
             if worker_token.is_cancelled() {
