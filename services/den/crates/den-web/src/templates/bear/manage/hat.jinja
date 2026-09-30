@@ -57,6 +57,19 @@
   {% else %}<p>No work surfaces are assigned to this Bear yet.</p>{% endif %}
 </div>
 <div class="box">
+  <h3>Autonomous learning for this hat: {{ hat.auto_curate_enabled and "on" or "off" }}</h3>
+  <p class="form-hint">When enabled, Curate may read a private note from a conversation wearing this hat, send it through this Bear's configured model provider to draft a generalized fact, and publish that new text to this hat. All Bear members using the hat may read it, including Pair sessions with approved tools. Model inference may have privacy, network, and usage costs. A private note is never published verbatim, but model review is not a guarantee against sensitive details or prompt injection. No credentials, tools, or Work authority are granted by this setting.</p>
+  <p class="form-hint">This is available only while autonomous Work is off. Enabling Work turns autonomous learning off; disabling Work later does not silently turn it back on.</p>
+  {% if hat.auto_curate_enabled %}
+  <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/auto-curate"><button type="submit" name="action" value="disable">Disable autonomous learning</button></form>
+  {% elif not hat.work_enabled %}
+  <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/auto-curate">
+    <label><input type="checkbox" name="confirm_audience" value="true" required> I understand private notes are reviewed by the configured model and derived knowledge becomes available to every Bear member using this hat.</label>
+    <button type="submit" name="action" value="enable">Enable autonomous learning</button>
+  </form>
+  {% endif %}
+</div>
+<div class="box">
   <h3>Autonomous Work: {{ hat.work_enabled and "on" or "off" }}</h3>
   <p class="form-hint">Turning Work on changes the audience for this hat's identity text and curated memory: future approved Work runs wearing it can use both, including memory curated after Work was enabled. This does not start a run or grant sandbox tools, credentials, or access. Each run still needs an authorized Job and permitted surfaces. The memory check happens when turning Work on, not each time a run starts.</p>
   {% if hat.work_enabled %}

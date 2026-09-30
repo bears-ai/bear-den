@@ -2,6 +2,7 @@
 
 pub mod bear_observations;
 pub mod curate_executor;
+mod curate_synthesis;
 pub mod curation;
 pub mod extraction;
 

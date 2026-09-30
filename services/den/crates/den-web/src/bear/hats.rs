@@ -53,6 +53,10 @@ pub fn router() -> Router<AppState> {
         .route_with_tsr("/bear/{slug}/hats/{hat_id}/surfaces", post(set_surfaces))
         .route_with_tsr("/bear/{slug}/hats/{hat_id}/work", post(set_work))
         .route_with_tsr(
+            "/bear/{slug}/hats/{hat_id}/auto-curate",
+            post(set_auto_curate),
+        )
+        .route_with_tsr(
             "/bear/{slug}/hats/{hat_id}/conversations",
             post(create_conversation),
         )
@@ -108,6 +112,20 @@ struct WorkForm {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum WorkAction {
+    Enable,
+    Disable,
+}
+
+#[derive(Debug, Deserialize)]
+struct AutoCurateForm {
+    action: AutoCurateAction,
+    #[serde(default)]
+    confirm_audience: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum AutoCurateAction {
     Enable,
     Disable,
 }
@@ -296,6 +314,28 @@ async fn set_short_summary(
         id,
         (!form.short_summary.trim().is_empty()).then_some(form.short_summary.as_str()),
         form.confirm_bear_audience,
+    )
+    .await?;
+    Ok(Redirect::to(&hat_url(&bear.slug, id)).into_response())
+}
+
+async fn set_auto_curate(
+    Path((slug, hat_id)): Path<(String, Uuid)>,
+    State(state): State<AppState>,
+    auth: AuthSession,
+    Form(form): Form<AutoCurateForm>,
+) -> Result<Response, CustomError> {
+    let bear = match load_session_bear_manage(&state, &auth, &slug).await? {
+        Ok(bear) => bear,
+        Err(redirect) => return Ok(redirect.into_response()),
+    };
+    let id = HatId::new(hat_id);
+    manage::set_auto_curate_enabled(
+        state.sqlx_pool(),
+        BearId::new(bear.id),
+        id,
+        matches!(form.action, AutoCurateAction::Enable),
+        form.confirm_audience,
     )
     .await?;
     Ok(Redirect::to(&hat_url(&bear.slug, id)).into_response())

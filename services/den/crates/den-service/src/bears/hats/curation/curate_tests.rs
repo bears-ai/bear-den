@@ -12,6 +12,26 @@ use den_memory::{
 };
 use serde_json::json;
 
+async fn promote_curated_proposal(
+    pool: &PgPool,
+    stores: &MemoryStoreManager,
+    bear_id: BearId,
+    proposal_id: Uuid,
+    content: &str,
+    agent_id: &str,
+) -> Result<ReviewedPromotion, DenError> {
+    super::promote_curated_proposal(
+        pool,
+        stores,
+        bear_id,
+        proposal_id,
+        content,
+        agent_id,
+        "Generalized the source without sharing private details",
+    )
+    .await
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn internal_curate_publication_is_atomic_verified_and_work_off_only(pool: PgPool) {
     let bear_id = db::create_bear(
@@ -36,6 +56,12 @@ async fn internal_curate_publication_is_atomic_verified_and_work_off_only(pool: 
         .await
         .unwrap();
     let work_hat = hats::create_hat(&pool, bear, UserId::new(user), "Work", "Review work facts")
+        .await
+        .unwrap();
+    hats::manage::set_auto_curate_enabled(&pool, bear, hat.id, true, true)
+        .await
+        .unwrap();
+    hats::manage::set_auto_curate_enabled(&pool, bear, work_hat.id, true, true)
         .await
         .unwrap();
     let conversation = persistence::ensure_conversation_for_external_id(

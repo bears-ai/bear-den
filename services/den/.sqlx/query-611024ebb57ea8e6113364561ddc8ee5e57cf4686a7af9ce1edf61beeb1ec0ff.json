@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT h.work_enabled, h.auto_curate_enabled FROM bear_hats h JOIN conversations c\n         ON c.hat_id = h.id AND c.bear_id = h.bear_id\n         WHERE h.bear_id = $1 AND h.id = $2 AND c.id = $3\n           AND c.status = 'active' AND c.created_by_user_id IS NOT NULL\n         FOR UPDATE OF h, c",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "work_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 1,
+        "name": "auto_curate_enabled",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "611024ebb57ea8e6113364561ddc8ee5e57cf4686a7af9ce1edf61beeb1ec0ff"
+}

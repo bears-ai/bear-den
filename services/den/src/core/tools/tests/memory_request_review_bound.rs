@@ -32,6 +32,7 @@ async fn bound_review_records_verified_source_and_hat_without_publishing(
     db::grant_membership(&pool, member, bear_id, Some(db::BEAR_ROLE_MEMBER)).await?;
     let hat = hats::create_hat(&pool, BearId::new(bear_id), UserId::new(admin), "Security", "Review code").await?;
     let other_hat = hats::create_hat(&pool, BearId::new(bear_id), UserId::new(admin), "Support", "Help customers").await?;
+    hats::manage::set_auto_curate_enabled(&pool, BearId::new(bear_id), hat.id, true, true).await?;
     let agent_id = format!("den-native:pair-{}", Uuid::new_v4());
     sqlx::query("INSERT INTO bear_profile_bindings (bear_id, profile, binding_id) VALUES ($1, 'pair', $2)")
         .bind(bear_id).bind(&agent_id).execute(&pool).await?;
@@ -98,6 +99,12 @@ async fn bound_review_records_verified_source_and_hat_without_publishing(
         DEN_MEMORY_REQUEST_REVIEW, args, ctx);
     let result = invoke(request(private_id), context(admin, "conv-bound-review-a")).await?;
     let id = Uuid::parse_str(result["proposal"]["id"].as_str().unwrap())?;
+    let queued = sqlx::query_scalar!(
+        "SELECT count(*) AS \"count!: i64\" FROM bear_reflection_runs
+         WHERE bear_id = $1 AND lane = 'memory_curate' AND trigger = 'verified_hat_intake'",
+        bear_id,
+    ).fetch_one(&pool).await?;
+    assert_eq!(queued, 1, "verified proposals enqueue autonomous Curate work");
     assert_eq!(result["proposal"]["verified_hat_source"]["memory_id"], private.memory_id);
     assert_eq!(result["proposal"]["verified_hat_source"]["hat_id"], hat.id.to_string());
     assert!(result["proposal"]["source_paths"].as_array().unwrap().is_empty());
@@ -135,6 +142,10 @@ async fn bound_review_records_verified_source_and_hat_without_publishing(
         "source_memory_id": private_id, "source_paths": ["pair/guess.md"],
         "suggested_action": "propose_hat", "title": "Mixed source", "summary": "No mixed source"
     }), context(admin, "conv-bound-review-a")).await.is_err());
+    hats::manage::set_auto_curate_enabled(&pool, BearId::new(bear_id), hat.id, false, false).await?;
+    assert!(invoke(request(private_id), context(admin, "conv-bound-review-a")).await.is_err(),
+        "disabling autonomous sharing must immediately stop new candidate intake");
+    hats::manage::set_auto_curate_enabled(&pool, BearId::new(bear_id), hat.id, true, true).await?;
     den_memory::mark_memory_record_lifecycle(&store, &private.memory_id, "archived", Some("no longer eligible")).await?;
     let stale = den_runtime::memory_curate_executor::execute_memory_curate_proposals(
         &pool, &config, &stores, bear_id, Some("verified_hat_intake"), &[id],

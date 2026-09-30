@@ -35,6 +35,7 @@ pub struct BearHat {
     pub short_summary: Option<String>,
     pub identity_prompt: String,
     pub work_enabled: bool,
+    pub auto_curate_enabled: bool,
     pub created_by_user_id: UserId,
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
@@ -48,6 +49,7 @@ struct BearHatRow {
     short_summary: Option<String>,
     identity_prompt: String,
     work_enabled: bool,
+    auto_curate_enabled: bool,
     created_by_user_id: i32,
     created_at: OffsetDateTime,
     updated_at: OffsetDateTime,
@@ -63,6 +65,7 @@ impl From<BearHatRow> for BearHat {
             short_summary: row.short_summary,
             identity_prompt: row.identity_prompt,
             work_enabled: row.work_enabled,
+            auto_curate_enabled: row.auto_curate_enabled,
             created_by_user_id: UserId::new(row.created_by_user_id),
             created_at: row.created_at,
             updated_at: row.updated_at,
@@ -113,7 +116,7 @@ pub async fn create_hat_with_summary(
         BearHatRow,
         r#"INSERT INTO bear_hats (bear_id, name, purpose, identity_prompt, created_by_user_id, short_summary)
            VALUES ($1, $2, $3, $3, $4, $5)
-           RETURNING id, bear_id, name, purpose, short_summary, identity_prompt, work_enabled, created_by_user_id, created_at, updated_at"#,
+           RETURNING id, bear_id, name, purpose, short_summary, identity_prompt, work_enabled, auto_curate_enabled, created_by_user_id, created_at, updated_at"#,
         bear_id.as_uuid(),
         name,
         purpose,
@@ -167,7 +170,7 @@ pub async fn set_ide_default_hat(
 pub async fn list_hats(pool: &PgPool, bear_id: BearId) -> Result<Vec<BearHat>, DenError> {
     let rows = sqlx::query_as!(
         BearHatRow,
-        r#"SELECT id, bear_id, name, purpose, short_summary, identity_prompt, work_enabled, created_by_user_id, created_at, updated_at
+        r#"SELECT id, bear_id, name, purpose, short_summary, identity_prompt, work_enabled, auto_curate_enabled, created_by_user_id, created_at, updated_at
            FROM bear_hats WHERE bear_id = $1 ORDER BY name, id"#,
         bear_id.as_uuid(),
     )

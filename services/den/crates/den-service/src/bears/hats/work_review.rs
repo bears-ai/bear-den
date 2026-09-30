@@ -268,7 +268,7 @@ pub async fn review_and_enable(
             snapshot.total_records, rationale, &decision.expected_identity_sha256,
         ).fetch_one(&mut *tx).await?;
         sqlx::query!(
-            "UPDATE bear_hats SET work_enabled = true, updated_at = NOW() WHERE bear_id = $1 AND id = $2",
+            "UPDATE bear_hats SET work_enabled = true, auto_curate_enabled = false, updated_at = NOW() WHERE bear_id = $1 AND id = $2",
             bear_id.as_uuid(), hat_id.as_uuid(),
         ).execute(&mut *tx).await?;
         tx.commit().await?;

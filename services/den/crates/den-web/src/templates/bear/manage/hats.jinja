@@ -8,7 +8,7 @@
   {% if hats %}
   <ul>
     {% for hat in hats %}
-    <li><a href="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}">{{ hat.name | e }}</a> — {% if hat.short_summary %}{{ hat.short_summary | e }}{% else %}Short summary not set{% endif %} · autonomous Work {{ hat.work_enabled and "on" or "off" }}
+    <li><a href="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}">{{ hat.name | e }}</a> — {% if hat.short_summary %}{{ hat.short_summary | e }}{% else %}Short summary not set{% endif %} · autonomous learning {{ hat.auto_curate_enabled and "on" or "off" }} · autonomous Work {{ hat.work_enabled and "on" or "off" }}
       {% if hat.id == ide_default_hat_id %}<strong>· IDE default</strong>{% else %}
       <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/ide-default"><button type="submit">Make IDE default</button></form>
       {% endif %}

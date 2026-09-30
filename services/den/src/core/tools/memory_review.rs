@@ -307,6 +307,13 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
             let hat_id = grant
                 .hat_id()
                 .ok_or_else(|| DenError::Authorization("bound conversation has no hat".into()))?;
+            let hat =
+                hats::manage::get_hat(self.pool, BearId::new(request.bear_id), hat_id).await?;
+            if !hat.auto_curate_enabled || hat.work_enabled {
+                return Err(DenError::Authorization(
+                    "autonomous curation is not enabled for this Work-off hat".into(),
+                ));
+            }
             let owned = sqlx::query_scalar!(
                 "SELECT EXISTS (SELECT 1 FROM conversations WHERE bear_id = $1 AND id = $2
                  AND hat_id = $3 AND status = 'active' AND created_by_user_id = $4) AS \"owned!\"",
@@ -380,6 +387,28 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
                 proposal.source_paths.clone(),
             ),
         );
+        if verified.is_some() {
+            let date = OffsetDateTime::now_utc().date();
+            let key = format!("memory_curate:{date}");
+            if let Err(error) = reflection_conductor::enqueue_memory_curate_for_proposals(
+                self.pool,
+                ProposalEnqueueParams {
+                    bear_id: request.bear_id,
+                    binding_id: None,
+                    conversation_id: None,
+                    conversation_key: Some(&key),
+                    conversation_date: Some(date),
+                    trigger: "verified_hat_intake",
+                    proposal_ids: vec![proposal.id],
+                },
+            )
+            .await
+            {
+                tracing::warn!(bear_id = %request.bear_id, proposal_id = %proposal.id,
+                    error_kind = ?std::mem::discriminant(&error),
+                    "verified hat proposal persists, but Curate enqueue failed");
+            }
+        }
         Ok(json!(proposal))
     }
 

@@ -22,6 +22,7 @@ pub async fn promote_curated_proposal(
     proposal_id: Uuid,
     curated_content: &str,
     curator_agent_id: &str,
+    curator_reason: &str,
 ) -> Result<ReviewedPromotion, DenError> {
     let store = stores.store_for_bear(bear_id.as_uuid()).await?;
     let proposal = get_memory_proposal(&store, &proposal_id.to_string())
@@ -45,8 +46,8 @@ pub async fn promote_curated_proposal(
     // Work-off hat first makes subsequent enablement review its new memory;
     // Work-on first denies this publication. No model flag widens that audience.
     let mut tx = pool.begin().await?;
-    let work_enabled = sqlx::query_scalar!(
-        "SELECT h.work_enabled FROM bear_hats h JOIN conversations c
+    let work_enabled = sqlx::query!(
+        "SELECT h.work_enabled, h.auto_curate_enabled FROM bear_hats h JOIN conversations c
          ON c.hat_id = h.id AND c.bear_id = h.bear_id
          WHERE h.bear_id = $1 AND h.id = $2 AND c.id = $3
            AND c.status = 'active' AND c.created_by_user_id IS NOT NULL
@@ -60,9 +61,9 @@ pub async fn promote_curated_proposal(
     .ok_or_else(|| {
         DenError::Authorization("verified source or Bear hat binding is no longer current".into())
     })?;
-    if work_enabled {
+    if work_enabled.work_enabled || !work_enabled.auto_curate_enabled {
         return Err(DenError::Authorization(
-            "autonomous Curate publication into a Work-enabled hat is not supported".into(),
+            "autonomous Curate publication requires an opted-in Work-off hat".into(),
         ));
     }
     let outcome = hat_promotion::promote_curated_proposal_to_hat(
@@ -71,6 +72,7 @@ pub async fn promote_curated_proposal(
         verified,
         curated_content,
         curator_agent_id,
+        curator_reason,
     )
     .await?;
     tx.commit().await?;

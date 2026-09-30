@@ -129,6 +129,24 @@ async fn admin_configuration_narrows_surfaces_and_requires_empty_memory_before_w
         .to_string_lossy()
         .to_string();
     let stores = MemoryStoreManager::new(&config);
+    assert!(
+        !get_hat(&pool, bear, hat.id)
+            .await
+            .unwrap()
+            .auto_curate_enabled
+    );
+    assert!(set_auto_curate_enabled(&pool, bear, hat.id, true, false)
+        .await
+        .is_err());
+    set_auto_curate_enabled(&pool, bear, hat.id, true, true)
+        .await
+        .unwrap();
+    assert!(
+        get_hat(&pool, bear, hat.id)
+            .await
+            .unwrap()
+            .auto_curate_enabled
+    );
     let current = get_hat(&pool, bear, hat.id).await.unwrap();
     let identity_hash = super::super::identity::identity_fingerprint(
         &current.name,
@@ -143,7 +161,15 @@ async fn admin_configuration_narrows_surfaces_and_requires_empty_memory_before_w
     enable_work_if_empty(&pool, &stores, bear, hat.id, &identity_hash)
         .await
         .unwrap();
-    assert!(get_hat(&pool, bear, hat.id).await.unwrap().work_enabled);
+    let enabled_hat = get_hat(&pool, bear, hat.id).await.unwrap();
+    assert!(enabled_hat.work_enabled);
+    assert!(
+        !enabled_hat.auto_curate_enabled,
+        "Work enablement must reset autonomous curation"
+    );
+    assert!(set_auto_curate_enabled(&pool, bear, hat.id, true, true)
+        .await
+        .is_err());
     assert!(matches!(
         update_hat(
             &pool,

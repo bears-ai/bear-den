@@ -20,11 +20,18 @@ pub async fn promote_curated_proposal_to_hat(
     verified: VerifiedHatProposalSource,
     curated_content: &str,
     curator_agent_id: &str,
+    curator_reason: &str,
 ) -> Result<ReviewedPromotion, DenError> {
     let content = curated_content.trim();
-    if content.is_empty() || content.len() > 16_000 || curator_agent_id.trim().is_empty() {
+    let reason = curator_reason.trim();
+    if content.is_empty()
+        || content.len() > 16_000
+        || curator_agent_id.trim().is_empty()
+        || reason.is_empty()
+        || reason.len() > 1_000
+    {
         return Err(DenError::ValidationError(
-            "curated content must be 1–16000 bytes and have a curator agent ID".into(),
+            "curated content must be 1–16000 bytes with a curator ID and bounded rationale".into(),
         ));
     }
     let mut tx = store
@@ -149,7 +156,7 @@ pub async fn promote_curated_proposal_to_hat(
     .bind(target_id.to_string())
     .bind(curator_agent_id)
     .bind(&created_at)
-    .bind("Curate-authored hat knowledge; Work was disabled at publication")
+    .bind(reason)
     .execute(&mut *tx)
     .await
     .map_err(|err| DenError::System(format!("write Curate source→hat provenance: {err}")))?;
@@ -164,9 +171,7 @@ pub async fn promote_curated_proposal_to_hat(
     payload["result_path"] = serde_json::json!(path);
     payload["result_commit"] = serde_json::json!(target_id);
     payload["reviewer_agent_id"] = serde_json::json!(curator_agent_id);
-    payload["decision_summary"] = serde_json::json!(
-        "Curate synthesized a new Work-off hat entry from a verified private note."
-    );
+    payload["decision_summary"] = serde_json::json!(reason);
     let updated = sqlx::query(
         "UPDATE memory_proposals SET status = 'approved', payload_json = ?, reviewed_at = ?
          WHERE bear_id = ? AND proposal_id = ? AND status = 'pending'",

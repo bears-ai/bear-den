@@ -1,4 +1,4 @@
-use den_core::{config::Config, DenError};
+use den_core::{config::Config, ids::BearId, DenError};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -6,10 +6,53 @@ use uuid::Uuid;
 use den_memory::{hat_promotion, MemorySource, MemoryStoreManager, VerifiedHatProposalSource};
 use den_service::memory_proposals::{MemoryProposalRow, ProposalResolutionParams};
 
-use crate::memory::{get_proposal, resolve_proposal};
-use den_service::bears::BearProfile;
+use crate::memory::{
+    curate_synthesis::{synthesize_verified_hat_note, HatSynthesisDecision},
+    get_proposal, resolve_proposal,
+};
+use den_service::bears::{hats, BearProfile};
 
 pub const MEMORY_CURATE_RUNNER_AGENT_ID: &str = "memory_curate_runner";
+
+#[async_trait::async_trait]
+trait HatSynthesizer: Send + Sync {
+    async fn synthesize(
+        &self,
+        bear_id: Uuid,
+        hat_id: den_core::ids::HatId,
+        proposal_id: Uuid,
+        source_content: &str,
+        proposal_summary: &str,
+    ) -> Result<Option<HatSynthesisDecision>, DenError>;
+}
+
+struct LiveHatSynthesizer<'a> {
+    pool: &'a PgPool,
+    config: &'a Config,
+}
+
+#[async_trait::async_trait]
+impl HatSynthesizer for LiveHatSynthesizer<'_> {
+    async fn synthesize(
+        &self,
+        bear_id: Uuid,
+        hat_id: den_core::ids::HatId,
+        proposal_id: Uuid,
+        source_content: &str,
+        proposal_summary: &str,
+    ) -> Result<Option<HatSynthesisDecision>, DenError> {
+        synthesize_verified_hat_note(
+            self.pool,
+            self.config,
+            bear_id,
+            hat_id,
+            proposal_id,
+            source_content,
+            proposal_summary,
+        )
+        .await
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CurateProposalOutcome {
@@ -216,6 +259,27 @@ pub async fn execute_memory_curate_proposals(
     trigger: Option<&str>,
     proposal_ids: &[Uuid],
 ) -> Result<MemoryCurateRunOutput, DenError> {
+    execute_memory_curate_proposals_with_synth(
+        pool,
+        config,
+        stores,
+        bear_id,
+        trigger,
+        proposal_ids,
+        &LiveHatSynthesizer { pool, config },
+    )
+    .await
+}
+
+async fn execute_memory_curate_proposals_with_synth<S: HatSynthesizer>(
+    pool: &PgPool,
+    config: &Config,
+    stores: &MemoryStoreManager,
+    bear_id: Uuid,
+    trigger: Option<&str>,
+    proposal_ids: &[Uuid],
+    synthesizer: &S,
+) -> Result<MemoryCurateRunOutput, DenError> {
     let mut outcomes = Vec::new();
     for proposal_id in proposal_ids {
         let Some(proposal) = get_proposal(pool, config, stores, bear_id, *proposal_id).await?
@@ -225,8 +289,16 @@ pub async fn execute_memory_curate_proposals(
         if proposal.status != "pending" {
             continue;
         }
-        let outcome =
-            resolve_curate_proposal(pool, config, stores, bear_id, &proposal, trigger).await?;
+        let outcome = resolve_curate_proposal(
+            pool,
+            config,
+            stores,
+            bear_id,
+            &proposal,
+            trigger,
+            synthesizer,
+        )
+        .await?;
         outcomes.push(outcome);
     }
 
@@ -311,13 +383,14 @@ async fn verified_hat_candidate_is_current(
     .await?)
 }
 
-async fn resolve_curate_proposal(
+async fn resolve_curate_proposal<S: HatSynthesizer>(
     pool: &PgPool,
     config: &Config,
     stores: &MemoryStoreManager,
     bear_id: Uuid,
     proposal: &MemoryProposalRow,
     trigger: Option<&str>,
+    synthesizer: &S,
 ) -> Result<CurateProposalOutcome, DenError> {
     let mut triage = decide_curate_triage(proposal, trigger);
     if matches!(triage, CurateTriage::AwaitCurator)
@@ -338,14 +411,122 @@ async fn resolve_curate_proposal(
     }
     let triage_label = triage.triage_label().to_string();
     if matches!(triage, CurateTriage::AwaitCurator) {
-        return Ok(CurateProposalOutcome {
+        let verified = proposal.verified_hat_source.ok_or_else(|| {
+            DenError::System("verified hat candidate lost its source link".into())
+        })?;
+        let store = stores.store_for_bear(bear_id).await?;
+        let source = hat_promotion::review_candidate(&store, verified.memory_id).await?;
+        let canonical_safe: bool = sqlx::query_scalar(
+            "SELECT sensitivity = 'normal' AND requires_human = 0 FROM memory_proposals
+             WHERE bear_id = ? AND proposal_id = ? AND status = 'pending'",
+        )
+        .bind(bear_id.to_string())
+        .bind(proposal.id.to_string())
+        .fetch_optional(store.pool())
+        .await
+        .map_err(|error| DenError::System(format!("check Curate candidate risk lane: {error}")))?
+        .unwrap_or(false);
+        let mut outcome = CurateProposalOutcome {
             proposal_id: proposal.id,
             status: "pending".into(),
             suggested_action: proposal.suggested_action.clone(),
             triage: triage_label,
             result_path: None,
             error: None,
-        });
+        };
+        if !canonical_safe {
+            return Ok(outcome);
+        }
+        let hat = hats::manage::get_hat(pool, BearId::new(bear_id), verified.hat_id).await?;
+        if hat.work_enabled || !hat.auto_curate_enabled {
+            return Ok(outcome);
+        }
+        let decision = match synthesizer
+            .synthesize(
+                bear_id,
+                verified.hat_id,
+                proposal.id,
+                &source.content_text,
+                &proposal.summary,
+            )
+            .await
+        {
+            Ok(decision) => decision,
+            Err(error) => {
+                tracing::warn!(bear_id = %bear_id, proposal_id = %proposal.id,
+                    error_kind = ?std::mem::discriminant(&error),
+                    "Curate synthesis unavailable; keeping private candidate pending");
+                outcome.error = Some("Curate synthesis unavailable; no memory was shared".into());
+                None
+            }
+        };
+        match decision {
+            Some(HatSynthesisDecision::RetainLocal { reason }) => {
+                let resolved = resolve_proposal(
+                    pool,
+                    config,
+                    stores,
+                    ProposalResolutionParams {
+                        bear_id,
+                        proposal_id: proposal.id,
+                        reviewer_profile: BearProfile::Curate,
+                        reviewer_agent_id: Some(MEMORY_CURATE_RUNNER_AGENT_ID),
+                        status: "retained_local",
+                        review_notes: Some(&reason),
+                        decision_summary: Some(&reason),
+                        result_path: None,
+                        result_commit: None,
+                        project_to_conversation: true,
+                    },
+                )
+                .await?;
+                outcome.status = resolved.status;
+                outcome.triage = "retain_profile_local".into();
+            }
+            Some(HatSynthesisDecision::Publish { content, reason }) => {
+                match hats::curation::promote_curated_proposal(
+                    pool,
+                    stores,
+                    BearId::new(bear_id),
+                    proposal.id,
+                    &content,
+                    MEMORY_CURATE_RUNNER_AGENT_ID,
+                    &reason,
+                )
+                .await
+                {
+                    Ok(published) => {
+                        outcome.status = "approved".into();
+                        outcome.triage = "promote_to_hat".into();
+                        outcome.result_path = Some(
+                            den_memory::LogicalMemoryPath::hat(
+                                verified.hat_id,
+                                &proposal.id.to_string(),
+                            )
+                            .to_logical_path(),
+                        );
+                        crate::reflection::conductor::enqueue_recall_index_if_enabled(
+                            pool,
+                            config,
+                            bear_id,
+                            "memory_curate_hat_promotion",
+                        )
+                        .await;
+                        tracing::info!(bear_id = %bear_id, proposal_id = %proposal.id,
+                            memory_id = %published.memory_id, "Curate published verified hat memory");
+                    }
+                    Err(error) => {
+                        tracing::warn!(bear_id = %bear_id, proposal_id = %proposal.id,
+                            error_kind = ?std::mem::discriminant(&error),
+                            "Curate publication denied; candidate remains private");
+                        outcome.error =
+                            Some("Curate publication was denied; no memory was shared".into());
+                    }
+                }
+            }
+            None => {}
+        }
+        return Ok(outcome);
     }
 
     let resolved = resolve_proposal(
@@ -397,6 +578,9 @@ fn aggregate_resolution_status(outcomes: &[CurateProposalOutcome]) -> String {
 #[cfg(test)]
 #[path = "curate_executor/hat_tests.rs"]
 mod hat_tests;
+#[cfg(test)]
+#[path = "curate_executor/synthesis_tests.rs"]
+mod synthesis_tests;
 
 #[cfg(test)]
 mod tests {

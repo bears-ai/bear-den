@@ -186,6 +186,9 @@ async fn populated_hat_requires_a_fresh_complete_admin_review_before_work(pool: 
             .is_err(),
         "concurrent memory changes invalidate the review snapshot"
     );
+    hats::manage::set_auto_curate_enabled(&pool, bear, hat.id, true, true)
+        .await
+        .unwrap();
     let fresh = snapshot_for_admin(&pool, &stores, bear, hat.id, user)
         .await
         .unwrap();
@@ -206,11 +209,11 @@ async fn populated_hat_requires_a_fresh_complete_admin_review_before_work(pool: 
     .await
     .unwrap();
     assert_eq!(receipt.record_count, 2);
+    let enabled = hats::manage::get_hat(&pool, bear, hat.id).await.unwrap();
+    assert!(enabled.work_enabled);
     assert!(
-        hats::manage::get_hat(&pool, bear, hat.id)
-            .await
-            .unwrap()
-            .work_enabled
+        !enabled.auto_curate_enabled,
+        "review-based Work enablement must reset auto-curation"
     );
     let stored = sqlx::query!(
         "SELECT reviewed_by_user_id, record_count, identity_sha256 FROM bear_hat_work_reviews WHERE id = $1 AND bear_id = $2 AND hat_id = $3",

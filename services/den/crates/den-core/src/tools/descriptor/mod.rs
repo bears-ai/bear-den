@@ -2039,10 +2039,11 @@ fn memory_request_review_schema() -> Value {
         "type": "object",
         "properties": {
             "source_paths": { "type": "array", "items": { "type": "string" }, "minItems": 1, "maxItems": 20 },
+            "source_memory_id": { "type": "string", "format": "uuid" },
             "title": { "type": "string", "minLength": 1, "maxLength": 200 },
             "summary": { "type": "string", "minLength": 1, "maxLength": 4000 },
             "rationale": { "type": "string", "maxLength": 4000 },
-            "suggested_action": { "type": "string", "enum": ["unspecified", "cabinet_update", "skill_review", "retain_profile_local", "delete_after_review", "human_review", "archive_index", "task_context"] },
+            "suggested_action": { "type": "string", "enum": ["unspecified", "propose_hat", "cabinet_update", "skill_review", "retain_profile_local", "delete_after_review", "human_review", "archive_index", "task_context"] },
             "target_ref": { "type": "string", "maxLength": 500 },
             "refs": { "type": "object" },
             "sensitivity": { "type": "string", "enum": ["normal", "person", "secret_risk", "external_untrusted", "unknown"] },
@@ -2050,7 +2051,8 @@ fn memory_request_review_schema() -> Value {
             "proposed_content": { "type": "string", "maxLength": 20000 },
             "proposed_patch": { "type": "string", "maxLength": 20000 }
         },
-        "required": ["source_paths", "title", "summary"],
+        "required": ["title", "summary"],
+        "anyOf": [{"required": ["source_paths"]}, {"required": ["source_memory_id"]}],
         "additionalProperties": false
     })
 }

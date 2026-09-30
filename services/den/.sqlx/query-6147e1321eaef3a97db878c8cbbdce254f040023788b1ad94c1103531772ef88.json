@@ -1,0 +1,82 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, bear_id, name, purpose, short_summary, identity_prompt, work_enabled, auto_curate_enabled, created_by_user_id, created_at, updated_at\n           FROM bear_hats WHERE bear_id = $1 ORDER BY name, id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "bear_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "purpose",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "short_summary",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "identity_prompt",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "work_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "auto_curate_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 8,
+        "name": "created_by_user_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 9,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "6147e1321eaef3a97db878c8cbbdce254f040023788b1ad94c1103531772ef88"
+}

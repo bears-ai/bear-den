@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bear_hats SET auto_curate_enabled = $3, updated_at = NOW()\n         WHERE bear_id = $1 AND id = $2 AND (NOT $3 OR NOT work_enabled)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bd6e860d6c54343c80c44ec5ac510478e43021923736d880697bcb09158497c5"
+}
