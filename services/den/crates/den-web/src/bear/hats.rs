@@ -160,6 +160,15 @@ async fn create(
         &form.purpose,
     )
     .await?;
+    // The first hat closes legacy profile recall for ordinary runs. Reconcile
+    // removes any previously indexed profile-local passages when enabled.
+    den_runtime::reflection::conductor::enqueue_recall_index_if_enabled(
+        state.sqlx_pool(),
+        state.config.as_ref(),
+        bear.id,
+        "hat_configured",
+    )
+    .await;
     Ok(Redirect::to(&hat_url(&bear.slug, hat.id)).into_response())
 }
 

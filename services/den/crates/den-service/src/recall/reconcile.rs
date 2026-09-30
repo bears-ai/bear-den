@@ -7,16 +7,21 @@ use std::collections::HashSet;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use den_core::{config::Config, ids::HatId, DenError};
+use den_core::{
+    config::Config,
+    ids::{BearId, HatId},
+    DenError,
+};
 use den_llm::EmbeddingClient;
 
 use den_memory::MemoryStoreManager;
-use den_memory::{relations, BearMemoryStore};
+use den_memory::{relations, BearMemoryStore, MemoryScopeType};
 
 use super::indexer::{PassageEmbedder, RecallIndexer};
 use super::policy::{is_indexable, IndexRequest};
 use super::qdrant::QdrantRecall;
 use super::registry;
+use crate::bears::hats;
 
 #[cfg(test)]
 mod tests;
@@ -136,6 +141,26 @@ pub async fn list_indexable_heads(store: &BearMemoryStore) -> Result<Vec<IndexRe
         .collect())
 }
 
+/// A configured Bear must not keep exporting old profile-local notes to its
+/// derived recall store or embedding provider. Reconcile removes their old
+/// points because they are omitted from the current head-ID set; no-hat Bears
+/// retain legacy profile recall until explicitly configured.
+pub async fn list_authorized_indexable_heads(
+    pg: &PgPool,
+    store: &BearMemoryStore,
+) -> Result<Vec<IndexRequest>, DenError> {
+    let mut heads = list_indexable_heads(store).await?;
+    if !hats::list_hats(pg, BearId::new(store.bear_id()))
+        .await?
+        .is_empty()
+    {
+        heads.retain(|head| {
+            MemoryScopeType::parse(&head.scope_type) != Some(MemoryScopeType::ProfileLocal)
+        });
+    }
+    Ok(heads)
+}
+
 /// Reconcile a Bear's recall index against its canonical heads.
 pub async fn reconcile_bear<E: PassageEmbedder>(
     pg: &PgPool,
@@ -145,7 +170,7 @@ pub async fn reconcile_bear<E: PassageEmbedder>(
     embedding_standard: &str,
 ) -> Result<ReconcileOutcome, DenError> {
     let bear_id = store.bear_id();
-    let heads = list_indexable_heads(store).await?;
+    let heads = list_authorized_indexable_heads(pg, store).await?;
     let indexer = RecallIndexer::new(pg, qdrant, embedder, embedding_standard.to_string());
 
     let mut outcome = ReconcileOutcome::default();

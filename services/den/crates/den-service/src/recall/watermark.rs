@@ -20,7 +20,7 @@ use den_memory::{memory_sequence_high_water, BearMemoryStore, MemoryStoreManager
 
 use super::chunking::chunk_text;
 use super::policy::IndexRequest;
-use super::reconcile::list_indexable_heads;
+use super::reconcile::list_authorized_indexable_heads;
 use super::registry;
 
 /// Reflection lane whose runs feed the recall index (see `den-runtime` conductor).
@@ -68,7 +68,7 @@ pub async fn recall_watermark(
     }
     let bear_id = store.bear_id();
     let canonical_seq = memory_sequence_high_water(store).await?;
-    let heads = list_indexable_heads(store).await?;
+    let heads = list_authorized_indexable_heads(pg, store).await?;
     let live_hashes =
         registry::live_chunk_hashes_by_memory(pg, bear_id, &config.embedding_standard).await?;
     let (indexed_seq, lag_count) = compute_indexed_seq(canonical_seq, &heads, &live_hashes);
