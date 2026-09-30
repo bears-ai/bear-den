@@ -16,6 +16,7 @@ den-core = { path = "../den-core" }
 serde.workspace = true
 serde_json.workspace = true
 serde_yml.workspace = true
+sha2.workspace = true
 sqlx = { workspace = true, default-features = false, features = ["runtime-tokio-rustls", "sqlite", "time", "json", "uuid"] }
 time = { workspace = true, features = ["serde", "serde-well-known"] }
 tokio = { workspace = true, features = ["sync", "rt-multi-thread", "macros"] }

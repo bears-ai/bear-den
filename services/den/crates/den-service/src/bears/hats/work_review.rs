@@ -11,7 +11,7 @@ use den_memory::{
     MemoryStoreManager,
 };
 use serde::Serialize;
-use sha2::{Digest, Sha256};
+
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -33,39 +33,23 @@ pub struct WorkMemoryReviewSnapshot {
     pub page_count: u32,
 }
 
-fn fingerprint(records: &[HatReviewRecord]) -> Result<String, DenError> {
-    let serialized = serde_json::to_vec(records)
-        .map_err(|err| DenError::System(format!("serialize hat memory review: {err}")))?;
-    Ok(format!("{:x}", Sha256::digest(serialized)))
-}
-
 fn review_snapshot(
     snapshot: hat_review::HatReviewSnapshot,
     page: u32,
     identity_sha256: String,
 ) -> Result<WorkMemoryReviewSnapshot, DenError> {
-    let complete = snapshot.complete();
-    let sha256 = if complete {
-        Some(fingerprint(&snapshot.records)?)
-    } else {
-        None
-    };
-    let shown = snapshot.records.len();
-    let page_count = shown.div_ceil(hat_review::REVIEW_PAGE_SIZE).max(1) as u32;
+    let total = usize::try_from(snapshot.total_records)
+        .map_err(|_| DenError::System("invalid hat review record count".into()))?;
+    let page_count = u32::try_from(total.div_ceil(hat_review::REVIEW_PAGE_SIZE).max(1))
+        .map_err(|_| DenError::ValidationError("hat review has too many pages".into()))?;
     if page == 0 || page > page_count {
         return Err(DenError::ValidationError("invalid hat review page".into()));
     }
-    let records = snapshot
-        .records
-        .into_iter()
-        .skip((page as usize - 1) * hat_review::REVIEW_PAGE_SIZE)
-        .take(hat_review::REVIEW_PAGE_SIZE)
-        .collect();
     Ok(WorkMemoryReviewSnapshot {
         total_records: snapshot.total_records,
-        records,
-        complete,
-        sha256,
+        records: snapshot.records,
+        complete: true,
+        sha256: Some(snapshot.sha256),
         identity_sha256,
         page,
         page_count,
@@ -133,7 +117,7 @@ pub async fn snapshot_for_admin(
     let hat = get_hat(pool, bear_id, hat_id).await?;
     let store = stores.store_for_bear(bear_id.as_uuid()).await?;
     review_snapshot(
-        hat_review::snapshot_for_hat(&store, hat_id).await?,
+        hat_review::snapshot_for_hat(&store, hat_id, 1).await?,
         1,
         identity_fingerprint(&hat.name, &hat.purpose, &hat.identity_prompt),
     )
@@ -151,7 +135,7 @@ pub async fn snapshot_page_for_admin(
     let hat = get_hat(pool, bear_id, hat_id).await?;
     let store = stores.store_for_bear(bear_id.as_uuid()).await?;
     review_snapshot(
-        hat_review::snapshot_for_hat(&store, hat_id).await?,
+        hat_review::snapshot_for_hat(&store, hat_id, page).await?,
         page,
         identity_fingerprint(&hat.name, &hat.purpose, &hat.identity_prompt),
     )
@@ -252,9 +236,9 @@ pub async fn review_and_enable(
         .await
         .map_err(|err| DenError::System(format!("begin hat review fence: {err}")))?;
     let outcome: Result<WorkReviewReceipt, DenError> = async {
-        let snapshot = review_snapshot(hat_review::snapshot_for_hat_on(&mut sqlite, bear_id.as_uuid(), hat_id).await?, 1, identity_fingerprint(&hat_state.name, &hat_state.purpose, &hat_state.identity_prompt))?;
+        let snapshot = review_snapshot(hat_review::snapshot_for_hat_on(&mut sqlite, bear_id.as_uuid(), hat_id, 1).await?, 1, identity_fingerprint(&hat_state.name, &hat_state.purpose, &hat_state.identity_prompt))?;
         if !snapshot.complete || snapshot.total_records == 0 {
-            return Err(DenError::Authorization("this hat is empty or exceeds the bounded historical review limit".into()));
+            return Err(DenError::Authorization("this hat is empty; use the empty-hat Work control".into()));
         }
         if snapshot.total_records != decision.expected_record_count
             || snapshot.sha256.as_deref() != Some(decision.expected_sha256.as_str())

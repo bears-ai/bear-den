@@ -239,9 +239,7 @@ async fn detail(
         .map(|candidate| candidate.name);
     let granted = manage::allowed_surfaces(state.sqlx_pool(), bear_id, hat_id).await?;
     let memory = state.memory_stores.store_for_bear(bear.id).await?;
-    let historical_hat_records = den_memory::hat_review::snapshot_for_hat(&memory, hat_id)
-        .await?
-        .total_records;
+    let historical_hat_records = den_memory::hat_review::hat_history_count(&memory, hat_id).await?;
     let work_reviews = hats::work_review::list_receipts(
         state.sqlx_pool(),
         bear_id,

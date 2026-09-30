@@ -228,7 +228,7 @@ async fn populated_hat_requires_a_fresh_complete_admin_review_before_work(pool: 
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn too_many_historical_records_cannot_be_approved_from_a_truncated_page(pool: PgPool) {
+async fn large_hat_requires_all_pages_and_rejects_in_place_changes(pool: PgPool) {
     let user = UserId::new(sqlx::query_scalar!(
         "INSERT INTO users (username, email) VALUES ('hatbigreviewer', 'hatbigreviewer@example.test') RETURNING id"
     ).fetch_one(&pool).await.unwrap());
@@ -261,7 +261,7 @@ async fn too_many_historical_records_cannot_be_approved_from_a_truncated_page(po
         .to_string();
     let stores = MemoryStoreManager::new(&config);
     let store = stores.store_for_bear(bear.as_uuid()).await.unwrap();
-    for index in 0..=hat_review::MAX_REVIEW_RECORDS {
+    for index in 0..=500 {
         let kind = format!("entry{index}");
         append_memory_record(
             &store,
@@ -297,9 +297,20 @@ async fn too_many_historical_records_cannot_be_approved_from_a_truncated_page(po
     let snapshot = snapshot_for_admin(&pool, &stores, bear, hat.id, user)
         .await
         .unwrap();
-    assert!(!snapshot.complete);
-    assert_eq!(snapshot.total_records, hat_review::MAX_REVIEW_RECORDS + 1);
-    assert!(snapshot.sha256.is_none());
+    assert!(snapshot.complete);
+    assert_eq!(snapshot.total_records, 501);
+    assert_eq!(snapshot.records.len(), hat_review::REVIEW_PAGE_SIZE);
+    assert_eq!(snapshot.page_count, 6);
+    let final_page = snapshot_page_for_admin(&pool, &stores, bear, hat.id, user, 6)
+        .await
+        .unwrap();
+    assert_eq!(final_page.records.len(), 1);
+    assert_eq!(final_page.sha256, snapshot.sha256);
+    assert!(
+        snapshot_page_for_admin(&pool, &stores, bear, hat.id, user, 7)
+            .await
+            .is_err()
+    );
     let surface = Uuid::new_v4();
     sqlx::query!(
         "INSERT INTO work_surfaces (id, name, kind, created_by_user_id, created_at, updated_at)
@@ -321,6 +332,14 @@ async fn too_many_historical_records_cannot_be_approved_from_a_truncated_page(po
     hats::manage::replace_surfaces(&pool, bear, hat.id, &[surface])
         .await
         .unwrap();
+    let old_hash = snapshot.sha256.unwrap();
+    sqlx::query("UPDATE memory_records SET content_text = ? WHERE bear_id = ? AND memory_id = ?")
+        .bind("Changed without bumping sequence")
+        .bind(bear.as_uuid().to_string())
+        .bind(&snapshot.records[0].memory_id)
+        .execute(store.pool())
+        .await
+        .unwrap();
     assert!(matches!(
         review_and_enable(
             &pool,
@@ -329,17 +348,42 @@ async fn too_many_historical_records_cannot_be_approved_from_a_truncated_page(po
             hat.id,
             user,
             WorkReviewDecision {
-                expected_sha256: "0".repeat(64),
+                expected_sha256: old_hash,
                 expected_record_count: snapshot.total_records,
-                expected_identity_sha256: snapshot.identity_sha256,
+                expected_identity_sha256: snapshot.identity_sha256.clone(),
                 rationale: "I reviewed all the historical entries for Work".into(),
-            },
+            }
         )
         .await,
-        Err(DenError::Authorization(_))
+        Err(DenError::ValidationError(_))
     ));
     assert!(
         !hats::manage::get_hat(&pool, bear, hat.id)
+            .await
+            .unwrap()
+            .work_enabled
+    );
+    let fresh = snapshot_page_for_admin(&pool, &stores, bear, hat.id, user, 6)
+        .await
+        .unwrap();
+    let receipt = review_and_enable(
+        &pool,
+        &stores,
+        bear,
+        hat.id,
+        user,
+        WorkReviewDecision {
+            expected_sha256: fresh.sha256.unwrap(),
+            expected_record_count: fresh.total_records,
+            expected_identity_sha256: fresh.identity_sha256,
+            rationale: "Reviewed all six pages and Work audience risks".into(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(receipt.record_count, 501);
+    assert!(
+        hats::manage::get_hat(&pool, bear, hat.id)
             .await
             .unwrap()
             .work_enabled
