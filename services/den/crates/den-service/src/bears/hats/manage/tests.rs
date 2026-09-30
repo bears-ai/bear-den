@@ -80,12 +80,18 @@ async fn admin_configuration_narrows_surfaces_and_requires_empty_memory_before_w
         hat.id,
         " Security review ",
         " Check dependencies ",
+        " Inspect dependency versions ",
+        false,
     )
     .await
     .unwrap();
     assert_eq!(
         get_hat(&pool, bear, hat.id).await.unwrap().name,
         "Security review"
+    );
+    assert_eq!(
+        get_hat(&pool, bear, hat.id).await.unwrap().identity_prompt,
+        "Inspect dependency versions"
     );
     let mut config = Config::test_stub();
     config.bear_sqlite_data_dir = std::env::temp_dir()
@@ -97,6 +103,30 @@ async fn admin_configuration_narrows_surfaces_and_requires_empty_memory_before_w
         .await
         .unwrap();
     assert!(get_hat(&pool, bear, hat.id).await.unwrap().work_enabled);
+    assert!(matches!(
+        update_hat(
+            &pool,
+            bear,
+            hat.id,
+            "Security review",
+            "Check dependencies",
+            "Review secrets before publishing",
+            false,
+        )
+        .await,
+        Err(DenError::Authorization(_))
+    ));
+    update_hat(
+        &pool,
+        bear,
+        hat.id,
+        "Security review",
+        "Check dependencies",
+        "Review secrets before publishing",
+        true,
+    )
+    .await
+    .unwrap();
     sqlx::query!(
         "INSERT INTO work_surface_bears (surface_id, bear_id) VALUES ($1, $2)",
         other_surface,

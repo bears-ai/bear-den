@@ -60,6 +60,15 @@ struct HatForm {
 }
 
 #[derive(Debug, Deserialize)]
+struct HatUpdateForm {
+    name: String,
+    purpose: String,
+    identity_prompt: String,
+    #[serde(default)]
+    confirm_work_audience: bool,
+}
+
+#[derive(Debug, Deserialize)]
 struct SurfaceForm {
     #[serde(default)]
     surface_ids: Vec<Uuid>,
@@ -205,7 +214,7 @@ async fn update(
     Path((slug, hat_id)): Path<(String, Uuid)>,
     State(state): State<AppState>,
     auth: AuthSession,
-    Form(form): Form<HatForm>,
+    Form(form): Form<HatUpdateForm>,
 ) -> Result<Response, CustomError> {
     let bear = match load_session_bear_manage(&state, &auth, &slug).await? {
         Ok(bear) => bear,
@@ -218,6 +227,8 @@ async fn update(
         id,
         &form.name,
         &form.purpose,
+        &form.identity_prompt,
+        form.confirm_work_audience,
     )
     .await?;
     Ok(Redirect::to(&hat_url(&bear.slug, id)).into_response())

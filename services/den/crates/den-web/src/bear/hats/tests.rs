@@ -188,6 +188,35 @@ async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.contains("Security review"));
     assert!(body.contains("None selected"));
+    assert!(body.contains("Preview hat identity draft"));
+    assert!(body.contains("Review repo"));
+    assert_eq!(
+        request(
+            &app,
+            &member_cookie,
+            "POST",
+            &detail,
+            "name=Security+review&purpose=Review+repo&identity_prompt=Not+allowed"
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        request(
+            &app,
+            &admin_cookie,
+            "POST",
+            &detail,
+            "name=Security+review&purpose=Review+repo&identity_prompt=Inspect+%3Cscript%3Ealert(1)%3C%2Fscript%3E"
+        )
+        .await
+        .0,
+        StatusCode::SEE_OTHER
+    );
+    let (_, preview, _) = request(&app, &admin_cookie, "GET", &detail, "").await;
+    assert!(preview.contains("Inspect &lt;script&gt;alert(1)&lt;"));
+    assert!(!preview.contains("Inspect <script>"));
     assert!(body.contains("Make IDE default"));
     assert_eq!(
         hats::ide_default_hat(&pool, BearId::new(bear_id))
@@ -406,6 +435,26 @@ async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
             "POST",
             &format!("{detail}/work"),
             "action=enable&confirmation=enable+work"
+        )
+        .await
+        .0,
+        StatusCode::SEE_OTHER
+    );
+    let changed_identity =
+        "name=Security+review&purpose=Review+repo&identity_prompt=Review+before+sharing";
+    assert_eq!(
+        request(&app, &admin_cookie, "POST", &detail, changed_identity)
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        request(
+            &app,
+            &admin_cookie,
+            "POST",
+            &detail,
+            &format!("{changed_identity}&confirm_work_audience=true")
         )
         .await
         .0,

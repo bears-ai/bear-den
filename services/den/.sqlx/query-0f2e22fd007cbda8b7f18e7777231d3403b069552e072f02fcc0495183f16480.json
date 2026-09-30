@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO bear_hats (id, bear_id, name, purpose, identity_prompt, created_by_user_id) VALUES ($1, $2, 'Work review', 'Review code', 'Review code', $3)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0f2e22fd007cbda8b7f18e7777231d3403b069552e072f02fcc0495183f16480"
+}

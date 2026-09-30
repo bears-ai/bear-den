@@ -30,24 +30,44 @@ pub async fn update_hat(
     hat_id: HatId,
     name: &str,
     purpose: &str,
+    identity_prompt: &str,
+    confirm_work_audience: bool,
 ) -> Result<(), DenError> {
     let name = name.trim();
     let purpose = purpose.trim();
-    if name.is_empty() || purpose.is_empty() {
+    let identity_prompt = identity_prompt.trim();
+    if name.is_empty()
+        || purpose.is_empty()
+        || identity_prompt.is_empty()
+        || identity_prompt.chars().count() > 4_000
+    {
         return Err(DenError::ValidationError(
-            "hat name and purpose are required".into(),
+            "hat name, purpose, and identity text are required; identity text is limited to 4000 characters".into(),
         ));
     }
     let updated = sqlx::query!(
-        "UPDATE bear_hats SET name = $3, purpose = $4, updated_at = NOW() WHERE bear_id = $1 AND id = $2",
-        bear_id.as_uuid(), hat_id.as_uuid(), name, purpose,
-    ).execute(pool).await.map_err(|err| match err {
-        sqlx::Error::Database(db) if db.is_unique_violation() =>
-            DenError::ValidationError("a hat with that name already exists for this Bear".into()),
+        "UPDATE bear_hats SET name = $3, purpose = $4, identity_prompt = $5, updated_at = NOW()
+         WHERE bear_id = $1 AND id = $2 AND (NOT work_enabled OR $6)",
+        bear_id.as_uuid(),
+        hat_id.as_uuid(),
+        name,
+        purpose,
+        identity_prompt,
+        confirm_work_audience,
+    )
+    .execute(pool)
+    .await
+    .map_err(|err| match err {
+        sqlx::Error::Database(db) if db.is_unique_violation() => {
+            DenError::ValidationError("a hat with that name already exists for this Bear".into())
+        }
         other => other.into(),
     })?;
     if updated.rows_affected() == 0 {
-        return Err(DenError::NotFound("hat not found for this Bear".into()));
+        get_hat(pool, bear_id, hat_id).await?;
+        return Err(DenError::Authorization(
+            "confirm the autonomous Work audience before changing this hat's identity".into(),
+        ));
     }
     Ok(())
 }

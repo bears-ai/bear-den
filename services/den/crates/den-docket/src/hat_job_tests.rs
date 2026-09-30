@@ -13,7 +13,7 @@ async fn selected_work_hat_is_checked_and_bound_in_the_job_creation_transaction(
     let service = PgDocketService::from_pool(&pool);
     let hat = HatId::new(Uuid::new_v4());
     sqlx::query!(
-        "INSERT INTO bear_hats (id, bear_id, name, purpose, created_by_user_id) VALUES ($1, $2, 'Work review', 'Review code', $3)",
+        "INSERT INTO bear_hats (id, bear_id, name, purpose, identity_prompt, created_by_user_id) VALUES ($1, $2, 'Work review', 'Review code', 'Review code', $3)",
         hat.as_uuid(), bear, user,
     ).execute(&pool).await.unwrap();
     let before = sqlx::query_scalar!(
@@ -47,7 +47,7 @@ async fn selected_work_hat_is_checked_and_bound_in_the_job_creation_transaction(
     let foreign_bear = seed_user_and_bear(&pool, "hat-job-foreign").await.1;
     let foreign_hat = HatId::new(Uuid::new_v4());
     sqlx::query!(
-        "INSERT INTO bear_hats (id, bear_id, name, purpose, work_enabled, created_by_user_id) VALUES ($1, $2, 'Other hat', 'Other Bear', true, $3)",
+        "INSERT INTO bear_hats (id, bear_id, name, purpose, identity_prompt, work_enabled, created_by_user_id) VALUES ($1, $2, 'Other hat', 'Other Bear', 'Other Bear', true, $3)",
         foreign_hat.as_uuid(), foreign_bear, user,
     ).execute(&pool).await.unwrap();
     assert!(service

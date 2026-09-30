@@ -28,6 +28,7 @@ pub struct BearHat {
     pub bear_id: BearId,
     pub name: String,
     pub purpose: String,
+    pub identity_prompt: String,
     pub work_enabled: bool,
     pub created_by_user_id: UserId,
     pub created_at: OffsetDateTime,
@@ -39,6 +40,7 @@ struct BearHatRow {
     bear_id: Uuid,
     name: String,
     purpose: String,
+    identity_prompt: String,
     work_enabled: bool,
     created_by_user_id: i32,
     created_at: OffsetDateTime,
@@ -52,6 +54,7 @@ impl From<BearHatRow> for BearHat {
             bear_id: BearId::new(row.bear_id),
             name: row.name,
             purpose: row.purpose,
+            identity_prompt: row.identity_prompt,
             work_enabled: row.work_enabled,
             created_by_user_id: UserId::new(row.created_by_user_id),
             created_at: row.created_at,
@@ -69,16 +72,16 @@ pub async fn create_hat(
 ) -> Result<BearHat, DenError> {
     let name = name.trim();
     let purpose = purpose.trim();
-    if name.is_empty() || purpose.is_empty() {
+    if name.is_empty() || purpose.is_empty() || purpose.len() > 4_000 {
         return Err(DenError::ValidationError(
-            "hat name and purpose must not be empty".to_string(),
+            "hat name and purpose must be present; purpose must be at most 4000 bytes".to_string(),
         ));
     }
     let row = sqlx::query_as!(
         BearHatRow,
-        r#"INSERT INTO bear_hats (bear_id, name, purpose, created_by_user_id)
-           VALUES ($1, $2, $3, $4)
-           RETURNING id, bear_id, name, purpose, work_enabled, created_by_user_id, created_at, updated_at"#,
+        r#"INSERT INTO bear_hats (bear_id, name, purpose, identity_prompt, created_by_user_id)
+           VALUES ($1, $2, $3, $3, $4)
+           RETURNING id, bear_id, name, purpose, identity_prompt, work_enabled, created_by_user_id, created_at, updated_at"#,
         bear_id.as_uuid(),
         name,
         purpose,
@@ -131,7 +134,7 @@ pub async fn set_ide_default_hat(
 pub async fn list_hats(pool: &PgPool, bear_id: BearId) -> Result<Vec<BearHat>, DenError> {
     let rows = sqlx::query_as!(
         BearHatRow,
-        r#"SELECT id, bear_id, name, purpose, work_enabled, created_by_user_id, created_at, updated_at
+        r#"SELECT id, bear_id, name, purpose, identity_prompt, work_enabled, created_by_user_id, created_at, updated_at
            FROM bear_hats WHERE bear_id = $1 ORDER BY name, id"#,
         bear_id.as_uuid(),
     )
