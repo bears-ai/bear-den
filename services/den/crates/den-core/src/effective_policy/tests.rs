@@ -1,6 +1,94 @@
 use super::*;
 
 #[test]
+fn typed_origins_preserve_every_existing_profile_governance_and_armature_denial() {
+    let origins = [
+        (
+            TurnExecutionOrigin::ChannelConversation,
+            TrustProfile::Chat,
+            ArmatureAvailability::Absent,
+        ),
+        (
+            TurnExecutionOrigin::BrowserTaskSession,
+            TrustProfile::Pair,
+            ArmatureAvailability::Absent,
+        ),
+        (
+            TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+            TrustProfile::Pair,
+            ArmatureAvailability::Connected,
+        ),
+        (
+            TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Absent),
+            TrustProfile::Pair,
+            ArmatureAvailability::Absent,
+        ),
+        (
+            TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Connected),
+            TrustProfile::Work,
+            ArmatureAvailability::Connected,
+        ),
+        (
+            TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Absent),
+            TrustProfile::Work,
+            ArmatureAvailability::Absent,
+        ),
+        (
+            TurnExecutionOrigin::InternalCuration,
+            TrustProfile::Curate,
+            ArmatureAvailability::Absent,
+        ),
+        (
+            TurnExecutionOrigin::InboundObservation,
+            TrustProfile::Watch,
+            ArmatureAvailability::Absent,
+        ),
+    ];
+    for (origin, profile, armature) in origins {
+        for governance in Governance::ALL {
+            assert_eq!(
+                EffectivePolicy::compile_for_origin(origin, governance),
+                EffectivePolicy::compile(profile, governance, armature),
+                "{origin:?}/{governance:?} must preserve existing denials",
+            );
+        }
+    }
+    let channel = EffectivePolicy::compile_for_origin(
+        TurnExecutionOrigin::ChannelConversation,
+        Governance::Interactive,
+    );
+    assert!(!channel
+        .capabilities
+        .contains(BearCapability::UseArmatureTools));
+    assert!(!channel
+        .capabilities
+        .contains(BearCapability::OwnSessionTasks));
+    let browser_tasks = EffectivePolicy::compile_for_origin(
+        TurnExecutionOrigin::BrowserTaskSession,
+        Governance::Interactive,
+    );
+    assert!(browser_tasks
+        .capabilities
+        .contains(BearCapability::OwnSessionTasks));
+    assert!(!browser_tasks
+        .capabilities
+        .contains(BearCapability::UseArmatureTools));
+    let disconnected = EffectivePolicy::compile_for_origin(
+        TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Absent),
+        Governance::Interactive,
+    );
+    assert!(!disconnected
+        .capabilities
+        .contains(BearCapability::UseArmatureTools));
+    let work = EffectivePolicy::compile_for_origin(
+        TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Connected),
+        Governance::Interactive,
+    );
+    assert!(work.capabilities.contains(BearCapability::ExecuteJob));
+    assert!(!work.capabilities.contains(BearCapability::Converse));
+}
+
+#[test]
 fn a_shared_hat_identity_cannot_collapse_chat_pair_and_work_policy_defaults() {
     use BearCapability::{Converse, CreateJob, ExecuteJob, OwnSessionTasks, UseArmatureTools};
 

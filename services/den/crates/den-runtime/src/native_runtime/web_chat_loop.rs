@@ -621,10 +621,9 @@ async fn execute_one_web_chat_den_tool(
                 tool_name: canonical,
                 arguments: args,
                 context: tool_context,
-                effective_policy: den_core::EffectivePolicy::compile(
-                    den_core::TrustProfile::Chat,
+                effective_policy: den_core::EffectivePolicy::compile_for_origin(
+                    den_core::TurnExecutionOrigin::ChannelConversation,
                     den_core::Governance::Interactive,
-                    den_core::ArmatureAvailability::Absent,
                 ),
                 origin_run_id: None,
                 tool_call_id: crate::turn_ids::ToolCallId::new(call.id.clone())?,

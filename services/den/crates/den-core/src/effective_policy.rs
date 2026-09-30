@@ -55,6 +55,35 @@ pub enum ArmatureAvailability {
     Absent,
 }
 
+/// A Den-verified execution surface, not a client-supplied stance or hat label.
+/// Construct this only after authenticating the channel/armature or resolving a
+/// Docket Work assignment. Until the route-level denial matrix is complete,
+/// `compile_for_origin` deliberately delegates to the existing profile policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnExecutionOrigin {
+    ChannelConversation,
+    /// The browser's server-derived session task controls are Pair-equivalent
+    /// today, but have no trusted local armature tools.
+    BrowserTaskSession,
+    ArmatureConversation(ArmatureAvailability),
+    AuthorizedWorkRun(ArmatureAvailability),
+    InternalCuration,
+    InboundObservation,
+}
+
+impl TurnExecutionOrigin {
+    fn policy_inputs(self) -> (TrustProfile, ArmatureAvailability) {
+        match self {
+            Self::ChannelConversation => (TrustProfile::Chat, ArmatureAvailability::Absent),
+            Self::BrowserTaskSession => (TrustProfile::Pair, ArmatureAvailability::Absent),
+            Self::ArmatureConversation(armature) => (TrustProfile::Pair, armature),
+            Self::AuthorizedWorkRun(armature) => (TrustProfile::Work, armature),
+            Self::InternalCuration => (TrustProfile::Curate, ArmatureAvailability::Absent),
+            Self::InboundObservation => (TrustProfile::Watch, ArmatureAvailability::Absent),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffectivePolicy {
     pub trust_profile: TrustProfile,
@@ -63,6 +92,11 @@ pub struct EffectivePolicy {
 }
 
 impl EffectivePolicy {
+    pub fn compile_for_origin(origin: TurnExecutionOrigin, governance: Governance) -> Self {
+        let (profile, armature) = origin.policy_inputs();
+        Self::compile(profile, governance, armature)
+    }
+
     pub fn compile(
         trust_profile: TrustProfile,
         governance: Governance,

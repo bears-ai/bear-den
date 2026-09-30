@@ -443,10 +443,9 @@ fn browser_client_session_id(user_id: i32, bear_id: Uuid, conversation_id: &str)
 }
 
 fn browser_session_policy() -> den_core::EffectivePolicy {
-    den_core::EffectivePolicy::compile(
-        den_core::TrustProfile::Pair,
+    den_core::EffectivePolicy::compile_for_origin(
+        den_core::TurnExecutionOrigin::BrowserTaskSession,
         den_core::Governance::Interactive,
-        den_core::ArmatureAvailability::Absent,
     )
 }
 

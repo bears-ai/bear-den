@@ -21,7 +21,9 @@ pub mod tools;
 
 pub mod model_request_policy;
 pub use agent_loop_control::{AgentLoopControlLevel, ThinkingEffort};
-pub use effective_policy::{ArmatureAvailability, BearCapability, CapabilitySet, EffectivePolicy};
+pub use effective_policy::{
+    ArmatureAvailability, BearCapability, CapabilitySet, EffectivePolicy, TurnExecutionOrigin,
+};
 pub use error::DenError;
 pub use governance::{Governance, RunMode};
 pub use ids::{BearId, ConversationId, SessionId, UserId};

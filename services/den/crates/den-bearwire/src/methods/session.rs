@@ -71,10 +71,11 @@ pub(super) async fn require_exclusive_client_session_id(
 }
 
 fn interactive_session_policy() -> den_core::EffectivePolicy {
-    den_core::EffectivePolicy::compile(
-        den_core::TrustProfile::Pair,
+    den_core::EffectivePolicy::compile_for_origin(
+        den_core::TurnExecutionOrigin::ArmatureConversation(
+            den_core::ArmatureAvailability::Connected,
+        ),
         den_core::Governance::Interactive,
-        den_core::ArmatureAvailability::Connected,
     )
 }
 
