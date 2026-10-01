@@ -64,12 +64,12 @@ ActiveObligations = TurnRunState × ObligationSet
 TerminalOutcome = TurnRunState × ObligationSet × TurnStepState × BearWireTerminalEvent
 ```
 
-`TurnAuthority` is the compiled permission surface for the turn: stance plus
-mode/plan policy determine tool routing, prompt authority blocks, and client
-permission projection. Governance is a separate run-supervision context and is
-not a mutation-permission input; prompt or client labels cannot feed authority
-back into either seam. `ResolvedCurrentTask` is Pair's validated persisted
-session current task; `WorkAssignment` is Work's explicit Job assignment. Only
+`TurnAuthority` compiles the verified execution origin, governance, and Den-owned
+session mode/plan policy for armature tool advertisement, routing, prompt authority
+blocks, and client permission projection. Governance may narrow armature tool
+availability but cannot grant an origin new authority. The selected hat, rendered
+prompt, and client-supplied tool labels cannot expand this permission surface.
+`ResolvedCurrentTask` is Pair's validated persisted session current task; `WorkAssignment` is Work's explicit Job assignment. Only
 the applicable owner may supply task-driven continuation. `TurnRunState` owns
 lifecycle and active wait reason. Terminal closure is committed through one
 atomic finish operation that transitions the run, settles obligations and active
@@ -81,7 +81,8 @@ authority owners unless a typed implementation seam consumes them into one of
 the authority owners above:
 
 ```text
-EffectivePolicyProjection = TurnAuthority × Armature × RunAuthContext
+EffectiveCapabilityProjection = VerifiedTurnExecutionOrigin × Governance
+ArmaturePermissionEnvelope = EffectiveCapabilityProjection × DenOwnedSessionMode
 
 RunSupervisionProjection = Governance × HumanPresence
 
@@ -115,7 +116,7 @@ Exit gate for the reduced authority model:
 | Conversation | Den Postgres | durable user-visible chat container | Owns transcript, archive state, title, model selection, and Pair's persisted current-task reference. Authenticated human viewers use immutable `created_by_user_id` plus current Bear membership; Bear admins may inspect ownerless legacy rows. |
 | Session/client binding | adapter/BearWire/web edge + Den session store | live client binding | Projects conversation/runtime state to a connected client; not the conversation. BearWire event reads check Bear and human owner. A Postgres ownership guard prevents new cross-user/Bear session-ID claims; historical collisions remain quarantined rather than silently reassigned. |
 | Hat binding | Den Postgres conversation or Docket Job | durable conversation/Job | Nullable for historical/no-hat records; a configured Bear cannot start an unbound ordinary turn. Bound memory tools and turn assembly resolve this canonical binding for both memory and hat identity, never a hat named in chat; ineligible Work bindings fail closed. Bound prompt-memory selection, model-facing prompt-block tools, and diagnostics derive narrower access from it. Bear-admin UI can bind an empty inactive conversation or eligible draft Job. A Bear-owned IDE default applies on new ACP session creation, and an armature-local `/hat` can select another hat before the first turn; browser users select a hat before creating a conversation; Job creators select an eligible Work-enabled hat before the Job and its initial run are created. The Bear-level connection is identity, not a hat grant. |
-| Trust profile | Bear profile registry | per turn/template | `chat`, `pair`, `curate`, `work`, `watch`; internal operating mode, tool policy, and legacy no-hat prompt path, not the identity or private-memory owner of a bound turn. `TurnExecutionOrigin` now derives the same policy defaults for a few authenticated channel/armature/task edges, but most call sites still take a profile and no stance has been retired. |
+| Trust profile | Bear profile registry | per turn/template | `chat`, `pair`, `curate`, `work`, `watch` remain compatibility labels for runtime binding, tool rosters, and no-hat prompts, not the identity or private-memory owner of a bound turn. The effective capability table and BearWire armature tool envelope now use verified `TurnExecutionOrigin`; other runtime paths still take a profile and no stance has been fully retired. |
 | Governance | runtime/workspace session | run-scoped mutable timeline | `interactive`, `grace`, `autonomous_continuation`, `observational`, `frozen`. |
 | Pair current task | conversation + client-session binding | durable conversation/session selection, resolved per run | A validated persisted `client_sessions.current_task_id` is Pair's optional objective; it may reference a session-local or Docket task. |
 | Pair task settlement | Docket task settlement | durable task outcome | A terminal user/model declaration appends the canonical outcome and task link. In Pair it is not gated on commit creation, publication, or artifact finalization. |

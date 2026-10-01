@@ -83,6 +83,8 @@ EffectivePolicy = TrustProfile × Governance × Armature × RunAuthContext
 
 The model never *infers* this cross product. Den enforces the tool roster, memory write target, and approval class for the effective policy, and exposes the components through `session_info`.
 
+**Implementation note (2026-10-01):** `EffectivePolicy::compile_for_origin` now owns the capability table keyed by Den-verified channel, armature, Job-run, curation, or observation origin plus governance. `TrustProfile` remains the runtime binding and compatibility projection, and the older `compile` API delegates to the origin table. BearWire `run.start` resolves the canonical Work-run or armature-conversation origin before compiling its client-tool permission envelope. Model tool rosters and other paths still depend on profiles; the broader stance-removal decision is not complete.
+
 ### 4. Lifetimes are separated
 
 | Object | Lifetime | Owner |

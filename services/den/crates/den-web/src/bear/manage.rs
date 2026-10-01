@@ -12,8 +12,12 @@ use axum::{
 };
 use axum_extra::routing::RouterExt;
 use den_core::{
-    client_tools::ClientToolName, tools::descriptor::builtin_den_tool_descriptors, BearProfile,
+    client_tools::ClientToolName,
+    ids::{BearId, HatId},
+    tools::descriptor::builtin_den_tool_descriptors,
+    BearProfile,
 };
+use den_service::bears::hats;
 use minijinja::context;
 use serde::Serialize;
 
@@ -24,6 +28,13 @@ use crate::{
 };
 
 use super::settings::{bear_nav_context, load_session_bear};
+
+#[derive(Serialize)]
+struct HatIdentityRow {
+    id: HatId,
+    name: String,
+    short_summary: Option<String>,
+}
 
 /// One tool, one row: identity and (future) configuration are per-tool;
 /// stances only gate availability, expressed as the boolean columns.
@@ -100,14 +111,22 @@ async fn identity_view(
             Ok(v) => v,
             Err(r) => return Ok(r.into_response()),
         };
-    let stances: Vec<&'static str> = BearProfile::ALL.iter().map(|p| p.as_str()).collect();
+    let hats = hats::list_hats(state.sqlx_pool(), BearId::new(bear.id))
+        .await?
+        .into_iter()
+        .map(|hat| HatIdentityRow {
+            id: hat.id,
+            name: hat.name,
+            short_summary: hat.short_summary,
+        })
+        .collect::<Vec<_>>();
     web::render_template(
         &state,
         "bear/manage/identity.html",
         auth_session,
         context! {
             can_manage_bear,
-            stances,
+            hats,
             manage_title => "Identity & charter",
             ..bear_nav_context(&bear, "identity"),
         },

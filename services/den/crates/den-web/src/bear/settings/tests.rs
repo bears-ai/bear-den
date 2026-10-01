@@ -364,13 +364,35 @@ async fn inspection_gets_require_bear_admin_but_overview_remains_member_viewable
     assert!(body.contains("Recall status") || body.contains("Memory statistics unavailable."));
     assert!(body.contains(&format!("/bear/{slug}/activity")));
 
+    let hat = hats::create_hat(
+        &pool,
+        BearId::new(bear_id),
+        den_core::ids::UserId::new(admin_id),
+        "Security review",
+        "Admin-only longer purpose",
+    )
+    .await
+    .unwrap();
+    hats::manage::set_short_summary(
+        &pool,
+        BearId::new(bear_id),
+        hat.id,
+        Some("Reviews <repository>"),
+        true,
+    )
+    .await
+    .unwrap();
     let (status, body) = get_as(&app, &member_cookie, &format!("/bear/{slug}/identity")).await;
     assert_eq!(status, StatusCode::OK, "member identity: {body}");
-    assert!(body.contains("Stances"));
+    assert!(body.contains("Security review"));
+    assert!(body.contains("Reviews &lt;repository&gt;"));
+    assert!(!body.contains("Admin-only longer purpose"));
+    assert!(!body.contains("<h3>Stances</h3>"));
     assert!(!body.contains(&format!("/bear/{slug}/stances/")));
     let (status, body) = get_as(&app, &admin_cookie, &format!("/bear/{slug}/identity")).await;
     assert_eq!(status, StatusCode::OK, "admin identity: {body}");
-    assert!(body.contains(&format!("/bear/{slug}/stances/chat")));
+    assert!(body.contains(&format!("/bear/{slug}/hats/{}", hat.id)));
+    assert!(!body.contains("<h3>Stances</h3>"));
 
     for path in [
         "activity".to_string(),

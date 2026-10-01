@@ -2333,13 +2333,41 @@ async fn run_start_with_recovery_source(
         &upstream_target,
     )
     .await?;
+    // The verified Docket binding decides both the turn's execution origin and
+    // the compatibility profile used by existing runtime bindings. Client context
+    // and requested mode cannot manufacture a Work assignment or armature grant.
+    let live_work_run =
+        den_docket::work_runs::get_live_work_run_by_session(&state.sqlx_pool, &session_id).await?;
+    let (origin, stance) = if let Some(work_run) = live_work_run {
+        memory_binding::for_work_run(&state.sqlx_pool, BearId::new(bear.id), work_run.id).await?;
+        tracing::info!(
+            work_run_id = %work_run.id,
+            job_id = %work_run.job_id,
+            task_id = ?work_run.executing_task_id,
+            session_id = %session_id,
+            "run.start resolved authorized Work-run origin"
+        );
+        (
+            den_core::TurnExecutionOrigin::AuthorizedWorkRun(
+                den_core::ArmatureAvailability::Connected,
+            ),
+            BearProfile::Work,
+        )
+    } else {
+        memory_binding::for_conversation(&state.sqlx_pool, BearId::new(bear.id), conversation.id)
+            .await?;
+        tracing::debug!(session_id = %session_id, "run.start resolved armature conversation origin");
+        (
+            den_core::TurnExecutionOrigin::ArmatureConversation(
+                den_core::ArmatureAvailability::Connected,
+            ),
+            BearProfile::Pair,
+        )
+    };
     let requested_mode = request.requested_mode;
-    // `TurnAuthority` is the single local authority seam for BearWire's tool
-    // surface and prompt permission envelope. The concrete stance is resolved
-    // below for runtime binding; BearWire sessions use Pair-equivalent tool
-    // authority unless a later typed work-run authority input says otherwise.
-    let turn_authority = den_core::client_tools::TurnAuthority::for_session_mode(
-        den_core::BearStance::Pair,
+    let turn_authority = den_core::client_tools::TurnAuthority::for_origin(
+        origin,
+        den_core::Governance::Interactive,
         requested_mode.as_deref().unwrap_or("ask"),
         None,
     );
@@ -2355,31 +2383,6 @@ async fn run_start_with_recovery_source(
             render_turn_fragment(fragment, &json!({ "authority": authority }))
         })
         .transpose()?;
-    // Stance signal: a session bound to a live work run via `work.checkout`
-    // runs in the Work stance; every other BearWire session stays Pair.
-    let live_work_run =
-        den_docket::work_runs::get_live_work_run_by_session(&state.sqlx_pool, &session_id).await?;
-    let stance = if let Some(work_run) = live_work_run {
-        memory_binding::for_work_run(&state.sqlx_pool, BearId::new(bear.id), work_run.id).await?;
-        tracing::info!(
-            work_run_id = %work_run.id,
-            job_id = %work_run.job_id,
-            task_id = ?work_run.executing_task_id,
-            session_id = %session_id,
-            stance = "work",
-            "run.start resolved live Work-run binding"
-        );
-        BearProfile::Work
-    } else {
-        memory_binding::for_conversation(&state.sqlx_pool, BearId::new(bear.id), conversation.id)
-            .await?;
-        tracing::debug!(
-            session_id = %session_id,
-            stance = "pair",
-            "run.start found no live Work-run binding"
-        );
-        BearProfile::Pair
-    };
     let binding_id = bears_db::profile_binding_id(&state.sqlx_pool, bear.id, stance)
         .await?
         .ok_or_else(|| {
@@ -4088,8 +4091,11 @@ mod tests {
                 }]
             }
         });
-        let authority = den_core::client_tools::TurnAuthority::for_session_mode(
-            den_core::BearStance::Pair,
+        let authority = den_core::client_tools::TurnAuthority::for_origin(
+            den_core::TurnExecutionOrigin::ArmatureConversation(
+                den_core::ArmatureAvailability::Connected,
+            ),
+            den_core::Governance::Interactive,
             "write",
             None,
         );
@@ -4125,8 +4131,11 @@ mod tests {
                 }]
             }
         });
-        let authority = den_core::client_tools::TurnAuthority::for_session_mode(
-            den_core::BearStance::Pair,
+        let authority = den_core::client_tools::TurnAuthority::for_origin(
+            den_core::TurnExecutionOrigin::ArmatureConversation(
+                den_core::ArmatureAvailability::Connected,
+            ),
+            den_core::Governance::Interactive,
             "ask",
             None,
         );

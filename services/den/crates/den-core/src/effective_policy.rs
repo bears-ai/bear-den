@@ -57,8 +57,8 @@ pub enum ArmatureAvailability {
 
 /// A Den-verified execution surface, not a client-supplied stance or hat label.
 /// Construct this only after authenticating the channel/armature or resolving a
-/// Docket Work assignment. Until the route-level denial matrix is complete,
-/// `compile_for_origin` deliberately delegates to the existing profile policy.
+/// Docket Work assignment. The compatibility profile is a projection of this
+/// verified origin, not an independent authority input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TurnExecutionOrigin {
     ChannelConversation,
@@ -93,24 +93,19 @@ pub struct EffectivePolicy {
 
 impl EffectivePolicy {
     pub fn compile_for_origin(origin: TurnExecutionOrigin, governance: Governance) -> Self {
-        let (profile, armature) = origin.policy_inputs();
-        Self::compile(profile, governance, armature)
-    }
-
-    pub fn compile(
-        trust_profile: TrustProfile,
-        governance: Governance,
-        armature: ArmatureAvailability,
-    ) -> Self {
+        let (trust_profile, armature) = origin.policy_inputs();
         use BearCapability::{
             Converse, CreateJob, CurateMemory, DispatchWork, ExecuteFocusedTask, ExecuteJob,
             ManageWorkSurfaces, OwnSessionTasks, ProposeProfileMemory, SelectSessionTask,
             UseArmatureTools, UseWorkSurfaces,
         };
 
-        let base = match trust_profile {
-            TrustProfile::Chat => [Converse, CreateJob, DispatchWork].as_slice(),
-            TrustProfile::Pair => [
+        let base = match origin {
+            TurnExecutionOrigin::ChannelConversation => {
+                [Converse, CreateJob, DispatchWork].as_slice()
+            }
+            TurnExecutionOrigin::BrowserTaskSession
+            | TurnExecutionOrigin::ArmatureConversation(_) => [
                 Converse,
                 OwnSessionTasks,
                 SelectSessionTask,
@@ -124,7 +119,7 @@ impl EffectivePolicy {
                 ProposeProfileMemory,
             ]
             .as_slice(),
-            TrustProfile::Work => [
+            TurnExecutionOrigin::AuthorizedWorkRun(_) => [
                 ExecuteFocusedTask,
                 ExecuteJob,
                 UseArmatureTools,
@@ -132,8 +127,8 @@ impl EffectivePolicy {
                 ProposeProfileMemory,
             ]
             .as_slice(),
-            TrustProfile::Curate => [CurateMemory].as_slice(),
-            TrustProfile::Watch => [].as_slice(),
+            TurnExecutionOrigin::InternalCuration => [CurateMemory].as_slice(),
+            TurnExecutionOrigin::InboundObservation => [].as_slice(),
         };
         let mut capabilities = CapabilitySet::from_capabilities(base.iter().copied());
 
@@ -166,6 +161,24 @@ impl EffectivePolicy {
             governance,
             capabilities,
         }
+    }
+
+    /// Compatibility projection for routes that still persist a profile label.
+    /// New authority decisions should call `compile_for_origin` with a verified
+    /// channel, armature, or Job assignment instead.
+    pub fn compile(
+        trust_profile: TrustProfile,
+        governance: Governance,
+        armature: ArmatureAvailability,
+    ) -> Self {
+        let origin = match trust_profile {
+            TrustProfile::Chat => TurnExecutionOrigin::ChannelConversation,
+            TrustProfile::Pair => TurnExecutionOrigin::ArmatureConversation(armature),
+            TrustProfile::Work => TurnExecutionOrigin::AuthorizedWorkRun(armature),
+            TrustProfile::Curate => TurnExecutionOrigin::InternalCuration,
+            TrustProfile::Watch => TurnExecutionOrigin::InboundObservation,
+        };
+        Self::compile_for_origin(origin, governance)
     }
 }
 

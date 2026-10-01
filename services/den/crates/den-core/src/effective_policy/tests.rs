@@ -89,6 +89,71 @@ fn typed_origins_preserve_every_existing_profile_governance_and_armature_denial(
 }
 
 #[test]
+fn verified_origins_own_explicit_capability_sets() {
+    use BearCapability::{
+        Converse, CreateJob, CurateMemory, DispatchWork, ExecuteFocusedTask, ExecuteJob,
+        ManageWorkSurfaces, OwnSessionTasks, ProposeProfileMemory, SelectSessionTask,
+        UseArmatureTools, UseWorkSurfaces,
+    };
+    let cases = [
+        (
+            TurnExecutionOrigin::ChannelConversation,
+            &[Converse, CreateJob, DispatchWork][..],
+        ),
+        (
+            TurnExecutionOrigin::BrowserTaskSession,
+            &[
+                Converse,
+                OwnSessionTasks,
+                SelectSessionTask,
+                ExecuteFocusedTask,
+                ExecuteJob,
+                CreateJob,
+                DispatchWork,
+                UseWorkSurfaces,
+                ManageWorkSurfaces,
+                ProposeProfileMemory,
+            ][..],
+        ),
+        (
+            TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+            &[
+                Converse,
+                OwnSessionTasks,
+                SelectSessionTask,
+                ExecuteFocusedTask,
+                ExecuteJob,
+                CreateJob,
+                DispatchWork,
+                UseArmatureTools,
+                UseWorkSurfaces,
+                ManageWorkSurfaces,
+                ProposeProfileMemory,
+            ][..],
+        ),
+        (
+            TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Connected),
+            &[
+                ExecuteFocusedTask,
+                ExecuteJob,
+                UseArmatureTools,
+                UseWorkSurfaces,
+                ProposeProfileMemory,
+            ][..],
+        ),
+        (TurnExecutionOrigin::InternalCuration, &[CurateMemory][..]),
+        (TurnExecutionOrigin::InboundObservation, &[][..]),
+    ];
+    for (origin, expected) in cases {
+        assert_eq!(
+            EffectivePolicy::compile_for_origin(origin, Governance::Interactive).capabilities,
+            CapabilitySet::from_capabilities(expected.iter().copied()),
+            "{origin:?} must keep its explicit capability set"
+        );
+    }
+}
+
+#[test]
 fn a_shared_hat_identity_cannot_collapse_chat_pair_and_work_policy_defaults() {
     use BearCapability::{Converse, CreateJob, ExecuteJob, OwnSessionTasks, UseArmatureTools};
 

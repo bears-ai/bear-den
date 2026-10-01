@@ -4,9 +4,8 @@
 <div class="box">
     <h2>Identity &amp; charter</h2>
     <p class="form-hint">
-        Who this Bear is: name, charter, and the model behind each stance.
-        Identity travels with the Bear; the model is a swappable engine —
-        changing it does not change the mind.
+        The Bear's name and charter describe its enduring purpose. Hats describe
+        the responsibilities it can take on. The model is a swappable engine.
     </p>
 
     <dl>
@@ -27,24 +26,17 @@
         </dd>
     </dl>
 
-    <h3>Stances</h3>
-    <p class="form-hint">
-        The same Bear in five trust postures. Each stance has its own
-        compiled prompt, tool surface, and model.
-    </p>
+    <h3>Hats</h3>
+    {% if hats %}
     <ul>
-        {% for stance in stances %}
+        {% for hat in hats %}
         <li>
-            {% if can_manage_bear %}
-            <a href="/bear/{{ bear.slug | e }}/stances/{{ stance }}"
-                >{{ stance }}</a
-            >
-            {% else %}
-            {{ stance }}
-            {% endif %}
+            {% if can_manage_bear %}<a href="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}">{{ hat.name | e }}</a>{% else %}{{ hat.name | e }}{% endif %}
+            {% if hat.short_summary %} — {{ hat.short_summary | e }}{% endif %}
         </li>
         {% endfor %}
     </ul>
+    {% else %}<p class="form-hint">No hats configured yet.</p>{% endif %}
 
     {% if can_manage_bear %}
     <p class="button-row">
@@ -54,12 +46,12 @@
         <a class="button-link" href="/bear/{{ bear.slug | e }}/edit/prompt"
             >Edit charter</a
         >
-        <a class="button-link" href="/bear/{{ bear.slug | e }}/models"
-            >Models per stance</a
+        <a class="button-link" href="/bear/{{ bear.slug | e }}/hats"
+            >Manage hats</a
         >
     </p>
     {% else %}
-    <p class="form-hint">Bear admins can edit identity and models.</p>
+    <p class="form-hint">Bear admins can edit identity and hats.</p>
     {% endif %}
 </div>
 {% endblock %}

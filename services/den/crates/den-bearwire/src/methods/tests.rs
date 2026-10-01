@@ -481,26 +481,61 @@ fn normalized_workspace_roots_uses_cwd_when_roots_are_not_declared() {
 
 #[test]
 fn injected_client_and_mcp_descriptors_do_not_advertise_without_armature_authority() {
-    use den_core::{client_tools::TurnAuthority, BearStance};
+    use den_core::{
+        client_tools::TurnAuthority, ArmatureAvailability, Governance, TurnExecutionOrigin,
+    };
     let context = json!({
         "mcp": {"client_tools": [{"name": "mcp__untrusted__send", "parameters": {"type": "object"}}]},
         "adapter": {"direct_tools": [{"name": "fs_read_text_file", "parameters": {"type": "object"}}]},
     });
-    for stance in [BearStance::Chat, BearStance::Curate, BearStance::Watch] {
-        let authority = TurnAuthority::for_session_mode(stance, "write", None);
+    for origin in [
+        TurnExecutionOrigin::ChannelConversation,
+        TurnExecutionOrigin::BrowserTaskSession,
+        TurnExecutionOrigin::InternalCuration,
+        TurnExecutionOrigin::InboundObservation,
+        TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Absent),
+    ] {
+        let authority = TurnAuthority::for_origin(origin, Governance::Interactive, "write", None);
         assert_eq!(
             client_tool_descriptors_from_context_with_authority(Some(&context), &authority),
             json!([]),
-            "{stance:?} must not acquire tools from supplied descriptors",
+            "{origin:?} must not acquire tools from supplied descriptors",
         );
     }
-    let pair = TurnAuthority::for_session_mode(BearStance::Pair, "ask", None);
+    let pair = TurnAuthority::for_origin(
+        TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+        Governance::Interactive,
+        "ask",
+        None,
+    );
     let advertised = client_tool_descriptors_from_context_with_authority(Some(&context), &pair);
     assert!(advertised
         .as_array()
         .unwrap()
         .iter()
         .any(|tool| tool["name"] == "mcp__untrusted__send"));
+    let work = TurnAuthority::for_origin(
+        TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Connected),
+        Governance::Interactive,
+        "ask",
+        None,
+    );
+    assert_eq!(
+        client_tool_descriptors_from_context_with_authority(Some(&context), &work),
+        advertised,
+        "a verified Work run keeps the same client approval surface"
+    );
+    let unsupervised = TurnAuthority::for_origin(
+        TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Connected),
+        Governance::AutonomousContinuation,
+        "write",
+        None,
+    );
+    assert_eq!(
+        client_tool_descriptors_from_context_with_authority(Some(&context), &unsupervised),
+        json!([]),
+        "a mode label and forwarded MCP list cannot restore unavailable tools"
+    );
 }
 
 #[test]

@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use crate::{ArmatureAvailability, BearCapability, BearStance, EffectivePolicy, Governance};
+use crate::{BearCapability, EffectivePolicy, Governance, TurnExecutionOrigin};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolClass {
@@ -58,36 +58,32 @@ pub struct ResolvedSessionPolicy {
 
 /// Compiled authority view for one turn.
 ///
-/// `TurnAuthority` is the seam between mutation-authority inputs (stance, session mode,
-/// workplan state) and consumers such as tool advertisement, tool routing, prompt assembly,
-/// and client projection. Run supervision/governance is intentionally not an input to this
-/// permission surface.
+/// `TurnAuthority` compiles verified turn origin, current supervision, and the
+/// Den-owned session mode/plan state for tool advertisement, routing, prompt
+/// assembly, and client projection. Rendered labels cannot grant authority.
 #[derive(Debug, Clone)]
 pub struct TurnAuthority {
-    pub stance: BearStance,
+    policy: EffectivePolicy,
     pub session_policy: ResolvedSessionPolicy,
 }
 
 impl TurnAuthority {
-    pub fn for_session_mode(
-        stance: BearStance,
+    pub fn for_origin(
+        origin: TurnExecutionOrigin,
+        governance: Governance,
         current_mode: &str,
         plan_mode_state: Option<&str>,
     ) -> Self {
         Self {
-            stance,
+            policy: EffectivePolicy::compile_for_origin(origin, governance),
             session_policy: resolve_session_policy_for_mode(current_mode, plan_mode_state),
         }
     }
 
     pub fn has_armature_tools(&self) -> bool {
-        EffectivePolicy::compile(
-            self.stance,
-            Governance::Interactive,
-            ArmatureAvailability::Connected,
-        )
-        .capabilities
-        .contains(BearCapability::UseArmatureTools)
+        self.policy
+            .capabilities
+            .contains(BearCapability::UseArmatureTools)
     }
 
     pub fn allows_tool(&self, tool: ClientToolName) -> bool {

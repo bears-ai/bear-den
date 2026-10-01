@@ -1,5 +1,14 @@
 use super::*;
-use crate::tools::descriptor::builtin_den_tool_descriptors;
+use crate::{tools::descriptor::builtin_den_tool_descriptors, ArmatureAvailability};
+
+fn armature_authority(mode: &str, plan: Option<&str>) -> TurnAuthority {
+    TurnAuthority::for_origin(
+        TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+        Governance::Interactive,
+        mode,
+        plan,
+    )
+}
 
 #[test]
 fn pre_risk_checkpoint_class_uses_typed_client_tool_identity() {
@@ -132,35 +141,80 @@ fn submitted_plan_keeps_write_tools_locked() {
 }
 
 #[test]
-fn session_write_mode_cannot_turn_non_armature_stances_into_local_tool_providers() {
-    for stance in [BearStance::Chat, BearStance::Curate, BearStance::Watch] {
-        let authority = TurnAuthority::for_session_mode(stance, "write", None);
+fn session_write_mode_cannot_turn_non_armature_origins_into_local_tool_providers() {
+    for origin in [
+        TurnExecutionOrigin::ChannelConversation,
+        TurnExecutionOrigin::BrowserTaskSession,
+        TurnExecutionOrigin::InternalCuration,
+        TurnExecutionOrigin::InboundObservation,
+        TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Absent),
+    ] {
+        let authority = TurnAuthority::for_origin(origin, Governance::Interactive, "write", None);
         assert!(
             !authority.allows_tool(ClientToolName::ReadTextFile),
-            "{stance:?}"
+            "{origin:?}"
         );
         assert!(
             !authority.allows_tool(ClientToolName::EditFile),
-            "{stance:?}"
+            "{origin:?}"
         );
         assert!(
             !authority.allows_tool(ClientToolName::TerminalRunCommand),
-            "{stance:?}"
+            "{origin:?}"
         );
         assert!(authority.allowed_tool_classes().is_empty());
         assert!(authority.denied_tool_classes().contains(&"read_only"));
         let context = authority.read_only_runtime_context().unwrap();
         assert_eq!(context["tool_enablement"], "unavailable");
     }
-    let pair = TurnAuthority::for_session_mode(BearStance::Pair, "write", None);
-    let work = TurnAuthority::for_session_mode(BearStance::Work, "write", None);
+    let pair = TurnAuthority::for_origin(
+        TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+        Governance::Interactive,
+        "write",
+        None,
+    );
+    let work = TurnAuthority::for_origin(
+        TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Connected),
+        Governance::Interactive,
+        "write",
+        None,
+    );
     assert!(pair.allows_tool(ClientToolName::EditFile));
     assert!(work.allows_tool(ClientToolName::EditFile));
 }
 
 #[test]
+fn connected_armature_without_interactive_supervision_does_not_advertise_local_tools() {
+    for origin in [
+        TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+        TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Connected),
+    ] {
+        for governance in [
+            Governance::Grace,
+            Governance::AutonomousContinuation,
+            Governance::Observational,
+            Governance::Frozen,
+        ] {
+            let authority = TurnAuthority::for_origin(origin, governance, "write", None);
+            assert!(!authority.has_armature_tools(), "{origin:?}/{governance:?}");
+            assert!(!authority.allows_tool(ClientToolName::ReadTextFile));
+            assert!(!authority.allows_tool(ClientToolName::TerminalRunCommand));
+            assert_eq!(
+                authority.read_only_runtime_context().unwrap()["tool_enablement"],
+                "unavailable"
+            );
+        }
+    }
+}
+
+#[test]
 fn turn_authority_is_single_derived_permission_surface() {
-    let authority = TurnAuthority::for_session_mode(BearStance::Pair, "write", Some("submitted"));
+    let authority = TurnAuthority::for_origin(
+        TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+        Governance::Interactive,
+        "write",
+        Some("submitted"),
+    );
 
     assert_eq!(authority.mode_label(), "Plan");
     assert_eq!(authority.tool_enablement(), ToolEnablementState::ReadOnly);
@@ -180,7 +234,7 @@ fn turn_authority_is_single_derived_permission_surface() {
 
 #[test]
 fn turn_authority_ignores_client_policy_projection_labels() {
-    let authority = TurnAuthority::for_session_mode(BearStance::Pair, "ask", None);
+    let authority = armature_authority("ask", None);
     let mut projection = authority.session_policy.to_json();
     projection["mode_label"] = json!("Write");
     projection["tool_enablement"]["state"] = json!("all_tools");
@@ -193,8 +247,8 @@ fn turn_authority_ignores_client_policy_projection_labels() {
 
 #[test]
 fn turn_authority_has_no_model_choice_authority_input() {
-    let first = TurnAuthority::for_session_mode(BearStance::Pair, "ask", None);
-    let second = TurnAuthority::for_session_mode(BearStance::Pair, "ask", None);
+    let first = armature_authority("ask", None);
+    let second = armature_authority("ask", None);
 
     assert_eq!(first.tool_enablement(), second.tool_enablement());
     assert_eq!(first.allowed_tool_classes(), second.allowed_tool_classes());
@@ -203,7 +257,7 @@ fn turn_authority_has_no_model_choice_authority_input() {
 
 #[test]
 fn turn_authority_has_no_prompt_or_compaction_authority_input() {
-    let authority = TurnAuthority::for_session_mode(BearStance::Pair, "ask", None);
+    let authority = armature_authority("ask", None);
 
     // ponytail: this is a compile-time seam check; if prompt/context/compaction
     // state ever becomes authority input, replace it with an explicit denied-
