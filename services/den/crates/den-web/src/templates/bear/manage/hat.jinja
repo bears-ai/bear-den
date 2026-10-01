@@ -57,6 +57,40 @@
   {% else %}<p>No work surfaces are assigned to this Bear yet.</p>{% endif %}
 </div>
 <div class="box">
+  <h3>Den web fetch policy</h3>
+  <p class="form-hint">A conversation wearing this hat can fetch an exact HTTPS host only when both the web-fetch tool and that host are granted. The current human must own the conversation; Den still applies block rules, public-DNS checks, and per-call approval in ACP. This does not enable Job sandbox egress, add a credential, or let a disconnected armature use local tools. Old Bear-wide approvals do not carry into this hat.</p>
+  {% if web_fetch_grants.tool_grant_id %}
+  <p>Web-fetch tool: granted</p>
+  <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/access">
+    <input type="hidden" name="grant_id" value="{{ web_fetch_grants.tool_grant_id }}">
+    <button type="submit" name="action" value="revoke">Revoke web-fetch tool grant</button>
+  </form>
+  {% else %}
+  <p>Web-fetch tool: not granted</p>
+  <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/access">
+    <label><input type="checkbox" name="confirm_future_job_audience" value="true" required> I understand this is shared with future conversations and eligible Job runs wearing this hat, once their separate execution and network policies permit it.</label>
+    <button type="submit" name="action" value="enable_fetch">Grant web-fetch tool to this hat</button>
+  </form>
+  {% endif %}
+  <h4>Exact HTTPS hosts</h4>
+  {% if web_fetch_grants.hosts %}
+  <ul>{% for grant in web_fetch_grants.hosts %}
+    <li>{{ grant.host | e }}
+      <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/access">
+        <input type="hidden" name="grant_id" value="{{ grant.id }}">
+        <button type="submit" name="action" value="revoke">Revoke {{ grant.host | e }}</button>
+      </form>
+    </li>
+  {% endfor %}</ul>
+  {% else %}<p>No HTTPS hosts granted.</p>{% endif %}
+  <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/access">
+    <label>Exact HTTPS host <input name="host" placeholder="docs.example.com" required></label>
+    <p class="form-hint">No wildcards, IP addresses, custom ports, HTTP, site accounts, or URL patterns. A host grant does not imply a tool grant.</p>
+    <label><input type="checkbox" name="confirm_future_job_audience" value="true" required> I understand future conversations and eligible Job runs wearing this hat may use this host where their separate execution and work-surface policies allow it.</label>
+    <button type="submit" name="action" value="allow_host">Grant HTTPS host</button>
+  </form>
+</div>
+<div class="box">
   <h3>Automatic memory sharing for this hat: {{ hat.auto_curate_enabled and "on" or "off" }}</h3>
   <p class="form-hint">When enabled, Curate may read a private note from a conversation wearing this hat, send it through this Bear's configured model provider, and publish a newly written fact to the hat. All Bear members and eligible Job runs wearing the hat, now or in the future, may read it. Model inference may have privacy, network, and usage costs. Curate does not publish the note verbatim, but its rewrite cannot guarantee that sensitive details or prompt injections are removed. Shared knowledge remains untrusted data; this setting grants no tools, credentials, permissions, or Job authority.</p>
   {% if hat.auto_curate_enabled %}

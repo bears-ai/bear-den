@@ -59,7 +59,7 @@ fn tool_aliases_and_network_hosts_normalize_at_the_boundary() {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn hat_grants_are_admin_owned_idempotent_revocable_and_inert_until_enforced(pool: PgPool) {
+async fn hat_grants_are_admin_owned_idempotent_revocable_and_scoped(pool: PgPool) {
     let first = bear(&pool, "hatgrantfirst").await;
     let second = bear(&pool, "hatgrantsecond").await;
     let admin = UserId::new(sqlx::query_scalar!(

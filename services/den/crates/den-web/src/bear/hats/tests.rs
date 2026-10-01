@@ -939,6 +939,199 @@ async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn hat_web_fetch_grants_are_admin_managed_and_revoke_immediately(pool: PgPool) {
+    use den_service::bears::hats::access;
+    let bear = bears_db::create_bear(
+        &pool,
+        BearParams {
+            slug: "hatfetchui",
+            name: "Fetch UI",
+            description: "",
+            system_prompt: "",
+            default_model: None,
+            tools_enabled: None,
+            context_profile: None,
+        },
+    )
+    .await
+    .unwrap();
+    let admin = user(&pool, bear, "hatfetchadmin", BEAR_ROLE_ADMIN).await;
+    let member = user(&pool, bear, "hatfetchmember", BEAR_ROLE_MEMBER).await;
+    let hat = hats::create_hat(
+        &pool,
+        BearId::new(bear),
+        UserId::new(admin),
+        "Research",
+        "Fetch approved docs",
+    )
+    .await
+    .unwrap();
+    let mut config = Config::test_stub();
+    config.templates_dir = format!("{}/src/templates", env!("CARGO_MANIFEST_DIR"));
+    config.bear_sqlite_data_dir = std::env::temp_dir()
+        .join(format!("hat-fetch-ui-{}", Uuid::new_v4()))
+        .to_string_lossy()
+        .to_string();
+    let config = Arc::new(config);
+    let state = AppState::test_with_template_env(
+        pool.clone(),
+        crate::template_environment(&config),
+        config,
+    );
+    let sessions = PostgresStore::new(pool.clone());
+    sessions.migrate().await.unwrap();
+    let app = Router::new()
+        .merge(router())
+        .route("/test-login/{user_id}", get(login))
+        .with_state(state)
+        .layer(
+            axum_login::AuthManagerLayerBuilder::new(
+                Backend::new(pool.clone()),
+                axum_login::tower_sessions::SessionManagerLayer::new(sessions),
+            )
+            .build(),
+        );
+    let admin_cookie = cookie(&app, admin).await;
+    let member_cookie = cookie(&app, member).await;
+    let detail = format!("/bear/hatfetchui/hats/{}", hat.id);
+    let path = format!("{detail}/access");
+    let (status, page, _) = request(&app, &admin_cookie, "GET", &detail, "").await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("Den web fetch policy"));
+    assert!(page.contains("per-call approval in ACP"));
+    assert_eq!(
+        request(
+            &app,
+            &member_cookie,
+            "POST",
+            &path,
+            "action=enable_fetch&confirm_future_job_audience=true"
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        request(&app, &admin_cookie, "POST", &path, "action=enable_fetch")
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        request(
+            &app,
+            &admin_cookie,
+            "POST",
+            &path,
+            "action=allow_host&host=localhost&confirm_future_job_audience=true"
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        request(
+            &app,
+            &admin_cookie,
+            "POST",
+            &path,
+            "action=allow_host&host=Example.COM&confirm_future_job_audience=true"
+        )
+        .await
+        .0,
+        StatusCode::SEE_OTHER
+    );
+    let summary = access::web_fetch_grants_for_hat(&pool, BearId::new(bear), hat.id)
+        .await
+        .unwrap();
+    assert!(summary.tool_grant_id.is_none());
+    assert_eq!(summary.hosts.len(), 1);
+    assert_eq!(summary.hosts[0].host, "example.com");
+    assert_eq!(
+        request(
+            &app,
+            &admin_cookie,
+            "POST",
+            &path,
+            "action=enable_fetch&confirm_future_job_audience=true"
+        )
+        .await
+        .0,
+        StatusCode::SEE_OTHER
+    );
+    let summary = access::web_fetch_grants_for_hat(&pool, BearId::new(bear), hat.id)
+        .await
+        .unwrap();
+    assert!(summary.tool_grant_id.is_some());
+    let (_, page, _) = request(&app, &admin_cookie, "GET", &detail, "").await;
+    assert!(page.contains("Web-fetch tool: granted"));
+    assert!(page.contains("example.com"));
+
+    assert_eq!(
+        request(
+            &app,
+            &member_cookie,
+            "POST",
+            &path,
+            &format!("action=revoke&grant_id={}", summary.hosts[0].id)
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        request(
+            &app,
+            &admin_cookie,
+            "POST",
+            &path,
+            &format!("action=revoke&grant_id={}", summary.hosts[0].id)
+        )
+        .await
+        .0,
+        StatusCode::SEE_OTHER
+    );
+    assert!(
+        access::web_fetch_grants_for_hat(&pool, BearId::new(bear), hat.id)
+            .await
+            .unwrap()
+            .hosts
+            .is_empty()
+    );
+    assert_eq!(
+        request(
+            &app,
+            &admin_cookie,
+            "POST",
+            &path,
+            &format!("action=revoke&grant_id={}", summary.hosts[0].id)
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        request(
+            &app,
+            &admin_cookie,
+            "POST",
+            &path,
+            &format!("action=revoke&grant_id={}", summary.tool_grant_id.unwrap())
+        )
+        .await
+        .0,
+        StatusCode::SEE_OTHER
+    );
+    assert!(
+        access::web_fetch_grants_for_hat(&pool, BearId::new(bear), hat.id)
+            .await
+            .unwrap()
+            .tool_grant_id
+            .is_none()
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn reviewed_hat_promotion_is_admin_only_and_does_not_copy_raw_notes(pool: PgPool) {
     use den_memory::{
         append_memory_record,

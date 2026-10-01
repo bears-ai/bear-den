@@ -1,5 +1,6 @@
-//! Canonical, Den-owned hat access grants. Storage is deliberately inert until
-//! descriptor, actor, resource, and egress execution paths share one resolver.
+//! Canonical, Den-owned hat access grants. Only the configured-hat Den
+//! web-fetch decision consumes them today; other effect paths need the shared
+//! actor, resource, and egress resolver.
 
 use std::net::IpAddr;
 
@@ -10,6 +11,7 @@ use den_core::{
     DenError,
 };
 use den_sandbox::protocol::AllowedOutboundHosts;
+use serde::Serialize;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -98,6 +100,61 @@ impl HatAccessGrant {
             Self::HttpsHost(host) => ("network", "https", "host", &host.0),
         }
     }
+}
+
+#[derive(Debug, Serialize)]
+pub struct WebFetchHostGrant {
+    pub id: Uuid,
+    pub host: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WebFetchGrantSummary {
+    pub tool_grant_id: Option<Uuid>,
+    pub hosts: Vec<WebFetchHostGrant>,
+}
+
+/// Read only the two grant dimensions used by Den's configured-hat web fetch.
+/// The Bear-admin page provides the authorization for presenting this summary;
+/// this is not a model-facing or effect-time authorization resolver.
+pub async fn web_fetch_grants_for_hat(
+    pool: &PgPool,
+    bear_id: BearId,
+    hat_id: HatId,
+) -> Result<WebFetchGrantSummary, DenError> {
+    super::manage::get_hat(pool, bear_id, hat_id).await?;
+    let action = ToolActionKey::from_provider_name(DEN_WEB_FETCH)?;
+    let tool_grant_id = sqlx::query_scalar!(
+        "SELECT id FROM bear_hat_access_grants
+         WHERE bear_id = $1 AND hat_id = $2 AND kind = 'tool'
+           AND action_key = $3 AND target_kind = 'hat' AND target_value = ''
+           AND revoked_at IS NULL",
+        bear_id.as_uuid(),
+        hat_id.as_uuid(),
+        action.0,
+    )
+    .fetch_optional(pool)
+    .await?;
+    let hosts = sqlx::query!(
+        "SELECT id, target_value FROM bear_hat_access_grants
+         WHERE bear_id = $1 AND hat_id = $2 AND kind = 'network'
+           AND action_key = 'https' AND target_kind = 'host'
+           AND revoked_at IS NULL ORDER BY target_value",
+        bear_id.as_uuid(),
+        hat_id.as_uuid(),
+    )
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(|row| WebFetchHostGrant {
+        id: row.id,
+        host: row.target_value,
+    })
+    .collect();
+    Ok(WebFetchGrantSummary {
+        tool_grant_id,
+        hosts,
+    })
 }
 
 /// Only a current Bear admin can persist a positive grant. The membership and
