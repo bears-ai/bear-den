@@ -105,7 +105,7 @@
 </div>
 <div class="box">
   <h3>Editor workspace read permissions</h3>
-  <p class="form-hint">A grant here covers only the selected read-only file action in the exact editor workspace root. It can be reused by future conversations wearing this hat, including other Bear members. Den checks the current member, conversation owner, hat, and grant on each use; the connected editor must also keep the requested path inside its live workspace and apply local sensitive-file rules. It does not grant terminal commands, writes, credentials, web access, or a Job. A Job with its own approved armature may use the grant only where all its other restrictions allow it.</p>
+  <p class="form-hint">A grant here covers only the selected read-only file action in the exact editor workspace root. It can be reused by future conversations wearing this hat, including other Bear members. Den checks the current member, conversation owner, hat, and grant on each use; the connected editor must also keep the requested path inside its live workspace and apply local sensitive-file rules. It does not grant terminal commands, writes, credentials, web access, or a Job. Work sessions cannot use this permission today; future Job support would still require a separately authorized connected armature and bounded work surface.</p>
   {% if workspace_read_grants %}
   <ul>{% for grant in workspace_read_grants %}
     <li>{{ grant.title | e }} in <code>{{ grant.workspace_root | e }}</code>
@@ -122,7 +122,7 @@
     </select></label>
     <label>Exact editor workspace root <input name="workspace_root" placeholder="/workspace/project" required maxlength="2000" autocomplete="off"></label>
     <p class="form-hint">Use the absolute, normalized root reported by the connected editor. The saved permission applies only to the selected action in that root and does not override local filesystem policy. Do not include <code>..</code>, wildcards, a home-directory shortcut, or a trailing slash. An existing approval for a different root will not match.</p>
-    <label><input type="checkbox" name="confirm_future_job_audience" value="true" required> I understand this permission can be reused by every authorized member's future conversations wearing this hat and by eligible Jobs only if they have their own connected, bounded work surface.</label>
+    <label><input type="checkbox" name="confirm_future_job_audience" value="true" required> I understand every authorized member's future editor conversations wearing this hat can reuse it, and eligible Jobs may become readers only if Den later authorizes a separate connected, bounded Work armature.</label>
     <button type="submit" name="action" value="grant_workspace_read">Grant workspace read action</button>
   </form>
 </div>
