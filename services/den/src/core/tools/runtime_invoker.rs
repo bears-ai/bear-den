@@ -8,10 +8,14 @@ use den_core::tools::{
     context::DenToolInvocationContext,
     descriptor::builtin_den_tool_descriptor_for_provider_name,
 };
-use den_core::{ids::BearId, DenError, EffectivePolicy, TurnExecutionOrigin};
+use den_core::{
+    ids::{BearId, UserId},
+    DenError, EffectivePolicy, TurnExecutionOrigin,
+};
 use den_runtime::native_runtime::{RuntimeToolInvocation, RuntimeToolInvoker};
 use den_service::{
     bears::{db as bears_db, hats::memory_binding},
+    conversation::{persistence, viewer::ConversationViewer},
     DenState,
 };
 use sqlx::PgPool;
@@ -68,16 +72,45 @@ async fn require_current_tool_actor(
     context: &DenToolInvocationContext,
     origin: TurnExecutionOrigin,
 ) -> Result<(), DenError> {
-    if matches!(
+    if !matches!(
         origin,
         TurnExecutionOrigin::ChannelConversation
             | TurnExecutionOrigin::BrowserTaskSession
             | TurnExecutionOrigin::ArmatureConversation(_)
-    ) && !bears_db::user_may_use_bear(pool, context.user_id, context.bear_id).await?
-    {
+    ) {
+        return Ok(());
+    }
+    if !bears_db::user_may_use_bear(pool, context.user_id, context.bear_id).await? {
         return Err(DenError::Authorization(
             "Den tool actor is no longer a member of this Bear".into(),
         ));
+    }
+    let bear_id = BearId::new(context.bear_id);
+    match memory_binding::for_external_conversation(pool, bear_id, &context.conversation_id).await {
+        Ok(memory_binding::ResolvedMemoryBinding::Bound(_)) => {
+            let conversation = persistence::get_conversation_for_external_id(
+                pool,
+                context.bear_id,
+                &context.conversation_id,
+            )
+            .await?
+            .ok_or_else(|| DenError::Authorization("Den tool conversation disappeared".into()))?;
+            let viewer = ConversationViewer::resolve(pool, bear_id, UserId::new(context.user_id))
+                .await?
+                .ok_or_else(|| DenError::Authorization("Den tool actor lost Bear access".into()))?;
+            if !viewer.may_read_own_source(pool, conversation.id).await? {
+                return Err(DenError::Authorization(
+                    "Den tool actor does not own this active conversation".into(),
+                ));
+            }
+        }
+        Ok(memory_binding::ResolvedMemoryBinding::Legacy) => {}
+        Err(DenError::NotFound(_)) => {
+            // Preserve no-hat sessions without canonical conversation rows;
+            // configured Bears cannot use this legacy escape hatch.
+            memory_binding::legacy_only_without_hats(pool, bear_id).await?;
+        }
+        Err(error) => return Err(error),
     }
     Ok(())
 }

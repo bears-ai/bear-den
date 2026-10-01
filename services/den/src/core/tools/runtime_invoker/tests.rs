@@ -201,3 +201,85 @@ async fn ordinary_tool_actor_loses_access_immediately_after_membership_revocatio
     ));
     Ok(())
 }
+
+#[sqlx::test]
+async fn hat_bound_tool_source_requires_current_conversation_owner(
+    pool: PgPool,
+) -> Result<(), DenError> {
+    use den_core::ids::{BearId, UserId};
+    use den_service::{
+        bears::{
+            db::{create_bear, grant_membership, BearParams},
+            hats::{bindings::bind_conversation_hat, create_hat},
+        },
+        conversation::persistence::ensure_conversation_for_external_id,
+    };
+
+    let bear_id = create_bear(
+        &pool,
+        BearParams {
+            slug: "invoker-source-test",
+            name: "Invoker source test",
+            description: "test",
+            system_prompt: "test",
+            default_model: None,
+            tools_enabled: None,
+            context_profile: None,
+        },
+    )
+    .await?;
+    let owner = crate::core::user::db::create_user(
+        &pool,
+        "sourceowner@example.test",
+        "sourceowner",
+        "Source owner",
+        "test-hash",
+    )
+    .await?;
+    let other = crate::core::user::db::create_user(
+        &pool,
+        "sourceother@example.test",
+        "sourceother",
+        "Other member",
+        "test-hash",
+    )
+    .await?;
+    grant_membership(&pool, owner, bear_id, Some("admin")).await?;
+    grant_membership(&pool, other, bear_id, Some("member")).await?;
+    let hat = create_hat(
+        &pool,
+        BearId::new(bear_id),
+        UserId::new(owner),
+        "Review",
+        "Review sources",
+    )
+    .await?;
+    let conversation = ensure_conversation_for_external_id(
+        &pool,
+        bear_id,
+        Some(owner),
+        "source-owner-conv",
+        Some("source-owner-session"),
+        None,
+    )
+    .await?;
+    bind_conversation_hat(&pool, BearId::new(bear_id), conversation.id, hat.id).await?;
+
+    let origin = TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected);
+    let mut call = context(BearProfile::Pair);
+    call.bear_id = bear_id;
+    call.conversation_id = "source-owner-conv".into();
+    call.user_id = owner;
+    require_current_tool_actor(&pool, &call, origin).await?;
+    call.user_id = other;
+    assert!(matches!(
+        require_current_tool_actor(&pool, &call, origin).await,
+        Err(DenError::Authorization(_))
+    ));
+    call.conversation_id = "invented-conversation".into();
+    assert!(matches!(
+        require_current_tool_actor(&pool, &call, origin).await,
+        Err(DenError::Authorization(_))
+    ));
+    Ok(())
+}
