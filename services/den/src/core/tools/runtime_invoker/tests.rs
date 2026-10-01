@@ -76,15 +76,19 @@ fn direct_invoker_cannot_widen_a_pair_origin_with_a_curate_or_work_profile() {
     }
     let work_origin = TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Absent);
     let work = EffectivePolicy::compile_for_origin(work_origin, Governance::Interactive);
+    let mut work_context = context(BearProfile::Work);
+    work_context.work_run_id = Some(Uuid::new_v4());
     assert!(require_origin_policy_and_descriptor(
-        &context(BearProfile::Work),
+        &work_context,
         &work,
         work_origin,
         DEN_RUN_WRITE_RESULT
     )
     .is_ok());
+    let mut forged_work = work_context;
+    forged_work.profile = Some(BearProfile::Pair);
     assert!(require_origin_policy_and_descriptor(
-        &context(BearProfile::Pair),
+        &forged_work,
         &work,
         work_origin,
         DEN_RUN_WRITE_RESULT
@@ -109,4 +113,28 @@ fn direct_invoker_cannot_widen_a_pair_origin_with_a_curate_or_work_profile() {
         DEN_WEB_FETCH
     )
     .is_err());
+}
+
+#[test]
+fn direct_invoker_requires_work_run_binding_only_for_work_origin() {
+    let work_origin = TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Absent);
+    let work = EffectivePolicy::compile_for_origin(work_origin, Governance::Interactive);
+    assert!(matches!(
+        require_origin_policy_and_descriptor(
+            &context(BearProfile::Work),
+            &work,
+            work_origin,
+            DEN_RUN_WRITE_RESULT,
+        ),
+        Err(DenError::Authorization(_))
+    ));
+
+    let pair_origin = TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected);
+    let pair = EffectivePolicy::compile_for_origin(pair_origin, Governance::Interactive);
+    let mut forged = context(BearProfile::Pair);
+    forged.work_run_id = Some(Uuid::new_v4());
+    assert!(matches!(
+        require_origin_policy_and_descriptor(&forged, &pair, pair_origin, DEN_WEB_FETCH),
+        Err(DenError::Authorization(_))
+    ));
 }

@@ -42,6 +42,12 @@ fn require_origin_policy_and_descriptor(
             "Den tool context profile does not match the verified execution origin".into(),
         ));
     }
+    if matches!(origin, TurnExecutionOrigin::AuthorizedWorkRun(_)) != context.work_run_id.is_some()
+    {
+        return Err(DenError::Authorization(
+            "Den tool Work-run binding does not match the verified execution origin".into(),
+        ));
+    }
     let descriptor = builtin_den_tool_descriptor_for_provider_name(tool_name)
         .ok_or_else(|| DenError::NotFound(format!("unknown Den tool: {tool_name}")))?;
     if !descriptor.allows_origin(origin) {
