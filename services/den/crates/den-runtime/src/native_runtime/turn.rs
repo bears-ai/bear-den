@@ -1,4 +1,3 @@
-use den_core::config::Config;
 use den_core::tools::{
     arguments::DenToolChannelContext,
     capability_catalog::SessionCapabilityDescriptor,
@@ -6,6 +5,7 @@ use den_core::tools::{
     descriptor::builtin_den_tool_descriptor_for_provider_name,
     result_compaction::{compact_client_tool_result, ClientToolResultInput, ToolResultStatus},
 };
+use den_core::{config::Config, ids::BearId};
 use std::sync::{Arc, LazyLock};
 #[cfg(feature = "test-fixtures")]
 use std::{
@@ -13,6 +13,7 @@ use std::{
     sync::Mutex,
 };
 
+use den_docket::work_runs;
 use den_memory::MemoryStoreManager;
 use den_protocol::{
     ContinueTurnRequest, RoleRuntimeBinding, RuntimeContinuation, RuntimeConversationBackend,
@@ -22,6 +23,7 @@ use den_protocol::{
 };
 use den_service::{
     bears::{
+        hats::memory_binding,
         prompt_fragments::{render_turn_fragment, repository_prompt_fragment_registry},
         BearProfile,
     },
@@ -1563,13 +1565,6 @@ pub async fn start_native_turn_event_stream(
     Ok(stream)
 }
 
-pub async fn continue_native_profile_turn_event_stream(
-    request: TurnContinueRequest<'_>,
-    role: BearProfile,
-) -> Result<(RuntimeStreamContinuation, RuntimeEventStream), DenError> {
-    continue_native_client_turn_event_stream(request, role).await
-}
-
 fn tool_observation_from_call(
     call: &ChatToolCall,
     content: Option<&str>,
@@ -2033,12 +2028,33 @@ async fn record_web_fetch_url_approval(
     Ok(())
 }
 
+async fn require_continuation_binding(
+    pool: &PgPool,
+    bear_id: Uuid,
+    profile: BearProfile,
+    binding: &RoleRuntimeBinding,
+) -> Result<(), DenError> {
+    let expected_binding = den_service::bears::db::profile_binding_id(pool, bear_id, profile)
+        .await?
+        .ok_or_else(|| {
+            DenError::Authorization("runtime binding for this turn is unavailable".into())
+        })?;
+    if binding.binding_id != expected_binding {
+        return Err(DenError::Authorization(
+            "continuation binding does not match the originating turn".into(),
+        ));
+    }
+    Ok(())
+}
+
 async fn execute_approved_den_tool_for_session(
     request: &TurnContinueRequest<'_>,
     session: &AgentLoopSession,
     call: &ChatToolCall,
     profile: BearProfile,
 ) -> Result<ChatMessage, DenError> {
+    require_continuation_binding(request.sqlx_pool, session.bear_id, profile, request.binding)
+        .await?;
     if call_is_den_web_fetch(call) {
         record_web_fetch_url_approval(request.sqlx_pool, session.bear_id, session.user_id, call)
             .await?;
@@ -2130,7 +2146,6 @@ async fn execute_approved_den_tool_for_session(
 
 pub async fn continue_native_client_turn_event_stream(
     request: TurnContinueRequest<'_>,
-    profile: BearProfile,
 ) -> Result<(RuntimeStreamContinuation, RuntimeEventStream), DenError> {
     let client_session_id = request.client_session_id;
     let conversation_id = request.conversation.id.clone();
@@ -2142,6 +2157,20 @@ pub async fn continue_native_client_turn_event_stream(
     let prior_session = existing_session
         .clone()
         .ok_or_else(|| DenError::System("native agent loop session not found".to_string()))?;
+    let profile = prior_session.profile;
+    if profile == BearProfile::Work {
+        let run = work_runs::get_live_work_run_by_session(request.sqlx_pool, client_session_id)
+            .await?
+            .ok_or_else(|| {
+                DenError::Authorization("Work continuation has no live Job run".into())
+            })?;
+        memory_binding::for_work_run(
+            request.sqlx_pool,
+            BearId::new(prior_session.bear_id),
+            run.id,
+        )
+        .await?;
+    }
     tracing::debug!(
         event = "native_turn_continue",
         session_key = %session_key,
@@ -2431,6 +2460,47 @@ mod tests {
         resolve_agent_loop_control, AgentLoopControlResolutionInput, FreeformPolicy,
         PostMutationVerificationWindow, StrategyProfile, ToolCallBudgetLimits, TurnBudgetPolicy,
     };
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn continuation_binding_cannot_switch_a_work_turn_to_pair(pool: PgPool) {
+        let bear_id = den_service::bears::db::create_bear(
+            &pool,
+            den_service::bears::db::BearParams {
+                slug: "continuationbindingbear",
+                name: "Continuation binding Bear",
+                description: "",
+                system_prompt: "",
+                default_model: None,
+                tools_enabled: None,
+                context_profile: None,
+            },
+        )
+        .await
+        .unwrap();
+        den_service::bears::db::ensure_bear_profile_binding_rows(&pool, bear_id)
+            .await
+            .unwrap();
+        let pair = den_service::bears::db::profile_binding_id(&pool, bear_id, BearProfile::Pair)
+            .await
+            .unwrap()
+            .unwrap();
+        let work = den_service::bears::db::profile_binding_id(&pool, bear_id, BearProfile::Work)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_ne!(pair, work);
+        let binding = |binding_id: String| RoleRuntimeBinding {
+            binding_id,
+            compatibility_backend: Some("native".into()),
+        };
+        require_continuation_binding(&pool, bear_id, BearProfile::Work, &binding(work))
+            .await
+            .unwrap();
+        assert!(matches!(
+            require_continuation_binding(&pool, bear_id, BearProfile::Work, &binding(pair)).await,
+            Err(DenError::Authorization(_))
+        ));
+    }
 
     fn sample_budget_warning(message: &str) -> TurnBudgetWarning {
         sample_budget_warning_with_code("total_tool_budget_warning", message)
@@ -3171,8 +3241,8 @@ mod tests {
             overflow_compaction_recovered: false,
         });
 
-        let (_continuation, mut stream) = continue_native_client_turn_event_stream(
-            TurnContinueRequest {
+        let (_continuation, mut stream) =
+            continue_native_client_turn_event_stream(TurnContinueRequest {
                 sqlx_pool: &pool,
                 config: &config,
                 memory_stores: &stores,
@@ -3193,11 +3263,9 @@ mod tests {
                     content: "{}".to_string(),
                 },
                 stream_context: crate::turn_runner::default_tool_continue_stream_context(),
-            },
-            BearProfile::Pair,
-        )
-        .await
-        .expect("max-step continuation should return terminal stream");
+            })
+            .await
+            .expect("max-step continuation should return terminal stream");
 
         let event = stream
             .next()

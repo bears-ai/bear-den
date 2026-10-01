@@ -2129,6 +2129,26 @@ async fn session_open_preserves_sandbox_work_session_binding(pool: sqlx::PgPool)
         .expect("look up live Work run")
         .expect("session remains bound to live Work run after session.open");
     assert_eq!(live.id, work_run_id);
+    let binding = super::client::continuation_binding_id(&pool, bear_id, &session_id)
+        .await
+        .expect("Work continuation binding");
+    let work_binding =
+        den_service::bears::db::profile_binding_id(&pool, bear_id, BearProfile::Work)
+            .await
+            .unwrap()
+            .expect("Work runtime binding");
+    assert_eq!(binding, work_binding);
+    let unbound_session = format!("pair-{}", Uuid::new_v4().simple());
+    let pair_binding = super::client::continuation_binding_id(&pool, bear_id, &unbound_session)
+        .await
+        .expect("armature conversation continuation binding");
+    assert_eq!(
+        pair_binding,
+        den_service::bears::db::profile_binding_id(&pool, bear_id, BearProfile::Pair)
+            .await
+            .unwrap()
+            .expect("Pair runtime binding")
+    );
 }
 
 fn start_mock_openai_sse_server() -> String {

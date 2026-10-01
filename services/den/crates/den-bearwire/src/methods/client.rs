@@ -16,6 +16,7 @@ use bearwire_protocol::{
 };
 use den_core::{
     client_tools::{client_tool_policy_json_for_provider, ClientToolName},
+    ids::BearId,
     tools::{
         constants::DEN_WEB_FETCH,
         result_compaction::{
@@ -52,7 +53,7 @@ use den_service::{
         DocketArtifactRole, DocketArtifactTargetKind, FinalizeGitCommitArtifactInput,
         GitObjectFormat, ReserveArtifactInput,
     },
-    bears::{db as bears_db, BearProfile},
+    bears::{db as bears_db, hats::memory_binding, BearProfile},
     client_sessions, DenState,
 };
 
@@ -588,6 +589,29 @@ async fn record_web_fetch_approval_from_permission(
     Ok(())
 }
 
+pub(super) async fn continuation_binding_id(
+    pool: &sqlx::PgPool,
+    bear_id: Uuid,
+    session_id: &str,
+) -> Result<String, CustomError> {
+    let profile =
+        match den_docket::work_runs::get_live_work_run_by_session(pool, session_id).await? {
+            Some(run) => {
+                memory_binding::for_work_run(pool, BearId::new(bear_id), run.id).await?;
+                BearProfile::Work
+            }
+            None => BearProfile::Pair,
+        };
+    bears_db::profile_binding_id(pool, bear_id, profile)
+        .await?
+        .ok_or_else(|| {
+            CustomError::System(format!(
+                "Bear {} runtime binding not configured",
+                profile.as_str()
+            ))
+        })
+}
+
 fn continuation_unavailable_response(
     run: &turn_runs::TurnRunRow,
     session_id: &str,
@@ -710,8 +734,8 @@ pub(crate) fn spawn_continuation_task(
                     () = tokio::time::sleep(pause) => {}
                 }
             }
-            let continuation_future = continue_native_client_turn_event_stream(
-                TurnContinueRequest {
+            let continuation_future =
+                continue_native_client_turn_event_stream(TurnContinueRequest {
                     sqlx_pool: &pool,
                     config: config.as_ref(),
                     memory_stores: &memory_stores,
@@ -724,9 +748,7 @@ pub(crate) fn spawn_continuation_task(
                     binding: &binding,
                     continuation: continuation.clone(),
                     stream_context: default_tool_continue_stream_context(),
-                },
-                BearProfile::Pair,
-            );
+                });
             tokio::pin!(continuation_future);
             let result = tokio::select! {
                 changed = cancel_rx.changed() => {
@@ -1400,11 +1422,7 @@ pub(crate) async fn client_tool_result_result(
             obligation.id,
         ));
     }
-    let binding_id = bears_db::profile_binding_id(&state.sqlx_pool, bear.id, BearProfile::Pair)
-        .await?
-        .ok_or_else(|| {
-            CustomError::System("Bear pair profile binding not configured".to_string())
-        })?;
+    let binding_id = continuation_binding_id(&state.sqlx_pool, bear.id, &session_id).await?;
     let attempt_token = attempt_token.ok_or_else(|| {
         CustomError::ValidationError("client.tool.result requires attempt_token".to_string())
     })?;
@@ -1667,11 +1685,7 @@ pub(crate) async fn client_permission_result_result(
             obligation.id,
         ));
     }
-    let binding_id = bears_db::profile_binding_id(&state.sqlx_pool, bear.id, BearProfile::Pair)
-        .await?
-        .ok_or_else(|| {
-            CustomError::System("Bear pair profile binding not configured".to_string())
-        })?;
+    let binding_id = continuation_binding_id(&state.sqlx_pool, bear.id, &session_id).await?;
     if normalized_decision == "granted" {
         // Validate and persist external approval before claiming the one-shot model
         // continuation. A failure after that claim would leave the run in
