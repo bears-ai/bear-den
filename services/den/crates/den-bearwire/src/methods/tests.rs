@@ -99,7 +99,7 @@ async fn workspace_tool_check_requires_owned_hat_session_and_exact_live_grant(po
         state.clone(),
         &token,
         "session.open",
-        json!({"bear_slug": bear_slug, "session_id": session_id, "client": "zed"}),
+        json!({"bear_slug": bear_slug, "session_id": session_id, "client": "zed", "cwd": "/workspace/project"}),
     )
     .await;
     assert_eq!(opened["result"]["ok"], true, "{opened}");
@@ -140,6 +140,20 @@ async fn workspace_tool_check_requires_owned_hat_session_and_exact_live_grant(po
     )
     .await;
     assert_eq!(allowed["result"]["allowed"], true, "{allowed}");
+    let unreported_root = HatAccessGrant::ReadOnlyToolInWorkspace(
+        ReadOnlyWorkspaceAction::from_provider_name("fs_read_text_file").unwrap(),
+        WorkspaceRoot::parse("/workspace/other").unwrap(),
+    );
+    access::grant(
+        &pool,
+        bear,
+        hat.id,
+        UserId::new(admin),
+        &unreported_root,
+        true,
+    )
+    .await
+    .unwrap();
     let other_root = check(&token, &session_id, "fs_read_text_file", "/workspace/other").await;
     assert_eq!(other_root["result"]["allowed"], false, "{other_root}");
     let write = check(&token, &session_id, "fs_edit_file", "/workspace/project").await;
@@ -160,7 +174,7 @@ async fn workspace_tool_check_requires_owned_hat_session_and_exact_live_grant(po
         &member_token,
         "session.open",
         json!({
-            "bear_slug": bear_slug, "session_id": member_session, "client": "zed",
+            "bear_slug": bear_slug, "session_id": member_session, "client": "zed", "cwd": "/workspace/project",
         }),
     )
     .await;
@@ -182,7 +196,7 @@ async fn workspace_tool_check_requires_owned_hat_session_and_exact_live_grant(po
         &token,
         "session.open",
         json!({
-            "bear_slug": bear_slug, "session_id": other_session, "client": "zed",
+            "bear_slug": bear_slug, "session_id": other_session, "client": "zed", "cwd": "/workspace/project",
         }),
     )
     .await;

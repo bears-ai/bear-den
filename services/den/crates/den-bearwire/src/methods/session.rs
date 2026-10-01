@@ -748,9 +748,19 @@ pub(crate) async fn hat_workspace_tool_check_result(
         authorize_existing_conversation(&viewer, &state.sqlx_pool, bear.id, conversation_id)
             .await?
             .ok_or_else(|| CustomError::NotFound("conversation not found".into()))?;
+    let workspace_root = WorkspaceRoot::parse(&request.workspace_root)?;
+    if !session
+        .trusted_workspace_context()
+        .roots
+        .iter()
+        .filter_map(|root| WorkspaceRoot::parse(root).ok())
+        .any(|root| root == workspace_root)
+    {
+        return Ok(json!({ "allowed": false }));
+    }
     let grant = HatAccessGrant::ReadOnlyToolInWorkspace(
         ReadOnlyWorkspaceAction::from_provider_name(&request.tool_name)?,
-        WorkspaceRoot::parse(&request.workspace_root)?,
+        workspace_root,
     );
     let allowed = hats::access::has_grant_for_own_conversation(
         &state.sqlx_pool,
