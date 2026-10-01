@@ -206,13 +206,18 @@ pub(crate) async fn persist_work_git_commit_artifact(
     else {
         return;
     };
+    let owner_profile = if work_run.is_some() {
+        BearProfile::Work
+    } else {
+        BearProfile::Pair
+    };
     let artifact = async {
         let artifact = artifacts::reserve_artifact(
             &state.sqlx_pool,
             ReserveArtifactInput {
                 bear_id,
                 created_by_user_id: Some(user_id),
-                owner_profile: BearProfile::Pair,
+                owner_profile,
                 kind: "git_commit".to_string(),
                 title: result.get("subject").and_then(Value::as_str).map(str::to_string),
                 summary: Some(format!("Git commit {commit_oid}")),

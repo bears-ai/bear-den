@@ -2129,6 +2129,44 @@ async fn session_open_preserves_sandbox_work_session_binding(pool: sqlx::PgPool)
         .expect("look up live Work run")
         .expect("session remains bound to live Work run after session.open");
     assert_eq!(live.id, work_run_id);
+    let task_id = live
+        .executing_task_id
+        .expect("checkout selects a Work task");
+    super::client::persist_work_git_commit_artifact(
+        &test_state(pool.clone()),
+        bear_id,
+        user_id,
+        &session_id,
+        Some("git_commit"),
+        den_core::tools::result_compaction::ToolResultStatus::Ok,
+        &json!({
+            "ok": true,
+            "repo_path": "/workspace/project",
+            "sha": "0123456789abcdef0123456789abcdef01234567",
+        }),
+    )
+    .await;
+    let artifacts = artifacts::list_docket_artifact_citations(
+        &pool,
+        bear_id,
+        DocketArtifactTargetKind::Task,
+        task_id,
+        ArtifactAccessContext {
+            bear_id,
+            user_id: Some(user_id),
+            profile: BearProfile::Work,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(artifacts.len(), 1);
+    assert_eq!(
+        den_service::artifacts::get_artifact_metadata(&pool, bear_id, &artifacts[0].artifact_ref)
+            .await
+            .unwrap()
+            .owner_profile,
+        BearProfile::Work
+    );
     let binding = super::client::continuation_binding_id(&pool, bear_id, &session_id)
         .await
         .expect("Work continuation binding");
@@ -5057,6 +5095,13 @@ async fn focused_pair_git_commit_creates_candidate_task_artifact(pool: sqlx::PgP
     .await
     .expect("list task artifacts");
     assert_eq!(citations.len(), 1);
+    assert_eq!(
+        artifacts::get_artifact_metadata(&pool, bear_id, &citations[0].artifact_ref)
+            .await
+            .unwrap()
+            .owner_profile,
+        BearProfile::Pair
+    );
     assert_eq!(citations[0].kind, "git_commit");
     assert_eq!(
         citations[0].summary.as_deref(),
