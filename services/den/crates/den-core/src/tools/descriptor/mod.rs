@@ -1,18 +1,31 @@
+mod audience;
+pub use audience::ToolAudience;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-const ALL_PROFILES: &[&str] = &["chat", "pair", "curate", "work", "watch"];
-const TASK_LIST_READ_PROFILES: &[&str] = &["chat", "pair", "curate", "work"];
-const TASK_LIST_UPDATE_PROFILES: &[&str] = &["chat", "pair", "work"];
-const CHAT_AND_PAIR_PROFILES: &[&str] = &["chat", "pair"];
-const PAIR_PROFILES: &[&str] = &["pair"];
-const MEMORY_READ_PROFILES: &[&str] = &["chat", "pair", "curate", "work", "watch"];
-const ENTITY_RELATION_WRITE_PROFILES: &[&str] = &["chat", "pair", "work", "watch"];
-const CURATE_PROFILES: &[&str] = &["curate"];
-const WATCH_PROFILES: &[&str] = &["watch"];
-const WORK_PROFILES: &[&str] = &["work"];
+use crate::{BearProfile, TurnExecutionOrigin};
+use ToolAudience::{
+    ArmatureConversation as Armature, AuthorizedWorkRun as Work, BrowserTaskSession as BrowserTask,
+    ChannelConversation as Channel, InboundObservation as Observation,
+    InternalCuration as Curation,
+};
 
-use crate::BearProfile;
+const ALL_AUDIENCES: &[ToolAudience] =
+    &[Channel, Armature, BrowserTask, Curation, Work, Observation];
+const TASK_LIST_READ_AUDIENCES: &[ToolAudience] = &[Channel, Armature, BrowserTask, Curation, Work];
+const TASK_LIST_UPDATE_AUDIENCES: &[ToolAudience] = &[Channel, Armature, BrowserTask, Work];
+const CHANNEL_ARMATURE_AUDIENCES: &[ToolAudience] = &[Channel, Armature, BrowserTask];
+const ARMATURE_AUDIENCES: &[ToolAudience] = &[Armature, BrowserTask];
+const ARMATURE_WORK_AUDIENCES: &[ToolAudience] = &[Armature, BrowserTask, Work];
+const CHANNEL_ARMATURE_CURATION_AUDIENCES: &[ToolAudience] =
+    &[Channel, Armature, BrowserTask, Curation];
+const MEMORY_READ_AUDIENCES: &[ToolAudience] = ALL_AUDIENCES;
+const ENTITY_RELATION_WRITE_AUDIENCES: &[ToolAudience] =
+    &[Channel, Armature, BrowserTask, Work, Observation];
+const CURATION_AUDIENCES: &[ToolAudience] = &[Curation];
+const OBSERVATION_AUDIENCES: &[ToolAudience] = &[Observation];
+const WORK_AUDIENCES: &[ToolAudience] = &[Work];
 
 use crate::tools::{
     constants::{
@@ -100,7 +113,9 @@ pub struct DenToolDescriptor {
     pub content_class: Option<&'static str>,
     pub availability: &'static str,
     pub permissions: &'static [&'static str],
-    pub allowed_roles: &'static [&'static str],
+    pub allowed_origins: &'static [ToolAudience],
+    /// Compatibility projection only. Never use for execution authority.
+    pub allowed_roles: Vec<&'static str>,
     pub approval_policy: &'static str,
     pub display: serde_json::Value,
     pub input_schema: Value,
@@ -226,7 +241,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Return Den's trusted profile for the current bear.",
             "bear",
             &["bear.read"],
-            ALL_PROFILES,
+            ALL_AUDIENCES,
             empty_schema(),
         ),
         descriptor(
@@ -235,7 +250,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Return Den's trusted profile for the current user in this interaction.",
             "session",
             &["user.current.read"],
-            ALL_PROFILES,
+            ALL_AUDIENCES,
             empty_schema(),
         ),
         descriptor(
@@ -244,7 +259,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "List users who have access to the current bear, with policy redaction.",
             "bear",
             &["bear.members.read"],
-            ALL_PROFILES,
+            ALL_AUDIENCES,
             empty_schema(),
         ),
         descriptor(
@@ -253,7 +268,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "List Den-managed tools available to the current bear/session.",
             "session",
             &["capabilities.read"],
-            ALL_PROFILES,
+            ALL_AUDIENCES,
             empty_schema(),
         ),
         descriptor(
@@ -262,7 +277,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Search the discoverable Capability Catalog using lexical query text, taxonomy tag, and kind filters. Returns compact results with locality, surface, authority, lifetime, risk, and execution-option metadata. Discovery does not grant invocation authority.",
             "session",
             &["capabilities.read"],
-            ALL_PROFILES,
+            ALL_AUDIENCES,
             json!({"type":"object","properties":{"query":{"type":"string"},"tag":{"type":"string"},"kind":{"type":"string","enum":["tool","skill","policy","memory","surface","executor","connector","example","bundle"]},"limit":{"type":"integer","minimum":1,"maximum":50}},"additionalProperties":false}),
         ),
         descriptor(
@@ -271,7 +286,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Describe one Capability Catalog entry by ref, canonical tool name, or provider tool name, including locality, surface, authority, lifetime, risk, execution options, and invocation references where available.",
             "session",
             &["capabilities.read"],
-            ALL_PROFILES,
+            ALL_AUDIENCES,
             json!({"type":"object","properties":{"ref":{"type":"string","minLength":1}},"required":["ref"],"additionalProperties":false}),
         ),
         descriptor(
@@ -280,7 +295,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Return trusted Den channel and session context for this interaction.",
             "session",
             &["channel.context.read"],
-            ALL_PROFILES,
+            ALL_AUDIENCES,
             empty_schema(),
         ),
         descriptor(
@@ -289,7 +304,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Explain current user and bear policy for this interaction.",
             "session",
             &["policy.read"],
-            ALL_PROFILES,
+            ALL_AUDIENCES,
             empty_schema(),
         ),
         descriptor(
@@ -298,7 +313,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Set the title of the current conversation. In some clients this may appear as the current chat or thread title. Does not change the conversation id, switch conversations, or write Bear memory.",
             "conversation",
             &["conversation.title.write"],
-            CHAT_AND_PAIR_PROFILES,
+            CHANNEL_ARMATURE_AUDIENCES,
             set_conversation_title_schema(),
         ),
         descriptor(
@@ -307,7 +322,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Fetch an HTTP(S) URL through Den with SSRF guards and return a bounded text excerpt.",
             "web",
             &["web.fetch"],
-            PAIR_PROFILES,
+            ARMATURE_AUDIENCES,
             json!({"type":"object","properties":{"url":{"type":"string","description":"HTTP or HTTPS URL to fetch."},"max_chars":{"type":"integer","minimum":1,"maximum":20000,"description":"Maximum characters of extracted text to return. Defaults to 8000."}},"required":["url"],"additionalProperties":false}),
         ),
         descriptor(
@@ -316,7 +331,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Search the web through a configured Den search provider. Returns a clear configuration error when no provider is configured.",
             "web",
             &["web.search"],
-            PAIR_PROFILES,
+            ARMATURE_AUDIENCES,
             json!({"type":"object","properties":{"query":{"type":"string"},"max_results":{"type":"integer","minimum":1,"maximum":10}},"required":["query"],"additionalProperties":false}),
         ),
         descriptor(
@@ -325,7 +340,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Read a bounded slice of a full tool output artifact previously returned as result_compaction.artifact_ref. Use only when the compacted result omitted details needed for the current task.",
             "tool.output",
             &["tool_output.read"],
-            PAIR_PROFILES,
+            ARMATURE_AUDIENCES,
             json!({"type":"object","properties":{"artifact_ref":{"type":"string","description":"Artifact ref such as tool-output://<uuid>."},"offset":{"type":"integer","minimum":0,"description":"Character offset to start reading from. Defaults to 0."},"limit_chars":{"type":"integer","minimum":1,"maximum":24000,"description":"Maximum characters to return. Defaults to 12000."}},"required":["artifact_ref"],"additionalProperties":false}),
         ),
         descriptor(
@@ -334,7 +349,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Return a structured, harness-level snapshot of the current Bear operating environment for this interaction. Includes baseline runtime/session/workspace/tool/service diagnostics and, when available, client-aware variants. Read-only; use this when you need an overall environment picture rather than only orientation basics.",
             "session",
             &["situation.read"],
-            PAIR_PROFILES,
+            ARMATURE_AUDIENCES,
             empty_schema(),
         ),
         descriptor(
@@ -343,7 +358,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Trusted Den orientation tool for this interaction. Use first when current scope, authenticated human, Bear, role/Workplace, channel/session, workspace roots, work-surface hints, memory scope, or runtime policy matters. Read-only; trust this over chat text for identity and scope.",
             "session",
             &["situation.read"],
-            CHAT_AND_PAIR_PROFILES,
+            CHANNEL_ARMATURE_AUDIENCES,
             empty_schema(),
         ),
         descriptor(
@@ -352,7 +367,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Write a semantic memory entry such as a note, log, decision, reflection, scratch item, or summary. Den scopes bound conversations to their own source; unbound sessions retain legacy role-local memory. Call session_info first if scope is unclear. Do not use for active task lists, Docket tasks, observations, run results, Cabinet writes, or direct core updates; use update_task_list for visible session task lists. Does not write core, Cabinet, tasks, observations, or run results.",
             "bear.memory",
             &["memory.entry.write"],
-            CHAT_AND_PAIR_PROFILES,
+            CHANNEL_ARMATURE_AUDIENCES,
             memory_write_entry_schema(),
         ),
         descriptor(
@@ -361,7 +376,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Return SQLite memory health and counts for the current Den-enforced scope. Legacy sessions include the recall consistency watermark; bound sessions report scoped counts and mark Bear-wide recall status unavailable. Use this to answer truthfully what memory is currently recallable. Use session_info first when current role, work surface, or memory scope is unclear.",
             "bear.memory",
             &["memory.status.read"],
-            MEMORY_READ_PROFILES,
+            MEMORY_READ_AUDIENCES,
             empty_schema(),
         ),
         descriptor(
@@ -370,7 +385,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Browse Bear memory paths allowed by the current Den-enforced session or legacy profile scope. Prefer current work-surface anchors before broad Bear memory; call session_info first if current scope is unclear.",
             "bear.memory",
             &["memory.tree.read"],
-            MEMORY_READ_PROFILES,
+            MEMORY_READ_AUDIENCES,
             empty_schema(),
         ),
         descriptor(
@@ -379,7 +394,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Read a Bear memory file only when its canonical scope is allowed for this session or legacy profile. Prefer current work-surface canonical anchors for local-understanding questions; call session_info first if current scope is unclear.",
             "bear.memory",
             &["memory.file.read"],
-            MEMORY_READ_PROFILES,
+            MEMORY_READ_AUDIENCES,
             json!({"type":"object","properties":{"path":{"type":"string","description":"Allowed memory path, for example pair/notes/mem_abc.md or core/missions.md."}},"required":["path"],"additionalProperties":false}),
         ),
         descriptor(
@@ -388,7 +403,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Search Bear memory entries allowed for this session or legacy profile. For local project/repo/service questions, orient to the current work surface with session_info and memory_orient_work_surface before broad search.",
             "bear.memory",
             &["memory.search"],
-            MEMORY_READ_PROFILES,
+            MEMORY_READ_AUDIENCES,
             json!({"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":50}},"required":["query"],"additionalProperties":false}),
         ),
         descriptor(
@@ -397,7 +412,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "List Bear-local entities known to memory, optionally filtered by entity type. Use after session_info when you need stable people, missions, domains, work surfaces, connections, or artifacts referenced by Bear memory.",
             "bear.memory",
             &["entity.read"],
-            MEMORY_READ_PROFILES,
+            MEMORY_READ_AUDIENCES,
             entity_browse_schema(),
         ),
         descriptor(
@@ -406,7 +421,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Read a Bear-local entity by id, following merge pointers to the live entity and optionally including handles and memory relations. Use entity ids returned by entity_browse, memory_search, or session/work-surface context.",
             "bear.memory",
             &["entity.read"],
-            MEMORY_READ_PROFILES,
+            MEMORY_READ_AUDIENCES,
             entity_resolve_schema(),
         ),
         descriptor(
@@ -415,7 +430,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Add a descriptive relation from a memory record to a Bear-local entity. Use this to mark a record as about a person, mission, domain, work surface, connection, or artifact. This tool only writes descriptive relations (`subject`, `source`, `participant`, `applies_when`) and cannot write access rules such as `audience` or `confined_to`.",
             "bear.memory",
             &["entity.relation.write"],
-            ENTITY_RELATION_WRITE_PROFILES,
+            ENTITY_RELATION_WRITE_AUDIENCES,
             entity_link_memory_schema(),
         ),
         descriptor(
@@ -424,7 +439,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Curate-only identity repair: merge a duplicate or mistaken entity into a survivor. The loser is not deleted; it forwards to the survivor and active handles are re-homed.",
             "bear.memory",
             &["entity.governance.write"],
-            CURATE_PROFILES,
+            CURATION_AUDIENCES,
             entity_merge_schema(),
         ),
         descriptor(
@@ -433,7 +448,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Curate-only identity repair: create a new entity and move selected handles to it after an incorrect merge or over-broad identity grouping.",
             "bear.memory",
             &["entity.governance.write"],
-            CURATE_PROFILES,
+            CURATION_AUDIENCES,
             entity_split_schema(),
         ),
         descriptor(
@@ -442,7 +457,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Curate-only visibility governance: add an access-bearing relation from a memory record to a resolved entity. Supports `audience` and `confined_to`; these relations are enforced by the memory access gate.",
             "bear.memory",
             &["entity.access_rule.write"],
-            CURATE_PROFILES,
+            CURATION_AUDIENCES,
             entity_write_access_rule_schema(),
         ),
         descriptor(
@@ -451,7 +466,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Curate-only anchor maintenance: write an explicit canonical memory record for a resolved, anchor-eligible entity at its generated anchor path. This is the v1 source for projected entity anchors.",
             "bear.memory",
             &["entity.anchor.write", "memory.core.write"],
-            CURATE_PROFILES,
+            CURATION_AUDIENCES,
             entity_write_anchor_schema(),
         ),
         descriptor(
@@ -460,7 +475,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Return a read-only orientation briefing for the likely current work surface using trusted session hints from session_info and canonical memory anchor paths when available. Use before broad memory search for local project/repo/service questions.",
             "bear.memory",
             &["memory.tree.read", "memory.file.read"],
-            MEMORY_READ_PROFILES,
+            MEMORY_READ_AUDIENCES,
             empty_schema(),
         ),
         descriptor(
@@ -469,7 +484,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Record the user's explicit selection of an assigned managed work surface for this Pair session. Call only after the user has chosen; this does not create or dispatch a work job.",
             "work",
             &["work_surface.confirm"],
-            PAIR_PROFILES,
+            ARMATURE_AUDIENCES,
             json!({"type":"object","properties":{"work_surface_id":{"type":"string","format":"uuid","description":"Managed work-surface ID selected explicitly by the user."}},"required":["work_surface_id"],"additionalProperties":false}),
         ),
         descriptor(
@@ -478,7 +493,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Create a minimal work-surface scaffold in Bear memory and register it in the work-surface index. Mutates memory; call session_info and memory_orient_work_surface first unless the user explicitly names the work surface.",
             "bear.memory",
             &["memory.write", "memory.core.write"],
-            PAIR_PROFILES,
+            ARMATURE_AUDIENCES,
             json!({"type":"object","properties":{"work_surface_slug":{"type":"string","minLength":1,"maxLength":80},"work_surface_name":{"type":"string","minLength":1,"maxLength":200},"overview":{"type":"string","minLength":1,"maxLength":20000},"glossary":{"type":"string","maxLength":20000},"current_understanding":{"type":"string","maxLength":20000}},"required":["work_surface_slug", "work_surface_name", "overview"],"additionalProperties":false}),
         ),
         descriptor(
@@ -487,7 +502,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Request Reflection/curate review of role-local memory without writing shared memory directly. Use for role/Workplace-local material that may deserve broader Bear-global review; call session_info first if scope/provenance is unclear.",
             "bear.memory",
             &["memory.review.request"],
-            PAIR_PROFILES,
+            ARMATURE_AUDIENCES,
             memory_request_review_schema(),
         ),
         descriptor(
@@ -496,7 +511,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Create or replace editable runtime prompt memory. Bound sessions may change only blocks for their own client session; unbound sessions retain the legacy profile policy. This is not semantic memory for the Bear.",
             "bear.memory",
             &["memory.entry.write"],
-            PAIR_PROFILES,
+            ARMATURE_AUDIENCES,
             prompt_memory_upsert_schema(),
         ),
         descriptor(
@@ -505,7 +520,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "List Den-owned prompt blocks allowed in the current session; bound sessions see Bear-wide and their own client-session blocks, not other profile or surface blocks.",
             "bear.memory",
             &["memory.status.read"],
-            PAIR_PROFILES,
+            ARMATURE_AUDIENCES,
             json!({"type":"object","properties":{"include_archived":{"type":"boolean"},"scope":{"type":"string","enum":["bear_wide","profile_local","work_surface","session"]},"block_type":{"type":"string","enum":["profile_guidance","work_surface_context","session_focus","user_instruction"]},"work_surface":{"type":"string","maxLength":500},"session_id":{"type":"string","maxLength":200}},"additionalProperties":false}),
         ),
         descriptor(
@@ -514,7 +529,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Update an existing prompt block only within the current Bear/profile; bound sessions may patch only their own client-session blocks.",
             "bear.memory",
             &["memory.entry.write"],
-            PAIR_PROFILES,
+            ARMATURE_AUDIENCES,
             prompt_memory_patch_schema(),
         ),
         descriptor(
@@ -523,7 +538,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "List memory review proposals for this Bear.",
             "bear.memory",
             &["memory.proposal.read"],
-            CURATE_PROFILES,
+            CURATION_AUDIENCES,
             json!({"type":"object","properties":{"status":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":100}},"additionalProperties":false}),
         ),
         descriptor(
@@ -532,7 +547,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Read one memory review proposal with source pointers and status.",
             "bear.memory",
             &["memory.proposal.read"],
-            CURATE_PROFILES,
+            CURATION_AUDIENCES,
             json!({"type":"object","properties":{"proposal_id":{"type":"string","format":"uuid"}},"required":["proposal_id"],"additionalProperties":false}),
         ),
         descriptor(
@@ -541,7 +556,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Resolve a memory review proposal without applying shared-memory writes.",
             "bear.memory",
             &["memory.proposal.resolve"],
-            CURATE_PROFILES,
+            CURATION_AUDIENCES,
             json!({"type":"object","properties":{"proposal_id":{"type":"string","format":"uuid"},"status":{"enum":["rejected","retained_local","deferred","superseded","needs_human_review"]},"review_notes":{"type":"string"},"decision_summary":{"type":"string"}},"required":["proposal_id","status"],"additionalProperties":false}),
         ),
 
@@ -551,7 +566,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Curate-only lifecycle marker for existing memory records: stale, superseded, archived, archive-candidate, or active. Does not promote or rewrite content.",
             "bear.memory",
             &["memory.lifecycle.write"],
-            CURATE_PROFILES,
+            CURATION_AUDIENCES,
             json!({"type":"object","properties":{"memory_id":{"type":"string","minLength":1,"maxLength":200},"status":{"type":"string","enum":["active","stale","superseded","archived","archive-candidate"]},"reason":{"type":"string","maxLength":1000}},"required":["memory_id","status"],"additionalProperties":false}),
         ),
         descriptor(
@@ -560,8 +575,8 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Capture a durable skill proposal for curate review without installing it directly.",
             "bear.skills",
             &["skill.proposal.write"],
-            ALL_PROFILES,
-            json!({"type":"object","properties":{"skill_name":{"type":"string"},"skill_version":{"type":"string"},"rationale":{"type":"string"},"proposed_content":{"type":"string"},"desired_roles":{"type":"array","items":{"enum":ALL_PROFILES}},"provenance":{"type":"object"}},"required":["skill_name","rationale","proposed_content"],"additionalProperties":false}),
+            ALL_AUDIENCES,
+            json!({"type":"object","properties":{"skill_name":{"type":"string"},"skill_version":{"type":"string"},"rationale":{"type":"string"},"proposed_content":{"type":"string"},"desired_roles":{"type":"array","items":{"enum":ALL_AUDIENCES}},"provenance":{"type":"object"}},"required":["skill_name","rationale","proposed_content"],"additionalProperties":false}),
         ),
         descriptor(
             DEN_SKILL_APPROVE_PROPOSAL,
@@ -569,8 +584,8 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Approve a pending skill proposal, update the manifest, and queue reconciliation for affected roles.",
             "bear.skills",
             &["skill.proposal.approve"],
-            CURATE_PROFILES,
-            json!({"type":"object","properties":{"proposal_id":{"type":"string","format":"uuid"},"skill_name":{"type":"string"},"skill_version":{"type":"string"},"applies_to_profiles":{"type":"array","items":{"enum":ALL_PROFILES},"minItems":1},"review_notes":{"type":"string"}},"required":["proposal_id","applies_to_profiles"],"additionalProperties":false}),
+            CURATION_AUDIENCES,
+            json!({"type":"object","properties":{"proposal_id":{"type":"string","format":"uuid"},"skill_name":{"type":"string"},"skill_version":{"type":"string"},"applies_to_profiles":{"type":"array","items":{"enum":ALL_AUDIENCES},"minItems":1},"review_notes":{"type":"string"}},"required":["proposal_id","applies_to_profiles"],"additionalProperties":false}),
         ),
         descriptor(
             DEN_SKILL_REJECT_PROPOSAL,
@@ -578,7 +593,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Reject a pending skill proposal with reviewer metadata and a rejection reason.",
             "bear.skills",
             &["skill.proposal.reject"],
-            CURATE_PROFILES,
+            CURATION_AUDIENCES,
             json!({"type":"object","properties":{"proposal_id":{"type":"string","format":"uuid"},"rejection_reason":{"type":"string"},"review_notes":{"type":"string"}},"required":["proposal_id","rejection_reason"],"additionalProperties":false}),
         ),
         descriptor(
@@ -587,8 +602,8 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "List visible planning and task-list context for the current Bear/conversation, including checked-out Docket task-list projections, submitted plan-mode gates, and saved plan artifacts where available. Docket-backed task lists are user-visible, durable/resumable plans, checklists, next steps, and roadmap slices for work jobs or the current Pair task tree. Call session_info first if current conversation/session/work-surface scope is unclear.",
             "bear.activity",
             &["task_list.read"],
-            TASK_LIST_READ_PROFILES,
-            json!({"type":"object","properties":{"status":{"type":"array","items":{"enum":["active","blocked","completed","cancelled","archived"]}},"owner_profile":{"enum":ALL_PROFILES},"include_archived":{"type":"boolean"},"include_completed":{"type":"boolean"},"include_plan_mode":{"type":"boolean"},"include_artifacts":{"type":"boolean"}},"additionalProperties":false}),
+            TASK_LIST_READ_AUDIENCES,
+            json!({"type":"object","properties":{"status":{"type":"array","items":{"enum":["active","blocked","completed","cancelled","archived"]}},"owner_profile":{"enum":ALL_AUDIENCES},"include_archived":{"type":"boolean"},"include_completed":{"type":"boolean"},"include_plan_mode":{"type":"boolean"},"include_artifacts":{"type":"boolean"}},"additionalProperties":false}),
         ),
         descriptor(
             DEN_TASK_LISTS_GET_STATUS,
@@ -596,7 +611,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Return the active Docket-backed task-list projection for this conversation/session when one exists. Use to recover focus before continuing, syncing, or handing off task-list work; call session_info first if conversation or session scope is unclear.",
             "bear.activity",
             &["task_list.read"],
-            TASK_LIST_READ_PROFILES,
+            TASK_LIST_READ_AUDIENCES,
             json!({"type":"object","properties":{},"additionalProperties":false}),
         ),
         descriptor(
@@ -605,7 +620,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Activate a reviewed Pair session task list by selecting its actionable task as the current Pair task. This transitions the session projection from planned to active and authorizes execution; it does not start a background job or alter task definition/status. Use durable Docket task tools for task definition edits and terminal outcomes. For a distinct lifecycle, managed work surface, commit policy, or autonomous execution, create a Docket Job instead.",
             "bear.activity",
             &["task_list.write"],
-            TASK_LIST_UPDATE_PROFILES,
+            TASK_LIST_UPDATE_AUDIENCES,
             json!({"type":"object","properties":{"task_id":{"type":"string","format":"uuid","description":"Actionable task anchored to the current Pair session to select and activate."}},"required":["task_id"],"additionalProperties":false}),
         ),
         descriptor(
@@ -614,7 +629,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Request review, promotion, or sync of items from the current task list into durable Docket work. The runtime derives the current task list and its metadata from this session; provide only the desired outcome and, optionally, a subset of item IDs.",
             "bear.activity",
             &["task_list.handoff.request"],
-            CHAT_AND_PAIR_PROFILES,
+            CHANNEL_ARMATURE_AUDIENCES,
             json!({"type":"object","properties":{"item_ids":{"type":"array","items":{"type":"string"},"description":"Optional subset of item IDs from the current task list; omit to hand off the whole list."},"requested_outcome":{"type":"string","description":"What the receiving workflow should accomplish."}},"required":["requested_outcome"],"additionalProperties":false}),
         ),
         descriptor(
@@ -623,7 +638,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Create a durable Docket work job with acceptance criteria and an optional initial task tree. A job may assign one or more managed work surfaces. The normal shorthand is work_surface_id, which creates one required mutation assignment; use work_surface_assignments only for multiple surfaces or optional/forbidden mutation policy. Every initial task requires concrete completion_criteria. Creating a Job does not execute or dispatch it. Keep returned full UUIDs for tool calls and evidence; in ordinary prose present a typed short handle such as `job e4e4797b` (extend the prefix if ambiguous). Do not invent a web URL: use a UI link only when a tool result provides one.",
             "bear.docket",
             &["docket.job.write"],
-            CHAT_AND_PAIR_PROFILES,
+            CHANNEL_ARMATURE_AUDIENCES,
             json!({"type":"object","properties":{"goal":{"type":"string","description":"Human-facing durable goal for the job."},"work_surface_id":{"type":"string","format":"uuid","description":"Simple common-case shorthand: one managed work surface with required mutation policy."},"work_surface_assignments":{"type":"array","description":"Use instead of work_surface_id for multiple surfaces or non-default mutation policy.","items":{"type":"object","properties":{"work_surface_id":{"type":"string","format":"uuid"},"mutation_policy":{"enum":["required","optional","forbidden"],"default":"required"}},"required":["work_surface_id"],"additionalProperties":false}},"commit_policy":{"enum":["none","per_task","per_job"]},"work_branch":{"type":"string","description":"Upstream branch work runs publish to when commit_policy allows; defaults to a generated den/job-<short-id> name."},"visibility":{"enum":["private_to_profile","same_user","bear_visible","handoff_requested"]},"supersedes_job_id":{"type":"string","format":"uuid","description":"Required only with overlap_resolution=supersede; the active matching job to replace."},"overlap_resolution":{"enum":["reject","independent","supersede"],"description":"For an exact active goal+surface overlap: reject (default), explicitly independent, or supersede the named predecessor."},"criteria":{"type":"array","items":{"type":"object","properties":{"kind":{"enum":["narrative","command","check_ref"]},"description":{"type":"string"},"spec":{"type":"object"},"sibling_order":{"type":"integer"}},"required":["description"],"additionalProperties":false}},"tasks":{"type":"array","items":{"type":"object","properties":{"client_key":{"type":"string"},"parent_client_key":{"type":"string"},"parent_task_id":{"type":"string","format":"uuid"},"sibling_order":{"type":"integer"},"kind":{"enum":["execution","investigation","decision"]},"scope":{"enum":["template","run"]},"title":{"type":"string"},"body":{"type":"string"},"completion_criteria":{"type":"array","items":{"type":"string"},"minItems":1,"description":"Concrete criteria that define when this task is done."},"difficulty":{"enum":["trivial","moderate","hard","unknown"]},"effort_hint":{"enum":["low","medium","high"]}},"required":["title","body","completion_criteria"],"additionalProperties":false}}},"required":["goal"],"additionalProperties":false}),
         ),
         descriptor(
@@ -632,7 +647,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "List durable Docket jobs for the current Bear. Use for canonical job status.",
             "bear.docket",
             &["docket.job.read"],
-            TASK_LIST_READ_PROFILES,
+            TASK_LIST_READ_AUDIENCES,
             json!({"type":"object","properties":{"status":{"type":"array","items":{"enum":["draft","ready","running","blocked","completed","cancelled","archived"]}},"include_cancelled":{"type":"boolean"},"include_archived":{"type":"boolean"},"limit":{"type":"integer","minimum":1,"maximum":200}},"additionalProperties":false}),
         ),
         descriptor(
@@ -641,7 +656,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Read one durable Docket job with criteria, task tree, current run, and run-scoped task state. Includes recent work runs (with queue placement) and work_attention: latest-attempt runs that ended blocked/failed and need triage, with their reasons. Treat this durable result as canonical status; keep full UUIDs for calls/evidence and use typed short handles in prose.",
             "bear.docket",
             &["docket.job.read"],
-            TASK_LIST_READ_PROFILES,
+            TASK_LIST_READ_AUDIENCES,
             json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"}},"required":["job_id"],"additionalProperties":false}),
         ),
         descriptor(
@@ -650,7 +665,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Find one Docket job by its full UUID or an unambiguous UUID prefix.",
             "bear.docket",
             &["docket.job.read"],
-            TASK_LIST_READ_PROFILES,
+            TASK_LIST_READ_AUDIENCES,
             json!({"type":"object","properties":{"job_ref":{"type":"string"}},"required":["job_ref"],"additionalProperties":false}),
         ),
         descriptor(
@@ -659,7 +674,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Update durable Docket job metadata. Operational status is derived from task, criterion, run, and lifecycle state; this tool does not execute task bodies.",
             "bear.docket",
             &["docket.job.write"],
-            CHAT_AND_PAIR_PROFILES,
+            CHANNEL_ARMATURE_AUDIENCES,
             json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"goal":{"type":"string"},"work_surface_id":{"type":"string","format":"uuid"},"commit_policy":{"enum":["none","per_task","per_job",null]},"clear_commit_policy":{"type":"boolean"},"visibility":{"enum":["private_to_profile","same_user","bear_visible","handoff_requested"]}},"required":["job_id"],"additionalProperties":false}),
         ),
         descriptor(
@@ -668,7 +683,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Cancel a Docket job and prevent it from receiving further work. This is terminal; use only when the user requests cancellation or the job should no longer proceed.",
             "bear.docket",
             &["docket.job.write"],
-            CHAT_AND_PAIR_PROFILES,
+            CHANNEL_ARMATURE_AUDIENCES,
             json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"}},"required":["job_id"],"additionalProperties":false}),
         ),
         descriptor(
@@ -677,7 +692,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Cancel the active Docket lifecycle run for a job without cancelling the job itself. This releases stale Pair execution claims so another session for the owning Bear can recover the task. It does not cancel a sandbox work run.",
             "bear.docket",
             &["docket.job.write"],
-            CHAT_AND_PAIR_PROFILES,
+            CHANNEL_ARMATURE_AUDIENCES,
             json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"}},"required":["job_id"],"additionalProperties":false}),
         ),
         descriptor(
@@ -686,7 +701,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Archive a Docket job and remove it from the default active-job list. This is terminal; use only when the user requests archival or the job is no longer active.",
             "bear.docket",
             &["docket.job.write"],
-            CHAT_AND_PAIR_PROFILES,
+            CHANNEL_ARMATURE_AUDIENCES,
             json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"}},"required":["job_id"],"additionalProperties":false}),
         ),
         descriptor(
@@ -695,7 +710,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Start or advance a Docket job in this Pair session. This records job/run/task state; continue bounded work here when context and tools suffice. Use dispatch_work only for a ready job that should run in a background sandbox.",
             "bear.docket",
             &["docket.job.execute"],
-            PAIR_PROFILES,
+            ARMATURE_AUDIENCES,
             json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"}},"required":["job_id"],"additionalProperties":false}),
         ),
         descriptor(
@@ -704,7 +719,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Repair a typed stale Docket execution focus. Call only when execute_job returns next_action reconcile_execution; this is not a retry-safe replacement for execute_job.",
             "bear.docket",
             &["docket.job.execute"],
-            PAIR_PROFILES,
+            ARMATURE_AUDIENCES,
             json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"}},"required":["job_id"],"additionalProperties":false}),
         ),
         descriptor(
@@ -713,7 +728,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Terminally settle the current Docket-owned task and return the canonical successor, terminal, or blocked execution control. Use instead of update_current_task_status only for a task claimed by execute_job/reconcile_job_execution.",
             "bear.docket",
             &["docket.job.execute"],
-            PAIR_PROFILES,
+            ARMATURE_AUDIENCES,
             json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"task_id":{"type":"string","format":"uuid"},"status":{"enum":["done","blocked","cancelled"]},"outcome_disposition":{"enum":["completed","no_change","delegated","blocked","failed","cancelled"]},"result_refs":{"type":"object"},"result_summary":{"type":"string"}},"required":["job_id","task_id","status","result_summary"],"additionalProperties":false}),
         ),
         descriptor(
@@ -722,7 +737,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Record run-scoped acceptance-criterion state for a Docket job. Use after checking narrative, command, or external evidence; job completion requires criteria to be met or waived.",
             "bear.docket",
             &["docket.criteria.write"],
-            PAIR_PROFILES,
+            ARMATURE_AUDIENCES,
             json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"run_id":{"type":"string","format":"uuid"},"criterion_id":{"type":"string","format":"uuid"},"status":{"enum":["unmet","met","waived"]},"evidence":{"type":"object"}},"required":["job_id","run_id","criterion_id","status"],"additionalProperties":false}),
         ),
         descriptor(
@@ -731,7 +746,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Create a durable Docket task under an explicit work Docket job or, when effective policy grants session-task ownership and job_id is omitted, under the authenticated current session. Use for durable/resumable plans, checklists, next steps, and roadmap slices; this records user-visible Docket state and does not execute work. A task has exactly one owner: its Job or its client session. Session-capable profiles can add planned/template tasks; work execution can add run-scoped child tasks. Every Docket task requires concrete completion_criteria so execution has a stopping condition. Terminal task outcomes are recorded atomically in the task journal; Job-run evidence is required when the Job task's execution policy requires it. Keep full UUIDs for tool calls and evidence; in prose use a typed unambiguous short handle such as `task e4e4797b` (extend the prefix if needed). Do not invent a web URL: use a UI link only when a tool result provides one.",
             "bear.docket",
             &["docket.task.write"],
-            &["pair", "work"],
+            ARMATURE_WORK_AUDIENCES,
             json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"parent_task_id":{"type":"string","format":"uuid"},"placement":{"oneOf":[{"type":"object","properties":{"kind":{"const":"first"}},"required":["kind"],"additionalProperties":false},{"type":"object","properties":{"kind":{"const":"last"}},"required":["kind"],"additionalProperties":false},{"type":"object","properties":{"kind":{"const":"before"},"task_id":{"type":"string","format":"uuid"}},"required":["kind","task_id"],"additionalProperties":false},{"type":"object","properties":{"kind":{"const":"after"},"task_id":{"type":"string","format":"uuid"}},"required":["kind","task_id"],"additionalProperties":false}]},"kind":{"enum":["execution","investigation","decision"]},"scope":{"enum":["template","run"]},"title":{"type":"string"},"body":{"type":"string"},"completion_criteria":{"type":"array","items":{"type":"string"},"minItems":1,"description":"Concrete criteria that define when this task is done."},"difficulty":{"enum":["trivial","moderate","hard","unknown"]},"effort_hint":{"enum":["low","medium","high"]},"created_in_run_id":{"type":"string","format":"uuid"}},"required":["title","body","completion_criteria"],"additionalProperties":false}),
         ),
         descriptor(
@@ -740,7 +755,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "List durable Docket task definitions for an explicit job/task subtree or, when job_id is omitted, the current session's implied Docket objective. Includes current-run state when available. Use for canonical Docket task hierarchy; use list_task_lists for conversation/job working focus. Treat returned full UUIDs as canonical identity/evidence and use typed unambiguous short task handles in prose.",
             "bear.docket",
             &["docket.task.read"],
-            TASK_LIST_READ_PROFILES,
+            TASK_LIST_READ_AUDIENCES,
             json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"parent_task_id":{"type":"string","format":"uuid"},"include_descendants":{"type":"boolean"},"limit":{"type":"integer","minimum":1,"maximum":500}},"additionalProperties":false}),
         ),
         descriptor(
@@ -749,7 +764,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Find one Docket task by its full UUID or an unambiguous UUID prefix; optionally limit the lookup to a job. Keep the canonical UUID for follow-up calls and evidence; use a typed short task handle in prose.",
             "bear.docket",
             &["docket.task.read"],
-            TASK_LIST_READ_PROFILES,
+            TASK_LIST_READ_AUDIENCES,
             json!({"type":"object","properties":{"task_ref":{"type":"string"},"job_ref":{"type":"string"}},"required":["task_ref"],"additionalProperties":false}),
         ),
         descriptor(
@@ -758,7 +773,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Update durable Docket task definition fields only: title/body/completion_criteria/hierarchy/kind/scope/difficulty/effort. Do not use for status or result changes; use update_current_task_status to settle a task and record its durable journal outcome.",
             "bear.docket",
             &["docket.task.write"],
-            &["pair", "work"],
+            ARMATURE_WORK_AUDIENCES,
             json!({"type":"object","properties":{"task_id":{"type":"string","format":"uuid"},"title":{"type":"string"},"body":{"type":"string"},"completion_criteria":{"type":"array","items":{"type":"string"},"description":"Replacement concrete criteria that define when this task is done."},"parent_task_id":{"type":["string","null"],"format":"uuid"},"clear_parent_task_id":{"type":"boolean"},"sibling_order":{"type":"integer"},"kind":{"enum":["execution","investigation","decision"]},"scope":{"enum":["template","run"]},"difficulty":{"enum":["trivial","moderate","hard","unknown",null]},"effort_hint":{"enum":["low","medium","high",null]}} ,"required":["task_id"],"additionalProperties":false}),
         ),
         descriptor(
@@ -767,7 +782,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Select an actionable task anchored to this client session as its canonical current task. Omit task_id to clear the selection. This changes session context only; it does not execute or settle work and cannot affect Job-scoped work runs. Do not call this merely because the conversational topic appears to change: first ask the user to confirm the proposed task switch. If several eligible tasks could match, ask which one to select. If none matches, ask whether to create a new session task or continue with no selected task. Never silently select, clear, replace, complete, or create a session task in response to redirection.",
             "bear.docket",
             &["docket.task.write"],
-            PAIR_PROFILES,
+            ARMATURE_AUDIENCES,
             json!({"type":"object","properties":{"task_id":{"type":["string","null"],"format":"uuid"}},"additionalProperties":false}),
         ),
         descriptor(
@@ -776,7 +791,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Start or resume focused execution for this client session's already-selected executable task. This does not select, create, replace, or settle a task. Success means Den acquired execution control and durably queued or started the first loop slice; a typed failure leaves the selection unchanged. Use this when the selected task should proceed without requiring a second user message.",
             "bear.docket",
             &["docket.task.write"],
-            PAIR_PROFILES,
+            ARMATURE_AUDIENCES,
             json!({"type":"object","properties":{},"additionalProperties":false}),
         ),
         descriptor(
@@ -785,7 +800,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Update a session-owned task's status/results. Omit job_id and run_id only for a task owned by this client session. Never use this for a task returned or claimed by execute_job/reconcile_job_execution: use settle_execution_task with its job_id and task_id; it settles the active execution run without a run_id. Every terminal status (done, blocked, or cancelled) requires a non-empty result_summary; Den records it atomically as the durable task outcome. Use outcome_disposition when the default does not describe the result: done accepts completed, no_change, or delegated; blocked accepts blocked or failed; cancelled accepts only cancelled. For report-only work, result_summary is sufficient and result_refs may be omitted. If the task has a verified primary output, provide result_refs.primary_output {kind: git_commit|den_artifact, artifact_ref, immutable_identity} and result_refs.validation {primary_output_ref, immutable_identity, command, result: passed, execution_provenance}; validation must match the primary output exactly. Do not invent primary-output evidence for work that did not produce it. Does not edit durable task definitions or execute task bodies.",
             "bear.docket",
             &["docket.task.write"],
-            PAIR_PROFILES,
+            ARMATURE_AUDIENCES,
             json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"run_id":{"type":"string","format":"uuid"},"task_id":{"type":"string","format":"uuid"},"status":{"enum":["pending","done","blocked","cancelled"]},"outcome_disposition":{"enum":["completed","no_change","delegated","blocked","failed","cancelled"],"description":"Optional typed terminal outcome. done accepts completed, no_change, or delegated; blocked accepts blocked or failed; cancelled accepts cancelled. Omit to use the status default. Not allowed for pending."},"result_refs":{"type":"object","description":"Optional. Omit for report-only completion. When reporting a verified output, provide primary_output {kind: git_commit|den_artifact, artifact_ref, immutable_identity} and validation {primary_output_ref, immutable_identity, command, result: passed, execution_provenance}."},"result_summary":{"type":"string","description":"Required for terminal status done, blocked, or cancelled. Den records it atomically as the durable task outcome; describe what actually occurred."}},"required":["task_id","status"],"additionalProperties":false}),
         ),
         descriptor(
@@ -794,7 +809,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Append a durable finding, decision, obstacle, follow-up, milestone, or question to a task journal or job notebook. Outcomes are settlement-owned and cannot be appended manually. Questions may be recorded only by Pair. A task-journal entry without task_id uses this client session's selected current task; otherwise it is rejected before persistence.",
             "bear.docket",
             &["docket.task.write"],
-            &["pair", "work"],
+            ARMATURE_WORK_AUDIENCES,
             json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"task_id":{"type":"string","format":"uuid"},"run_id":{"type":"string","format":"uuid"},"scope":{"enum":["task_journal","job_notebook"]},"kind":{"enum":["finding","decision","obstacle","follow_up","milestone","question"]},"summary":{"type":"string"},"body":{"type":"string"},"evidence_refs":{"type":"array","items":{}},"related_task_ids":{"type":"array","items":{"type":"string","format":"uuid"}},"tags":{"type":"array","items":{"type":"string"}}},"required":["scope","kind","summary"],"additionalProperties":false}),
         ),
         descriptor(
@@ -803,7 +818,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Promote one non-outcome task-journal entry into its job notebook by reference. The operation is idempotent and preserves the original entry and provenance rather than copying model-authored content.",
             "bear.docket",
             &["docket.task.write"],
-            &["pair", "work"],
+            ARMATURE_WORK_AUDIENCES,
             json!({"type":"object","properties":{"entry_id":{"type":"string","format":"uuid"}},"required":["entry_id"],"additionalProperties":false}),
         ),
         descriptor(
@@ -812,7 +827,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "List durable task-journal or job-notebook entries for this Bear, filtered by job or task. Includes settlement outcomes and explicitly recorded findings, decisions, obstacles, follow-ups, milestones, and questions.",
             "bear.docket",
             &["docket.task.read"],
-            TASK_LIST_READ_PROFILES,
+            TASK_LIST_READ_AUDIENCES,
             json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"task_id":{"type":"string","format":"uuid"},"limit":{"type":"integer","minimum":1,"maximum":500}},"additionalProperties":false}),
         ),
         descriptor(
@@ -821,7 +836,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Search Cabinet, the Den-wide shared knowledge wiki that humans and Bears read and edit together. Matches item titles and current content; returns item summaries with cabinet_ref and current version. Cabinet is shared durable knowledge, not your private memory: use memory tools for Bear-local notes and this for knowledge meant for people and other Bears.",
             "bear.cabinet",
             &["cabinet.read"],
-            ALL_PROFILES,
+            ALL_AUDIENCES,
             json!({"type":"object","properties":{"query":{"type":"string","description":"Substring match over titles and current content. Empty lists recent items."},"lifecycle":{"enum":["active","archived"],"description":"Defaults to active items."}},"required":["query"],"additionalProperties":false}),
         ),
         descriptor(
@@ -830,7 +845,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Read one Cabinet shared-knowledge item: title, Markdown content, revision, current version ref, provenance, and source links. Pass version_ref to read an older immutable revision. Always read an item before updating it - the returned current version ref is the base_version a later cabinet_update requires.",
             "bear.cabinet",
             &["cabinet.read"],
-            ALL_PROFILES,
+            ALL_AUDIENCES,
             json!({"type":"object","properties":{"cabinet_ref":{"type":"string","description":"Item ref from cabinet_search or a citation, e.g. cabinet_item_..."},"version_ref":{"type":"string","description":"Optional immutable revision to read instead of the current version."}},"required":["cabinet_ref"],"additionalProperties":false}),
         ),
         descriptor(
@@ -839,7 +854,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Create a new Cabinet shared-knowledge document with Markdown content. The item publishes immediately and is visible and editable by humans and other authorized Bears; write knowledge worth sharing, not session scratch or private Bear memory. Optionally attach source links recording where the knowledge came from. Search first to avoid duplicating an existing item.",
             "bear.cabinet",
             &["cabinet.write"],
-            &["chat", "pair", "curate"],
+            CHANNEL_ARMATURE_CURATION_AUDIENCES,
             json!({"type":"object","properties":{"title":{"type":"string"},"content":{"type":"string","description":"Markdown document body."},"source_links":{"type":"array","items":{"type":"object","properties":{"source_kind":{"enum":["url","offline","artifact","conversation","external_record"]},"locator":{"type":"string","description":"https URL, synthetic scheme like book://isbn/..., artifact_... ref, or conversation id, matching source_kind."},"role":{"enum":["origin","citation","related"]}},"required":["source_kind","locator","role"],"additionalProperties":false}}},"required":["title","content"],"additionalProperties":false}),
         ),
         descriptor(
@@ -848,7 +863,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Publish a new revision of a Cabinet item with the full replacement Markdown content. Requires base_version: the current version ref from a fresh cabinet_read. If someone else published a newer revision first, the update fails with the new current version ref - re-read, merge your change into the latest content, and retry. Every revision is immutable and kept in history; nothing is overwritten.",
             "bear.cabinet",
             &["cabinet.write"],
-            &["chat", "pair", "curate"],
+            CHANNEL_ARMATURE_CURATION_AUDIENCES,
             json!({"type":"object","properties":{"cabinet_ref":{"type":"string"},"content":{"type":"string","description":"Full replacement Markdown body (not a diff)."},"base_version":{"type":"string","description":"The current version ref this edit is based on, from cabinet_read."},"title":{"type":"string","description":"Optional new title."}},"required":["cabinet_ref","content","base_version"],"additionalProperties":false}),
         ),
         descriptor(
@@ -857,7 +872,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "List the immutable revisions of a Cabinet item, newest first: version ref, revision number, who authored it (person or Bear), when, and the content hash. Use this after a cabinet_update conflict to see what changed and who changed it, or to cite or read a specific earlier revision with cabinet_read.",
             "bear.cabinet",
             &["cabinet.read"],
-            ALL_PROFILES,
+            ALL_AUDIENCES,
             json!({"type":"object","properties":{"cabinet_ref":{"type":"string"}},"required":["cabinet_ref"],"additionalProperties":false}),
         ),
         descriptor(
@@ -866,7 +881,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Attach or detach provenance on a Cabinet item: where its knowledge came from. Add a link when you learn the origin of material already written down; source links are provenance only, so Cabinet never stores the linked content itself. Detaching removes the link and never alters any revision.",
             "bear.cabinet",
             &["cabinet.write"],
-            &["chat", "pair", "curate"],
+            CHANNEL_ARMATURE_CURATION_AUDIENCES,
             json!({"type":"object","properties":{"cabinet_ref":{"type":"string"},"action":{"enum":["add","remove"],"description":"Defaults to add."},"source_kind":{"enum":["url","offline","artifact","conversation","external_record"],"description":"Required when adding."},"locator":{"type":"string","description":"Required when adding: https URL, synthetic scheme like book://isbn/..., artifact_... ref, or conversation id, matching source_kind."},"role":{"enum":["origin","citation","related"],"description":"Required when adding."},"source_ref":{"type":"string","description":"Required when removing: the cabinet_source_... ref from cabinet_read."}},"required":["cabinet_ref"],"additionalProperties":false}),
         ),
         descriptor(
@@ -875,7 +890,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Archive a Cabinet item so it drops out of default search, or restore an archived one. Archiving is reversible and keeps every revision readable; it does not delete anything. Prefer archiving superseded knowledge over rewriting it away. Only people can delete a Cabinet item.",
             "bear.cabinet",
             &["cabinet.write"],
-            CURATE_PROFILES,
+            CURATION_AUDIENCES,
             json!({"type":"object","properties":{"cabinet_ref":{"type":"string"},"lifecycle":{"enum":["archived","active"],"description":"archived hides the item from default search; active restores it."}},"required":["cabinet_ref","lifecycle"],"additionalProperties":false}),
         ),
         descriptor(
@@ -884,7 +899,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "List bounded, sanitized warning and error evidence for this Bear. Filter by Work run, runtime run, session, Docket job, event code, or severity when investigating a user-visible failure. This is a searchable exception record, not raw server logs; it never returns prompts, tool payloads, credentials, or cross-Bear events.",
             "bear.runtime",
             &["runtime.diagnostics.read"],
-            TASK_LIST_READ_PROFILES,
+            TASK_LIST_READ_AUDIENCES,
             json!({"type":"object","properties":{"work_run_id":{"type":"string","format":"uuid"},"runtime_run_id":{"type":"string"},"session_id":{"type":"string"},"docket_job_id":{"type":"string","format":"uuid"},"event_code":{"type":"string"},"severity":{"enum":["warning","error"]},"limit":{"type":"integer","minimum":1,"maximum":200}},"additionalProperties":false}),
         ),
         descriptor(
@@ -893,7 +908,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Create a task-list projection from an explicit Docket job/root task subtree or, in pair conversation scope when job_id is omitted, the current conversation's implied Docket objective. Use this when you want to work Docket tasks through the current conversation/task-list focus. Checkout records focus/projection state only; it does not execute tasks or change task definitions by itself.",
             "bear.docket",
             &["docket.task.checkout"],
-            &["pair", "work"],
+            ARMATURE_WORK_AUDIENCES,
             json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"parent_task_id":{"type":"string","format":"uuid"}},"additionalProperties":false}),
         ),
         descriptor(
@@ -902,7 +917,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Queue a ready Docket job for isolated background execution in a sandbox. `root` identifies the managed source or sandbox-provider root; `image` selects a sandbox toolchain image. Docket dispatch never modifies Pair's attached checkout. Keep full UUIDs for calls and evidence; use typed short handles only in prose.",
             "bear.docket",
             &["docket.job.execute"],
-            CHAT_AND_PAIR_PROFILES,
+            CHANNEL_ARMATURE_AUDIENCES,
             json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"root":{"type":"string","description":"Managed work surface or sandbox provider root."},"git_ref":{"type":"string"},"image":{"type":"string","description":"Catalog image name for sandbox execution."}},"required":["job_id"],"additionalProperties":false}),
         ),
         descriptor(
@@ -911,7 +926,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "List autonomous work runs (sandbox executions of work-assigned Docket tasks) for this Bear, optionally filtered by job, task, or state. Queued runs include a queue object (position within the job's queue and the in-flight run they are waiting behind) — runs serialize per job. Keep full UUIDs for evidence/follow-up calls and present typed unambiguous short work-run handles in prose.",
             "bear.docket",
             &["docket.job.read"],
-            TASK_LIST_READ_PROFILES,
+            TASK_LIST_READ_AUDIENCES,
             json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"task_id":{"type":"string","format":"uuid"},"state":{"enum":["queued","claimed","provisioning","running","reporting","succeeded","blocked","failed","cancelled","timed_out"]},"limit":{"type":"integer","minimum":1,"maximum":200}},"additionalProperties":false}),
         ),
         descriptor(
@@ -920,7 +935,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Read one autonomous work run: state, attempt, sandbox type and strength, recognized work surface, result summary (including published branch/commit in result_refs), changed files, bounded log tail, and error/blockage reason. Queued runs include a queue object (position within the job's queue and the in-flight run they are waiting behind). Use its terminal result and durable evidence for claims about changes, tests, or commits; a failed/cancelled run proves only the recorded partial progress. Its work surface is not implicitly accessible to Pair. Keep the full UUID for tool calls/evidence and present `work run e4e4797b`-style handles in prose.",
             "bear.docket",
             &["docket.job.read"],
-            TASK_LIST_READ_PROFILES,
+            TASK_LIST_READ_AUDIENCES,
             json!({"type":"object","properties":{"work_run_id":{"type":"string","format":"uuid"}},"required":["work_run_id"],"additionalProperties":false}),
         ),
         descriptor(
@@ -929,7 +944,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Find one work run by full UUID or an unambiguous UUID prefix, or list runs for a job UUID or prefix. Keep canonical UUIDs for calls/evidence and use typed unambiguous short work-run handles in prose.",
             "bear.docket",
             &["docket.job.read"],
-            TASK_LIST_READ_PROFILES,
+            TASK_LIST_READ_AUDIENCES,
             json!({"type":"object","properties":{"run_ref":{"type":"string"},"job_ref":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":200}},"additionalProperties":false}),
         ),
         descriptor(
@@ -938,7 +953,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Request cancellation of an active work run. The dispatch worker tears the sandbox down and records the task as blocked; this tool only sets the cancel flag and never touches the sandbox host directly. After requesting cancellation, read the canonical work-run result before describing the outcome; its separate worktree may contain partial changes. Keep the full UUID for the call and use a typed short handle in prose.",
             "bear.docket",
             &["docket.job.execute"],
-            CHAT_AND_PAIR_PROFILES,
+            CHANNEL_ARMATURE_AUDIENCES,
             json!({"type":"object","properties":{"work_run_id":{"type":"string","format":"uuid"}},"required":["work_run_id"],"additionalProperties":false}),
         ),
         descriptor(
@@ -947,7 +962,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Record the operator's resolution of a stalled work run without changing its terminal outcome or diagnostic evidence. Use only after inspecting the stalled run and deciding how it was handled; retrying work creates a new attempt. A repeated request does not overwrite the original resolution.",
             "bear.docket",
             &["docket.job.execute"],
-            CHAT_AND_PAIR_PROFILES,
+            CHANNEL_ARMATURE_AUDIENCES,
             json!({"type":"object","properties":{"work_run_id":{"type":"string","format":"uuid"},"reason":{"type":"string","minLength":1,"maxLength":2000}},"required":["work_run_id"],"additionalProperties":false}),
         ),
         descriptor(
@@ -956,7 +971,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Read what work can run on: managed work surfaces assigned to this bear (preferred for create_job.work_surface_id / dispatch_work.root), the sandbox provider's roots, and the container images selectable for dispatch_work. Use this before dispatching when the surface or toolchain image is not obvious.",
             "bear.docket",
             &["docket.job.read"],
-            TASK_LIST_READ_PROFILES,
+            TASK_LIST_READ_AUDIENCES,
             json!({"type":"object","properties":{},"additionalProperties":false}),
         ),
         descriptor(
@@ -965,7 +980,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Apply authorized changes from a checked-out Docket-backed task-list projection back to Docket-backed tasks. Docket-backed items update task definitions and run-scoped status; local-only items in a Docket checkout become new child tasks. Conflicts are reported instead of overwritten.",
             "bear.docket",
             &["docket.task.sync"],
-            &["pair", "work"],
+            ARMATURE_WORK_AUDIENCES,
             json!({"type":"object","properties":{"task_list":{"type":"object","description":"TaskListProjection returned by get_job, get_task_list_status, update_task_list, or checkout."}},"required":["task_list"],"additionalProperties":false}),
         ),
         descriptor(
@@ -974,7 +989,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Enter client pair workplan mode and reflect that mode in the client session UI. Use this when the user asks to enter planning mode.",
             "bear.workplan",
             &["plan_mode.enter"],
-            PAIR_PROFILES,
+            ARMATURE_AUDIENCES,
             json!({"type":"object","properties":{"reason":{"type":"string"},"previous_permission_mode":{"type":"string"}},"additionalProperties":false}),
         ),
         descriptor(
@@ -983,7 +998,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Return the current client pair workplan gate for this session, if any.",
             "bear.workplan",
             &["plan_mode.read"],
-            PAIR_PROFILES,
+            ARMATURE_AUDIENCES,
             empty_schema(),
         ),
         descriptor(
@@ -992,7 +1007,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Record explicit approval from the authenticated human for the currently submitted implementation workplan. Use only when the user clearly approves the current plan in this conversation, for example 'go ahead', 'approved', or 'proceed'.",
             "bear.workplan",
             &["plan_mode.approve"],
-            PAIR_PROFILES,
+            ARMATURE_AUDIENCES,
             json!({"type":"object","properties":{"plan_mode_id":{"type":"string","format":"uuid"},"approval_text":{"type":"string","description":"The user's approval text that prompted this tool call."}},"required":["approval_text"],"additionalProperties":false}),
         ),
         descriptor(
@@ -1001,7 +1016,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Submit a markdown implementation workplan artifact for user approval. This is for durable implementation workplans, not for the live visible task list; use Docket task-list projections for visible conversation/task-list tracking.",
             "bear.workplan",
             &["plan_mode.exit"],
-            PAIR_PROFILES,
+            ARMATURE_AUDIENCES,
             json!({"type":"object","properties":{"plan_mode_id":{"type":"string","format":"uuid"},"title":{"type":"string"},"body":{"type":"string"}},"required":["title","body"],"additionalProperties":false}),
         ),
         descriptor(
@@ -1010,7 +1025,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Cancel the current client pair workplan gate without approving implementation.",
             "bear.workplan",
             &["plan_mode.cancel"],
-            PAIR_PROFILES,
+            ARMATURE_AUDIENCES,
             json!({"type":"object","properties":{"plan_mode_id":{"type":"string","format":"uuid"}},"additionalProperties":false}),
         ),
         descriptor(
@@ -1019,7 +1034,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Write a schema-validated task intent from chat or pair for later curate review.",
             "bear.tasks",
             &["task.intent.write"],
-            CHAT_AND_PAIR_PROFILES,
+            CHANNEL_ARMATURE_AUDIENCES,
             json!({"type":"object","properties":{"title":{"type":"string"},"summary":{"type":"string"},"requested_outcome":{"type":"string"},"constraints":{"type":"array","items":{"type":"string"}},"allowed_tools_hint":{"type":"array","items":{"type":"string"}},"source_reference":{"type":"object"}},"required":["title","summary","requested_outcome"],"additionalProperties":false}),
         ),
         descriptor(
@@ -1028,7 +1043,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Approve a chat/pair task intent, write the canonical core task, and update source intent audit metadata.",
             "bear.tasks",
             &["task.intent.approve"],
-            CURATE_PROFILES,
+            CURATION_AUDIENCES,
             json!({"type":"object","properties":{"source_intent_path":{"type":"string"},"task_id":{"type":"string"},"title":{"type":"string"},"approved_scope":{"type":"object"},"allowed_tools":{"type":"array","items":{"type":"string"}},"expires_at":{"type":"string"},"review_notes":{"type":"string"}},"required":["source_intent_path","task_id","title","approved_scope","allowed_tools"],"additionalProperties":false}),
         ),
         descriptor(
@@ -1037,7 +1052,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Reject a chat/pair task intent and update source intent audit metadata with the rejection reason.",
             "bear.tasks",
             &["task.intent.reject"],
-            CURATE_PROFILES,
+            CURATION_AUDIENCES,
             json!({"type":"object","properties":{"source_intent_path":{"type":"string"},"rejection_reason":{"type":"string"},"review_notes":{"type":"string"}},"required":["source_intent_path","rejection_reason"],"additionalProperties":false}),
         ),
         descriptor(
@@ -1046,7 +1061,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Write a curate-reviewed summary of work results into shared core memory through Den-controlled validation.",
             "bear.core",
             &["core.result_summary.write"],
-            CURATE_PROFILES,
+            CURATION_AUDIENCES,
             json!({"type":"object","properties":{"task_id":{"type":"string"},"run_id":{"type":"string"},"summary":{"type":"string"},"durable_learnings":{"type":"array","items":{"type":"string"}},"source_result_path":{"type":"string"}},"required":["task_id","summary"],"additionalProperties":false}),
         ),
         descriptor(
@@ -1055,7 +1070,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Write a schema-validated inbound observation from a Den-delivered watch event.",
             "bear.observations",
             &["observation.write"],
-            WATCH_PROFILES,
+            OBSERVATION_AUDIENCES,
             json!({"type":"object","properties":{"observation_id":{"type":"string"},"summary":{"type":"string"},"salience":{"type":"string"},"payload_ref":{"type":"string"},"source":{"type":"object"}},"required":["summary"],"additionalProperties":false}),
         ),
         descriptor(
@@ -1064,7 +1079,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Prepare dependencies for one Rust package outside the restricted work sandbox. Use after changing Cargo.toml; update_lockfile may modify the applicable Cargo.lock. The sandbox remains offline.",
             "work.run",
             &["work.rust_dependencies.prepare"],
-            WORK_PROFILES,
+            WORK_AUDIENCES,
             json!({"type":"object","properties":{
                 "manifest_path":{"type":"string","minLength":1},
                 "package":{"type":"string","minLength":1},
@@ -1078,10 +1093,19 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Write a schema-validated work run result under the active Den-issued run context.",
             "bear.runs",
             &["run.result.write"],
-            WORK_PROFILES,
+            WORK_AUDIENCES,
             json!({"type":"object","properties":{"task_id":{"type":"string"},"run_id":{"type":"string"},"status":{"enum":["succeeded","failed","partial"]},"summary":{"type":"string"},"result":{"type":"object"},"follow_up":{"type":"array","items":{"type":"string"}}},"required":["task_id","run_id","status","summary"],"additionalProperties":false}),
         ),
     ]
+}
+
+pub fn builtin_den_tool_descriptors_for_origin(
+    origin: TurnExecutionOrigin,
+) -> Vec<DenToolDescriptor> {
+    builtin_den_tool_descriptors()
+        .into_iter()
+        .filter(|descriptor| descriptor.allows_origin(origin))
+        .collect()
 }
 
 pub fn builtin_den_tool_descriptors_for_profile(role: BearProfile) -> Vec<DenToolDescriptor> {
@@ -1179,6 +1203,15 @@ pub fn builtin_den_tool_descriptors_for_pair_acp_surface() -> Vec<DenToolDescrip
     builtin_den_tool_descriptors()
         .into_iter()
         .filter(|descriptor| allowed.contains(descriptor.name))
+        .collect()
+}
+
+pub fn builtin_den_tool_descriptors_for_pair_acp_origin(
+    origin: TurnExecutionOrigin,
+) -> Vec<DenToolDescriptor> {
+    builtin_den_tool_descriptors_for_pair_acp_surface()
+        .into_iter()
+        .filter(|descriptor| descriptor.allows_origin(origin))
         .collect()
 }
 
@@ -1320,9 +1353,16 @@ fn descriptor(
     description: &'static str,
     scope: &'static str,
     permissions: &'static [&'static str],
-    allowed_roles: &'static [&'static str],
+    allowed_origins: &'static [ToolAudience],
     input_schema: Value,
 ) -> DenToolDescriptor {
+    let mut allowed_roles = Vec::new();
+    for audience in allowed_origins {
+        let label = audience.compatibility_profile().as_str();
+        if !allowed_roles.contains(&label) {
+            allowed_roles.push(label);
+        }
+    }
     DenToolDescriptor {
         name,
         provider_name: provider_safe_tool_name(name),
@@ -1337,6 +1377,7 @@ fn descriptor(
         content_class: tool_content_class(name),
         availability: "available",
         permissions,
+        allowed_origins,
         allowed_roles,
         approval_policy: if name == DEN_WEB_FETCH {
             "always"
@@ -2106,7 +2147,8 @@ mod tests {
 
         assert_eq!(descriptor.provider_name, "prepare_rust_dependencies");
         assert_eq!(descriptor.execution_target, "den");
-        assert_eq!(descriptor.allowed_roles, WORK_PROFILES);
+        assert_eq!(descriptor.allowed_origins, WORK_AUDIENCES);
+        assert_eq!(descriptor.allowed_roles, vec!["work"]);
         assert_eq!(descriptor.input_schema["additionalProperties"], false);
         assert_eq!(
             descriptor.input_schema["properties"]["resolution"]["enum"],
@@ -2144,7 +2186,8 @@ mod tests {
             .expect("descriptor");
 
         assert_eq!(descriptor.provider_name, "resolve_stalled_work_run");
-        assert_eq!(descriptor.allowed_roles, CHAT_AND_PAIR_PROFILES);
+        assert_eq!(descriptor.allowed_origins, CHANNEL_ARMATURE_AUDIENCES);
+        assert_eq!(descriptor.allowed_roles, vec!["chat", "pair"]);
         assert_eq!(descriptor.input_schema["required"], json!(["work_run_id"]));
         assert_eq!(descriptor.input_schema["additionalProperties"], false);
     }
@@ -2380,10 +2423,16 @@ fn entity_write_anchor_schema() -> Value {
 }
 
 impl DenToolDescriptor {
+    pub fn allows_origin(&self, origin: TurnExecutionOrigin) -> bool {
+        self.allowed_origins
+            .contains(&ToolAudience::from_origin(origin))
+    }
+
+    /// Legacy profile metadata is a derived view of the typed origin policy.
     pub fn allows_profile(&self, role: BearProfile) -> bool {
-        self.allowed_roles
+        self.allowed_origins
             .iter()
-            .any(|allowed| *allowed == role.as_str())
+            .any(|audience| audience.compatibility_profile() == role)
     }
 }
 
@@ -2441,13 +2490,11 @@ impl<'de> Deserialize<'de> for DenToolDescriptor {
                 .collect::<Vec<_>>()
                 .into_boxed_slice(),
         );
-        let allowed_roles: &'static [&'static str] = Box::leak(
-            raw.allowed_roles
-                .into_iter()
-                .map(|item| Box::leak(item.into_boxed_str()) as &'static str)
-                .collect::<Vec<_>>()
-                .into_boxed_slice(),
-        );
+        let allowed_roles: Vec<&'static str> = raw
+            .allowed_roles
+            .into_iter()
+            .map(|item| Box::leak(item.into_boxed_str()) as &'static str)
+            .collect();
         let approval_policy: &'static str = Box::leak(raw.approval_policy.into_boxed_str());
 
         Ok(Self {
@@ -2464,6 +2511,10 @@ impl<'de> Deserialize<'de> for DenToolDescriptor {
             content_class,
             availability,
             permissions,
+            // A forwarded or deserialized descriptor is presentation data,
+            // never an executable Den audience grant. Resolve builtin Den
+            // descriptors from the server registry at invocation instead.
+            allowed_origins: &[],
             allowed_roles,
             approval_policy,
             display: raw.display,

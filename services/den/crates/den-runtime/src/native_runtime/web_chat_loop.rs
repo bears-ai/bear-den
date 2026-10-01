@@ -621,6 +621,7 @@ async fn execute_one_web_chat_den_tool(
                 tool_name: canonical,
                 arguments: args,
                 context: tool_context,
+                origin: den_core::TurnExecutionOrigin::ChannelConversation,
                 effective_policy: den_core::EffectivePolicy::compile_for_origin(
                     den_core::TurnExecutionOrigin::ChannelConversation,
                     den_core::Governance::Interactive,

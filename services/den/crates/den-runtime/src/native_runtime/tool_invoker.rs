@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use den_core::tools::context::DenToolInvocationContext;
-use den_core::{DenError, EffectivePolicy};
+use den_core::{DenError, EffectivePolicy, TurnExecutionOrigin};
 
 use crate::turn_ids::{ToolCallId, TurnRunId};
 
@@ -20,6 +20,7 @@ pub struct RuntimeToolInvocation {
     pub tool_name: String,
     pub arguments: Value,
     pub context: DenToolInvocationContext,
+    pub origin: TurnExecutionOrigin,
     pub effective_policy: EffectivePolicy,
     pub origin_run_id: Option<TurnRunId>,
     pub tool_call_id: ToolCallId,

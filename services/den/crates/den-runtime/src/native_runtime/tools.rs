@@ -22,11 +22,9 @@ use serde_json::Value;
 
 use crate::llm::LlmToolDefinition;
 use den_core::tools::descriptor::{
-    builtin_den_tool_descriptor_for_provider_name,
-    builtin_den_tool_descriptors_for_pair_acp_surface, builtin_den_tool_descriptors_for_profile,
-    DenToolDescriptor,
+    builtin_den_tool_descriptor_for_provider_name, builtin_den_tool_descriptors_for_origin,
+    builtin_den_tool_descriptors_for_pair_acp_origin, DenToolDescriptor,
 };
-use den_service::bears::BearProfile;
 
 use super::legacy_memory_tools::{
     filter_client_tools_for_native_runtime, is_legacy_memory_client_tool_name,
@@ -44,14 +42,14 @@ fn den_tool_to_llm_definition(descriptor: &DenToolDescriptor, compact: bool) -> 
     }
 }
 
-fn den_tools_for_profile(
-    role: BearProfile,
+fn den_tools_for_origin(
+    origin: TurnExecutionOrigin,
     capabilities: &den_core::CapabilitySet,
 ) -> Vec<LlmToolDefinition> {
     let descriptors = if capabilities.contains(den_core::BearCapability::OwnSessionTasks) {
-        builtin_den_tool_descriptors_for_pair_acp_surface()
+        builtin_den_tool_descriptors_for_pair_acp_origin(origin)
     } else {
-        builtin_den_tool_descriptors_for_profile(role)
+        builtin_den_tool_descriptors_for_origin(origin)
     };
     descriptors
         .into_iter()
@@ -181,7 +179,7 @@ pub(crate) fn merge_den_and_client_tools_with_search(
     let effective_policy =
         den_core::EffectivePolicy::compile_for_origin(origin, den_core::Governance::Interactive);
     let role = effective_policy.trust_profile;
-    let mut merged = den_tools_for_profile(role, &effective_policy.capabilities);
+    let mut merged = den_tools_for_origin(origin, &effective_policy.capabilities);
     if !search_available {
         merged.retain(|tool| {
             !builtin_den_tool_descriptor_for_provider_name(&tool.name)
@@ -276,7 +274,7 @@ pub(crate) fn merge_den_and_client_tools_with_search(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use den_core::{config::Config, ArmatureAvailability};
+    use den_core::{config::Config, ArmatureAvailability, BearProfile};
 
     // Exercise the compatibility profiles through the origin-owned production
     // roster; the profile is never passed to the actual policy compiler.

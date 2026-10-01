@@ -673,11 +673,8 @@ impl SessionTrackingStream {
                 || !is_task_definition_or_delegation_tool_provider_name(tool_name))
     }
 
-    fn effective_server_tool_policy(
-        &self,
-        governance: Governance,
-    ) -> Result<EffectivePolicy, DenError> {
-        let origin = match (self.origin, self.dispatch_mode) {
+    fn server_tool_origin(&self) -> TurnExecutionOrigin {
+        match (self.origin, self.dispatch_mode) {
             (
                 TurnExecutionOrigin::ArmatureConversation(_),
                 NativeToolDispatchMode::ServerSideInProcess,
@@ -687,8 +684,14 @@ impl SessionTrackingStream {
                 NativeToolDispatchMode::ServerSideInProcess,
             ) => TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Absent),
             (origin, _) => origin,
-        };
-        let policy = EffectivePolicy::compile_for_origin(origin, governance);
+        }
+    }
+
+    fn effective_server_tool_policy(
+        &self,
+        governance: Governance,
+    ) -> Result<EffectivePolicy, DenError> {
+        let policy = EffectivePolicy::compile_for_origin(self.server_tool_origin(), governance);
         if policy.trust_profile != self.profile {
             return Err(DenError::Authorization(
                 "native runtime profile does not match the verified execution origin".into(),
@@ -898,6 +901,7 @@ impl SessionTrackingStream {
         let store = self.store.clone();
         let session_key = self.session_key.clone();
         let profile = self.profile;
+        let origin = self.server_tool_origin();
         let bear_id = self.bear_id;
         let user_id = self.user_id;
         let conversation_id = self.conversation_id.clone();
@@ -922,6 +926,7 @@ impl SessionTrackingStream {
                         tool_name: canonical.clone(),
                         arguments: args,
                         context,
+                        origin,
                         effective_policy,
                         origin_run_id: origin_run_id
                             .map(crate::turn_ids::TurnRunId::new)

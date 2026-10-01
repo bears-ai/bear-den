@@ -2145,6 +2145,7 @@ async fn execute_approved_den_tool_for_session(
             tool_name: canonical,
             arguments: args,
             context,
+            origin: session.origin,
             effective_policy: den_core::EffectivePolicy::compile_for_origin(
                 session.origin,
                 session.governance,

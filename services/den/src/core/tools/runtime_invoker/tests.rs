@@ -1,6 +1,10 @@
 use super::*;
 use den_core::{
-    tools::{arguments::DenToolChannelContext, context::DenToolInvocationContext},
+    tools::{
+        arguments::DenToolChannelContext,
+        constants::{DEN_RUN_WRITE_RESULT, DEN_WEB_FETCH},
+        context::DenToolInvocationContext,
+    },
     ArmatureAvailability, BearProfile, Governance, TurnExecutionOrigin,
 };
 use uuid::Uuid;
@@ -35,11 +39,22 @@ fn context(profile: BearProfile) -> DenToolInvocationContext {
 
 #[test]
 fn direct_invoker_cannot_widen_a_pair_origin_with_a_curate_or_work_profile() {
-    let pair = EffectivePolicy::compile_for_origin(
-        TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
-        Governance::Interactive,
-    );
-    assert!(require_origin_profile(&context(BearProfile::Pair), &pair).is_ok());
+    let origin = TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected);
+    let pair = EffectivePolicy::compile_for_origin(origin, Governance::Interactive);
+    assert!(require_origin_policy_and_descriptor(
+        &context(BearProfile::Pair),
+        &pair,
+        origin,
+        DEN_WEB_FETCH
+    )
+    .is_ok());
+    assert!(require_origin_policy_and_descriptor(
+        &context(BearProfile::Pair),
+        &pair,
+        origin,
+        DEN_RUN_WRITE_RESULT
+    )
+    .is_err());
     for forged in [
         BearProfile::Curate,
         BearProfile::Work,
@@ -48,16 +63,50 @@ fn direct_invoker_cannot_widen_a_pair_origin_with_a_curate_or_work_profile() {
     ] {
         assert!(
             matches!(
-                require_origin_profile(&context(forged), &pair),
+                require_origin_policy_and_descriptor(
+                    &context(forged),
+                    &pair,
+                    origin,
+                    DEN_WEB_FETCH
+                ),
                 Err(DenError::Authorization(_))
             ),
             "{forged:?}"
         );
     }
-    let work = EffectivePolicy::compile_for_origin(
-        TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Absent),
-        Governance::Interactive,
+    let work_origin = TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Absent);
+    let work = EffectivePolicy::compile_for_origin(work_origin, Governance::Interactive);
+    assert!(require_origin_policy_and_descriptor(
+        &context(BearProfile::Work),
+        &work,
+        work_origin,
+        DEN_RUN_WRITE_RESULT
+    )
+    .is_ok());
+    assert!(require_origin_policy_and_descriptor(
+        &context(BearProfile::Pair),
+        &work,
+        work_origin,
+        DEN_RUN_WRITE_RESULT
+    )
+    .is_err());
+    assert!(
+        require_origin_policy_and_descriptor(
+            &context(BearProfile::Pair),
+            &work,
+            origin,
+            DEN_WEB_FETCH
+        )
+        .is_err(),
+        "a Work policy cannot claim an interactive origin"
     );
-    assert!(require_origin_profile(&context(BearProfile::Work), &work).is_ok());
-    assert!(require_origin_profile(&context(BearProfile::Pair), &work).is_err());
+    let chat_origin = TurnExecutionOrigin::ChannelConversation;
+    let chat = EffectivePolicy::compile_for_origin(chat_origin, Governance::Interactive);
+    assert!(require_origin_policy_and_descriptor(
+        &context(BearProfile::Chat),
+        &chat,
+        chat_origin,
+        DEN_WEB_FETCH
+    )
+    .is_err());
 }

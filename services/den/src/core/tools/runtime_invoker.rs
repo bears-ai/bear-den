@@ -6,8 +6,9 @@ use serde_json::Value;
 use den_core::tools::{
     constants::{DEN_TASK_FOCUS, DEN_TASK_FOCUS_PROVIDER},
     context::DenToolInvocationContext,
+    descriptor::builtin_den_tool_descriptor_for_provider_name,
 };
-use den_core::{DenError, EffectivePolicy};
+use den_core::{DenError, EffectivePolicy, TurnExecutionOrigin};
 use den_runtime::native_runtime::{RuntimeToolInvocation, RuntimeToolInvoker};
 use den_service::DenState;
 
@@ -24,14 +25,30 @@ impl DenRuntimeToolInvoker {
     }
 }
 
-fn require_origin_profile(
+fn require_origin_policy_and_descriptor(
     context: &DenToolInvocationContext,
     effective_policy: &EffectivePolicy,
+    origin: TurnExecutionOrigin,
+    tool_name: &str,
 ) -> Result<(), DenError> {
+    if *effective_policy != EffectivePolicy::compile_for_origin(origin, effective_policy.governance)
+    {
+        return Err(DenError::Authorization(
+            "Den tool policy does not match its verified execution origin".into(),
+        ));
+    }
     if context.profile != Some(effective_policy.trust_profile) {
         return Err(DenError::Authorization(
             "Den tool context profile does not match the verified execution origin".into(),
         ));
+    }
+    let descriptor = builtin_den_tool_descriptor_for_provider_name(tool_name)
+        .ok_or_else(|| DenError::NotFound(format!("unknown Den tool: {tool_name}")))?;
+    if !descriptor.allows_origin(origin) {
+        return Err(DenError::Authorization(format!(
+            "Den tool `{}` is unavailable to this verified execution origin",
+            descriptor.name,
+        )));
     }
     Ok(())
 }
@@ -47,6 +64,7 @@ impl RuntimeToolInvoker for DenRuntimeToolInvoker {
             tool_name,
             arguments,
             context,
+            origin,
             effective_policy,
             origin_run_id,
             tool_call_id,
@@ -54,7 +72,7 @@ impl RuntimeToolInvoker for DenRuntimeToolInvoker {
         // The runtime's verified origin is the authority. A forged/supplied
         // compatibility profile or binding cannot turn a Pair/Channel run
         // into an internal Curate/Work Den tool invocation.
-        require_origin_profile(&context, &effective_policy)?;
+        require_origin_policy_and_descriptor(&context, &effective_policy, origin, &tool_name)?;
         if matches!(tool_name.as_str(), DEN_TASK_FOCUS | DEN_TASK_FOCUS_PROVIDER) {
             effective_policy
                 .capabilities
