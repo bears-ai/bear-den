@@ -5571,6 +5571,56 @@ async fn verified_approval_scope(
     scope
 }
 
+/// An exact Den-owned grant is only a positive policy input. The local target
+/// must also exist within this connection's canonical workspace, and Den must
+/// recheck the current owner, hat and revocation on every attempted reuse.
+async fn verified_hat_workspace_read_grant(
+    config: &Config,
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    scope: &VerifiedPermissionScope,
+    context: &SessionContext,
+    tool_name: &str,
+    raw_path: &str,
+) -> bool {
+    if !matches!(scope, VerifiedPermissionScope::CurrentHat { .. }) {
+        return false;
+    }
+    let Ok(target) = paths::resolve_fs_target(context, raw_path) else {
+        return false;
+    };
+    if paths::is_sensitive_path(&target.resolved_path) {
+        return false;
+    }
+    let (Ok(root), Ok(path)) = (
+        std::fs::canonicalize(&target.workspace_root),
+        std::fs::canonicalize(&target.resolved_path),
+    ) else {
+        return false;
+    };
+    if !path.starts_with(&root) || paths::is_sensitive_path(&path) {
+        return false;
+    }
+    let Some(root) = root.to_str() else {
+        return false;
+    };
+    bearwire::rpc_call(
+        &shared_state.http,
+        config,
+        "hats.workspace_tool.check",
+        json!({
+            "bear_slug": config.bear,
+            "session_id": session_id,
+            "tool_name": tool_name,
+            "workspace_root": root,
+        }),
+    )
+    .await
+    .ok()
+    .and_then(|response| response.get("allowed").and_then(Value::as_bool))
+        == Some(true)
+}
+
 fn hat_web_fetch_permission_option(
     scope: &VerifiedPermissionScope,
     tool_name: &str,
@@ -8841,10 +8891,30 @@ async fn handle_tool_request_event(
         });
     let target_url_for_approval = tool_url(event).map(str::to_string);
     let target_command_for_approval = tool_command(event).map(str::to_string);
-    let legacy_no_hats = approval_required_from_event(event)
-        && verified_approval_scope(config, shared_state, session_id)
-            .await
-            .is_legacy();
+    let verified_scope = if approval_required_from_event(event)
+        || event.get("hat_workspace_grant_auto_approved") == Some(&json!(true))
+    {
+        verified_approval_scope(config, shared_state, session_id).await
+    } else {
+        VerifiedPermissionScope::OnceOnly
+    };
+    let legacy_no_hats = approval_required_from_event(event) && verified_scope.is_legacy();
+    let hat_grant_reused = if let (Some(context), Some(raw_path)) =
+        (context_for_approval.as_ref(), tool_path(event))
+    {
+        verified_hat_workspace_read_grant(
+            config,
+            shared_state,
+            session_id,
+            &verified_scope,
+            context,
+            tool_name,
+            raw_path,
+        )
+        .await
+    } else {
+        false
+    };
     let approval_reused = if legacy_no_hats {
         if let Some(context) = context_for_approval.as_ref() {
             approval_cache
@@ -8860,7 +8930,7 @@ async fn handle_tool_request_event(
             false
         }
     } else {
-        false
+        hat_grant_reused
     };
     if approval_reused && bear_debug_verbose() {
         let target_label = target_path_for_approval
@@ -9025,6 +9095,43 @@ async fn handle_tool_request_event(
             tool_name,
             ToolTaskPhase::PermissionGranted,
         );
+    }
+    let hat_grant_was_used = event.get("hat_workspace_grant_auto_approved") == Some(&json!(true))
+        || (approval_reused && !legacy_no_hats);
+    if hat_grant_was_used {
+        let fresh = if let (Some(context), Some(raw_path)) =
+            (context_for_approval.as_ref(), tool_path(event))
+        {
+            verified_hat_workspace_read_grant(
+                config,
+                shared_state,
+                session_id,
+                &verified_scope,
+                context,
+                tool_name,
+                raw_path,
+            )
+            .await
+        } else {
+            false
+        };
+        if !hat_grant_reused || !fresh {
+            post_local_tool_error_result(
+                config,
+                shared_state,
+                turn_token,
+                session_id,
+                tool_call_id,
+                tool_name,
+                event,
+                LocalToolError::permission_denied(
+                    "Den hat workspace grant was revoked or its target is no longer safe",
+                ),
+                std::time::Instant::now(),
+            )
+            .await?;
+            return Ok(());
+        }
     }
     let running = friendly_tool_status(tool_name, event, "running");
     send_detached_tool_call_update_for_turn(
@@ -10760,6 +10867,27 @@ pub(crate) async fn handle_permission_request_event(
         .and_then(Value::as_str)
         .and_then(|url| hat_web_fetch_permission_option(&verified_scope, tool_name, url));
     let hat_option_available = hat_option.is_some();
+    let hat_workspace_auto = if let (Some(context), Some(raw_path)) = (
+        context_for_approval.as_ref(),
+        canonical
+            .tool_call
+            .arguments
+            .get("path")
+            .and_then(Value::as_str),
+    ) {
+        verified_hat_workspace_read_grant(
+            config,
+            shared_state,
+            session_id,
+            &verified_scope,
+            context,
+            tool_name,
+            raw_path,
+        )
+        .await
+    } else {
+        false
+    };
     let mut options = if is_plan_mode {
         vec![
             agent_client_protocol::schema::PermissionOption::new(
@@ -10812,7 +10940,7 @@ pub(crate) async fn handle_permission_request_event(
             false
         }
     } else {
-        false
+        hat_workspace_auto
     };
     let decision = if auto_allowed {
         tracing::debug!(
@@ -10973,6 +11101,11 @@ pub(crate) async fn handle_permission_request_event(
             "obligation_id": obligation_id,
             "plan_mode_id": plan_mode_id,
             "run_id": event.get("run_id").and_then(Value::as_str),
+            "reason": if hat_workspace_auto && auto_allowed {
+                json!({"approval_source": "den_hat_workspace_read_grant"})
+            } else {
+                Value::Null
+            },
         }),
     )
     .await?;
@@ -11022,7 +11155,10 @@ pub(crate) async fn handle_permission_request_event(
         }
     }
     if let Some(local_tool) = response.get("local_tool_request") {
-        let request_event = approved_local_tool_request_event(event, local_tool)?;
+        let mut request_event = approved_local_tool_request_event(event, local_tool)?;
+        if hat_workspace_auto && auto_allowed {
+            request_event["hat_workspace_grant_auto_approved"] = json!(true);
+        }
         spawn_tool_request_task(
             config.clone(),
             shared_state.clone(),
@@ -12569,6 +12705,7 @@ mod tests {
     #[derive(Clone)]
     struct BearWireTestServerState {
         fail_bearwire: bool,
+        hat_workspace_grant_allowed: bool,
         paths: Arc<TokioMutex<Vec<String>>>,
         rpc_methods: Arc<TokioMutex<Vec<String>>>,
         events: Arc<TokioMutex<Vec<Value>>>,
@@ -12665,6 +12802,10 @@ mod tests {
             Some("session.hat.select") => json!({
                 "jsonrpc": "2.0", "id": id,
                 "result": {"ok": true, "hat_id": value.pointer("/params/hat_id")}
+            }),
+            Some("hats.workspace_tool.check") => json!({
+                "jsonrpc": "2.0", "id": id,
+                "result": {"allowed": state.hat_workspace_grant_allowed}
             }),
             Some("session.state") => {
                 if let Some(session_id) =
@@ -12796,10 +12937,23 @@ mod tests {
         Arc<TokioMutex<Vec<String>>>,
         Arc<TokioMutex<Vec<String>>>,
     ) {
+        start_bearwire_test_server_with_workspace_grant(fail_bearwire, events, false).await
+    }
+
+    async fn start_bearwire_test_server_with_workspace_grant(
+        fail_bearwire: bool,
+        events: Vec<Value>,
+        hat_workspace_grant_allowed: bool,
+    ) -> (
+        String,
+        Arc<TokioMutex<Vec<String>>>,
+        Arc<TokioMutex<Vec<String>>>,
+    ) {
         let paths = Arc::new(TokioMutex::new(Vec::new()));
         let rpc_methods = Arc::new(TokioMutex::new(Vec::new()));
         let state = BearWireTestServerState {
             fail_bearwire,
+            hat_workspace_grant_allowed,
             paths: paths.clone(),
             rpc_methods: rpc_methods.clone(),
             events: Arc::new(TokioMutex::new(events)),
@@ -12844,6 +12998,7 @@ mod tests {
         let paths = Arc::new(TokioMutex::new(Vec::new()));
         let state = BearWireTestServerState {
             fail_bearwire: false,
+            hat_workspace_grant_allowed: false,
             paths: paths.clone(),
             rpc_methods: Arc::new(TokioMutex::new(Vec::new())),
             events: Arc::new(TokioMutex::new(events)),
@@ -14115,6 +14270,87 @@ mod tests {
             .await
             .is_legacy());
         assert_eq!(methods.lock().await.as_slice(), ["hats.list"]);
+    }
+
+    #[tokio::test]
+    async fn workspace_hat_grant_requires_live_bearwire_decision_and_local_safe_target() {
+        let (api_url, _paths, methods) =
+            start_bearwire_test_server_with_workspace_grant(false, vec![], true).await;
+        let config = test_config(api_url);
+        let shared_state = test_shared_state();
+        let root = unique_test_dir("hat-workspace-read");
+        fs::write(root.join("allowed.txt"), "allowed").unwrap();
+        fs::write(root.join(".env"), "secret").unwrap();
+        let context = SessionContext {
+            cwd: root.to_string_lossy().to_string(),
+            roots: vec![root.to_string_lossy().to_string()],
+            ..Default::default()
+        };
+        let scope = VerifiedPermissionScope::CurrentHat {
+            name: "Reviewer".into(),
+            can_manage: false,
+        };
+        assert!(
+            verified_hat_workspace_read_grant(
+                &config,
+                &shared_state,
+                "ide-test",
+                &scope,
+                &context,
+                "fs_read_text_file",
+                "allowed.txt",
+            )
+            .await
+        );
+        assert!(
+            !verified_hat_workspace_read_grant(
+                &config,
+                &shared_state,
+                "ide-test",
+                &VerifiedPermissionScope::OnceOnly,
+                &context,
+                "fs_read_text_file",
+                "allowed.txt",
+            )
+            .await
+        );
+        assert!(
+            !verified_hat_workspace_read_grant(
+                &config,
+                &shared_state,
+                "ide-test",
+                &scope,
+                &context,
+                "fs_read_text_file",
+                ".env",
+            )
+            .await
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let outside = unique_test_dir("hat-workspace-outside");
+            fs::write(outside.join("outside.txt"), "outside").unwrap();
+            symlink(&outside, root.join("link")).unwrap();
+            assert!(
+                !verified_hat_workspace_read_grant(
+                    &config,
+                    &shared_state,
+                    "ide-test",
+                    &scope,
+                    &context,
+                    "fs_read_text_file",
+                    "link/outside.txt",
+                )
+                .await
+            );
+            fs::remove_dir_all(outside).unwrap();
+        }
+        assert_eq!(
+            methods.lock().await.as_slice(),
+            ["hats.workspace_tool.check"]
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]

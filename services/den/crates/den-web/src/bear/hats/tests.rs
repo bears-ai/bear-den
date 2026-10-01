@@ -1233,6 +1233,134 @@ async fn hat_web_grants_are_admin_managed_and_revoke_immediately(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn workspace_read_grants_are_admin_only_exact_and_escaped(pool: PgPool) {
+    use den_service::bears::hats::access;
+    let bear = bears_db::create_bear(
+        &pool,
+        BearParams {
+            slug: "hatworkspaceui",
+            name: "Workspace grant Bear",
+            description: "",
+            system_prompt: "",
+            default_model: None,
+            tools_enabled: None,
+            context_profile: None,
+        },
+    )
+    .await
+    .unwrap();
+    let admin = user(&pool, bear, "workspacegrantadmin", BEAR_ROLE_ADMIN).await;
+    let member = user(&pool, bear, "workspacegrantmember", BEAR_ROLE_MEMBER).await;
+    let hat = hats::create_hat(
+        &pool,
+        BearId::new(bear),
+        UserId::new(admin),
+        "Reader",
+        "Read code",
+    )
+    .await
+    .unwrap();
+    let mut config = Config::test_stub();
+    config.templates_dir = format!("{}/src/templates", env!("CARGO_MANIFEST_DIR"));
+    config.bear_sqlite_data_dir = std::env::temp_dir()
+        .join(format!("hat-workspace-ui-{}", Uuid::new_v4()))
+        .to_string_lossy()
+        .to_string();
+    let config = Arc::new(config);
+    let state = AppState::test_with_template_env(
+        pool.clone(),
+        crate::template_environment(&config),
+        config,
+    );
+    let sessions = PostgresStore::new(pool.clone());
+    sessions.migrate().await.unwrap();
+    let app = Router::new()
+        .merge(router())
+        .route("/test-login/{user_id}", get(login))
+        .with_state(state)
+        .layer(
+            axum_login::AuthManagerLayerBuilder::new(
+                Backend::new(pool.clone()),
+                axum_login::tower_sessions::SessionManagerLayer::new(sessions),
+            )
+            .build(),
+        );
+    let admin_cookie = cookie(&app, admin).await;
+    let member_cookie = cookie(&app, member).await;
+    let detail = format!("/bear/hatworkspaceui/hats/{}", hat.id);
+    let path = format!("{detail}/access");
+    let (_, initial, _) = request(&app, &admin_cookie, "GET", &detail, "").await;
+    assert!(initial.contains("Editor workspace read permissions"));
+    assert!(initial.contains("fs_read_text_file"));
+    let input = "action=grant_workspace_read&tool_name=fs_read_text_file&workspace_root=%2Fworkspace%2Fproject&confirm_future_job_audience=true";
+    assert_eq!(
+        request(&app, &member_cookie, "POST", &path, input).await.0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(request(&app, &admin_cookie, "POST", &path, "action=grant_workspace_read&tool_name=fs_read_text_file&workspace_root=%2Fworkspace%2Fproject").await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(request(&app, &admin_cookie, "POST", &path, "action=grant_workspace_read&tool_name=fs_edit_file&workspace_root=%2Fworkspace%2Fproject&confirm_future_job_audience=true").await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(request(&app, &admin_cookie, "POST", &path, "action=grant_workspace_read&tool_name=fs_read_text_file&workspace_root=%2Fworkspace%2F..%2Fetc&confirm_future_job_audience=true").await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        request(&app, &admin_cookie, "POST", &path, input).await.0,
+        StatusCode::SEE_OTHER
+    );
+    let listed = access::workspace_read_grants_for_hat(&pool, BearId::new(bear), hat.id)
+        .await
+        .unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].workspace_root, "/workspace/project");
+    let (_, updated, _) = request(&app, &admin_cookie, "GET", &detail, "").await;
+    assert!(updated.contains("/workspace/project"));
+    assert!(updated.contains("Revoke this workspace read permission"));
+    assert_eq!(
+        request(
+            &app,
+            &member_cookie,
+            "POST",
+            &path,
+            &format!("action=revoke_workspace&grant_id={}", listed[0].id)
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        request(
+            &app,
+            &admin_cookie,
+            "POST",
+            &path,
+            &format!("action=revoke&grant_id={}", listed[0].id)
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        request(
+            &app,
+            &admin_cookie,
+            "POST",
+            &path,
+            &format!("action=revoke_workspace&grant_id={}", listed[0].id)
+        )
+        .await
+        .0,
+        StatusCode::SEE_OTHER
+    );
+    assert!(
+        access::workspace_read_grants_for_hat(&pool, BearId::new(bear), hat.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(request(&app, &admin_cookie, "POST", &path, "action=grant_workspace_read&tool_name=fs_stat&workspace_root=%2Fworkspace%2F%3Cscript%3E&confirm_future_job_audience=true").await.0, StatusCode::SEE_OTHER);
+    let (_, escaped, _) = request(&app, &admin_cookie, "GET", &detail, "").await;
+    assert!(escaped.contains("&lt;script&gt;"));
+    assert!(!escaped.contains("<code>/workspace/<script>"));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn reviewed_hat_promotion_is_admin_only_and_does_not_copy_raw_notes(pool: PgPool) {
     use den_memory::{
         append_memory_record,

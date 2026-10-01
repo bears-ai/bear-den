@@ -241,6 +241,9 @@ async fn detail(
         .map(|candidate| candidate.name);
     let granted = manage::allowed_surfaces(state.sqlx_pool(), bear_id, hat_id).await?;
     let web_grants = hats::access::web_grants_for_hat(state.sqlx_pool(), bear_id, hat_id).await?;
+    let workspace_read_grants =
+        hats::access::workspace_read_grants_for_hat(state.sqlx_pool(), bear_id, hat_id).await?;
+    let workspace_read_choices = hats::access::ReadOnlyWorkspaceAction::choices();
     let memory = state.memory_stores.store_for_bear(bear.id).await?;
     let historical_hat_records = den_memory::hat_review::hat_history_count(&memory, hat_id).await?;
     let work_reviews = hats::work_review::list_receipts(
@@ -266,7 +269,7 @@ async fn detail(
         "bear/manage/hat.jinja",
         auth,
         context! {
-            hat, identity_preview, identity_sha256, previous_instructions, is_ide_default, ide_default_hat_name, choices, grant_count => granted.len(), web_grants, historical_hat_records, work_reviews, message => query.message,
+            hat, identity_preview, identity_sha256, previous_instructions, is_ide_default, ide_default_hat_name, choices, grant_count => granted.len(), web_grants, workspace_read_grants, workspace_read_choices, historical_hat_records, work_reviews, message => query.message,
             can_manage_bear => true, native_runtime => true,
             ..bear_nav_context(&bear, "hats"),
         },

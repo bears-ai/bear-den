@@ -12,7 +12,8 @@ use den_core::{
     tools::constants::{DEN_WEB_FETCH, DEN_WEB_SEARCH},
 };
 use den_service::bears::hats::access::{
-    self as hat_access, HatAccessGrant, HttpsHost, ToolActionKey,
+    self as hat_access, HatAccessGrant, HttpsHost, ReadOnlyWorkspaceAction, ToolActionKey,
+    WorkspaceRoot,
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -33,6 +34,8 @@ enum Action {
     EnableFetch,
     EnableSearch,
     AllowHost,
+    GrantWorkspaceRead,
+    RevokeWorkspace,
     Revoke,
 }
 
@@ -40,6 +43,8 @@ enum Action {
 struct AccessForm {
     action: Action,
     host: Option<String>,
+    workspace_root: Option<String>,
+    tool_name: Option<String>,
     grant_id: Option<Uuid>,
     #[serde(default)]
     confirm_future_job_audience: bool,
@@ -99,6 +104,42 @@ async fn update(
                 form.confirm_future_job_audience,
             )
             .await?;
+        }
+        Action::GrantWorkspaceRead => {
+            let raw_root = form.workspace_root.as_deref().ok_or_else(|| {
+                CustomError::ValidationError("absolute workspace root is required".into())
+            })?;
+            let raw_tool = form.tool_name.as_deref().ok_or_else(|| {
+                CustomError::ValidationError("read-only filesystem action is required".into())
+            })?;
+            let grant = HatAccessGrant::ReadOnlyToolInWorkspace(
+                ReadOnlyWorkspaceAction::from_provider_name(raw_tool)?,
+                WorkspaceRoot::parse(raw_root)?,
+            );
+            hat_access::grant(
+                state.sqlx_pool(),
+                bear_id,
+                hat_id,
+                actor,
+                &grant,
+                form.confirm_future_job_audience,
+            )
+            .await?;
+        }
+        Action::RevokeWorkspace => {
+            let id = form.grant_id.ok_or_else(|| {
+                CustomError::ValidationError("workspace grant ID is required".into())
+            })?;
+            if !hat_access::workspace_read_grants_for_hat(state.sqlx_pool(), bear_id, hat_id)
+                .await?
+                .iter()
+                .any(|grant| grant.id == id)
+            {
+                return Err(CustomError::ValidationError(
+                    "this is not a current workspace read grant for this hat".into(),
+                ));
+            }
+            hat_access::revoke(state.sqlx_pool(), bear_id, hat_id, actor, id).await?;
         }
         Action::Revoke => {
             let id = form

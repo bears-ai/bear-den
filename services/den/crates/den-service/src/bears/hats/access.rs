@@ -137,19 +137,37 @@ impl WorkspaceRoot {
 /// Initially only read-only filesystem actions can be scoped to a workspace.
 /// Terminal and forwarded MCP names must never become workspace grants by
 /// arriving as untrusted provider aliases.
+const READ_ONLY_WORKSPACE_TOOLS: &[ClientToolName] = &[
+    ClientToolName::ReadTextFile,
+    ClientToolName::ListDirectory,
+    ClientToolName::FindPaths,
+    ClientToolName::SearchFiles,
+    ClientToolName::Stat,
+];
+
+#[derive(Debug, Serialize)]
+pub struct WorkspaceToolChoice {
+    pub provider_name: &'static str,
+    pub title: &'static str,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReadOnlyWorkspaceAction(ClientToolName);
 
 impl ReadOnlyWorkspaceAction {
+    pub fn choices() -> Vec<WorkspaceToolChoice> {
+        READ_ONLY_WORKSPACE_TOOLS
+            .iter()
+            .map(|tool| WorkspaceToolChoice {
+                provider_name: tool.descriptor().provider_name,
+                title: tool.descriptor().title,
+            })
+            .collect()
+    }
+
     pub fn from_provider_name(name: &str) -> Result<Self, DenError> {
         match ClientToolName::from_provider_alias(name) {
-            Some(
-                tool @ (ClientToolName::ReadTextFile
-                | ClientToolName::ListDirectory
-                | ClientToolName::FindPaths
-                | ClientToolName::SearchFiles
-                | ClientToolName::Stat),
-            ) => Ok(Self(tool)),
+            Some(tool) if READ_ONLY_WORKSPACE_TOOLS.contains(&tool) => Ok(Self(tool)),
             _ => Err(DenError::ValidationError(
                 "workspace grant requires a supported read-only filesystem descriptor".into(),
             )),
@@ -177,6 +195,43 @@ impl HatAccessGrant {
             Self::HttpsHost(host) => ("network", "https", "host", &host.0),
         }
     }
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkspaceReadGrantSummary {
+    pub id: Uuid,
+    pub action_key: String,
+    pub title: String,
+    pub workspace_root: String,
+}
+
+pub async fn workspace_read_grants_for_hat(
+    pool: &PgPool,
+    bear_id: BearId,
+    hat_id: HatId,
+) -> Result<Vec<WorkspaceReadGrantSummary>, DenError> {
+    super::manage::get_hat(pool, bear_id, hat_id).await?;
+    let rows = sqlx::query!(
+        "SELECT id, action_key, target_value FROM bear_hat_access_grants
+         WHERE bear_id = $1 AND hat_id = $2 AND kind = 'tool'
+           AND target_kind = 'workspace' AND revoked_at IS NULL
+         ORDER BY action_key, target_value",
+        bear_id.as_uuid(),
+        hat_id.as_uuid(),
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| WorkspaceReadGrantSummary {
+            id: row.id,
+            title: ClientToolName::from_provider_alias(&row.action_key)
+                .map(|tool| tool.descriptor().title.to_string())
+                .unwrap_or_else(|| row.action_key.clone()),
+            action_key: row.action_key,
+            workspace_root: row.target_value,
+        })
+        .collect())
 }
 
 #[derive(Debug, Serialize)]
