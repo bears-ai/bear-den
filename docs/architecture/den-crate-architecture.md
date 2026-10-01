@@ -63,7 +63,7 @@ The concrete Den tool **executors** live in the `den` binary under `src/core/too
 - Concrete executors call runtime/service/memory/reflection/Docket code and therefore sit above those crates.
 - A single `den-tools` crate would either be misleading or create dependency cycles.
 
-`den-runtime` exposes `RuntimeToolInvoker`; the binary injects the concrete invoker at startup. `/internal/den-tools/invoke` also lives in the binary (`src/internal_tools.rs`) because it needs concrete builtin tool execution and should not pull those dependencies into `den-api`, `den-http`, `den-service`, or `den-runtime`.
+`den-runtime` exposes `RuntimeToolInvoker`; the binary injects the concrete invoker at startup. `/internal/den-tools/invoke` also lives in the binary (`src/internal_tools.rs`) because it needs concrete builtin tool execution and should not pull those dependencies into `den-api`, `den-http`, `den-service`, or `den-runtime`. This route is unavailable when `DEN_INTERNAL_TOKEN` is unset/blank, and otherwise requires that service-level secret. The secret authenticates an internal caller; it does not by itself prove a caller-supplied conversation, hat, user, or run context. Remaining direct-tool origin verification is tracked in the [hat access plan](../roadmap/HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md#gate-0a--hat-owned-tool-and-network-permissions-partial-cutover-exit-pending).
 
 ### Den-Side Privileged Tools
 

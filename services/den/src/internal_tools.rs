@@ -106,9 +106,17 @@ async fn invoke_den_tool(
 }
 
 fn authorize_internal_request(state: &DenState, headers: &HeaderMap) -> Option<Response> {
-    let expected = state.config.den_internal_token.trim();
+    authorize_internal_token(&state.config.den_internal_token, headers)
+}
+
+fn authorize_internal_token(token: &str, headers: &HeaderMap) -> Option<Response> {
+    let expected = token.trim();
     if expected.is_empty() {
-        return None;
+        return Some(json_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "unavailable",
+            "internal Den tool invocation is disabled until DEN_INTERNAL_TOKEN is configured",
+        ));
     }
     let Some(raw) = headers.get(axum::http::header::AUTHORIZATION) else {
         return Some(json_error(
@@ -163,4 +171,45 @@ fn json_error(status: StatusCode, code: &'static str, message: impl Into<String>
         })),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::{header, HeaderValue};
+
+    #[test]
+    fn internal_den_tool_endpoint_fails_closed_when_secret_is_absent() {
+        let headers = HeaderMap::new();
+        assert_eq!(
+            authorize_internal_token("", &headers).unwrap().status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            authorize_internal_token("  ", &headers).unwrap().status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            authorize_internal_token("internal-test-secret", &headers)
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        let mut invalid = HeaderMap::new();
+        invalid.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer wrong"),
+        );
+        assert_eq!(
+            authorize_internal_token("internal-test-secret", &invalid)
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        invalid.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer internal-test-secret"),
+        );
+        assert!(authorize_internal_token("internal-test-secret", &invalid).is_none());
+    }
 }

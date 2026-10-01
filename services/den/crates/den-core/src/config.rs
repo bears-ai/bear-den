@@ -146,7 +146,7 @@ pub struct Config {
     /// Public base URL for the **API** service (no trailing slash).
     pub api_server_url: String,
 
-    /// Shared secret for internal API endpoints (`DEN_INTERNAL_TOKEN`). Empty = internal auth disabled.
+    /// Shared secret for internal API endpoints (`DEN_INTERNAL_TOKEN`). Empty disables the internal tool endpoint.
     pub den_internal_token: String,
     /// Secret used to encrypt Den-managed credentials at rest (`DEN_SECRET_ENCRYPTION_KEY`).
     /// Empty means no new encrypted secret values can be stored.
