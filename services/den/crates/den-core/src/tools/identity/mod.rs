@@ -13,7 +13,10 @@ pub use store::{
 
 use serde_json::{json, Value};
 
-use crate::{BearProfile, DenError, TurnExecutionOrigin};
+use crate::{
+    ArmatureAvailability, BearCapability, BearProfile, DenError, EffectivePolicy, Governance,
+    TurnExecutionOrigin,
+};
 
 use crate::tools::{
     capability_catalog::{
@@ -22,7 +25,8 @@ use crate::tools::{
     },
     context::DenToolInvocationContext,
     descriptor::{
-        builtin_den_tool_descriptors, builtin_den_tool_descriptors_for_profile, ToolAudience,
+        builtin_den_tool_descriptors, builtin_den_tool_descriptors_for_origin,
+        builtin_den_tool_descriptors_for_profile, ToolAudience,
     },
 };
 
@@ -48,6 +52,70 @@ pub fn list_capabilities_self(context: &DenToolInvocationContext, role: BearProf
         "channel": context.channel,
         "capabilities": descriptors,
     })
+}
+
+/// Native model-facing catalog from the same typed descriptor audiences used
+/// for advertisement and execution. Client-local instances additionally need
+/// an available connected armature; a forwarded list alone is never enough.
+pub fn list_capabilities_for_origin(
+    context: &DenToolInvocationContext,
+    origin: TurnExecutionOrigin,
+) -> Value {
+    json!({
+        "bear_id": context.bear_id,
+        "channel": context.channel,
+        "capabilities": builtin_den_tool_descriptors_for_origin(origin),
+    })
+}
+
+pub fn capability_entries_for_origin(
+    origin: TurnExecutionOrigin,
+    context: &DenToolInvocationContext,
+) -> Vec<crate::tools::capability_catalog::CapabilityEntry> {
+    let mut entries: Vec<_> = builtin_den_tool_descriptors_for_origin(origin)
+        .into_iter()
+        .map(tool_descriptor_to_capability)
+        .collect();
+    entries.push(code_mode_capability(
+        ToolAudience::from_origin(origin).compatibility_profile(),
+    ));
+    if matches!(
+        origin,
+        TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected)
+            | TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Connected)
+    ) && EffectivePolicy::compile_for_origin(origin, Governance::Interactive)
+        .capabilities
+        .contains(BearCapability::UseArmatureTools)
+    {
+        entries.extend(session_capability_entries(&context.session_capabilities));
+    }
+    entries
+}
+
+pub fn capability_search_for_origin(
+    arguments: Value,
+    origin: TurnExecutionOrigin,
+    context: &DenToolInvocationContext,
+) -> Result<Value, DenError> {
+    let args: CapabilitySearchArguments = serde_json::from_value(arguments).map_err(|err| {
+        DenError::ValidationError(format!("invalid capability_search arguments: {err}"))
+    })?;
+    Ok(search_capabilities(
+        &capability_entries_for_origin(origin, context),
+        args,
+    ))
+}
+
+pub fn capability_describe_for_origin(
+    arguments: Value,
+    origin: TurnExecutionOrigin,
+    context: &DenToolInvocationContext,
+) -> Result<Value, DenError> {
+    let args: CapabilityDescribeArguments = serde_json::from_value(arguments).map_err(|err| {
+        DenError::ValidationError(format!("invalid capability_describe arguments: {err}"))
+    })?;
+    describe_capability(&capability_entries_for_origin(origin, context), &args.r#ref)
+        .ok_or_else(|| DenError::NotFound(format!("unknown capability: {}", args.r#ref)))
 }
 
 /// Pure: searchable capability catalog entries for the caller's resolved role.

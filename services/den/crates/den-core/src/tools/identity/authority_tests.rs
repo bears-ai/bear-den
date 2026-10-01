@@ -129,3 +129,55 @@ fn native_core_authorizer_uses_origin_for_tools_and_registration_only_as_a_check
         Err(DenError::Authorization(_))
     ));
 }
+
+#[test]
+fn native_capability_catalog_filters_by_origin_and_armature_availability() {
+    use crate::tools::capability_catalog::SessionCapabilityDescriptor;
+
+    let mut context = context(BearProfile::Pair);
+    context
+        .session_capabilities
+        .push(SessionCapabilityDescriptor {
+            instance_id: "session:mcp__filesystem__read".to_string(),
+            name: "mcp__filesystem__read".to_string(),
+            summary: "Read files through a connected provider".to_string(),
+            kind: "tool".to_string(),
+            provider: "mcp".to_string(),
+            execution_locality: "connected MCP provider".to_string(),
+            authority: "current client connection and turn policy".to_string(),
+            surface: "workspace roots".to_string(),
+            availability: "available".to_string(),
+            tags: vec!["session-bound".to_string()],
+        });
+    let channel = TurnExecutionOrigin::ChannelConversation;
+    let browser = TurnExecutionOrigin::BrowserTaskSession;
+    let connected = TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected);
+    let disconnected = TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Absent);
+    let tool_ref = "capability-instance:session:mcp__filesystem__read";
+    for origin in [channel, browser, disconnected] {
+        let entries = capability_entries_for_origin(origin, &context);
+        assert!(
+            !entries.iter().any(|entry| entry.r#ref == tool_ref),
+            "{origin:?}"
+        );
+        assert!(matches!(
+            capability_describe_for_origin(serde_json::json!({"ref": tool_ref}), origin, &context),
+            Err(DenError::NotFound(_))
+        ));
+    }
+    let pair = capability_entries_for_origin(connected, &context);
+    assert!(pair.iter().any(|entry| entry.r#ref == tool_ref));
+    assert!(pair
+        .iter()
+        .any(|entry| entry.r#ref == format!("tool:{DEN_WEB_FETCH}")));
+    let channel_entries = capability_entries_for_origin(channel, &context);
+    assert!(!channel_entries
+        .iter()
+        .any(|entry| entry.r#ref == format!("tool:{DEN_WEB_FETCH}")));
+    let roster = list_capabilities_for_origin(&context, channel);
+    assert!(!roster["capabilities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["name"] == DEN_WEB_FETCH));
+}
