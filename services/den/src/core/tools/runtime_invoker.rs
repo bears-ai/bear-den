@@ -10,7 +10,10 @@ use den_core::tools::{
 };
 use den_core::{ids::BearId, DenError, EffectivePolicy, TurnExecutionOrigin};
 use den_runtime::native_runtime::{RuntimeToolInvocation, RuntimeToolInvoker};
-use den_service::{bears::hats::memory_binding, DenState};
+use den_service::{
+    bears::{db as bears_db, hats::memory_binding},
+    DenState,
+};
 use sqlx::PgPool;
 
 use crate::core::tools::{context::DenToolContext, session::invoke_den_tool};
@@ -60,6 +63,25 @@ fn require_origin_policy_and_descriptor(
     Ok(())
 }
 
+async fn require_current_tool_actor(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    origin: TurnExecutionOrigin,
+) -> Result<(), DenError> {
+    if matches!(
+        origin,
+        TurnExecutionOrigin::ChannelConversation
+            | TurnExecutionOrigin::BrowserTaskSession
+            | TurnExecutionOrigin::ArmatureConversation(_)
+    ) && !bears_db::user_may_use_bear(pool, context.user_id, context.bear_id).await?
+    {
+        return Err(DenError::Authorization(
+            "Den tool actor is no longer a member of this Bear".into(),
+        ));
+    }
+    Ok(())
+}
+
 async fn require_live_work_tool_source(
     pool: &PgPool,
     context: &DenToolInvocationContext,
@@ -105,6 +127,7 @@ impl RuntimeToolInvoker for DenRuntimeToolInvoker {
         // compatibility profile or binding cannot turn a Pair/Channel run
         // into an internal Curate/Work Den tool invocation.
         require_origin_policy_and_descriptor(&context, &effective_policy, origin, &tool_name)?;
+        require_current_tool_actor(&self.state.sqlx_pool, &context, origin).await?;
         require_live_work_tool_source(&self.state.sqlx_pool, &context, origin).await?;
         if matches!(tool_name.as_str(), DEN_TASK_FOCUS | DEN_TASK_FOCUS_PROVIDER) {
             effective_policy

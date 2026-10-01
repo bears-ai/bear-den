@@ -156,3 +156,48 @@ async fn work_tool_rechecks_the_live_run_at_effect_time(pool: PgPool) -> Result<
     );
     Ok(())
 }
+
+#[sqlx::test]
+async fn ordinary_tool_actor_loses_access_immediately_after_membership_revocation(
+    pool: PgPool,
+) -> Result<(), DenError> {
+    use den_service::bears::db::{create_bear, grant_membership, revoke_membership, BearParams};
+
+    let bear_id = create_bear(
+        &pool,
+        BearParams {
+            slug: "invoker-member-test",
+            name: "Invoker membership test",
+            description: "test",
+            system_prompt: "test",
+            default_model: None,
+            tools_enabled: None,
+            context_profile: None,
+        },
+    )
+    .await?;
+    let user_id = crate::core::user::db::create_user(
+        &pool,
+        "invoker-member@example.test",
+        "invokermember",
+        "Invoker test",
+        "test-hash",
+    )
+    .await?;
+    let mut pair = context(BearProfile::Pair);
+    pair.bear_id = bear_id;
+    pair.user_id = user_id;
+    let origin = TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected);
+    assert!(matches!(
+        require_current_tool_actor(&pool, &pair, origin).await,
+        Err(DenError::Authorization(_))
+    ));
+    grant_membership(&pool, user_id, bear_id, Some("member")).await?;
+    require_current_tool_actor(&pool, &pair, origin).await?;
+    revoke_membership(&pool, user_id, bear_id).await?;
+    assert!(matches!(
+        require_current_tool_actor(&pool, &pair, origin).await,
+        Err(DenError::Authorization(_))
+    ));
+    Ok(())
+}
