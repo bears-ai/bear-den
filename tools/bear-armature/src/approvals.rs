@@ -74,7 +74,8 @@ fn default_approval_scope_kind() -> String {
 pub(crate) enum ApprovalScope {
     Directory,
     Workspace,
-
+    /// Persisted only by Den for an authenticated Bear-admin hat owner.
+    HatHost,
     Command,
     CommandExactWorkspace,
     CommandFamilyWorkspace,
@@ -86,7 +87,7 @@ impl ApprovalScope {
         match self {
             Self::Directory => "directory",
             Self::Workspace => "workspace",
-
+            Self::HatHost => "hat_host",
             Self::Command => "command",
             Self::CommandExactWorkspace => "command_exact_workspace",
             Self::CommandFamilyWorkspace => "command_family_workspace",
@@ -478,7 +479,7 @@ fn approval_scope_fingerprint(
             approval_directory_scope(context, target.path).map(|path| path.display().to_string())
         }
         ApprovalScope::Workspace => Some(approval_root_fingerprint(context)),
-
+        ApprovalScope::HatHost => None,
         ApprovalScope::Command => target.command.map(normalize_command),
         ApprovalScope::CommandExactWorkspace => target
             .command
@@ -742,6 +743,11 @@ pub(crate) fn permission_decision_from_option_id(id: &str) -> PermissionDecision
             approved: true,
             remember: false,
             scope: ApprovalScope::Workspace,
+        },
+        "allow_hat_host" => PermissionDecision {
+            approved: true,
+            remember: false,
+            scope: ApprovalScope::HatHost,
         },
         "allow_directory" => PermissionDecision {
             approved: true,
@@ -1397,6 +1403,14 @@ mod tests {
             assert!(!decision.approved, "{old_url_choice} must fail closed");
             assert!(!decision.remember);
         }
+
+        let hat_host = permission_decision_from_option_id("allow_hat_host");
+        assert!(hat_host.approved);
+        assert!(
+            !hat_host.remember,
+            "Den, not the client cache, owns this grant"
+        );
+        assert_eq!(hat_host.scope, ApprovalScope::HatHost);
 
         let global = permission_decision_from_option_id("allow_global");
         assert!(global.approved);

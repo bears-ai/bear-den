@@ -51,6 +51,24 @@ impl ToolActionKey {
 pub struct HttpsHost(String);
 
 impl HttpsHost {
+    pub fn from_https_url(raw: &str) -> Result<Self, DenError> {
+        let url = reqwest::Url::parse(raw)
+            .map_err(|err| DenError::ValidationError(format!("invalid HTTPS URL: {err}")))?;
+        if url.scheme() != "https"
+            || url.port_or_known_default() != Some(443)
+            || !url.username().is_empty()
+            || url.password().is_some()
+        {
+            return Err(DenError::ValidationError(
+                "a hat host grant requires HTTPS on port 443 without URL credentials".into(),
+            ));
+        }
+        Self::parse(
+            url.host_str()
+                .ok_or_else(|| DenError::ValidationError("HTTPS URL has no host".into()))?,
+        )
+    }
+
     pub fn parse(raw: &str) -> Result<Self, DenError> {
         let raw = raw.trim();
         if raw.is_empty()
@@ -172,6 +190,69 @@ pub async fn web_grants_for_hat(
         search_tool_grant_id,
         hosts,
     })
+}
+
+/// Persist one web-fetch tool and exact HTTPS-host grant as one policy change
+/// for the current conversation's authenticated Bear-admin creator. The
+/// canonical binding, membership, and hat are locked and resolved by Den;
+/// neither a client-supplied hat ID nor a displayed host confers authority.
+pub async fn grant_web_fetch_host_for_own_conversation(
+    pool: &PgPool,
+    bear_id: BearId,
+    conversation_id: Uuid,
+    actor: UserId,
+    raw_url: &str,
+    confirm_future_job_audience: bool,
+) -> Result<HatId, DenError> {
+    if !confirm_future_job_audience {
+        return Err(DenError::ValidationError(
+            "confirm this grant also applies to future eligible Job runs wearing the hat".into(),
+        ));
+    }
+    let host = HatAccessGrant::HttpsHost(HttpsHost::from_https_url(raw_url)?);
+    let tool = HatAccessGrant::ToolForHat(ToolActionKey::from_provider_name(DEN_WEB_FETCH)?);
+    let mut tx = pool.begin().await?;
+    let hat_id = sqlx::query_scalar!(
+        "SELECT h.id FROM conversations c
+         JOIN bear_hats h ON h.id = c.hat_id AND h.bear_id = c.bear_id
+         JOIN user_bear ub ON ub.bear_id = c.bear_id AND ub.user_id = $3
+         WHERE c.bear_id = $1 AND c.id = $2 AND c.status = 'active'
+           AND c.created_by_user_id = $3
+           AND lower(btrim(coalesce(ub.role, ''))) = $4
+         FOR UPDATE OF c, h, ub",
+        bear_id.as_uuid(),
+        conversation_id,
+        actor.get(),
+        crate::bears::db::BEAR_ROLE_ADMIN,
+    )
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| {
+        DenError::Authorization(
+            "current conversation owner and Bear-admin hat manager are required".into(),
+        )
+    })?;
+    for grant in [&tool, &host] {
+        let (kind, action_key, target_kind, target_value) = grant.storage();
+        sqlx::query!(
+            "INSERT INTO bear_hat_access_grants
+                (bear_id, hat_id, kind, action_key, target_kind, target_value, created_by_user_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             ON CONFLICT (bear_id, hat_id, kind, action_key, target_kind, target_value)
+               WHERE revoked_at IS NULL DO NOTHING",
+            bear_id.as_uuid(),
+            hat_id,
+            kind,
+            action_key,
+            target_kind,
+            target_value,
+            actor.get(),
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(HatId::new(hat_id))
 }
 
 /// Only a current Bear admin can persist a positive grant. The membership and

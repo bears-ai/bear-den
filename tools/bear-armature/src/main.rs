@@ -5509,37 +5509,106 @@ async fn write_prompt_end_turn_response(response_id: Value) -> Result<()> {
 struct VerifiedHatDirectory {
     hats: Vec<VerifiedHatRef>,
     selected_hat_id: Option<Uuid>,
+    #[serde(default)]
+    may_manage_hat_policy: bool,
 }
 
 #[derive(Deserialize)]
 struct VerifiedHatRef {
-    #[serde(rename = "id")]
-    _id: Uuid,
+    id: Uuid,
+    name: String,
 }
 
-fn verified_no_hats(value: Value) -> bool {
-    serde_json::from_value::<VerifiedHatDirectory>(value)
-        .is_ok_and(|listing| listing.hats.is_empty() && listing.selected_hat_id.is_none())
+#[derive(Debug, PartialEq, Eq)]
+enum VerifiedPermissionScope {
+    LegacyNoHats,
+    CurrentHat { name: String, can_manage: bool },
+    OnceOnly,
 }
 
-async fn legacy_approval_cache_available(
+impl VerifiedPermissionScope {
+    fn is_legacy(&self) -> bool {
+        matches!(self, Self::LegacyNoHats)
+    }
+}
+
+fn verified_permission_scope(value: Value) -> VerifiedPermissionScope {
+    let Ok(directory) = serde_json::from_value::<VerifiedHatDirectory>(value) else {
+        return VerifiedPermissionScope::OnceOnly;
+    };
+    match directory.selected_hat_id {
+        None if directory.hats.is_empty() => VerifiedPermissionScope::LegacyNoHats,
+        Some(selected) => directory
+            .hats
+            .into_iter()
+            .find(|hat| hat.id == selected)
+            .map(|hat| VerifiedPermissionScope::CurrentHat {
+                name: hat.name,
+                can_manage: directory.may_manage_hat_policy,
+            })
+            .unwrap_or(VerifiedPermissionScope::OnceOnly),
+        None => VerifiedPermissionScope::OnceOnly,
+    }
+}
+
+async fn verified_approval_scope(
     config: &Config,
     shared_state: &AdapterSharedState,
     session_id: &str,
-) -> bool {
-    let no_hats = bearwire::rpc_call(
+) -> VerifiedPermissionScope {
+    let scope = bearwire::rpc_call(
         &shared_state.http,
         config,
         "hats.list",
         json!({"bear_slug": config.bear, "session_id": session_id}),
     )
     .await
-    .ok()
-    .is_some_and(verified_no_hats);
-    if !no_hats {
+    .map(verified_permission_scope)
+    .unwrap_or(VerifiedPermissionScope::OnceOnly);
+    if !scope.is_legacy() {
         shared_state.approval_cache.clear_for_identity().await;
     }
-    no_hats
+    scope
+}
+
+fn hat_web_fetch_permission_option(
+    scope: &VerifiedPermissionScope,
+    tool_name: &str,
+    raw_url: &str,
+) -> Option<agent_client_protocol::schema::PermissionOption> {
+    let VerifiedPermissionScope::CurrentHat {
+        name,
+        can_manage: true,
+    } = scope
+    else {
+        return None;
+    };
+    if tool_name != "web_fetch" {
+        return None;
+    }
+    let url = reqwest::Url::parse(raw_url).ok()?;
+    if url.scheme() != "https"
+        || url.port_or_known_default() != Some(443)
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return None;
+    }
+
+    let host = url.host_str()?;
+    if host.parse::<std::net::IpAddr>().is_ok()
+        || !host.contains('.')
+        || host.ends_with(".localhost")
+        || host == "localhost"
+    {
+        return None;
+    }
+    let name = name.replace(['\n', '\r'], " ");
+    Some(agent_client_protocol::schema::PermissionOption::new(
+        "allow_hat_host",
+        format!("Always for {name}: HTTPS host {host} (future conversations and eligible Jobs wearing this hat)"),
+        agent_client_protocol::schema::PermissionOptionKind::AllowAlways,
+    ))
 }
 
 async fn hat_report(
@@ -8773,7 +8842,9 @@ async fn handle_tool_request_event(
     let target_url_for_approval = tool_url(event).map(str::to_string);
     let target_command_for_approval = tool_command(event).map(str::to_string);
     let legacy_no_hats = approval_required_from_event(event)
-        && legacy_approval_cache_available(config, shared_state, session_id).await;
+        && verified_approval_scope(config, shared_state, session_id)
+            .await
+            .is_legacy();
     let approval_reused = if legacy_no_hats {
         if let Some(context) = context_for_approval.as_ref() {
             approval_cache
@@ -9885,7 +9956,10 @@ async fn request_tool_permission(
         scope = decision.scope.as_str(),
         "ACP permission response received"
     );
-    if decision.approved && (legacy_no_hats || !decision.remember) {
+    if decision.approved
+        && decision.scope != ApprovalScope::HatHost
+        && (legacy_no_hats || !decision.remember)
+    {
         Ok(decision)
     } else {
         Err(anyhow!("permission denied for {tool_name} on {path}"))
@@ -10673,9 +10747,20 @@ pub(crate) async fn handle_permission_request_event(
         }
         meta
     }));
-    let legacy_no_hats =
-        !is_plan_mode && legacy_approval_cache_available(config, shared_state, session_id).await;
-    let options = if is_plan_mode {
+    let verified_scope = if is_plan_mode {
+        VerifiedPermissionScope::OnceOnly
+    } else {
+        verified_approval_scope(config, shared_state, session_id).await
+    };
+    let legacy_no_hats = verified_scope.is_legacy();
+    let hat_option = canonical
+        .tool_call
+        .arguments
+        .get("url")
+        .and_then(Value::as_str)
+        .and_then(|url| hat_web_fetch_permission_option(&verified_scope, tool_name, url));
+    let hat_option_available = hat_option.is_some();
+    let mut options = if is_plan_mode {
         vec![
             agent_client_protocol::schema::PermissionOption::new(
                 "approve",
@@ -10707,6 +10792,9 @@ pub(crate) async fn handle_permission_request_event(
             permission_family_label(tool_name),
         )
     };
+    if let Some(option) = hat_option {
+        options.insert(1, option);
+    }
     let request = RequestPermissionRequest::new(session_id.to_string(), tool_call, options);
     let auto_allowed = if legacy_no_hats {
         if let Some(context) = context_for_approval.as_ref() {
@@ -10825,7 +10913,9 @@ pub(crate) async fn handle_permission_request_event(
             }
         }
     };
-    let decision = if !legacy_no_hats && decision.remember {
+    let decision = if (!legacy_no_hats && decision.remember)
+        || (decision.scope == ApprovalScope::HatHost && !hat_option_available)
+    {
         PermissionDecision {
             approved: false,
             remember: false,
@@ -10860,6 +10950,7 @@ pub(crate) async fn handle_permission_request_event(
         }
     } else {
         match decision.scope {
+            ApprovalScope::HatHost if decision.approved => "allow_hat_host",
             ApprovalScope::Workspace
             | ApprovalScope::Directory
             | ApprovalScope::Command
@@ -10885,6 +10976,25 @@ pub(crate) async fn handle_permission_request_event(
         }),
     )
     .await?;
+    if decision.scope == ApprovalScope::HatHost
+        && (response.get("ok").and_then(Value::as_bool) != Some(true)
+            || response.get("hat_grant_status").and_then(Value::as_str) != Some("persisted"))
+    {
+        let _ = send_tool_call_update(
+            session_id,
+            tool_call_id,
+            tool_name,
+            ToolCallUpdatePayload {
+                status: "failed",
+                text: "Den did not save the hat's HTTPS-host grant. The request was not approved as a persistent policy change.",
+                request: Some(ToolRequestPresentation::from_event(tool_call_id, tool_name, event)),
+                raw_output: Some(json!({"hat_grant_status": "not_persisted"})),
+                extra_content: Vec::new(),
+            },
+        )
+        .await;
+        return Ok(());
+    }
     if is_plan_mode {
         let mode = response
             .get("effective_mode")
@@ -13896,9 +14006,9 @@ mod tests {
 
     #[test]
     fn only_a_complete_den_verified_no_hat_listing_admits_legacy_cached_approvals() {
-        assert!(verified_no_hats(
-            json!({"hats": [], "selected_hat_id": null})
-        ));
+        assert!(
+            verified_permission_scope(json!({"hats": [], "selected_hat_id": null})).is_legacy()
+        );
         for listing in [
             json!({"hats": [], "selected_hat_id": Uuid::new_v4()}),
             json!({"hats": [{"id": Uuid::new_v4()}], "selected_hat_id": null}),
@@ -13906,8 +14016,52 @@ mod tests {
             json!({"selected_hat_id": null}),
             json!({"hats": "not-an-array", "selected_hat_id": null}),
         ] {
-            assert!(!verified_no_hats(listing));
+            assert!(!verified_permission_scope(listing).is_legacy());
         }
+    }
+
+    #[test]
+    fn only_a_verified_admin_hat_offers_an_exact_persistent_web_fetch_host() {
+        let id = Uuid::new_v4();
+        let scope = verified_permission_scope(json!({
+            "hats": [{"id": id, "name": "Security review"}],
+            "selected_hat_id": id, "may_manage_hat_policy": true,
+        }));
+        assert_eq!(
+            scope,
+            VerifiedPermissionScope::CurrentHat {
+                name: "Security review".into(),
+                can_manage: true,
+            }
+        );
+        let option =
+            hat_web_fetch_permission_option(&scope, "web_fetch", "https://docs.example.com/review")
+                .unwrap();
+        let label = serde_json::to_value(&option).unwrap().to_string();
+        assert!(label.contains("Security review"), "{label}");
+        assert!(label.contains("docs.example.com"), "{label}");
+        assert!(
+            label.contains("future conversations and eligible Jobs"),
+            "{label}"
+        );
+        for (name, url) in [
+            ("web_fetch", "http://docs.example.com/review"),
+            ("web_fetch", "https://docs.example.com:8443/review"),
+            ("web_fetch", "https://127.0.0.1/review"),
+            ("fs_edit_file", "https://docs.example.com/review"),
+        ] {
+            assert!(hat_web_fetch_permission_option(&scope, name, url).is_none());
+        }
+        let ordinary = verified_permission_scope(json!({
+            "hats": [{"id": id, "name": "Security review"}],
+            "selected_hat_id": id, "may_manage_hat_policy": false,
+        }));
+        assert!(hat_web_fetch_permission_option(
+            &ordinary,
+            "web_fetch",
+            "https://docs.example.com/review"
+        )
+        .is_none());
     }
 
     #[test]
@@ -13957,7 +14111,9 @@ mod tests {
             start_bearwire_test_server_with_events_and_methods(false, vec![]).await;
         let config = test_config(api_url);
         let shared_state = test_shared_state();
-        assert!(!legacy_approval_cache_available(&config, &shared_state, "ide-test").await);
+        assert!(!verified_approval_scope(&config, &shared_state, "ide-test")
+            .await
+            .is_legacy());
         assert_eq!(methods.lock().await.as_slice(), ["hats.list"]);
     }
 

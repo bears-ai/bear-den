@@ -125,9 +125,12 @@ impl WebFetcher for DenWebFetcher<'_> {
         };
         let decision = match binding {
             memory_binding::ResolvedMemoryBinding::Legacy => {
-                if decision == web_policy::WebApprovalDecision::RequiresApproval
-                    && consume_web_fetch_once(self.pool, context, raw_url).await?
-                {
+                // A native approval bound to this exact request is consumed
+                // even when a separate standing policy already permits it.
+                // Otherwise revoking that policy could resurrect the old
+                // approved continuation as a later one-time fetch.
+                let approved_once = consume_web_fetch_once(self.pool, context, raw_url).await?;
+                if decision == web_policy::WebApprovalDecision::RequiresApproval && approved_once {
                     WebApproval::ApprovedOnce
                 } else {
                     map_decision(decision)
@@ -164,6 +167,8 @@ impl WebFetcher for DenWebFetcher<'_> {
                         "web fetch requires the current conversation owner".into(),
                     ));
                 }
+                let approved_once = is_hat_one_shot_destination(&normalized.url)
+                    && consume_web_fetch_once(self.pool, context, raw_url).await?;
                 if decision == web_policy::WebApprovalDecision::Blocked {
                     WebApproval::Blocked
                 } else if access::has_web_fetch_grants_for_own_conversation(
@@ -176,9 +181,7 @@ impl WebFetcher for DenWebFetcher<'_> {
                 .await?
                 {
                     WebApproval::HatGranted
-                } else if is_hat_one_shot_destination(&normalized.url)
-                    && consume_web_fetch_once(self.pool, context, raw_url).await?
-                {
+                } else if approved_once {
                     WebApproval::ApprovedOnce
                 } else {
                     WebApproval::RequiresApproval

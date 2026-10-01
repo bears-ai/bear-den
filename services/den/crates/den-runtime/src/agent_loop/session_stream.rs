@@ -37,7 +37,8 @@ use crate::{
         step::RUNTIME_CHECKPOINT_TOOL_NAME,
         tool_call_finished_event_for_content,
         tool_policy::{
-            maybe_pause_for_tool_approval, provider_tool_requires_approval,
+            hat_web_fetch_preapproved, maybe_pause_for_tool_approval,
+            provider_tool_is_den_web_fetch, provider_tool_requires_approval,
             provider_tool_supports_unilateral_execution,
         },
         validate_checkpoint_response, AgentStepOverflowContext, CheckpointArtifactInput,
@@ -101,6 +102,7 @@ pub enum NativeToolDispatchMode {
 
 type ApprovalPauseFuture =
     Pin<Box<dyn Future<Output = Result<Option<RuntimeSemanticEvent>, DenError>> + Send>>;
+type HatWebFetchPreflightFuture = Pin<Box<dyn Future<Output = Result<bool, DenError>> + Send>>;
 type ServerToolContinuationFuture =
     Pin<Box<dyn Future<Output = Result<RuntimeEventStream, DenError>> + Send>>;
 type ServerToolFuture = Pin<
@@ -408,6 +410,8 @@ pub struct SessionTrackingStream {
     finished: bool,
     assistant_synced_to_session: bool,
     pending_approval: Option<ApprovalPauseFuture>,
+    pending_hat_web_fetch: Option<HatWebFetchPreflightFuture>,
+    pending_hat_web_fetch_call: Option<ChatToolCall>,
     pending_tool_event: Option<RuntimeStreamEvent>,
     pending_pause_after_tool: Option<RuntimeSemanticEvent>,
     pending_checkpoint_thinking: Option<RuntimeSemanticEvent>,
@@ -464,6 +468,8 @@ impl SessionTrackingStream {
             finished: false,
             assistant_synced_to_session: false,
             pending_approval: None,
+            pending_hat_web_fetch: None,
+            pending_hat_web_fetch_call: None,
             pending_tool_event: None,
             pending_pause_after_tool: None,
             pending_checkpoint_thinking: None,
@@ -1175,6 +1181,10 @@ impl SessionTrackingStream {
     }
 
     fn persist_assistant_tool_step(&self) {
+        self.persist_assistant_tool_step_with_preapproval(None);
+    }
+
+    fn persist_assistant_tool_step_with_preapproval(&self, preauthorized_call_id: Option<&str>) {
         let calls = self.accumulated_tool_calls();
         if self.dispatch_mode != NativeToolDispatchMode::ServerSideInProcess {
             spawn_persist_native_agent_step(
@@ -1186,6 +1196,7 @@ impl SessionTrackingStream {
                 self.request_id.clone(),
                 self.assistant_text.clone(),
                 &calls,
+                preauthorized_call_id,
             );
         }
         if !self.tool_calls.is_empty() {
@@ -2411,6 +2422,65 @@ impl Stream for SessionTrackingStream {
             }
         }
 
+        if let Some(fut) = self.pending_hat_web_fetch.as_mut() {
+            match fut.as_mut().poll(cx) {
+                Poll::Ready(Ok(granted)) => {
+                    self.pending_hat_web_fetch = None;
+                    let call = self
+                        .pending_hat_web_fetch_call
+                        .take()
+                        .expect("a hat fetch preflight always has one tool call");
+                    if granted {
+                        let mut event = self
+                            .pending_tool_event
+                            .take()
+                            .expect("a hat fetch preflight always has one tool event");
+                        if let RuntimeStreamEvent::Semantic(
+                            RuntimeSemanticEvent::ToolCallRequested {
+                                approval_required,
+                                approval_reason,
+                                ..
+                            },
+                        ) = &mut event
+                        {
+                            *approval_required = false;
+                            *approval_reason = None;
+                        }
+                        self.persist_assistant_tool_step_with_preapproval(Some(&call.id));
+                        self.begin_server_tool_execution(call);
+                        return Poll::Ready(Some(Ok(event)));
+                    }
+                    let pool = self.pool.clone();
+                    let bear_id = self.bear_id;
+                    let conversation_id = self.conversation_id.clone();
+                    let client_session_id = self.client_session_id.clone();
+                    self.pending_approval = Some(Box::pin(async move {
+                        let arguments = serde_json::from_str(&call.function.arguments)
+                            .unwrap_or_else(|_| serde_json::json!({}));
+                        maybe_pause_for_tool_approval(
+                            &pool,
+                            bear_id,
+                            &conversation_id,
+                            &client_session_id,
+                            &call.id,
+                            &call.function.name,
+                            &arguments,
+                        )
+                        .await
+                    }));
+                    cx.waker().wake_by_ref();
+                    return Poll::Pending;
+                }
+                Poll::Ready(Err(error)) => {
+                    self.pending_hat_web_fetch = None;
+                    self.pending_hat_web_fetch_call = None;
+                    self.pending_tool_event = None;
+                    return Poll::Ready(Some(Err(error)));
+                }
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+
         if let Some(fut) = self.pending_approval.as_mut() {
             match fut.as_mut().poll(cx) {
                 Poll::Ready(Ok(Some(pause))) => {
@@ -2568,6 +2638,43 @@ impl Stream for SessionTrackingStream {
                     };
                     self.begin_server_tool_execution(call);
                     return Poll::Ready(Some(Ok(event)));
+                }
+                if approval_required
+                    && self.dispatch_mode == NativeToolDispatchMode::DeferToClient
+                    && self.profile == BearProfile::Pair
+                    && provider_tool_is_den_web_fetch(&tool_name)
+                    && self
+                        .store
+                        .get(&self.session_key)
+                        .and_then(|session| session.work_run_id)
+                        .is_none()
+                {
+                    let pool = self.pool.clone();
+                    let bear_id = self.bear_id;
+                    let conversation_id = self.conversation_id.clone();
+                    let user_id = self.user_id;
+                    let arguments_value = arguments.clone();
+                    self.pending_tool_event = Some(event);
+                    self.pending_hat_web_fetch_call = Some(ChatToolCall {
+                        id: tool_call_id,
+                        call_type: "function".to_string(),
+                        function: crate::llm::ChatToolCallFunction {
+                            name: tool_name,
+                            arguments: arguments.to_string(),
+                        },
+                    });
+                    self.pending_hat_web_fetch = Some(Box::pin(async move {
+                        hat_web_fetch_preapproved(
+                            &pool,
+                            bear_id,
+                            &conversation_id,
+                            user_id,
+                            &arguments_value,
+                        )
+                        .await
+                    }));
+                    cx.waker().wake_by_ref();
+                    return Poll::Pending;
                 }
                 if approval_required && self.dispatch_mode == NativeToolDispatchMode::DeferToClient
                 {
@@ -2753,6 +2860,10 @@ impl Stream for SessionTrackingStream {
 }
 
 #[cfg(test)]
+#[path = "session_stream/hat_web_fetch_tests.rs"]
+mod hat_web_fetch_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::{
@@ -2808,7 +2919,7 @@ mod tests {
         unsafe { Waker::from_raw(raw) }
     }
 
-    fn test_session(session_key: &str, bear_id: uuid::Uuid) -> AgentLoopSession {
+    pub(super) fn test_session(session_key: &str, bear_id: uuid::Uuid) -> AgentLoopSession {
         AgentLoopSession {
             session_key: session_key.to_string(),
             bear_id,

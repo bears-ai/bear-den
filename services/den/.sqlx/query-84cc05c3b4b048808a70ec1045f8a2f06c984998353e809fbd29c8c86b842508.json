@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT h.id FROM conversations c\n         JOIN bear_hats h ON h.id = c.hat_id AND h.bear_id = c.bear_id\n         JOIN user_bear ub ON ub.bear_id = c.bear_id AND ub.user_id = $3\n         WHERE c.bear_id = $1 AND c.id = $2 AND c.status = 'active'\n           AND c.created_by_user_id = $3\n           AND lower(btrim(coalesce(ub.role, ''))) = $4\n         FOR UPDATE OF c, h, ub",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int4",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "84cc05c3b4b048808a70ec1045f8a2f06c984998353e809fbd29c8c86b842508"
+}

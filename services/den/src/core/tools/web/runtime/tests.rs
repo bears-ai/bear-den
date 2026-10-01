@@ -496,6 +496,35 @@ async fn configured_hat_fetch_ignores_bear_wide_allows_and_checks_owner_and_revo
         fetcher.authorize_search(&ctx).await.is_err(),
         "provider-host revocation takes effect on the next call"
     );
+    let persistent_choice_approval = create_native_approval(
+        &pool,
+        bear,
+        "hat-fetch-own",
+        "hat-fetch-client",
+        "persistent-hat-call",
+        "web_fetch",
+        &json!({"url": url}),
+    )
+    .await
+    .unwrap();
+    decide_native_approval(
+        &pool,
+        &persistent_choice_approval,
+        NativeApprovalDecision::Approve,
+        None,
+    )
+    .await
+    .unwrap();
+    let persistent_request_id = Uuid::new_v4();
+    sqlx::query!(
+        "UPDATE runtime_approvals SET execution_request_id = $1 WHERE approval_id = $2",
+        persistent_request_id,
+        persistent_choice_approval,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    ctx.request_id = Some(persistent_request_id.to_string());
     let response = den_core::tools::web::web_fetch(
         &MockTransport(DenWebFetcher {
             pool: &pool,
@@ -507,6 +536,10 @@ async fn configured_hat_fetch_ignores_bear_wide_allows_and_checks_owner_and_revo
     .await
     .unwrap();
     assert_eq!(response["approval"], "hat_host");
+    assert!(sqlx::query_scalar!(
+        "SELECT consumed_at IS NOT NULL AS \"consumed!\" FROM runtime_approvals WHERE approval_id = $1",
+        persistent_choice_approval,
+    ).fetch_one(&pool).await.unwrap(), "the approval which installed a hat grant cannot reappear after revocation");
     assert_eq!(sqlx::query_scalar!("SELECT approval_kind FROM bear_web_fetches WHERE bear_id = $1 ORDER BY fetched_at DESC LIMIT 1", bear).fetch_one(&pool).await.unwrap(), "hat_host");
     for target in [
         "https://other.example.com/page",

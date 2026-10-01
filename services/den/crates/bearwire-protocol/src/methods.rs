@@ -402,6 +402,7 @@ pub enum PermissionDecisionInput {
     AllowOnce,
     AllowSiteAccount,
     AllowHost,
+    AllowHatHost,
     Denied,
     Deny,
     Rejected,
@@ -418,7 +419,7 @@ struct PermissionDecisionDescriptor {
     normalized: &'static str,
 }
 
-const PERMISSION_DECISION_DESCRIPTORS: [PermissionDecisionDescriptor; 15] = [
+const PERMISSION_DECISION_DESCRIPTORS: [PermissionDecisionDescriptor; 16] = [
     PermissionDecisionDescriptor {
         raw: "approved",
         normalized: "granted",
@@ -445,6 +446,10 @@ const PERMISSION_DECISION_DESCRIPTORS: [PermissionDecisionDescriptor; 15] = [
     },
     PermissionDecisionDescriptor {
         raw: "allow_host",
+        normalized: "granted",
+    },
+    PermissionDecisionDescriptor {
+        raw: "allow_hat_host",
         normalized: "granted",
     },
     PermissionDecisionDescriptor {
@@ -491,14 +496,15 @@ impl PermissionDecisionInput {
             Self::AllowOnce => 4,
             Self::AllowSiteAccount => 5,
             Self::AllowHost => 6,
-            Self::Denied => 7,
-            Self::Deny => 8,
-            Self::Rejected => 9,
-            Self::Reject => 10,
-            Self::RejectOnce => 11,
-            Self::RejectAlways => 12,
-            Self::Timeout => 13,
-            Self::TimedOut => 14,
+            Self::AllowHatHost => 7,
+            Self::Denied => 8,
+            Self::Deny => 9,
+            Self::Rejected => 10,
+            Self::Reject => 11,
+            Self::RejectOnce => 12,
+            Self::RejectAlways => 13,
+            Self::Timeout => 14,
+            Self::TimedOut => 15,
         }
     }
 
@@ -539,6 +545,14 @@ pub struct ClientPermissionResultRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hat_host_permission_decision_is_distinct_and_normalizes_to_granted() {
+        let decision: PermissionDecisionInput = serde_json::from_str("\"allow_hat_host\"").unwrap();
+        assert_eq!(decision, PermissionDecisionInput::AllowHatHost);
+        assert_eq!(decision.normalized(), "granted");
+        assert_eq!(decision.raw(), "allow_hat_host");
+    }
 
     #[test]
     fn session_task_settlement_request_trims_required_fields() {

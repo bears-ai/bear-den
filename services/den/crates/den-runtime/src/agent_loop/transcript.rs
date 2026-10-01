@@ -68,6 +68,7 @@ pub fn spawn_persist_native_agent_step(
     request_id: Option<String>,
     assistant_text: String,
     tool_calls: &[ChatToolCall],
+    preauthorized_call_id: Option<&str>,
 ) {
     if assistant_text.trim().is_empty() && tool_calls.is_empty() {
         return;
@@ -94,7 +95,8 @@ pub fn spawn_persist_native_agent_step(
     }
     for call in tool_calls {
         let args = parse_tool_arguments(&call.function.arguments);
-        let approval_required = provider_tool_requires_approval(&call.function.name);
+        let approval_required = preauthorized_call_id != Some(call.id.as_str())
+            && provider_tool_requires_approval(&call.function.name);
         spawn_persist_tool_request(
             context.clone(),
             CanonicalToolRequestRecord::new(

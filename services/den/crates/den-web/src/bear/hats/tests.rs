@@ -1045,7 +1045,7 @@ async fn hat_web_grants_are_admin_managed_and_revoke_immediately(pool: PgPool) {
     let (status, page, _) = request(&app, &admin_cookie, "GET", &detail, "").await;
     assert_eq!(status, StatusCode::OK, "{page}");
     assert!(page.contains("Den web tool and host policy"));
-    assert!(page.contains("per-call approval in ACP"));
+    assert!(page.contains("skip the ACP prompt only while"));
     assert_eq!(
         request(
             &app,

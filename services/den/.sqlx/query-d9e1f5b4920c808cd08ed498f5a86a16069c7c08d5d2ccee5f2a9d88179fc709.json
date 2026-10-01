@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT consumed_at IS NOT NULL AS \"consumed!\" FROM runtime_approvals WHERE approval_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "consumed!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "d9e1f5b4920c808cd08ed498f5a86a16069c7c08d5d2ccee5f2a9d88179fc709"
+}

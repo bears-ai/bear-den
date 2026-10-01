@@ -145,8 +145,26 @@ async fn ide_default_and_first_interaction_hat_selection_bind_one_canonical_conv
         default.id.to_string()
     );
     assert_eq!(listed["result"]["selected_hat_id"], default.id.to_string());
+    assert_eq!(listed["result"]["may_manage_hat_policy"], true);
     let other_user = create_test_user(&pool).await;
     let other_token = create_member_token(&pool, other_user, bear_id).await;
+    let member_session = format!("member-ide-{}", Uuid::new_v4());
+    let member_opened = rpc_value(
+        state.clone(),
+        &other_token,
+        "session.open",
+        json!({"bear_slug": bear_slug, "session_id": member_session, "client": "zed"}),
+    )
+    .await;
+    assert_eq!(member_opened["result"]["ok"], true, "{member_opened}");
+    let member_listing = rpc_value(
+        state.clone(),
+        &other_token,
+        "hats.list",
+        json!({"bear_slug": bear_slug, "session_id": member_session}),
+    )
+    .await;
+    assert_eq!(member_listing["result"]["may_manage_hat_policy"], false);
     let stolen = rpc_value(
         state.clone(),
         &other_token,

@@ -678,10 +678,17 @@ pub(crate) async fn hats_list_result(
     } else {
         None
     };
+    let may_manage_hat_policy = bears_db::role_is_bear_admin(
+        bears_db::membership_role_for_user(&state.sqlx_pool, user_id, bear.id)
+            .await?
+            .flatten()
+            .as_deref(),
+    );
     Ok(json!({
         "hats": hats::list_hats(&state.sqlx_pool, bear_id).await?,
         "ide_default_hat_id": ide_default_hat_id,
         "selected_hat_id": selected_hat_id,
+        "may_manage_hat_policy": may_manage_hat_policy,
     }))
 }
 

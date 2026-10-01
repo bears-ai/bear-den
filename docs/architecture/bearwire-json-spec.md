@@ -1212,7 +1212,7 @@ Identical duplicate submissions are idempotent; conflicting or stale submissions
 
 The attempt token is a bearer capability for one execution attempt. It must be transmitted only in claim-dependent requests and must not be returned by `run.state`, event history, snapshots, logs, or user-visible diagnostics. `run.state` may expose typed lease status and expiry so reconnecting clients can inspect safely without acquiring execution authority.
 
-`client.permission.result` answers an open `permission_decision` obligation emitted via `client.waiting`. Permission approval does not itself claim or execute the tool; a subsequent armature-local tool obligation must still be claimed before execution.
+`client.permission.result` answers an open `permission_decision` obligation emitted via `client.waiting`. A client-local approval is followed by a separately claimed armature-local tool obligation; an approved Den-hosted `web_fetch` instead resumes Den's own tool execution. The typed `allow_hat_host` decision is accepted only for a canonical Den web-fetch obligation and a current Bear-admin conversation creator. Once the result wins the obligation, Den derives the hat and exact HTTPS host from the canonical conversation and stored request, writes its tool+host grants together, and then resumes the original fetch. A duplicate or late result cannot create the grant. The armature cannot manufacture a hat grant from a client-supplied hat ID or a displayed permission label.
 
 ### Resource methods
 

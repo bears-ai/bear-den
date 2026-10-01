@@ -43,6 +43,21 @@ fn tool_aliases_and_network_hosts_normalize_at_the_boundary() {
         HttpsHost::parse("EXAMPLE.COM.").unwrap(),
         HttpsHost::parse("example.com").unwrap()
     );
+    for invalid_url in [
+        "http://example.com/docs",
+        "https://example.com:8443/docs",
+        "https://user@example.com/docs",
+        "https://127.0.0.1/docs",
+    ] {
+        assert!(
+            HttpsHost::from_https_url(invalid_url).is_err(),
+            "{invalid_url}"
+        );
+    }
+    assert_eq!(
+        HttpsHost::from_https_url("https://EXAMPLE.COM/docs").unwrap(),
+        HttpsHost::parse("example.com").unwrap()
+    );
     for invalid in [
         "localhost",
         "repo.localhost",
@@ -56,6 +71,113 @@ fn tool_aliases_and_network_hosts_normalize_at_the_boundary() {
     ] {
         assert!(HttpsHost::parse(invalid).is_err(), "{invalid}");
     }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn acp_web_grant_is_atomic_and_derived_from_the_admin_owned_conversation(pool: PgPool) {
+    let bear_id = bear(&pool, "acpwebgrantbear").await;
+    let admin = UserId::new(sqlx::query_scalar!(
+        "INSERT INTO users (username, email) VALUES ('hatgrantadmin', 'hatgrantadmin@example.test') RETURNING id"
+    ).fetch_one(&pool).await.unwrap());
+    let member = UserId::new(sqlx::query_scalar!(
+        "INSERT INTO users (username, email) VALUES ('hatgrantmember', 'hatgrantmember@example.test') RETURNING id"
+    ).fetch_one(&pool).await.unwrap());
+    db::grant_membership(
+        &pool,
+        admin.get(),
+        bear_id.as_uuid(),
+        Some(db::BEAR_ROLE_ADMIN),
+    )
+    .await
+    .unwrap();
+    db::grant_membership(
+        &pool,
+        member.get(),
+        bear_id.as_uuid(),
+        Some(db::BEAR_ROLE_MEMBER),
+    )
+    .await
+    .unwrap();
+    let hat = hats::create_hat(&pool, bear_id, admin, "Research", "Fetch public docs")
+        .await
+        .unwrap();
+    let own = persistence::ensure_conversation_for_external_id(
+        &pool,
+        bear_id.as_uuid(),
+        Some(admin.get()),
+        "acp-web-grant-owner",
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    hats::bindings::bind_conversation_hat(&pool, bear_id, own.id, hat.id)
+        .await
+        .unwrap();
+    let other = persistence::ensure_conversation_for_external_id(
+        &pool,
+        bear_id.as_uuid(),
+        Some(member.get()),
+        "acp-web-grant-other",
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    hats::bindings::bind_conversation_hat(&pool, bear_id, other.id, hat.id)
+        .await
+        .unwrap();
+    let url = "https://example.com/docs";
+    for denied in [
+        grant_web_fetch_host_for_own_conversation(&pool, bear_id, own.id, admin, url, false).await,
+        grant_web_fetch_host_for_own_conversation(&pool, bear_id, other.id, admin, url, true).await,
+        grant_web_fetch_host_for_own_conversation(&pool, bear_id, other.id, member, url, true)
+            .await,
+        grant_web_fetch_host_for_own_conversation(
+            &pool,
+            bear_id,
+            own.id,
+            admin,
+            "http://example.com",
+            true,
+        )
+        .await,
+    ] {
+        assert!(denied.is_err());
+    }
+    assert!(
+        !has_web_fetch_grants_for_own_conversation(&pool, bear_id, own.id, admin, url)
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        grant_web_fetch_host_for_own_conversation(&pool, bear_id, own.id, admin, url, true)
+            .await
+            .unwrap(),
+        hat.id
+    );
+    assert_eq!(
+        grant_web_fetch_host_for_own_conversation(&pool, bear_id, own.id, admin, url, true)
+            .await
+            .unwrap(),
+        hat.id
+    );
+    assert!(
+        has_web_fetch_grants_for_own_conversation(&pool, bear_id, other.id, member, url)
+            .await
+            .unwrap()
+    );
+    let summary = web_grants_for_hat(&pool, bear_id, hat.id).await.unwrap();
+    assert_eq!(summary.hosts.len(), 1);
+    assert!(summary.fetch_tool_grant_id.is_some());
+    revoke(&pool, bear_id, hat.id, admin, summary.hosts[0].id)
+        .await
+        .unwrap();
+    assert!(
+        !has_web_fetch_grants_for_own_conversation(&pool, bear_id, own.id, admin, url)
+            .await
+            .unwrap()
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]

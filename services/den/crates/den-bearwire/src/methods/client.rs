@@ -17,12 +17,9 @@ use bearwire_protocol::{
 use den_core::{
     client_tools::{client_tool_policy_json_for_provider, ClientToolName},
     ids::BearId,
-    tools::{
-        constants::DEN_WEB_FETCH,
-        result_compaction::{
-            compact_client_tool_result, compact_client_tool_result_with_artifact,
-            ClientToolResultInput, ToolResultStatus,
-        },
+    tools::result_compaction::{
+        compact_client_tool_result, compact_client_tool_result_with_artifact,
+        ClientToolResultInput, ToolResultStatus,
     },
     DenError,
 };
@@ -467,29 +464,11 @@ fn continuation_conversation_id(session: &client_sessions::ClientSessionRow) -> 
         .unwrap_or_else(|| session.conversation_id.clone())
 }
 
-fn validate_web_fetch_permission_decision(
-    decision: PermissionDecisionInput,
-    obligation_payload: &Value,
-) -> Result<(), CustomError> {
-    let tool_name = obligation_payload
-        .get("tool_name")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let is_web_fetch =
-        den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name(tool_name)
-            .is_some_and(|descriptor| descriptor.name == DEN_WEB_FETCH);
-    if is_web_fetch
-        && matches!(
-            decision,
-            PermissionDecisionInput::AllowSiteAccount | PermissionDecisionInput::AllowHost
-        )
-    {
-        return Err(CustomError::ValidationError(
-            "persistent web_fetch approval must be managed as a Den-owned hat policy; choose Just this time".into(),
-        ));
-    }
-    Ok(())
-}
+mod hat_web_permission;
+use hat_web_permission::{
+    persist as persist_hat_web_fetch_permission,
+    validate_decision as validate_web_fetch_permission_decision,
+};
 
 pub(super) async fn continuation_binding_id(
     pool: &sqlx::PgPool,
@@ -1589,9 +1568,10 @@ pub(crate) async fn client_permission_result_result(
     }
     let binding_id = continuation_binding_id(&state.sqlx_pool, bear.id, &session_id).await?;
     if normalized_decision == "granted" {
-        // Reject a stale client's persistent web choice before claiming the
-        // one-shot continuation. No ACP decision writes Bear-wide web grants.
         validate_web_fetch_permission_decision(decision, &obligation.request_payload)?;
+        if decision == PermissionDecisionInput::AllowHatHost {
+            hat_web_permission::validate_destination(&obligation.request_payload)?;
+        }
     }
     let coordinator_outcome = client_obligation_coordinator::record_and_settle_permission_result(
         &state.sqlx_pool,
@@ -1716,38 +1696,67 @@ pub(crate) async fn client_permission_result_result(
                 &session_id,
             )
             .await?;
-            let event_type = match normalized_decision {
-                "granted" => "permission.granted",
-                "expired" => "permission.expired",
-                _ => "permission.denied",
+            // Only the winning, newly inserted result may create a shared hat
+            // grant. Never apply a duplicate, stale result, or a losing sibling
+            // continuation. On a post-claim policy failure, continue the
+            // original tool call as denied rather than leaving the run stuck.
+            let grant_error = if transitioned.is_some() && decision == PermissionDecisionInput::AllowHatHost {
+                persist_hat_web_fetch_permission(
+                    &state.sqlx_pool, bear.id, user_id, &continuation_conversation_id,
+                    &session_id, &obligation.request_payload,
+                ).await.err()
+            } else {
+                None
             };
-            let mut event = BearWireEvent::ephemeral(event_type, payload);
+            if let Some(error) = &grant_error {
+                tracing::warn!(bear_id = %bear.id, session_id, permission_id,
+                    error = %error, "hat web-fetch grant was not persisted after permission claim");
+            }
+            let hat_grant_not_persisted = decision == PermissionDecisionInput::AllowHatHost
+                && (grant_error.is_some() || transitioned.is_none());
+            let event_type = if hat_grant_not_persisted {
+                "permission.denied"
+            } else {
+                match normalized_decision {
+                    "granted" => "permission.granted",
+                    "expired" => "permission.expired",
+                    _ => "permission.denied",
+                }
+            };
+            let mut event_payload = payload;
+            if hat_grant_not_persisted {
+                event_payload["hat_grant_status"] = json!("not_persisted");
+            }
+            let mut event = BearWireEvent::ephemeral(event_type, event_payload);
             event.bear_id = Some(bear.id.to_string());
             event.human_id = Some(user_id.to_string());
             event.session_id = Some(session_id.clone());
             event.run_id = Some(run_id.clone());
             event.subject = Some(format!("resource/permission_request/{permission_id}"));
-            let persisted = bearwire_events::append_bearwire_event(
-                &state.sqlx_pool,
-                &session_id,
-                Some(bear.id),
-                Some(user_id),
-                event,
-            )
-            .await?;
-            let decision = if normalized_decision == "granted" {
+            let event_sequence = match bearwire_events::append_bearwire_event(
+                &state.sqlx_pool, &session_id, Some(bear.id), Some(user_id), event,
+            ).await {
+                Ok(persisted) => Some(persisted.sequence_no),
+                Err(error) => {
+                    tracing::warn!(bear_id = %bear.id, session_id, permission_id,
+                        error = %error, "permission event append failed after result claim; continuing to avoid a stranded run");
+                    None
+                }
+            };
+            let continuation_decision = if normalized_decision == "granted" && grant_error.is_none() {
                 RuntimeApprovalDecision::Approve
             } else {
                 RuntimeApprovalDecision::Deny
             };
             let Some(transitioned) = transitioned else {
                 return Ok(json!({
-                    "ok": true,
+                    "ok": decision != PermissionDecisionInput::AllowHatHost,
                     "duplicate": false,
                     "result_id": result.id,
-                    "event_sequence": persisted.sequence_no,
+                    "event_sequence": event_sequence,
                     "run_state": "continuing",
                     "continuation": "already_started",
+                    "hat_grant_status": if decision == PermissionDecisionInput::AllowHatHost { "not_persisted" } else { "not_requested" },
                 }));
             };
             spawn_continuation_task(
@@ -1758,17 +1767,22 @@ pub(crate) async fn client_permission_result_result(
                 RuntimeContinuation::ApprovalDecision {
                     approval_request_id: permission_id.clone(),
                     tool_call_id: obligation.tool_call_id.clone(),
-                    decision,
-                    reason,
+                    decision: continuation_decision,
+                    reason: if grant_error.is_some() {
+                        Some("hat policy could not be persisted".into())
+                    } else {
+                        reason
+                    },
                 },
             );
             Ok(json!({
-                "ok": true,
+                "ok": grant_error.is_none(),
                 "duplicate": false,
                 "result_id": result.id,
-                "event_sequence": persisted.sequence_no,
+                "event_sequence": event_sequence,
                 "run_state": transitioned.state,
                 "continuation": "started",
+                "hat_grant_status": if grant_error.is_some() { "not_persisted" } else if decision == PermissionDecisionInput::AllowHatHost { "persisted" } else { "not_requested" },
             }))
         }
     }
@@ -1783,6 +1797,7 @@ fn compacted_artifact_ref(artifact: &ToolOutputArtifactRecord) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use den_core::tools::constants::DEN_WEB_FETCH;
 
     #[test]
     fn durable_tool_output_ref_is_preferred_for_compaction() {
