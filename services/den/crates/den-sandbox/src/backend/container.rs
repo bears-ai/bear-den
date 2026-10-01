@@ -19,6 +19,7 @@ use crate::protocol::{
     RustDependencyPreparation, RustDependencyResolution,
 };
 use std::collections::BTreeMap;
+use std::future::Future;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -257,24 +258,18 @@ impl DockerCliBackend {
         }
         for (index, host) in spec.allowed_outbound_hosts.iter().enumerate() {
             let relay = egress_relay_container_name(&spec.id, index);
-            let resolved = tokio::time::timeout(
+            let pinned = bounded_public_egress_address(
+                async {
+                    tokio::net::lookup_host((host.as_str(), 443))
+                        .await
+                        .map(|addresses| addresses.collect())
+                },
                 EGRESS_DNS_TIMEOUT,
-                tokio::net::lookup_host((host.as_str(), 443)),
             )
             .await
-            .map_err(|_| BackendError::Operation {
+            .map_err(|detail| BackendError::Operation {
                 id: spec.id.clone(),
-                detail: format!("approved egress host {host} DNS lookup timed out"),
-            })?
-            .map_err(|error| BackendError::Operation {
-                id: spec.id.clone(),
-                detail: format!("approved egress host could not be resolved safely: {error}"),
-            })?;
-            let pinned = select_public_egress_address(resolved).map_err(|detail| {
-                BackendError::Operation {
-                    id: spec.id.clone(),
-                    detail: format!("approved egress host {host}: {detail}"),
-                }
+                detail: format!("approved egress host {host}: {detail}"),
             })?;
             // The sandbox still addresses the original DNS alias for TLS SNI;
             // only the relay's upstream is pinned, so reconnecting cannot
@@ -808,6 +803,17 @@ fn network_create_args(network: &str, id: &str) -> Vec<String> {
     ]
 }
 
+async fn bounded_public_egress_address<F>(lookup: F, deadline: Duration) -> Result<Ipv4Addr, String>
+where
+    F: Future<Output = std::io::Result<Vec<SocketAddr>>>,
+{
+    let addresses = tokio::time::timeout(deadline, lookup)
+        .await
+        .map_err(|_| "DNS lookup timed out".to_string())?
+        .map_err(|error| format!("DNS lookup failed: {error}"))?;
+    select_public_egress_address(addresses).map_err(str::to_string)
+}
+
 fn select_public_egress_address(
     addresses: impl IntoIterator<Item = SocketAddr>,
 ) -> Result<Ipv4Addr, &'static str> {
@@ -1097,6 +1103,34 @@ mod tests {
                 "{blocked}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn egress_dns_lookup_times_out_and_never_falls_back_to_hostname() {
+        let timeout = bounded_public_egress_address(
+            std::future::pending::<std::io::Result<Vec<SocketAddr>>>(),
+            Duration::from_millis(1),
+        )
+        .await
+        .unwrap_err();
+        assert!(timeout.contains("timed out"), "{timeout}");
+        let public: SocketAddr = "1.1.1.1:443".parse().unwrap();
+        assert_eq!(
+            bounded_public_egress_address(
+                std::future::ready(Ok(vec![public])),
+                Duration::from_millis(100),
+            )
+            .await
+            .unwrap(),
+            "1.1.1.1".parse::<Ipv4Addr>().unwrap(),
+        );
+        let private: SocketAddr = "10.0.0.1:443".parse().unwrap();
+        assert!(bounded_public_egress_address(
+            std::future::ready(Ok(vec![public, private])),
+            Duration::from_millis(100),
+        )
+        .await
+        .is_err());
     }
 
     #[test]
