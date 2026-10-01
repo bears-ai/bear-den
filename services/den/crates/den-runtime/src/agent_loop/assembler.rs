@@ -354,27 +354,30 @@ async fn resolve_memory_projection_scope(
     ctx: &AssembleTurnContext<'_>,
 ) -> Result<MemoryProjectionScope, DenError> {
     let bear_id = BearId::new(ctx.bear_id);
-    let binding = match ctx.profile {
-        BearProfile::Pair | BearProfile::Chat => {
-            let Some(conversation) =
-                get_conversation_for_external_id(ctx.pool, ctx.bear_id, ctx.conversation_id)
-                    .await?
-            else {
-                return shared_only_without_configured_hats(ctx).await;
-            };
-            memory_binding::for_conversation(ctx.pool, bear_id, conversation.id).await?
+    if matches!(ctx.profile, BearProfile::Curate | BearProfile::Watch) {
+        return Ok(MemoryProjectionScope::Legacy);
+    }
+    let work_run = match ctx.session_id {
+        Some(session_id) => work_runs::get_live_work_run_by_session(ctx.pool, session_id).await?,
+        None => None,
+    };
+    let binding = if let Some(run) = work_run {
+        if run.bear_id != ctx.bear_id || ctx.profile != BearProfile::Work {
+            return Err(DenError::Authorization(
+                "a Work-bound session cannot be read as a conversation".into(),
+            ));
         }
-        BearProfile::Work => {
-            let Some(session_id) = ctx.session_id else {
-                return shared_only_without_configured_hats(ctx).await;
-            };
-            let Some(run) = work_runs::get_live_work_run_by_session(ctx.pool, session_id).await?
-            else {
-                return shared_only_without_configured_hats(ctx).await;
-            };
-            memory_binding::for_work_run(ctx.pool, bear_id, run.id).await?
+        memory_binding::for_work_run(ctx.pool, bear_id, run.id).await?
+    } else {
+        if ctx.profile == BearProfile::Work {
+            return shared_only_without_configured_hats(ctx).await;
         }
-        BearProfile::Curate | BearProfile::Watch => return Ok(MemoryProjectionScope::Legacy),
+        let Some(conversation) =
+            get_conversation_for_external_id(ctx.pool, ctx.bear_id, ctx.conversation_id).await?
+        else {
+            return shared_only_without_configured_hats(ctx).await;
+        };
+        memory_binding::for_conversation(ctx.pool, bear_id, conversation.id).await?
     };
     Ok(match binding {
         ResolvedMemoryBinding::Legacy => MemoryProjectionScope::Legacy,

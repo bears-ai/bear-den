@@ -363,6 +363,27 @@ async fn model_turn_uses_verified_hat_identity_without_cross_hat_or_stance_ident
     assert!(work_system.contains("Review secrets"));
     assert!(!work_system.contains("Help customers"));
     assert!(!work_system.contains("OLD WORK IDENTITY"));
+    for profile in [BearProfile::Pair, BearProfile::Chat] {
+        assert!(
+            matches!(
+                assemble_native_turn_for_bear(
+                    context(
+                        &pool,
+                        &config,
+                        &stores,
+                        bear_id,
+                        profile,
+                        "conv-turn-security",
+                        Some("hat-work-session"),
+                    ),
+                    &bear,
+                )
+                .await,
+                Err(DenError::Authorization(_))
+            ),
+            "{profile:?} cannot read a Work-bound session as an interactive conversation"
+        );
+    }
     hats::manage::update_hat(
         &pool,
         BearId::new(bear_id),
