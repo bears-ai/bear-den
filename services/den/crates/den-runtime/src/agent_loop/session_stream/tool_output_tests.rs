@@ -27,3 +27,21 @@ fn compacted_tool_output_read_requires_its_verified_descriptor_audience() {
         );
     }
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn compacted_tool_output_read_rechecks_actor_before_artifact_lookup(
+    pool: sqlx::PgPool,
+) -> Result<(), DenError> {
+    let result = tool_output_read_result(
+        &pool,
+        Uuid::new_v4(),
+        Some(1),
+        "invented-conversation",
+        "invented-session",
+        TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+        serde_json::json!({ "artifact_ref": "tool-output://invented" }),
+    )
+    .await;
+    assert!(matches!(result, Err(DenError::Authorization(_))));
+    Ok(())
+}

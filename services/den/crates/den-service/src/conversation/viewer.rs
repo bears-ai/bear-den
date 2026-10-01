@@ -7,9 +7,54 @@ use den_core::{
 use sqlx::{types::Json, PgPool};
 use uuid::Uuid;
 
-use crate::bears::db::{membership_role_for_user, role_is_bear_admin};
+use crate::bears::{
+    db::{membership_role_for_user, role_is_bear_admin, user_may_use_bear},
+    hats::memory_binding::{self, ResolvedMemoryBinding},
+};
 
-use super::persistence::{ConversationRecord, ConversationRow};
+use super::persistence::{get_conversation_for_external_id, ConversationRecord, ConversationRow};
+
+/// Effect-time source check for ordinary Den-hosted tools, including direct
+/// artifact reads. Internal curation/observation and Job work have separate
+/// authority, and must not call this with a fabricated human ID.
+pub async fn require_ordinary_tool_source(
+    pool: &PgPool,
+    bear_id: BearId,
+    user_id: UserId,
+    external_conversation_id: &str,
+) -> Result<(), DenError> {
+    if !user_may_use_bear(pool, user_id.get(), bear_id.as_uuid()).await? {
+        return Err(DenError::Authorization(
+            "Den tool actor is no longer a member of this Bear".into(),
+        ));
+    }
+    match memory_binding::for_external_conversation(pool, bear_id, external_conversation_id).await {
+        Ok(ResolvedMemoryBinding::Bound(_)) => {
+            let conversation =
+                get_conversation_for_external_id(pool, bear_id.as_uuid(), external_conversation_id)
+                    .await?
+                    .ok_or_else(|| {
+                        DenError::Authorization("Den tool conversation disappeared".into())
+                    })?;
+            let viewer = ConversationViewer::resolve(pool, bear_id, user_id)
+                .await?
+                .ok_or_else(|| DenError::Authorization("Den tool actor lost Bear access".into()))?;
+            if !viewer.may_read_own_source(pool, conversation.id).await? {
+                return Err(DenError::Authorization(
+                    "Den tool actor does not own this active conversation".into(),
+                ));
+            }
+        }
+        Ok(ResolvedMemoryBinding::Legacy) => {}
+        Err(DenError::NotFound(_)) => {
+            // Preserve no-hat sessions without canonical conversation rows;
+            // configured Bears cannot use this legacy escape hatch.
+            memory_binding::legacy_only_without_hats(pool, bear_id).await?;
+        }
+        Err(error) => return Err(error),
+    }
+    Ok(())
+}
 
 /// A bounded set of canonical conversations whose private source notes belong to this human.
 #[derive(Debug, Clone)]

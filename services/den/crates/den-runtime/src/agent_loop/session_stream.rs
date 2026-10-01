@@ -364,9 +364,23 @@ fn require_tool_output_read_origin(origin: TurnExecutionOrigin) -> Result<(), De
 async fn tool_output_read_result(
     pool: &sqlx::PgPool,
     bear_id: uuid::Uuid,
+    user_id: Option<i32>,
+    conversation_id: &str,
     session_id: &str,
+    origin: TurnExecutionOrigin,
     args: serde_json::Value,
 ) -> Result<serde_json::Value, DenError> {
+    require_tool_output_read_origin(origin)?;
+    let user_id = user_id.ok_or_else(|| {
+        DenError::Authorization("tool output read requires an authenticated human".into())
+    })?;
+    den_service::conversation::viewer::require_ordinary_tool_source(
+        pool,
+        den_core::ids::BearId::new(bear_id),
+        den_core::ids::UserId::new(user_id),
+        conversation_id,
+    )
+    .await?;
     let artifact_ref = args
         .get("artifact_ref")
         .and_then(serde_json::Value::as_str)
@@ -931,12 +945,16 @@ impl SessionTrackingStream {
                 return Err(DenError::ValidationError(error));
             }
             let result = if canonical == DEN_TOOL_OUTPUT_READ {
-                match require_tool_output_read_origin(origin) {
-                    Ok(()) => {
-                        tool_output_read_result(&pool, bear_id, &client_session_id, args).await
-                    }
-                    Err(error) => Err(error),
-                }
+                tool_output_read_result(
+                    &pool,
+                    bear_id,
+                    user_id,
+                    &conversation_id,
+                    &client_session_id,
+                    origin,
+                    args,
+                )
+                .await
             } else {
                 invoker
                     .invoke(crate::native_runtime::RuntimeToolInvocation {
