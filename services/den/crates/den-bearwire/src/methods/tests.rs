@@ -2311,6 +2311,22 @@ async fn session_open_preserves_sandbox_work_session_binding(pool: sqlx::PgPool)
     )
     .await;
     assert_eq!(opened["result"]["ok"], true, "{opened}");
+    let forbidden_workspace_grant = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "hats.workspace_tool.check",
+        json!({
+            "bear_slug": bear_slug,
+            "session_id": session_id,
+            "tool_name": "fs_read_text_file",
+            "workspace_root": "/workspace/project",
+        }),
+    )
+    .await;
+    assert!(
+        forbidden_workspace_grant.get("error").is_some(),
+        "{forbidden_workspace_grant}"
+    );
 
     let live = den_docket::work_runs::get_live_work_run_by_session(&pool, &session_id)
         .await
