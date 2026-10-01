@@ -13,7 +13,7 @@ pub use store::{
 
 use serde_json::{json, Value};
 
-use crate::{BearProfile, DenError};
+use crate::{BearProfile, DenError, TurnExecutionOrigin};
 
 use crate::tools::{
     capability_catalog::{
@@ -21,7 +21,9 @@ use crate::tools::{
         tool_descriptor_to_capability, CapabilityDescribeArguments, CapabilitySearchArguments,
     },
     context::DenToolInvocationContext,
-    descriptor::{builtin_den_tool_descriptors, builtin_den_tool_descriptors_for_profile},
+    descriptor::{
+        builtin_den_tool_descriptors, builtin_den_tool_descriptors_for_profile, ToolAudience,
+    },
 };
 
 /// Pure: the trusted channel-context echo for `channel_get_context`.
@@ -242,7 +244,42 @@ pub async fn authorize_context(
     context_role(dir, context).await
 }
 
-/// Reject tools the resolved role is not permitted to call.
+/// The runtime owns the origin; registration and the context profile can only
+/// confirm it, never select the descriptor audience for a native invocation.
+pub async fn authorize_context_for_origin(
+    dir: &impl BearDirectory,
+    context: &DenToolInvocationContext,
+    origin: TurnExecutionOrigin,
+) -> Result<BearProfile, DenError> {
+    let registered = authorize_context(dir, context).await?;
+    let projected = ToolAudience::from_origin(origin).compatibility_profile();
+    if registered != projected || context.profile != Some(projected) {
+        return Err(DenError::Authorization(
+            "Den tool binding does not match the verified execution origin".into(),
+        ));
+    }
+    Ok(projected)
+}
+
+pub fn authorize_tool_for_origin(
+    tool_name: &str,
+    origin: TurnExecutionOrigin,
+) -> Result<(), DenError> {
+    let descriptor = builtin_den_tool_descriptors()
+        .into_iter()
+        .find(|descriptor| descriptor.name == tool_name)
+        .ok_or_else(|| DenError::NotFound(format!("unknown Den tool: {tool_name}")))?;
+    if descriptor.allows_origin(origin) {
+        Ok(())
+    } else {
+        Err(DenError::Authorization(format!(
+            "Den tool `{tool_name}` is unavailable to this verified execution origin"
+        )))
+    }
+}
+
+/// Legacy no-hat dispatcher compatibility. Never derive a native turn's
+/// authority from this profile projection.
 pub fn authorize_tool_for_profile(tool_name: &str, role: BearProfile) -> Result<(), DenError> {
     let descriptor = builtin_den_tool_descriptors()
         .into_iter()
@@ -256,6 +293,10 @@ pub fn authorize_tool_for_profile(tool_name: &str, role: BearProfile) -> Result<
         )))
     }
 }
+
+#[cfg(test)]
+#[path = "authority_tests.rs"]
+mod authority_tests;
 
 #[cfg(test)]
 mod tests {

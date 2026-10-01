@@ -22,6 +22,7 @@ use den_core::tools::{
         DEN_WORK_RUN_RESOLVE_STALLED, DEN_WORK_SURFACE_CONFIRM,
     },
 };
+use den_core::TurnExecutionOrigin;
 use den_docket::{DocketService, PgDocketService, TaskListHandoffRequest};
 use den_memory::MemoryStoreManager;
 use den_service::bears::BearProfile;
@@ -49,6 +50,47 @@ pub async fn invoke_den_tool(
     arguments: Value,
     context: DenToolInvocationContext,
 ) -> Result<Value, CustomError> {
+    invoke_den_tool_with_origin(pool, config, stores, tool_name, arguments, context, None).await
+}
+
+pub async fn invoke_den_tool_for_origin(
+    pool: &PgPool,
+    config: &Config,
+    stores: &MemoryStoreManager,
+    tool_name: &str,
+    arguments: Value,
+    context: DenToolInvocationContext,
+    origin: TurnExecutionOrigin,
+) -> Result<Value, CustomError> {
+    invoke_den_tool_with_origin(
+        pool,
+        config,
+        stores,
+        tool_name,
+        arguments,
+        context,
+        Some(origin),
+    )
+    .await
+}
+
+async fn invoke_den_tool_with_origin(
+    pool: &PgPool,
+    config: &Config,
+    stores: &MemoryStoreManager,
+    tool_name: &str,
+    arguments: Value,
+    context: DenToolInvocationContext,
+    origin: Option<TurnExecutionOrigin>,
+) -> Result<Value, CustomError> {
+    if let Some(origin) = origin {
+        let ctx = DenToolContext::new(pool, config, stores);
+        let canonical =
+            den_core::tools::aliases::canonical_builtin_den_tool(tool_name).unwrap_or(tool_name);
+        den_core::tools::dispatch::authorize_den_tool_for_origin(&ctx, canonical, &context, origin)
+            .await
+            .map_err(CustomError::from)?;
+    }
     if tool_name == DEN_WORK_PREPARE_RUST_DEPENDENCIES {
         let arguments: PrepareRustDependenciesArguments = serde_json::from_value(arguments)
             .map_err(|error| CustomError::ValidationError(error.to_string()))?;
@@ -139,9 +181,11 @@ pub async fn invoke_den_tool(
         let args: TaskListHandoffArguments = serde_json::from_value(arguments)
             .map_err(|error| CustomError::ValidationError(error.to_string()))?;
         let ctx = DenToolContext::new(pool, config, stores);
-        den_core::tools::dispatch::authorize_den_tool(&ctx, tool_name, &context)
-            .await
-            .map_err(CustomError::from)?;
+        if origin.is_none() {
+            den_core::tools::dispatch::authorize_den_tool(&ctx, tool_name, &context)
+                .await
+                .map_err(CustomError::from)?;
+        }
         let role = context.profile.unwrap_or(BearProfile::Pair);
         let session_anchor_id = workflow::resolve_task_session_anchor_id(pool, &context, None)
             .await?
@@ -200,9 +244,16 @@ pub async fn invoke_den_tool(
     }
 
     let ctx = DenToolContext::new(pool, config, stores);
-    den_core::tools::dispatch::invoke_den_tool(&ctx, tool_name, arguments, context)
+    match origin {
+        Some(origin) => den_core::tools::dispatch::invoke_den_tool_for_origin(
+            &ctx, tool_name, arguments, context, origin,
+        )
         .await
-        .map_err(CustomError::from)
+        .map_err(CustomError::from),
+        None => den_core::tools::dispatch::invoke_den_tool(&ctx, tool_name, arguments, context)
+            .await
+            .map_err(CustomError::from),
+    }
 }
 
 /// Den-owned bridge from an authorized work run to its active sandbox provider.

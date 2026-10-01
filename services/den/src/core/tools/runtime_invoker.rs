@@ -18,7 +18,7 @@ use den_service::{
 };
 use sqlx::PgPool;
 
-use crate::core::tools::{context::DenToolContext, session::invoke_den_tool};
+use crate::core::tools::{context::DenToolContext, session::invoke_den_tool_for_origin};
 use crate::errors::CustomError;
 
 pub struct DenRuntimeToolInvoker {
@@ -143,8 +143,13 @@ impl RuntimeToolInvoker for DenRuntimeToolInvoker {
                 self.state.config.as_ref(),
                 &self.state.memory_stores,
             );
-            den_core::tools::dispatch::authorize_den_tool(&tool_context, DEN_TASK_FOCUS, &context)
-                .await?;
+            den_core::tools::dispatch::authorize_den_tool_for_origin(
+                &tool_context,
+                DEN_TASK_FOCUS,
+                &context,
+                origin,
+            )
+            .await?;
             let origin_run_id = origin_run_id.ok_or_else(|| {
                 DenError::ValidationError(
                     "focus_current_task requires an active Pair run origin".to_string(),
@@ -173,13 +178,14 @@ impl RuntimeToolInvoker for DenRuntimeToolInvoker {
             });
         }
 
-        invoke_den_tool(
+        invoke_den_tool_for_origin(
             &self.state.sqlx_pool,
             self.state.config.as_ref(),
             &self.state.memory_stores,
             &tool_name,
             arguments,
             context,
+            origin,
         )
         .await
         .map_err(CustomError::into_den)

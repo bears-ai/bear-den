@@ -10,7 +10,7 @@
 
 use serde_json::Value;
 
-use crate::DenError;
+use crate::{DenError, TurnExecutionOrigin};
 
 use crate::tools::{
     constants::{
@@ -185,11 +185,42 @@ pub async fn authorize_den_tool(
     Ok(role)
 }
 
+pub async fn authorize_den_tool_for_origin(
+    ctx: &impl ToolContext,
+    tool_name: &str,
+    context: &DenToolInvocationContext,
+    origin: TurnExecutionOrigin,
+) -> Result<crate::BearProfile, DenError> {
+    let projected = identity::authorize_context_for_origin(ctx, context, origin).await?;
+    identity::authorize_tool_for_origin(tool_name, origin)?;
+    Ok(projected)
+}
+
 pub async fn invoke_den_tool(
     ctx: &impl ToolContext,
     tool_name: &str,
     arguments: Value,
     context: DenToolInvocationContext,
+) -> Result<Value, DenError> {
+    invoke_den_tool_with_origin(ctx, tool_name, arguments, context, None).await
+}
+
+pub async fn invoke_den_tool_for_origin(
+    ctx: &impl ToolContext,
+    tool_name: &str,
+    arguments: Value,
+    context: DenToolInvocationContext,
+    origin: TurnExecutionOrigin,
+) -> Result<Value, DenError> {
+    invoke_den_tool_with_origin(ctx, tool_name, arguments, context, Some(origin)).await
+}
+
+async fn invoke_den_tool_with_origin(
+    ctx: &impl ToolContext,
+    tool_name: &str,
+    arguments: Value,
+    context: DenToolInvocationContext,
+    origin: Option<TurnExecutionOrigin>,
 ) -> Result<Value, DenError> {
     // Provider-facing names are advertised to models, while dispatch arms use
     // canonical names. Normalize once here so newly advertised aliases cannot
@@ -202,7 +233,10 @@ pub async fn invoke_den_tool(
             return Ok(tool_warning_payload(tool_name, warning));
         }
     }
-    let role = authorize_den_tool(ctx, tool_name, &context).await?;
+    let role = match origin {
+        Some(origin) => authorize_den_tool_for_origin(ctx, tool_name, &context, origin).await?,
+        None => authorize_den_tool(ctx, tool_name, &context).await?,
+    };
     match tool_name {
         DEN_BEAR_GET_SELF => identity::get_bear_self(ctx, &context).await,
         DEN_USER_GET_CURRENT => identity::get_current_user(ctx, &context).await,

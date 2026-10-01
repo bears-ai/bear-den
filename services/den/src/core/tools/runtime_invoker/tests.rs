@@ -283,3 +283,72 @@ async fn hat_bound_tool_source_requires_current_conversation_owner(
     ));
     Ok(())
 }
+
+#[sqlx::test]
+async fn native_core_dispatcher_uses_origin_audience_at_effect_time(
+    pool: PgPool,
+) -> Result<(), DenError> {
+    use den_core::tools::{constants::DEN_BEAR_GET_SELF, dispatch};
+    use den_service::bears::db::{
+        create_bear, ensure_bear_profile_binding_rows, grant_membership, profile_binding_id,
+        BearParams,
+    };
+
+    let bear_id = create_bear(
+        &pool,
+        BearParams {
+            slug: "typed-dispatch-test",
+            name: "Typed dispatcher test",
+            description: "test",
+            system_prompt: "test",
+            default_model: None,
+            tools_enabled: None,
+            context_profile: None,
+        },
+    )
+    .await?;
+    let user_id = crate::core::user::db::create_user(
+        &pool,
+        "typeddispatch@example.test",
+        "typeddispatch",
+        "Typed dispatcher test",
+        "test-hash",
+    )
+    .await?;
+    grant_membership(&pool, user_id, bear_id, Some("member")).await?;
+    ensure_bear_profile_binding_rows(&pool, bear_id).await?;
+    let mut call = context(BearProfile::Pair);
+    call.bear_id = bear_id;
+    call.user_id = user_id;
+    call.binding_id = profile_binding_id(&pool, bear_id, BearProfile::Pair)
+        .await?
+        .expect("Pair registration");
+    let config = crate::config::Config::test_stub();
+    let stores = den_memory::MemoryStoreManager::new(&config);
+    let ctx = DenToolContext::new(&pool, &config, &stores);
+    let origin = TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected);
+    let self_view = dispatch::invoke_den_tool_for_origin(
+        &ctx,
+        DEN_BEAR_GET_SELF,
+        serde_json::json!({}),
+        call.clone(),
+        origin,
+    )
+    .await?;
+    assert_eq!(self_view["bear"]["bear_id"], bear_id.to_string());
+    assert!(matches!(
+        dispatch::authorize_den_tool_for_origin(&ctx, DEN_RUN_WRITE_RESULT, &call, origin).await,
+        Err(DenError::Authorization(_))
+    ));
+    assert!(matches!(
+        dispatch::authorize_den_tool_for_origin(
+            &ctx,
+            DEN_WEB_FETCH,
+            &call,
+            TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Absent),
+        )
+        .await,
+        Err(DenError::Authorization(_))
+    ));
+    Ok(())
+}
