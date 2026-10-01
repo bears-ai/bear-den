@@ -11,7 +11,7 @@ It defines:
 - copy and state rules for tool activity and permission prompts;
 - data requirements for the presentation layer.
 
-This is a product and edge-projection spec. It does not move ACP semantics into Den core. The [hat access plan](../roadmap/HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md#gate-0a--hat-owned-tool-and-network-permissions-accepted-target-not-deployed) owns the intended grant policy; this document specifies how the armature presents it. Current armature host/account and local-tool approval caching and remembered Den web approvals are not yet hat-scoped. The armature's `Just this time` option is not cached, and global approvals for URL targets are no longer offered or reused. Den-hosted web fetch consumes an exact one-shot runtime approval without creating a remembered Bear grant; this does not imply the persistent hat option is deployed.
+This is a product and edge-projection spec. It does not move ACP semantics into Den core. The [hat access plan](../roadmap/HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md#gate-0a--hat-owned-tool-and-network-permissions-accepted-target-not-deployed) owns the intended grant policy; this document specifies how the armature presents it. Current armature remembered local-tool approvals are not yet hat-scoped. For URL-targeted actions it offers only `Just this time` or denial; old host/account/global URL cache entries are not reused, and stale host/account selections are rejected. Den-hosted web fetch consumes an exact one-shot runtime approval without creating a remembered Bear grant; Bear admins can separately configure Den-owned hat web grants, but the ACP persistent hat option is not deployed.
 
 ## Goals
 

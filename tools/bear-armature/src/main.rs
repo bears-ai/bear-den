@@ -10793,8 +10793,6 @@ pub(crate) async fn handle_permission_request_event(
         }
     } else {
         match decision.scope {
-            ApprovalScope::SiteAccount if decision.approved => "allow_site_account",
-            ApprovalScope::Host if decision.approved => "allow_host",
             ApprovalScope::Workspace
             | ApprovalScope::Directory
             | ApprovalScope::Command
