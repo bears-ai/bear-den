@@ -108,9 +108,59 @@ impl HttpsHost {
     }
 }
 
+/// Lexically normalized absolute workspace root. Den stores the target, not
+/// evidence of a filesystem sandbox: the connected armature must canonicalize
+/// it and recheck the actual tool path against its live roots at execution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceRoot(String);
+
+impl WorkspaceRoot {
+    pub fn parse(raw: &str) -> Result<Self, DenError> {
+        if raw.len() > 2000
+            || !raw.starts_with('/')
+            || raw == "/"
+            || raw.contains('\\')
+            || raw.chars().any(char::is_control)
+            || raw
+                .split('/')
+                .skip(1)
+                .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+        {
+            return Err(DenError::ValidationError(
+                "workspace grant requires a normalized absolute root below /".into(),
+            ));
+        }
+        Ok(Self(raw.to_string()))
+    }
+}
+
+/// Initially only read-only filesystem actions can be scoped to a workspace.
+/// Terminal and forwarded MCP names must never become workspace grants by
+/// arriving as untrusted provider aliases.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadOnlyWorkspaceAction(ClientToolName);
+
+impl ReadOnlyWorkspaceAction {
+    pub fn from_provider_name(name: &str) -> Result<Self, DenError> {
+        match ClientToolName::from_provider_alias(name) {
+            Some(
+                tool @ (ClientToolName::ReadTextFile
+                | ClientToolName::ListDirectory
+                | ClientToolName::FindPaths
+                | ClientToolName::SearchFiles
+                | ClientToolName::Stat),
+            ) => Ok(Self(tool)),
+            _ => Err(DenError::ValidationError(
+                "workspace grant requires a supported read-only filesystem descriptor".into(),
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HatAccessGrant {
     ToolForHat(ToolActionKey),
+    ReadOnlyToolInWorkspace(ReadOnlyWorkspaceAction, WorkspaceRoot),
     HttpsHost(HttpsHost),
 }
 
@@ -118,6 +168,12 @@ impl HatAccessGrant {
     fn storage(&self) -> (&'static str, &str, &'static str, &str) {
         match self {
             Self::ToolForHat(action) => ("tool", &action.0, "hat", ""),
+            Self::ReadOnlyToolInWorkspace(action, root) => (
+                "tool",
+                action.0.descriptor().canonical_name,
+                "workspace",
+                &root.0,
+            ),
             Self::HttpsHost(host) => ("network", "https", "host", &host.0),
         }
     }

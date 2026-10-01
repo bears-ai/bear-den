@@ -73,6 +73,51 @@ fn tool_aliases_and_network_hosts_normalize_at_the_boundary() {
     }
 }
 
+#[test]
+fn workspace_grants_require_normalized_roots_and_read_only_descriptors() {
+    let read = ReadOnlyWorkspaceAction::from_provider_name("fs_read_text_file").unwrap();
+    let alias = ReadOnlyWorkspaceAction::from_provider_name("armature.fs.read_text_file").unwrap();
+    assert_eq!(read, alias);
+    for denied in [
+        "fs_edit_file",
+        "terminal_run_command",
+        "process_run",
+        "mcp__untrusted__read",
+        "web_fetch",
+    ] {
+        assert!(
+            ReadOnlyWorkspaceAction::from_provider_name(denied).is_err(),
+            "{denied}"
+        );
+    }
+    for denied in [
+        "/",
+        "relative/root",
+        "//workspace",
+        "/workspace/",
+        "/workspace//src",
+        "/workspace/../outside",
+        "/workspace/./src",
+        "/workspace\\src",
+        "/workspace/\0secret",
+    ] {
+        assert!(WorkspaceRoot::parse(denied).is_err(), "{denied:?}");
+    }
+    assert_eq!(
+        HatAccessGrant::ReadOnlyToolInWorkspace(
+            read,
+            WorkspaceRoot::parse("/workspace/project with spaces").unwrap(),
+        )
+        .storage(),
+        (
+            "tool",
+            "armature.fs.read_text_file",
+            "workspace",
+            "/workspace/project with spaces"
+        )
+    );
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn acp_web_grant_is_atomic_and_derived_from_the_admin_owned_conversation(pool: PgPool) {
     let bear_id = bear(&pool, "acpwebgrantbear").await;
@@ -423,6 +468,50 @@ async fn hat_grants_are_admin_owned_idempotent_revocable_and_scoped(pool: PgPool
         .await
         .unwrap());
     assert!(!has_current(&pool, second, foreign.id, &tool).await.unwrap());
+    let scoped = HatAccessGrant::ReadOnlyToolInWorkspace(
+        ReadOnlyWorkspaceAction::from_provider_name("fs_read_text_file").unwrap(),
+        WorkspaceRoot::parse("/workspace/project").unwrap(),
+    );
+    let other_root = HatAccessGrant::ReadOnlyToolInWorkspace(
+        ReadOnlyWorkspaceAction::from_provider_name("fs_read_text_file").unwrap(),
+        WorkspaceRoot::parse("/workspace/other").unwrap(),
+    );
+    assert!(grant(&pool, first, hat.id, member, &scoped, true)
+        .await
+        .is_err());
+    let scoped_id = grant(&pool, first, hat.id, admin, &scoped, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        grant(&pool, first, hat.id, admin, &scoped, true)
+            .await
+            .unwrap(),
+        scoped_id
+    );
+    assert!(
+        has_grant_for_own_conversation(&pool, first, own.id, member, &scoped)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !has_grant_for_own_conversation(&pool, first, own.id, member, &other_root)
+            .await
+            .unwrap()
+    );
+    assert!(!has_current(&pool, first, other_hat.id, &scoped)
+        .await
+        .unwrap());
+    assert!(!has_current(&pool, second, foreign.id, &scoped)
+        .await
+        .unwrap());
+    revoke(&pool, first, hat.id, admin, scoped_id)
+        .await
+        .unwrap();
+    assert!(
+        !has_grant_for_own_conversation(&pool, first, own.id, member, &scoped)
+            .await
+            .unwrap()
+    );
     assert!(revoke(&pool, first, other_hat.id, admin, id).await.is_err());
     assert!(revoke(&pool, first, hat.id, member, id).await.is_err());
     revoke(&pool, first, hat.id, admin, id).await.unwrap();
