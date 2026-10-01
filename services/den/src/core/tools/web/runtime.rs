@@ -11,18 +11,17 @@ use uuid::Uuid;
 
 use den_core::tools::{
     context::DenToolInvocationContext,
-    web::{max_fetch_bytes, WebApproval, WebFetchAudit, WebFetcher, WebHttpResponse, WebUrl},
+    web::{
+        max_fetch_bytes, WebApproval, WebFetchAudit, WebFetcher, WebHttpResponse, WebUrl,
+        BRAVE_SEARCH_URL,
+    },
 };
 use den_core::{
     ids::{BearId, UserId},
-    tools::constants::DEN_WEB_SEARCH,
     DenError,
 };
 use den_service::{
-    bears::hats::{
-        access::{self, HatAccessGrant, HttpsHost, ToolActionKey},
-        memory_binding,
-    },
+    bears::hats::{access, memory_binding},
     conversation::{persistence, viewer::ConversationViewer},
 };
 
@@ -35,8 +34,6 @@ use crate::{
 #[cfg(test)]
 #[path = "runtime/tests.rs"]
 mod tests;
-
-const BRAVE_SEARCH_URL: &str = "https://api.search.brave.com/res/v1/web/search";
 
 pub(crate) struct DenWebFetcher<'a> {
     pub(crate) pool: &'a PgPool,
@@ -324,30 +321,19 @@ impl WebFetcher for DenWebFetcher<'_> {
                 DenError::Authorization("canonical conversation required for search".into())
             })?;
             let human = UserId::new(context.user_id);
-            let tool =
-                HatAccessGrant::ToolForHat(ToolActionKey::from_provider_name(DEN_WEB_SEARCH)?);
             let provider_host = url::Url::parse(provider_url)
                 .map_err(|err| DenError::System(format!("invalid search provider URL: {err}")))?
                 .host_str()
                 .ok_or_else(|| DenError::System("search provider URL is missing a host".into()))?
                 .to_string();
-            let host = HatAccessGrant::HttpsHost(HttpsHost::parse(&provider_host)?);
-            if !access::has_grant_for_own_conversation(
+            if !access::has_web_search_grants_for_own_conversation(
                 self.pool,
                 bear_id,
                 conversation.id,
                 human,
-                &tool,
+                &provider_host,
             )
             .await?
-                || !access::has_grant_for_own_conversation(
-                    self.pool,
-                    bear_id,
-                    conversation.id,
-                    human,
-                    &host,
-                )
-                .await?
             {
                 return Err(DenError::Authorization(
                     "web search requires this hat's search-tool and exact provider-host grants"

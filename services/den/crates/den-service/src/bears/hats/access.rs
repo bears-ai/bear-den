@@ -325,6 +325,25 @@ pub async fn has_grant_for_own_conversation(
 /// Verify both dimensions of a potential HTTPS fetch for this conversation.
 /// This does not authorize execution: the descriptor, current actor, Den web
 /// safety policy, credentials, and any work-surface bounds still must pass.
+/// Search discloses its query to the configured provider. Both the exact
+/// descriptor action and the provider's HTTPS host must be currently granted
+/// to the source conversation's Bear-owned hat and human creator. Provider
+/// selection, Bear blocks, and transport safety are checked by the caller.
+pub async fn has_web_search_grants_for_own_conversation(
+    pool: &PgPool,
+    bear_id: BearId,
+    conversation_id: Uuid,
+    human: UserId,
+    provider_host: &str,
+) -> Result<bool, DenError> {
+    let tool = HatAccessGrant::ToolForHat(ToolActionKey::from_provider_name(DEN_WEB_SEARCH)?);
+    let host = HatAccessGrant::HttpsHost(HttpsHost::parse(provider_host)?);
+    if !has_grant_for_own_conversation(pool, bear_id, conversation_id, human, &tool).await? {
+        return Ok(false);
+    }
+    has_grant_for_own_conversation(pool, bear_id, conversation_id, human, &host).await
+}
+
 pub async fn has_web_fetch_grants_for_own_conversation(
     pool: &PgPool,
     bear_id: BearId,

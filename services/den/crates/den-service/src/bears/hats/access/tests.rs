@@ -200,6 +200,60 @@ async fn hat_grants_are_admin_owned_idempotent_revocable_and_scoped(pool: PgPool
             .await
             .unwrap()
     );
+    assert!(!has_web_search_grants_for_own_conversation(
+        &pool,
+        first,
+        own.id,
+        member,
+        "example.com"
+    )
+    .await
+    .unwrap());
+    let search_tool = HatAccessGrant::ToolForHat(
+        ToolActionKey::from_provider_name(den_core::tools::constants::DEN_WEB_SEARCH).unwrap(),
+    );
+    let search_id = grant(&pool, first, hat.id, admin, &search_tool, true)
+        .await
+        .unwrap();
+    assert!(has_web_search_grants_for_own_conversation(
+        &pool,
+        first,
+        own.id,
+        member,
+        "example.com"
+    )
+    .await
+    .unwrap());
+    assert!(!has_web_search_grants_for_own_conversation(
+        &pool,
+        first,
+        own.id,
+        member,
+        "other.example.com"
+    )
+    .await
+    .unwrap());
+    assert!(!has_web_search_grants_for_own_conversation(
+        &pool,
+        first,
+        admin_other_hat.id,
+        admin,
+        "example.com"
+    )
+    .await
+    .unwrap());
+    revoke(&pool, first, hat.id, admin, search_id)
+        .await
+        .unwrap();
+    assert!(!has_web_search_grants_for_own_conversation(
+        &pool,
+        first,
+        own.id,
+        member,
+        "example.com"
+    )
+    .await
+    .unwrap());
     for target in [
         "https://other.example.com/docs",
         "http://example.com/docs",

@@ -12,8 +12,9 @@ use den_core::{
         DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER, DEN_TASK_LISTS_UPDATE_PROVIDER,
         DEN_TASK_LIST_CHECKOUT_PROVIDER, DEN_TASK_LIST_PROVIDER, DEN_TASK_LIST_SYNC_PROVIDER,
         DEN_TASK_SELECT_PROVIDER, DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER,
-        DEN_TASK_UPDATE_PROVIDER, DEN_WORK_CATALOG_PROVIDER, DEN_WORK_DISPATCH_PROVIDER,
-        DEN_WORK_RUN_CANCEL_PROVIDER, DEN_WORK_RUN_GET_PROVIDER, DEN_WORK_RUN_LIST_PROVIDER,
+        DEN_TASK_UPDATE_PROVIDER, DEN_WEB_SEARCH, DEN_WORK_CATALOG_PROVIDER,
+        DEN_WORK_DISPATCH_PROVIDER, DEN_WORK_RUN_CANCEL_PROVIDER, DEN_WORK_RUN_GET_PROVIDER,
+        DEN_WORK_RUN_LIST_PROVIDER,
     },
     DenError, TurnExecutionOrigin,
 };
@@ -21,6 +22,7 @@ use serde_json::Value;
 
 use crate::llm::LlmToolDefinition;
 use den_core::tools::descriptor::{
+    builtin_den_tool_descriptor_for_provider_name,
     builtin_den_tool_descriptors_for_pair_acp_surface, builtin_den_tool_descriptors_for_profile,
     DenToolDescriptor,
 };
@@ -146,6 +148,27 @@ fn compact_client_tool_description(description: Option<&str>) -> Option<String> 
 }
 
 pub fn merge_den_and_client_tools(
+    config: &Config,
+    origin: TurnExecutionOrigin,
+    work_enabled: bool,
+    cabinet_enabled: bool,
+    may_define_task: bool,
+    client_tools: Option<&Value>,
+    pair_turn_prompt: Option<&str>,
+) -> Result<Vec<LlmToolDefinition>, DenError> {
+    merge_den_and_client_tools_with_search(
+        config,
+        origin,
+        work_enabled,
+        cabinet_enabled,
+        may_define_task,
+        client_tools,
+        pair_turn_prompt,
+        true,
+    )
+}
+
+pub(crate) fn merge_den_and_client_tools_with_search(
     _config: &Config,
     origin: TurnExecutionOrigin,
     work_enabled: bool,
@@ -153,11 +176,18 @@ pub fn merge_den_and_client_tools(
     may_define_task: bool,
     client_tools: Option<&Value>,
     _pair_turn_prompt: Option<&str>,
+    search_available: bool,
 ) -> Result<Vec<LlmToolDefinition>, DenError> {
     let effective_policy =
         den_core::EffectivePolicy::compile_for_origin(origin, den_core::Governance::Interactive);
     let role = effective_policy.trust_profile;
     let mut merged = den_tools_for_profile(role, &effective_policy.capabilities);
+    if !search_available {
+        merged.retain(|tool| {
+            !builtin_den_tool_descriptor_for_provider_name(&tool.name)
+                .is_some_and(|descriptor| descriptor.name == DEN_WEB_SEARCH)
+        });
+    }
     if !work_enabled {
         merged.retain(|tool| !is_work_tool_provider_name(&tool.name));
     }
@@ -196,7 +226,11 @@ pub fn merge_den_and_client_tools(
         let Some(name) = name else {
             continue;
         };
-        if is_legacy_memory_client_tool_name(name) {
+        if is_legacy_memory_client_tool_name(name)
+            || (!search_available
+                && builtin_den_tool_descriptor_for_provider_name(name)
+                    .is_some_and(|descriptor| descriptor.name == DEN_WEB_SEARCH))
+        {
             continue;
         }
         if let Some(action) = mcp_client_tool_dedup_key(name) {
@@ -328,6 +362,48 @@ mod tests {
         assert!(work.iter().any(|tool| tool.name == "fs_read_text_file"));
         assert!(work.iter().any(|tool| tool.name == "mcp__outside__send"));
         assert!(!work.iter().any(|tool| tool.name == "create_job"));
+    }
+
+    #[test]
+    fn denied_search_is_not_advertised_or_resurrected_by_client_descriptors() {
+        let config = native_test_config();
+        let client = serde_json::json!([
+            {"name": "web_search", "parameters": {"type": "object"}},
+            {"name": "den.web.search", "parameters": {"type": "object"}},
+            {"name": "fs_read_text_file", "parameters": {"type": "object"}}
+        ]);
+        let origin = TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected);
+        let denied = super::merge_den_and_client_tools_with_search(
+            &config,
+            origin,
+            true,
+            true,
+            true,
+            Some(&client),
+            None,
+            false,
+        )
+        .unwrap();
+        assert!(!denied
+            .iter()
+            .any(
+                |tool| builtin_den_tool_descriptor_for_provider_name(&tool.name)
+                    .is_some_and(|descriptor| descriptor.name == DEN_WEB_SEARCH)
+            ));
+        assert!(denied.iter().any(|tool| tool.name == "session_info"));
+        assert!(denied.iter().any(|tool| tool.name == "fs_read_text_file"));
+        let permitted = super::merge_den_and_client_tools_with_search(
+            &config,
+            origin,
+            true,
+            true,
+            true,
+            Some(&client),
+            None,
+            true,
+        )
+        .unwrap();
+        assert!(permitted.iter().any(|tool| tool.name == "web_search"));
     }
 
     #[test]

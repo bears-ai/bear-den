@@ -13,6 +13,7 @@ mod openai_stream;
 mod openai_stream_tests;
 mod profile;
 mod profile_briefing;
+mod search_availability;
 pub mod tool_invoker;
 mod tools;
 mod turn;

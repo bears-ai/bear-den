@@ -63,7 +63,8 @@ use crate::{
     llm::{ChatMessage, ChatToolCall, LlmClient},
     native_runtime::{
         profile::NativeCapabilityProfile,
-        tools::{is_work_tool_provider_name, merge_den_and_client_tools},
+        search_availability,
+        tools::{is_work_tool_provider_name, merge_den_and_client_tools_with_search},
     },
     turn_runner::{
         materialize_runtime_conversation_if_needed, RunRecoveryDisposition, TurnContinueRequest,
@@ -967,7 +968,16 @@ async fn build_session(
             true
         }
     };
-    let tools = merge_den_and_client_tools(
+    let search_available = search_availability::for_turn(
+        deps.pool,
+        deps.config,
+        origin,
+        bear_id,
+        runtime_target.unwrap_or(conversation_id),
+        user_id,
+    )
+    .await?;
+    let tools = merge_den_and_client_tools_with_search(
         deps.config,
         origin,
         bear.work_enabled,
@@ -975,6 +985,7 @@ async fn build_session(
         may_define_task,
         client_tools,
         human_message,
+        search_available,
     )?;
     let execution_id = run_id
         .map(str::to_string)

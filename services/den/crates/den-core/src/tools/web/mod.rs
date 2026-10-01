@@ -20,6 +20,10 @@ use text::{html_to_text_excerpt, truncate_chars};
 /// Full downloaded bytes are capped to this before decoding.
 const MAX_FETCH_BYTES: usize = 1_000_000;
 
+/// Fixed supported search destination; used by both advertisement and the
+/// effect-time client so the hat host grant names the actual provider.
+pub const BRAVE_SEARCH_URL: &str = "https://api.search.brave.com/res/v1/web/search";
+
 #[derive(Debug, Deserialize)]
 struct WebFetchArguments {
     url: String,
