@@ -33,6 +33,10 @@ impl WebFetcher for MockTransport<'_> {
         })
     }
 
+    async fn authorize_search(&self, context: &DenToolInvocationContext) -> Result<(), DenError> {
+        self.0.authorize_search(context).await
+    }
+
     async fn preferred_hosts(&self, _bear_id: Uuid) -> Result<Vec<String>, DenError> {
         Ok(Vec::new())
     }
@@ -126,6 +130,17 @@ async fn exact_web_fetch_approval_is_consumed_once_without_a_bear_wide_grant(poo
         config: &config,
     };
     let correct = context(bear_id, "client-session-one", request_id);
+    assert!(
+        matches!(
+            den_core::tools::web::web_search(
+                &MockTransport(DenWebFetcher { pool: &pool, config: &config }),
+                &correct,
+                json!({"query": "test"}),
+            ).await,
+            Err(DenError::Authorization(reason)) if reason == "search is not part of this test"
+        ),
+        "a no-hat Bear still reaches the configured search provider"
+    );
     for (candidate, target) in [
         (context(bear_id, "client-session-two", request_id), url),
         (
@@ -331,6 +346,21 @@ async fn configured_hat_fetch_ignores_bear_wide_allows_and_checks_owner_and_revo
         fetcher.decide_fetch_approval(&ctx, url).await.unwrap().1,
         WebApproval::RequiresApproval
     );
+    assert!(
+        matches!(
+            den_core::tools::web::web_search(
+                &MockTransport(DenWebFetcher {
+                    pool: &pool,
+                    config: &config
+                }),
+                &ctx,
+                json!({"query": "private Bear notes"})
+            )
+            .await,
+            Err(DenError::Authorization(_))
+        ),
+        "a configured hat must reject provider egress before any query is sent"
+    );
     let tool = HatAccessGrant::ToolForHat(ToolActionKey::from_provider_name("web_fetch").unwrap());
     let host = HatAccessGrant::HttpsHost(HttpsHost::parse("example.com").unwrap());
     access::grant(
@@ -357,6 +387,21 @@ async fn configured_hat_fetch_ignores_bear_wide_allows_and_checks_owner_and_revo
     )
     .await
     .unwrap();
+    assert!(
+        matches!(
+            den_core::tools::web::web_search(
+                &MockTransport(DenWebFetcher {
+                    pool: &pool,
+                    config: &config
+                }),
+                &ctx,
+                json!({"query": "private Bear notes"})
+            )
+            .await,
+            Err(DenError::Authorization(_))
+        ),
+        "a web-fetch grant cannot authorize a different network tool"
+    );
     let response = den_core::tools::web::web_fetch(
         &MockTransport(DenWebFetcher {
             pool: &pool,

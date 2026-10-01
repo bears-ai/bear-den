@@ -58,7 +58,7 @@
 </div>
 <div class="box">
   <h3>Den web fetch policy</h3>
-  <p class="form-hint">A conversation wearing this hat can fetch an exact HTTPS host only when both the web-fetch tool and that host are granted. The current human must own the conversation; Den still applies block rules, public-DNS checks, and per-call approval in ACP. This does not enable Job sandbox egress, add a credential, or let a disconnected armature use local tools. Old Bear-wide approvals do not carry into this hat.</p>
+  <p class="form-hint">A conversation wearing this hat can fetch an exact HTTPS host only when both the web-fetch tool and that host are granted. The current human must own the conversation; Den still applies block rules, public-DNS checks, and per-call approval in ACP. This does not enable Job sandbox egress, add a credential, or let a disconnected armature use local tools. Old Bear-wide approvals do not carry into this hat. Web search is a separate provider call and is disabled for configured hats until its own network policy is enforced.</p>
   {% if web_fetch_grants.tool_grant_id %}
   <p>Web-fetch tool: granted</p>
   <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/access">

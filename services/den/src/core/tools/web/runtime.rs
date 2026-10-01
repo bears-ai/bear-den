@@ -271,6 +271,16 @@ impl WebFetcher for DenWebFetcher<'_> {
         })
     }
 
+    async fn authorize_search(&self, context: &DenToolInvocationContext) -> Result<(), DenError> {
+        // Search sends the entire query to an external provider, not to the
+        // web-fetch destination. Until provider credentials, DNS, and hat tool
+        // and destination grants share an effect-time resolver, no configured
+        // hat may use the old Bear-wide search configuration as authority.
+        memory_binding::legacy_only_without_hats(self.pool, BearId::new(context.bear_id))
+            .await
+            .map(|_| ())
+    }
+
     async fn preferred_hosts(&self, bear_id: Uuid) -> Result<Vec<String>, DenError> {
         web_policy::preferred_hosts_for_bear(self.pool, bear_id)
             .await

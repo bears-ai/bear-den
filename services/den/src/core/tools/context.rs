@@ -145,6 +145,10 @@ impl WebFetcher for DenToolContext<'_> {
         self.web().http_get(url).await
     }
 
+    async fn authorize_search(&self, context: &DenToolInvocationContext) -> Result<(), DenError> {
+        self.web().authorize_search(context).await
+    }
+
     async fn preferred_hosts(&self, bear_id: Uuid) -> Result<Vec<String>, DenError> {
         self.web().preferred_hosts(bear_id).await
     }

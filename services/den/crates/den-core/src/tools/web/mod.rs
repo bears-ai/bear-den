@@ -122,11 +122,12 @@ pub async fn web_fetch(
     }))
 }
 
-/// `web_search`: provider search with bear-preferred-host re-ranking. `bear_id`
-/// is `None` for non-bear-scoped callers (preferred-host re-ranking is skipped).
+/// `web_search`: policy-gated provider search with Bear-preferred-host re-ranking.
+/// The full trusted invocation context is needed before disclosing a query to
+/// an external provider; a model-supplied query is never an authorization.
 pub async fn web_search(
     ctx: &impl WebFetcher,
-    bear_id: Option<Uuid>,
+    context: &DenToolInvocationContext,
     arguments: Value,
 ) -> Result<Value, DenError> {
     let args: WebSearchArguments = serde_json::from_value(arguments)?;
@@ -141,13 +142,10 @@ pub async fn web_search(
         .unwrap_or_else(|| ctx.default_search_max_results())
         .clamp(1, 10);
 
+    ctx.authorize_search(context).await?;
     let mut value = ctx.provider_search(query, max_results).await?;
 
-    let preferred_hosts = if let Some(bear_id) = bear_id {
-        ctx.preferred_hosts(bear_id).await?
-    } else {
-        Vec::new()
-    };
+    let preferred_hosts = ctx.preferred_hosts(context.bear_id).await?;
 
     if let Some(results) = value.get_mut("results").and_then(Value::as_array_mut) {
         for result in results.iter_mut() {

@@ -219,7 +219,7 @@ pub async fn invoke_den_tool(
             conversation::set_conversation_title(ctx, &context, arguments).await
         }
         DEN_WEB_FETCH => web::web_fetch(ctx, &context, arguments).await,
-        DEN_WEB_SEARCH => web::web_search(ctx, Some(context.bear_id), arguments).await,
+        DEN_WEB_SEARCH => web::web_search(ctx, &context, arguments).await,
         DEN_TOOL_OUTPUT_READ => Err(DenError::System(
             "tool_output_read is handled by the native runtime artifact store".to_string(),
         )),

@@ -121,6 +121,10 @@ pub trait WebFetcher: Send + Sync {
     /// post-redirect final URL) and return the capped body + metadata.
     async fn http_get(&self, url: &str) -> Result<WebHttpResponse, DenError>;
 
+    /// Reject search before contacting the external provider if this verified
+    /// source does not have a network policy for the provider destination.
+    async fn authorize_search(&self, context: &DenToolInvocationContext) -> Result<(), DenError>;
+
     /// Hosts the bear has marked `preferred`, highest priority first.
     async fn preferred_hosts(&self, bear_id: Uuid) -> Result<Vec<String>, DenError>;
 
