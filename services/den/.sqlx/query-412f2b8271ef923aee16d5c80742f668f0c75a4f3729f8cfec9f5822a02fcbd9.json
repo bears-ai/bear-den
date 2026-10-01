@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT approval_kind FROM bear_web_fetches WHERE bear_id = $1 ORDER BY fetched_at DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "approval_kind",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "412f2b8271ef923aee16d5c80742f668f0c75a4f3729f8cfec9f5822a02fcbd9"
+}

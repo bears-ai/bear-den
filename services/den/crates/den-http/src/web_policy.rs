@@ -156,25 +156,23 @@ async fn source_policy(
     bear_id: Uuid,
     normalized: &NormalizedWebUrl,
 ) -> Result<Option<String>, CustomError> {
-    let row: Option<(String,)> = sqlx::query_as(
-        r"
-        SELECT policy
-        FROM bear_web_sources
-        WHERE bear_id = $1
-          AND ((scope_kind = 'url' AND scope_value = $2)
-            OR (scope_kind = 'host' AND scope_value = $3))
-        ORDER BY CASE scope_kind WHEN 'url' THEN 0 ELSE 1 END,
-                 CASE policy WHEN 'blocked' THEN 0 WHEN 'preferred' THEN 1 ELSE 2 END,
-                 priority DESC
-        LIMIT 1
-        ",
+    let policy = sqlx::query_scalar!(
+        "SELECT policy FROM bear_web_sources
+         WHERE bear_id = $1
+           AND ((scope_kind = 'url' AND scope_value = $2)
+             OR (scope_kind = 'host' AND scope_value = $3))
+         ORDER BY CASE policy WHEN 'blocked' THEN 0 ELSE 1 END,
+                  CASE scope_kind WHEN 'url' THEN 0 ELSE 1 END,
+                  CASE policy WHEN 'preferred' THEN 0 ELSE 1 END,
+                  priority DESC
+         LIMIT 1",
+        bear_id,
+        &normalized.url,
+        &normalized.host,
     )
-    .bind(bear_id)
-    .bind(&normalized.url)
-    .bind(&normalized.host)
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(|r| r.0))
+    Ok(policy)
 }
 
 async fn approval_exists(

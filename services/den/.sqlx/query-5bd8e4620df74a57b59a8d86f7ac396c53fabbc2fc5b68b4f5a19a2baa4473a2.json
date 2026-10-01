@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT policy FROM bear_web_sources\n         WHERE bear_id = $1\n           AND ((scope_kind = 'url' AND scope_value = $2)\n             OR (scope_kind = 'host' AND scope_value = $3))\n         ORDER BY CASE policy WHEN 'blocked' THEN 0 ELSE 1 END,\n                  CASE scope_kind WHEN 'url' THEN 0 ELSE 1 END,\n                  CASE policy WHEN 'preferred' THEN 0 ELSE 1 END,\n                  priority DESC\n         LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "policy",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "5bd8e4620df74a57b59a8d86f7ac396c53fabbc2fc5b68b4f5a19a2baa4473a2"
+}

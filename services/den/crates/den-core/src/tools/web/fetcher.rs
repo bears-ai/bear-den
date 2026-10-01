@@ -18,6 +18,7 @@ pub enum WebApproval {
     Allowed,
     ApprovedUrl,
     ApprovedHost,
+    HatGranted,
     ApprovedOnce,
     Blocked,
     RequiresApproval,
@@ -31,6 +32,7 @@ impl WebApproval {
             Self::Allowed => "allowed",
             Self::ApprovedUrl => "user_url",
             Self::ApprovedHost => "user_host",
+            Self::HatGranted => "hat_host",
             Self::ApprovedOnce => "approved_once",
             Self::Blocked => "denied",
             Self::RequiresApproval => "requires_approval",
@@ -44,6 +46,7 @@ impl WebApproval {
                 | Self::Allowed
                 | Self::ApprovedUrl
                 | Self::ApprovedHost
+                | Self::HatGranted
                 | Self::ApprovedOnce
         )
     }

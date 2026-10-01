@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bear_web_sources SET policy = 'blocked' WHERE bear_id = $1 AND scope_value = 'example.com'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "14ed60662e4439db38141bc78fd33af72e4b8e6da023fc8905dbd9eaaff77b00"
+}

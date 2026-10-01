@@ -13,7 +13,14 @@ use den_core::tools::{
     context::DenToolInvocationContext,
     web::{max_fetch_bytes, WebApproval, WebFetchAudit, WebFetcher, WebHttpResponse, WebUrl},
 };
-use den_core::DenError;
+use den_core::{
+    ids::{BearId, UserId},
+    DenError,
+};
+use den_service::{
+    bears::hats::{access, memory_binding},
+    conversation::{persistence, viewer::ConversationViewer},
+};
 
 use crate::{
     config::Config,
@@ -73,6 +80,19 @@ async fn consume_web_fetch_once(
     Ok(consumed.is_some())
 }
 
+fn is_hat_one_shot_destination(raw_url: &str) -> bool {
+    let Ok(url) = url::Url::parse(raw_url) else {
+        return false;
+    };
+    url.scheme() == "https"
+        && url.port_or_known_default() == Some(443)
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url
+            .host_str()
+            .is_some_and(|host| access::HttpsHost::parse(host).is_ok())
+}
+
 impl WebFetcher for DenWebFetcher<'_> {
     async fn decide_fetch_approval(
         &self,
@@ -83,12 +103,84 @@ impl WebFetcher for DenWebFetcher<'_> {
             web_policy::decide_web_fetch_approval(self.pool, context.bear_id, raw_url)
                 .await
                 .map_err(CustomError::into_den)?;
-        let decision = if decision == web_policy::WebApprovalDecision::RequiresApproval
-            && consume_web_fetch_once(self.pool, context, raw_url).await?
+        let bear_id = BearId::new(context.bear_id);
+        // A configured Bear never inherits a legacy Bear-wide allow or URL
+        // approval. An unknown conversation can use the legacy path only when
+        // this Bear has no hats at all.
+        let binding = match memory_binding::for_external_conversation(
+            self.pool,
+            bear_id,
+            &context.conversation_id,
+        )
+        .await
         {
-            WebApproval::ApprovedOnce
-        } else {
-            map_decision(decision)
+            Ok(binding) => binding,
+            Err(DenError::NotFound(_)) => {
+                memory_binding::legacy_only_without_hats(self.pool, bear_id).await?
+            }
+            Err(err) => return Err(err),
+        };
+        let decision = match binding {
+            memory_binding::ResolvedMemoryBinding::Legacy => {
+                if decision == web_policy::WebApprovalDecision::RequiresApproval
+                    && consume_web_fetch_once(self.pool, context, raw_url).await?
+                {
+                    WebApproval::ApprovedOnce
+                } else {
+                    map_decision(decision)
+                }
+            }
+            memory_binding::ResolvedMemoryBinding::Bound(_) => {
+                if context.work_run_id.is_some() {
+                    return Err(DenError::Authorization(
+                        "Job web fetch requires a verified Job/surface network policy".into(),
+                    ));
+                }
+                let conversation = persistence::get_conversation_for_external_id(
+                    self.pool,
+                    context.bear_id,
+                    &context.conversation_id,
+                )
+                .await?
+                .ok_or_else(|| {
+                    DenError::Authorization("canonical conversation required for web fetch".into())
+                })?;
+                let human = UserId::new(context.user_id);
+                let viewer = ConversationViewer::resolve(self.pool, bear_id, human)
+                    .await?
+                    .ok_or_else(|| {
+                        DenError::Authorization(
+                            "current Bear membership required for web fetch".into(),
+                        )
+                    })?;
+                if !viewer
+                    .may_read_own_source(self.pool, conversation.id)
+                    .await?
+                {
+                    return Err(DenError::Authorization(
+                        "web fetch requires the current conversation owner".into(),
+                    ));
+                }
+                if decision == web_policy::WebApprovalDecision::Blocked {
+                    WebApproval::Blocked
+                } else if access::has_web_fetch_grants_for_own_conversation(
+                    self.pool,
+                    bear_id,
+                    conversation.id,
+                    human,
+                    &normalized.url,
+                )
+                .await?
+                {
+                    WebApproval::HatGranted
+                } else if is_hat_one_shot_destination(&normalized.url)
+                    && consume_web_fetch_once(self.pool, context, raw_url).await?
+                {
+                    WebApproval::ApprovedOnce
+                } else {
+                    WebApproval::RequiresApproval
+                }
+            }
         };
         Ok((
             WebUrl {

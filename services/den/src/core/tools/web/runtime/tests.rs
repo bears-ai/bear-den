@@ -17,8 +17,8 @@ impl WebFetcher for MockTransport<'_> {
         self.0.decide_fetch_approval(context, raw_url).await
     }
 
-    async fn record_fetch_attempt(&self, _audit: WebFetchAudit<'_>) -> Result<(), DenError> {
-        Ok(())
+    async fn record_fetch_attempt(&self, audit: WebFetchAudit<'_>) -> Result<(), DenError> {
+        self.0.record_fetch_attempt(audit).await
     }
 
     async fn http_get(&self, url: &str) -> Result<WebHttpResponse, DenError> {
@@ -156,6 +156,14 @@ async fn exact_web_fetch_approval_is_consumed_once_without_a_bear_wide_grant(poo
     .unwrap();
     assert_eq!(response["approval"], "approved_once");
     assert_eq!(response["text_excerpt"], "Synthetic response");
+    let audit_kind = sqlx::query_scalar!(
+        "SELECT approval_kind FROM bear_web_fetches WHERE bear_id = $1 ORDER BY fetched_at DESC LIMIT 1",
+        bear_id,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(audit_kind, "approved_once");
     assert!(den_core::tools::web::web_fetch(
         &MockTransport(DenWebFetcher {
             pool: &pool,
@@ -187,4 +195,281 @@ async fn exact_web_fetch_approval_is_consumed_once_without_a_bear_wide_grant(poo
             .is_err(),
         "a consumed approval cannot be rearmed by a replay"
     );
+}
+
+#[sqlx::test]
+async fn configured_hat_fetch_ignores_bear_wide_allows_and_checks_owner_and_revocation(
+    pool: PgPool,
+) {
+    use den_core::ids::{BearId, UserId};
+    use den_service::{
+        bears::hats::{
+            self,
+            access::{HatAccessGrant, HttpsHost, ToolActionKey},
+        },
+        conversation::persistence,
+    };
+
+    let bear = db::create_bear(
+        &pool,
+        db::BearParams {
+            slug: "hatwebfetch",
+            name: "Hat web fetch",
+            description: "",
+            system_prompt: "",
+            default_model: None,
+            tools_enabled: None,
+            context_profile: None,
+        },
+    )
+    .await
+    .unwrap();
+    let other_bear = db::create_bear(
+        &pool,
+        db::BearParams {
+            slug: "otherhatwebfetch",
+            name: "Other hat web fetch",
+            description: "",
+            system_prompt: "",
+            default_model: None,
+            tools_enabled: None,
+            context_profile: None,
+        },
+    )
+    .await
+    .unwrap();
+    let admin = sqlx::query_scalar!("INSERT INTO users (username, email) VALUES ('fetchhatadmin', 'fetchhatadmin@example.test') RETURNING id")
+        .fetch_one(&pool).await.unwrap();
+    let member = sqlx::query_scalar!("INSERT INTO users (username, email) VALUES ('fetchhatmember', 'fetchhatmember@example.test') RETURNING id")
+        .fetch_one(&pool).await.unwrap();
+    db::grant_membership(&pool, admin, bear, Some(db::BEAR_ROLE_ADMIN))
+        .await
+        .unwrap();
+    db::grant_membership(&pool, admin, other_bear, Some(db::BEAR_ROLE_ADMIN))
+        .await
+        .unwrap();
+    db::grant_membership(&pool, member, bear, Some(db::BEAR_ROLE_MEMBER))
+        .await
+        .unwrap();
+    hats::create_hat(
+        &pool,
+        BearId::new(other_bear),
+        UserId::new(admin),
+        "Other",
+        "Other Bear",
+    )
+    .await
+    .unwrap();
+    let a = hats::create_hat(
+        &pool,
+        BearId::new(bear),
+        UserId::new(admin),
+        "Review",
+        "Review docs",
+    )
+    .await
+    .unwrap();
+    let b = hats::create_hat(
+        &pool,
+        BearId::new(bear),
+        UserId::new(admin),
+        "Support",
+        "Support docs",
+    )
+    .await
+    .unwrap();
+    let own = persistence::ensure_conversation_for_external_id(
+        &pool,
+        bear,
+        Some(member),
+        "hat-fetch-own",
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let other = persistence::ensure_conversation_for_external_id(
+        &pool,
+        bear,
+        Some(admin),
+        "hat-fetch-other",
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    hats::bindings::bind_conversation_hat(&pool, BearId::new(bear), own.id, a.id)
+        .await
+        .unwrap();
+    hats::bindings::bind_conversation_hat(&pool, BearId::new(bear), other.id, b.id)
+        .await
+        .unwrap();
+    let url = "https://example.com/first";
+    // Neither an old per-Bear host approval nor an allowed source is an
+    // authorization for either configured hat.
+    web_policy::record_web_approval(
+        &pool,
+        bear,
+        "host",
+        "example.com",
+        Some(admin),
+        "admin",
+        None,
+    )
+    .await
+    .unwrap();
+    sqlx::query!("INSERT INTO bear_web_sources (bear_id, scope_kind, scope_value, policy) VALUES ($1, 'host', 'example.com', 'allowed')", bear).execute(&pool).await.unwrap();
+    let config = Config::test_stub();
+    let fetcher = DenWebFetcher {
+        pool: &pool,
+        config: &config,
+    };
+    let mut ctx = context(bear, "hat-fetch-client", Uuid::new_v4());
+    ctx.user_id = member;
+    ctx.conversation_id = "hat-fetch-own".into();
+    assert_eq!(
+        fetcher.decide_fetch_approval(&ctx, url).await.unwrap().1,
+        WebApproval::RequiresApproval
+    );
+    let tool = HatAccessGrant::ToolForHat(ToolActionKey::from_provider_name("web_fetch").unwrap());
+    let host = HatAccessGrant::HttpsHost(HttpsHost::parse("example.com").unwrap());
+    access::grant(
+        &pool,
+        BearId::new(bear),
+        a.id,
+        UserId::new(admin),
+        &tool,
+        true,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        fetcher.decide_fetch_approval(&ctx, url).await.unwrap().1,
+        WebApproval::RequiresApproval
+    );
+    let host_id = access::grant(
+        &pool,
+        BearId::new(bear),
+        a.id,
+        UserId::new(admin),
+        &host,
+        true,
+    )
+    .await
+    .unwrap();
+    let response = den_core::tools::web::web_fetch(
+        &MockTransport(DenWebFetcher {
+            pool: &pool,
+            config: &config,
+        }),
+        &ctx,
+        json!({"url": url}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(response["approval"], "hat_host");
+    assert_eq!(sqlx::query_scalar!("SELECT approval_kind FROM bear_web_fetches WHERE bear_id = $1 ORDER BY fetched_at DESC LIMIT 1", bear).fetch_one(&pool).await.unwrap(), "hat_host");
+    for target in [
+        "https://other.example.com/page",
+        "http://example.com/page",
+        "https://example.com:8443/page",
+    ] {
+        assert_eq!(
+            fetcher.decide_fetch_approval(&ctx, target).await.unwrap().1,
+            WebApproval::RequiresApproval,
+            "{target}"
+        );
+    }
+    let mut other_hat = ctx.clone();
+    other_hat.conversation_id = "hat-fetch-other".into();
+    other_hat.user_id = admin;
+    assert_eq!(
+        fetcher
+            .decide_fetch_approval(&other_hat, url)
+            .await
+            .unwrap()
+            .1,
+        WebApproval::RequiresApproval
+    );
+    assert!(fetcher
+        .decide_fetch_approval(&ctx_with_bear(&ctx, other_bear), url)
+        .await
+        .is_err());
+    let mut impostor = ctx.clone();
+    impostor.user_id = admin;
+    assert!(fetcher.decide_fetch_approval(&impostor, url).await.is_err());
+    access::revoke(&pool, BearId::new(bear), a.id, UserId::new(admin), host_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        fetcher.decide_fetch_approval(&ctx, url).await.unwrap().1,
+        WebApproval::RequiresApproval
+    );
+    let approval_id = create_native_approval(
+        &pool,
+        bear,
+        "hat-fetch-own",
+        "hat-fetch-client",
+        "hat-fetch-call",
+        "web_fetch",
+        &json!({"url": url}),
+    )
+    .await
+    .unwrap();
+    decide_native_approval(&pool, &approval_id, NativeApprovalDecision::Approve, None)
+        .await
+        .unwrap();
+    let request_id = Uuid::new_v4();
+    sqlx::query!(
+        "UPDATE runtime_approvals SET execution_request_id = $1 WHERE approval_id = $2",
+        request_id,
+        approval_id,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    ctx.request_id = Some(request_id.to_string());
+    assert_eq!(
+        fetcher
+            .decide_fetch_approval(&other_hat, url)
+            .await
+            .unwrap()
+            .1,
+        WebApproval::RequiresApproval,
+        "an approval from another hat's conversation cannot be replayed",
+    );
+    assert_eq!(
+        fetcher.decide_fetch_approval(&ctx, url).await.unwrap().1,
+        WebApproval::ApprovedOnce,
+    );
+    assert_eq!(
+        fetcher.decide_fetch_approval(&ctx, url).await.unwrap().1,
+        WebApproval::RequiresApproval,
+        "the same request may not run twice",
+    );
+    access::grant(
+        &pool,
+        BearId::new(bear),
+        a.id,
+        UserId::new(admin),
+        &host,
+        true,
+    )
+    .await
+    .unwrap();
+    sqlx::query!("UPDATE bear_web_sources SET policy = 'blocked' WHERE bear_id = $1 AND scope_value = 'example.com'", bear).execute(&pool).await.unwrap();
+    sqlx::query!("INSERT INTO bear_web_sources (bear_id, scope_kind, scope_value, policy) VALUES ($1, 'url', $2, 'allowed')", bear, url).execute(&pool).await.unwrap();
+    assert_eq!(
+        fetcher.decide_fetch_approval(&ctx, url).await.unwrap().1,
+        WebApproval::Blocked,
+        "a specific URL allow cannot override an explicit host block or a hat grant",
+    );
+    db::revoke_membership(&pool, member, bear).await.unwrap();
+    assert!(fetcher.decide_fetch_approval(&ctx, url).await.is_err());
+}
+
+fn ctx_with_bear(ctx: &DenToolInvocationContext, bear: Uuid) -> DenToolInvocationContext {
+    let mut other = ctx.clone();
+    other.bear_id = bear;
+    other
 }
