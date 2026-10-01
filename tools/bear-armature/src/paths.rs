@@ -129,23 +129,34 @@ fn lexically_normalize_path(path: PathBuf) -> PathBuf {
 }
 
 pub(crate) fn ensure_path_allowed_for_session(context: &SessionContext, path: &Path) -> Result<()> {
-    let roots = if context.roots.is_empty() {
-        vec![context.cwd.as_str()]
-    } else {
-        context.roots.iter().map(String::as_str).collect::<Vec<_>>()
-    };
-    let allowed = roots.iter().any(|root| {
-        let root_path = Path::new(root);
-        path == root_path || path.starts_with(root_path)
-    });
-    if allowed {
-        Ok(())
-    } else {
-        Err(anyhow!(
-            "tool path {} is outside the ACP session workspace roots",
-            path.display()
-        ))
+    let roots = session_workspace_roots(context);
+    for root in &roots {
+        if path != root && !path.starts_with(root) {
+            continue;
+        }
+        let Ok(canonical_root) = std::fs::canonicalize(root) else {
+            continue;
+        };
+        // A not-yet-created target is checked through its closest existing
+        // ancestor. This also detects symlinked parents before a write creates
+        // the final path; callers must still apply their own effect-time policy.
+        let mut existing = path;
+        while !existing.exists() {
+            let Some(parent) = existing.parent() else {
+                break;
+            };
+            existing = parent;
+        }
+        if std::fs::canonicalize(existing)
+            .is_ok_and(|resolved| resolved.starts_with(&canonical_root))
+        {
+            return Ok(());
+        }
     }
+    Err(anyhow!(
+        "tool path {} is outside the ACP session workspace roots or crosses a symlink boundary",
+        path.display()
+    ))
 }
 
 pub(crate) fn is_hidden_path_component(path: &Path, root: &Path) -> bool {
@@ -263,6 +274,31 @@ mod tests {
         let escaped = resolve_requested_tool_path(&ctx, "../etc/passwd").unwrap();
         assert!(!escaped.starts_with("/workspace"));
         assert!(ensure_path_allowed_for_session(&ctx, &escaped).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn session_root_rejects_symlinks_that_escape_to_another_directory() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_root("symlink-root");
+        let outside = temp_root("symlink-outside");
+        std::fs::write(outside.join("secret.txt"), "outside").unwrap();
+        symlink(&outside, root.join("linked")).unwrap();
+        let context = SessionContext {
+            cwd: root.to_string_lossy().to_string(),
+            roots: vec![root.to_string_lossy().to_string()],
+            ..Default::default()
+        };
+        assert!(
+            ensure_path_allowed_for_session(&context, &root.join("linked/secret.txt")).is_err()
+        );
+        assert!(resolve_fs_target(&context, "linked/secret.txt").is_err());
+        assert!(ensure_path_allowed_for_session(&context, &root.join("linked/new.txt")).is_err());
+        std::fs::write(root.join("allowed.txt"), "inside").unwrap();
+        assert!(resolve_fs_target(&context, "allowed.txt").is_ok());
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(outside).unwrap();
     }
 
     #[test]

@@ -33,6 +33,12 @@ pub(crate) async fn rpc(
             methods::session::hats_list_result(&state, &headers, &request.params).await,
             "BearWire hats.list failed",
         ),
+        "hats.workspace_tool.check" => method_response(
+            request.id,
+            methods::session::hat_workspace_tool_check_result(&state, &headers, &request.params)
+                .await,
+            "BearWire hats.workspace_tool.check failed",
+        ),
         "session.hat.select" => method_response(
             request.id,
             methods::session::session_hat_select_result(&state, &headers, &request.params).await,

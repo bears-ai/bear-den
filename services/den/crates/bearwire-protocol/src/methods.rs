@@ -208,6 +208,21 @@ pub struct SessionHatSelectRequest {
     pub hat_id: String,
 }
 
+/// Advisory Den policy check; the armature must independently constrain the
+/// actual filesystem target to its live canonical workspace and OS sandbox.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionHatWorkspaceToolCheckRequest {
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub bear_slug: Option<String>,
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub session_id: String,
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub tool_name: String,
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub workspace_root: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct SessionIdRequest {
     #[serde(deserialize_with = "deserialize_required_string")]

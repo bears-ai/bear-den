@@ -11,8 +11,8 @@ use bearwire_protocol::{
     methods::{
         RunStartRequest, SessionCurrentTaskClearRequest, SessionCurrentTaskSelectionRequest,
         SessionCurrentTaskStartRequest, SessionExecutionDiagnosticsRequest, SessionHatListRequest,
-        SessionHatSelectRequest, SessionIdRequest, SessionModelSetRequest, SessionOpenRequest,
-        SessionStateRequest,
+        SessionHatSelectRequest, SessionHatWorkspaceToolCheckRequest, SessionIdRequest,
+        SessionModelSetRequest, SessionOpenRequest, SessionStateRequest,
     },
     wire::BearWireEvent,
 };
@@ -30,7 +30,14 @@ use den_runtime::{
     turn_ids::ClientSessionId,
 };
 use den_service::{
-    bears::{db as bears_db, hats, BearProfile},
+    bears::{
+        db as bears_db,
+        hats::{
+            self,
+            access::{HatAccessGrant, ReadOnlyWorkspaceAction, WorkspaceRoot},
+        },
+        BearProfile,
+    },
     client_sessions, DenState,
 };
 
@@ -690,6 +697,65 @@ pub(crate) async fn hats_list_result(
         "selected_hat_id": selected_hat_id,
         "may_manage_hat_policy": may_manage_hat_policy,
     }))
+}
+
+/// Read a narrowly targeted hat grant for a verified human conversation.
+/// This is advisory to the connected armature: it must still prove its current
+/// canonical workspace root, target path, OS permissions, and tool obligation.
+pub(crate) async fn hat_workspace_tool_check_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let request: SessionHatWorkspaceToolCheckRequest = parse_params(params)?;
+    let session_id = ClientSessionId::new(request.session_id)?;
+    let bear_id = BearId::new(bear.id);
+    require_exclusive_client_session_id(
+        &state.sqlx_pool,
+        &session_id,
+        UserId::new(user_id),
+        bear_id,
+    )
+    .await?;
+    let session = client_sessions::find_for_user_bear_session_id(
+        &state.sqlx_pool,
+        user_id,
+        bear.id,
+        session_id.as_str(),
+    )
+    .await?
+    .ok_or_else(|| CustomError::NotFound("IDE session not found".into()))?;
+    if den_docket::work_runs::get_work_run_by_session(&state.sqlx_pool, session_id.as_str())
+        .await?
+        .is_some()
+    {
+        return Err(CustomError::Authorization(
+            "Work sessions cannot use interactive workspace grants".into(),
+        ));
+    }
+    interactive_session_policy()
+        .capabilities
+        .require(den_core::BearCapability::UseArmatureTools)?;
+    let viewer = conversation_viewer(state, bear.id, user_id).await?;
+    let conversation_id = resolved_or_stored_conversation_id(&session);
+    let conversation =
+        authorize_existing_conversation(&viewer, &state.sqlx_pool, bear.id, conversation_id)
+            .await?
+            .ok_or_else(|| CustomError::NotFound("conversation not found".into()))?;
+    let grant = HatAccessGrant::ReadOnlyToolInWorkspace(
+        ReadOnlyWorkspaceAction::from_provider_name(&request.tool_name)?,
+        WorkspaceRoot::parse(&request.workspace_root)?,
+    );
+    let allowed = hats::access::has_grant_for_own_conversation(
+        &state.sqlx_pool,
+        bear_id,
+        conversation.id,
+        UserId::new(user_id),
+        &grant,
+    )
+    .await?;
+    Ok(json!({ "allowed": allowed }))
 }
 
 pub(crate) async fn session_hat_select_result(

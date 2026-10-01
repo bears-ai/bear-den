@@ -73,6 +73,153 @@ use crate::{
 use bearwire_protocol::{rpc::JsonRpcRequest, surface::SurfaceHistoryEvent, wire::BearWireEvent};
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn workspace_tool_check_requires_owned_hat_session_and_exact_live_grant(pool: sqlx::PgPool) {
+    use den_core::ids::{BearId, UserId};
+    use den_service::bears::hats::{
+        self,
+        access::{self, HatAccessGrant, ReadOnlyWorkspaceAction, WorkspaceRoot},
+    };
+
+    let admin = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, admin, bear_id).await;
+    let bear = BearId::new(bear_id);
+    let hat = hats::create_hat(&pool, bear, UserId::new(admin), "Reviewer", "Review safely")
+        .await
+        .unwrap();
+    let other_hat = hats::create_hat(&pool, bear, UserId::new(admin), "Other", "Other work")
+        .await
+        .unwrap();
+    hats::set_ide_default_hat(&pool, bear, hat.id)
+        .await
+        .unwrap();
+    let state = test_state(pool.clone());
+    let session_id = format!("workspace-check-{}", Uuid::new_v4());
+    let opened = rpc_value(
+        state.clone(),
+        &token,
+        "session.open",
+        json!({"bear_slug": bear_slug, "session_id": session_id, "client": "zed"}),
+    )
+    .await;
+    assert_eq!(opened["result"]["ok"], true, "{opened}");
+    let check = |token: &str, session: &str, tool: &str, root: &str| {
+        let token = token.to_string();
+        let params = json!({
+            "bear_slug": bear_slug, "session_id": session, "tool_name": tool,
+            "workspace_root": root,
+        });
+        let state = state.clone();
+        async move { rpc_value(state, &token, "hats.workspace_tool.check", params).await }
+    };
+    let denied = check(
+        &token,
+        &session_id,
+        "fs_read_text_file",
+        "/workspace/project",
+    )
+    .await;
+    assert_eq!(denied["result"]["allowed"], false, "{denied}");
+    let grant = HatAccessGrant::ReadOnlyToolInWorkspace(
+        ReadOnlyWorkspaceAction::from_provider_name("fs_read_text_file").unwrap(),
+        WorkspaceRoot::parse("/workspace/project").unwrap(),
+    );
+    assert!(
+        access::grant(&pool, bear, hat.id, UserId::new(admin), &grant, false)
+            .await
+            .is_err()
+    );
+    let id = access::grant(&pool, bear, hat.id, UserId::new(admin), &grant, true)
+        .await
+        .unwrap();
+    let allowed = check(
+        &token,
+        &session_id,
+        "fs_read_text_file",
+        "/workspace/project",
+    )
+    .await;
+    assert_eq!(allowed["result"]["allowed"], true, "{allowed}");
+    let other_root = check(&token, &session_id, "fs_read_text_file", "/workspace/other").await;
+    assert_eq!(other_root["result"]["allowed"], false, "{other_root}");
+    let write = check(&token, &session_id, "fs_edit_file", "/workspace/project").await;
+    assert!(write.get("error").is_some(), "{write}");
+    let member = create_test_user(&pool).await;
+    let member_token = create_member_token(&pool, member, bear_id).await;
+    let stolen = check(
+        &member_token,
+        &session_id,
+        "fs_read_text_file",
+        "/workspace/project",
+    )
+    .await;
+    assert!(stolen.get("error").is_some(), "{stolen}");
+    let member_session = format!("member-workspace-check-{}", Uuid::new_v4());
+    let opened_member = rpc_value(
+        state.clone(),
+        &member_token,
+        "session.open",
+        json!({
+            "bear_slug": bear_slug, "session_id": member_session, "client": "zed",
+        }),
+    )
+    .await;
+    assert_eq!(opened_member["result"]["ok"], true, "{opened_member}");
+    let shared = check(
+        &member_token,
+        &member_session,
+        "fs_read_text_file",
+        "/workspace/project",
+    )
+    .await;
+    assert_eq!(shared["result"]["allowed"], true, "{shared}");
+    let other_session = format!("other-workspace-check-{}", Uuid::new_v4());
+    hats::set_ide_default_hat(&pool, bear, other_hat.id)
+        .await
+        .unwrap();
+    let opened = rpc_value(
+        state.clone(),
+        &token,
+        "session.open",
+        json!({
+            "bear_slug": bear_slug, "session_id": other_session, "client": "zed",
+        }),
+    )
+    .await;
+    assert_eq!(opened["result"]["ok"], true, "{opened}");
+    let different_hat = check(
+        &token,
+        &other_session,
+        "fs_read_text_file",
+        "/workspace/project",
+    )
+    .await;
+    assert_eq!(different_hat["result"]["allowed"], false, "{different_hat}");
+    access::revoke(&pool, bear, hat.id, UserId::new(admin), id)
+        .await
+        .unwrap();
+    let revoked = check(
+        &token,
+        &session_id,
+        "fs_read_text_file",
+        "/workspace/project",
+    )
+    .await;
+    assert_eq!(revoked["result"]["allowed"], false, "{revoked}");
+    let revoked_member = check(
+        &member_token,
+        &member_session,
+        "fs_read_text_file",
+        "/workspace/project",
+    )
+    .await;
+    assert_eq!(
+        revoked_member["result"]["allowed"], false,
+        "{revoked_member}"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn ide_default_and_first_interaction_hat_selection_bind_one_canonical_conversation(
     pool: sqlx::PgPool,
 ) {

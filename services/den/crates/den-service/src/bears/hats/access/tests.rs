@@ -476,6 +476,12 @@ async fn hat_grants_are_admin_owned_idempotent_revocable_and_scoped(pool: PgPool
         ReadOnlyWorkspaceAction::from_provider_name("fs_read_text_file").unwrap(),
         WorkspaceRoot::parse("/workspace/other").unwrap(),
     );
+    assert!(
+        !has_grant_for_own_conversation(&pool, first, own.id, member, &scoped)
+            .await
+            .unwrap(),
+        "a broad tool record cannot stand in for the workspace target"
+    );
     assert!(grant(&pool, first, hat.id, member, &scoped, true)
         .await
         .is_err());
