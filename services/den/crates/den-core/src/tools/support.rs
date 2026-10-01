@@ -298,7 +298,13 @@ pub fn is_public_ip(ip: IpAddr) -> bool {
                 || ip.is_multicast()
                 || ip.is_broadcast()
                 || ip.is_documentation()
-                || ip.octets()[0] == 0)
+                || ip.octets()[0] == 0
+                || ip.octets()[0] >= 240
+                // Shared-address, protocol-assignment and benchmarking ranges
+                // must never be treated as public destinations for egress.
+                || (ip.octets()[0] == 100 && (64..=127).contains(&ip.octets()[1]))
+                || (ip.octets()[0] == 192 && ip.octets()[1] == 0 && ip.octets()[2] == 0)
+                || (ip.octets()[0] == 198 && (18..=19).contains(&ip.octets()[1])))
         }
         IpAddr::V6(ip) => {
             if let Some(v4) = ip.to_ipv4_mapped() {
@@ -308,7 +314,8 @@ pub fn is_public_ip(ip: IpAddr) -> bool {
                 || ip.is_unspecified()
                 || ip.is_multicast()
                 || ip.segments()[0] & 0xfe00 == 0xfc00
-                || ip.segments()[0] & 0xffc0 == 0xfe80)
+                || ip.segments()[0] & 0xffc0 == 0xfe80
+                || (ip.segments()[0] == 0x2001 && ip.segments()[1] == 0x0db8))
         }
     }
 }

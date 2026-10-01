@@ -19,6 +19,7 @@ use crate::protocol::{
     RustDependencyPreparation, RustDependencyResolution,
 };
 use std::collections::BTreeMap;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -255,8 +256,23 @@ impl DockerCliBackend {
         }
         for (index, host) in spec.allowed_outbound_hosts.iter().enumerate() {
             let relay = egress_relay_container_name(&spec.id, index);
+            let resolved = tokio::net::lookup_host((host.as_str(), 443))
+                .await
+                .map_err(|error| BackendError::Operation {
+                    id: spec.id.clone(),
+                    detail: format!("approved egress host could not be resolved safely: {error}"),
+                })?;
+            let pinned = select_public_egress_address(resolved).map_err(|detail| {
+                BackendError::Operation {
+                    id: spec.id.clone(),
+                    detail: format!("approved egress host {host}: {detail}"),
+                }
+            })?;
+            // The sandbox still addresses the original DNS alias for TLS SNI;
+            // only the relay's upstream is pinned, so reconnecting cannot
+            // re-resolve the approved name to an internal address.
             let target = RelayTarget {
-                host: host.clone(),
+                host: pinned.to_string(),
                 port: 443,
                 path: String::new(),
             };
@@ -780,6 +796,28 @@ fn network_create_args(network: &str, id: &str) -> Vec<String> {
     ]
 }
 
+fn select_public_egress_address(
+    addresses: impl IntoIterator<Item = SocketAddr>,
+) -> Result<Ipv4Addr, &'static str> {
+    let addresses: Vec<_> = addresses.into_iter().collect();
+    if addresses.is_empty() {
+        return Err("DNS returned no addresses");
+    }
+    if addresses
+        .iter()
+        .any(|address| !den_core::tools::support::is_public_ip(address.ip()))
+    {
+        return Err("DNS returned a non-public address");
+    }
+    addresses
+        .iter()
+        .find_map(|address| match address.ip() {
+            std::net::IpAddr::V4(ip) => Some(ip),
+            std::net::IpAddr::V6(_) => None,
+        })
+        .ok_or("DNS returned no usable public IPv4 address")
+}
+
 fn relay_run_args(
     relay: &str,
     id: &str,
@@ -1032,9 +1070,27 @@ mod tests {
     }
 
     #[test]
+    fn egress_pins_only_public_ipv4_and_rejects_mixed_or_empty_dns_answers() {
+        let public: SocketAddr = "1.1.1.1:443".parse().unwrap();
+        let public_v6: SocketAddr = "[2606:4700:4700::1111]:443".parse().unwrap();
+        assert_eq!(
+            select_public_egress_address([public_v6, public]).unwrap(),
+            "1.1.1.1".parse::<Ipv4Addr>().unwrap()
+        );
+        assert!(select_public_egress_address(Vec::<SocketAddr>::new()).is_err());
+        assert!(select_public_egress_address([public_v6]).is_err());
+        for blocked in ["10.0.0.1:443", "100.64.0.1:443", "127.0.0.1:443"] {
+            assert!(
+                select_public_egress_address([public, blocked.parse().unwrap()]).is_err(),
+                "{blocked}"
+            );
+        }
+    }
+
+    #[test]
     fn allowed_egress_uses_an_internal_dns_alias_and_https_only_relay() {
         let target = RelayTarget {
-            host: "index.crates.io".into(),
+            host: "1.1.1.1".into(),
             port: 443,
             path: String::new(),
         };
@@ -1047,7 +1103,8 @@ mod tests {
         );
         let joined = args.join(" ");
         assert!(joined.contains("TCP-LISTEN:443,fork,reuseaddr"), "{joined}");
-        assert!(joined.contains("TCP:index.crates.io:443"), "{joined}");
+        assert!(joined.contains("TCP:1.1.1.1:443"), "{joined}");
+        assert!(!joined.contains("TCP:index.crates.io:443"), "{joined}");
         assert_eq!(
             egress_relay_container_name("abc123", 0),
             "den-sbx-egress-abc123-0"
