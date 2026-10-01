@@ -174,6 +174,12 @@ pub struct CreateSandboxRequest {
     /// Network posture; defaults to [`NetworkMode::Restricted`].
     #[serde(default)]
     pub network: NetworkMode,
+    /// An optional Den-verified run ceiling. `Some(empty)` prohibits outbound
+    /// host relays; `None` preserves the legacy surface-only contract. The
+    /// provider intersects this with its own saved root ceiling and never
+    /// treats the request as an independent grant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_outbound_hosts: Option<AllowedOutboundHosts>,
     /// Environment injected into the sandbox (armature credentials, work
     /// order id, ...). Values are never logged by the provider.
     #[serde(default)]

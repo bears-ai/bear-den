@@ -1,0 +1,76 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT b.slug AS bear_slug, b.name AS bear_name, j.created_by_user_id, j.goal AS job_goal, assignment.work_surface_id, s.name AS work_surface_name,\n                j.commit_policy, j.work_branch,\n                COALESCE(j.work_branch = g.default_ref, FALSE) AS \"allow_default_ref!\",\n                COALESCE((\n                    SELECT jsonb_agg(\n                        jsonb_build_object('summary', rr.summary, 'evidence_refs', rr.evidence_refs)\n                        ORDER BY rr.created_at, rr.task_id\n                    )\n                    FROM docket_result_rollups rr\n                    WHERE rr.run_id = r.job_run_id\n                      AND rr.parent_task_id = r.executing_task_id\n                ), '[]'::jsonb) AS child_result_rollups\n         FROM bear_work_runs r\n         JOIN bears b ON b.id = r.bear_id\n         JOIN bear_jobs j ON j.id = r.job_id\n         LEFT JOIN LATERAL (\n             SELECT a.work_surface_id\n             FROM job_work_surface_assignments a\n             JOIN work_surfaces candidate ON candidate.id = a.work_surface_id\n             WHERE a.job_id = j.id\n               AND candidate.kind = 'git_workspace'\n               AND a.mutation_policy <> 'forbidden'\n             ORDER BY a.created_at\n             LIMIT 1\n         ) assignment ON true\n         LEFT JOIN work_surfaces s ON s.id = assignment.work_surface_id\n         LEFT JOIN git_work_surface_details g ON g.id = s.id\n         WHERE r.id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "bear_slug",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "bear_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "created_by_user_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 3,
+        "name": "job_goal",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "work_surface_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 5,
+        "name": "work_surface_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "commit_policy",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "work_branch",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "allow_default_ref!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 9,
+        "name": "child_result_rollups",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      null,
+      null
+    ]
+  },
+  "hash": "0403c4d92ebe9e63becee6c94363ed6283232c8061b2db938694af9c67a9c263"
+}

@@ -9,7 +9,7 @@
 use crate::backend::container::DockerCliBackend;
 use crate::backend::{Backend, BackendError, ProvisionSpec};
 use crate::metrics;
-use crate::policy::{validate_selection, PolicyContext, PolicyError};
+use crate::policy::{effective_outbound_hosts, validate_selection, PolicyContext, PolicyError};
 use crate::proc::{run_command, CommandSpec};
 use crate::protocol::{
     CatalogImage, CatalogResponse, CatalogRoot, CleanupState, CreateSandboxRequest, DiffResponse,
@@ -43,6 +43,7 @@ enum SandboxErrorKind {
     Unauthorized,
     UnimplementedType,
     ReadonlyWriteConflict,
+    OpenNetworkWithRunCeiling,
     UnknownRoot,
     UnknownImage,
     PublishUnsupported,
@@ -73,6 +74,7 @@ impl SandboxErrorKind {
             Self::Unauthorized => "unauthorized",
             Self::UnimplementedType => "unimplemented_type",
             Self::ReadonlyWriteConflict => "readonly_write_conflict",
+            Self::OpenNetworkWithRunCeiling => "open_network_with_run_ceiling",
             Self::UnknownRoot => "unknown_root",
             Self::UnknownImage => "unknown_image",
             Self::PublishUnsupported => "publish_unsupported",
@@ -339,6 +341,10 @@ fn policy_error_response(err: &PolicyError) -> Response {
         PolicyError::ReadonlyWriteConflict => (
             StatusCode::UNPROCESSABLE_ENTITY,
             SandboxErrorKind::ReadonlyWriteConflict,
+        ),
+        PolicyError::OpenNetworkWithRunCeiling => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            SandboxErrorKind::OpenNetworkWithRunCeiling,
         ),
         PolicyError::RuntimeUnavailable { .. } => (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -990,7 +996,10 @@ async fn provision(
         image,
         env: request.env.clone(),
         network: request.network,
-        allowed_outbound_hosts: root.allowed_outbound_hosts.clone(),
+        allowed_outbound_hosts: effective_outbound_hosts(
+            &root.allowed_outbound_hosts,
+            request.allowed_outbound_hosts.as_ref(),
+        ),
         memory_mb: request.limits.memory_mb,
         cpus: request.limits.cpus,
         pids: request.limits.pids,

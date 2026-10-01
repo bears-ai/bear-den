@@ -29,6 +29,8 @@ use crate::runtime_exception_events::{
     self, NewRuntimeExceptionEvent, RuntimeExceptionContext, RuntimeExceptionSeverity,
 };
 
+mod network_policy;
+
 const LEASE: Duration = Duration::from_mins(2);
 const ORPHAN_SWEEP_INTERVAL: Duration = Duration::from_hours(1);
 const SURFACE_SYNC_INTERVAL: Duration = Duration::from_mins(5);
@@ -225,10 +227,13 @@ async fn provision_run(
 ) {
     // Recheck the canonical Job hat before touching task state, minting a token,
     // or creating a sandbox. Also applies when adopting a previously claimed run.
-    if let Err(err) = memory_binding::for_work_run(pool, BearId::new(run.bear_id), run.id).await {
-        fail_run(pool, run, "work_hat_ineligible", &err.to_string(), None).await;
-        return;
-    }
+    let binding = match memory_binding::for_work_run(pool, BearId::new(run.bear_id), run.id).await {
+        Ok(binding) => binding,
+        Err(err) => {
+            fail_run(pool, run, "work_hat_ineligible", &err.to_string(), None).await;
+            return;
+        }
+    };
     let context = match work_runs::get_work_run_dispatch_context(pool, run.id).await {
         Ok(context) => context,
         Err(err) => {
@@ -252,6 +257,33 @@ async fn provision_run(
         .await;
         return;
     };
+
+    let network = if config.work_sandbox_network.eq_ignore_ascii_case("open") {
+        NetworkMode::Open
+    } else {
+        NetworkMode::Restricted
+    };
+    let allowed_outbound_hosts =
+        match network_policy::for_run(pool, BearId::new(run.bear_id), binding, &context, &root)
+            .await
+        {
+            Ok(hosts) => hosts,
+            Err(err) => {
+                fail_run(pool, run, "work_hat_egress", &err.to_string(), None).await;
+                return;
+            }
+        };
+    if allowed_outbound_hosts.is_some() && network == NetworkMode::Open {
+        fail_run(
+            pool,
+            run,
+            "work_hat_open_network",
+            "hat-bound Work requires a restricted sandbox network",
+            None,
+        )
+        .await;
+        return;
+    }
 
     // Docket owns sibling ordering. Claim the exact runnable task before
     // minting credentials or creating a sandbox, so an out-of-order run never
@@ -366,12 +398,6 @@ async fn provision_run(
     env.insert("GIT_COMMITTER_NAME".to_string(), git_identity);
     env.insert("GIT_COMMITTER_EMAIL".to_string(), git_email);
 
-    let network = if config.work_sandbox_network.eq_ignore_ascii_case("open") {
-        NetworkMode::Open
-    } else {
-        NetworkMode::Restricted
-    };
-
     let request = CreateSandboxRequest {
         root,
         git_ref: work_branch.or_else(|| run.git_ref.clone()),
@@ -379,6 +405,7 @@ async fn provision_run(
         requires_write: true,
         image: run.image_name.clone(),
         network,
+        allowed_outbound_hosts,
         env,
         limits: SandboxLimits {
             timeout_secs,

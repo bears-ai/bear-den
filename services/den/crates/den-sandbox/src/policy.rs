@@ -2,7 +2,7 @@
 //! table. Every rejection carries an actionable reason; nothing is silently
 //! degraded to a weaker boundary.
 
-use crate::protocol::{CreateSandboxRequest, SandboxType};
+use crate::protocol::{AllowedOutboundHosts, CreateSandboxRequest, NetworkMode, SandboxType};
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum PolicyError {
@@ -16,6 +16,8 @@ pub enum PolicyError {
     QueueFull { active: usize, max: usize },
     #[error("unknown root '{name}'; configure it in the roots file")]
     UnknownRoot { name: String },
+    #[error("a run-scoped outbound ceiling requires a restricted sandbox network")]
+    OpenNetworkWithRunCeiling,
 }
 
 pub struct PolicyContext {
@@ -42,6 +44,9 @@ pub fn validate_selection(
             })
         }
     }
+    if request.allowed_outbound_hosts.is_some() && request.network == NetworkMode::Open {
+        return Err(PolicyError::OpenNetworkWithRunCeiling);
+    }
     if request.requires_write && request.sandbox_type == SandboxType::LocalWorkspaceReadonly {
         return Err(PolicyError::ReadonlyWriteConflict);
     }
@@ -61,6 +66,23 @@ pub fn validate_selection(
     Ok(())
 }
 
+/// The saved root allowlist and an optional Den run ceiling can only narrow
+/// one another. This calculation is repeated at provider provisioning time;
+/// a request cannot add a host missing from the provider's current root.
+pub fn effective_outbound_hosts(
+    root_hosts: &[String],
+    run_ceiling: Option<&AllowedOutboundHosts>,
+) -> Vec<String> {
+    match run_ceiling {
+        None => root_hosts.to_vec(),
+        Some(ceiling) => root_hosts
+            .iter()
+            .filter(|host| ceiling.as_slice().contains(host))
+            .cloned()
+            .collect(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -73,6 +95,7 @@ mod tests {
             requires_write,
             image: None,
             network: Default::default(),
+            allowed_outbound_hosts: None,
             env: Default::default(),
             limits: Default::default(),
             labels: Default::default(),
@@ -133,6 +156,29 @@ mod tests {
             validate_selection(&request(SandboxType::Container, true), &ctx),
             Err(PolicyError::RuntimeUnavailable { .. })
         ));
+    }
+
+    #[test]
+    fn run_ceiling_cannot_open_the_network_or_widen_a_root() {
+        let mut request = request(SandboxType::Container, true);
+        request.allowed_outbound_hosts = Some(AllowedOutboundHosts::default());
+        request.network = NetworkMode::Open;
+        assert_eq!(
+            validate_selection(&request, &ok_ctx()),
+            Err(PolicyError::OpenNetworkWithRunCeiling)
+        );
+        request.network = NetworkMode::Restricted;
+        assert_eq!(validate_selection(&request, &ok_ctx()), Ok(()));
+        let root = vec!["one.example.com".into(), "two.example.com".into()];
+        let run =
+            AllowedOutboundHosts::new(vec!["two.example.com".into(), "other.example.com".into()])
+                .unwrap();
+        assert_eq!(effective_outbound_hosts(&root, None), root);
+        assert_eq!(
+            effective_outbound_hosts(&root, Some(&run)),
+            vec!["two.example.com"]
+        );
+        assert!(effective_outbound_hosts(&root, Some(&AllowedOutboundHosts::default())).is_empty());
     }
 
     #[test]

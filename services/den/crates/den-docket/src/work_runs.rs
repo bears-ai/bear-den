@@ -1922,6 +1922,7 @@ pub struct WorkRunDispatchContext {
     pub bear_name: String,
     pub created_by_user_id: i32,
     pub job_goal: String,
+    pub work_surface_id: Option<Uuid>,
     pub work_surface_name: Option<String>,
     pub commit_policy: Option<String>,
     pub work_branch: Option<String>,
@@ -1944,7 +1945,7 @@ pub async fn get_work_run_dispatch_context(
     run_id: Uuid,
 ) -> Result<WorkRunDispatchContext, DenError> {
     sqlx::query_as!(WorkRunDispatchContext,
-        "SELECT b.slug AS bear_slug, b.name AS bear_name, j.created_by_user_id, j.goal AS job_goal, s.name AS work_surface_name,
+        "SELECT b.slug AS bear_slug, b.name AS bear_name, j.created_by_user_id, j.goal AS job_goal, assignment.work_surface_id, s.name AS work_surface_name,
                 j.commit_policy, j.work_branch,
                 COALESCE(j.work_branch = g.default_ref, FALSE) AS \"allow_default_ref!\",
                 COALESCE((
