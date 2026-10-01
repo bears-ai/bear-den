@@ -73,6 +73,48 @@ use crate::{
 use bearwire_protocol::{rpc::JsonRpcRequest, surface::SurfaceHistoryEvent, wire::BearWireEvent};
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn work_egress_check_rejects_missing_run_token_and_unsafe_host(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let state = test_state(pool);
+    let run_id = Uuid::new_v4();
+    let missing = rpc_value(
+        state.clone(),
+        &token,
+        "work.egress.check",
+        json!({
+            "bear_slug": bear_slug, "work_run_id": run_id,
+            "host": "docs.example.com",
+        }),
+    )
+    .await;
+    assert_eq!(missing["result"]["allowed"], false, "{missing}");
+    for denied in ["localhost", "127.0.0.1", "*.example.com"] {
+        let unsafe_host = rpc_value(
+            state.clone(),
+            &token,
+            "work.egress.check",
+            json!({
+                "bear_slug": bear_slug, "work_run_id": run_id, "host": denied,
+            }),
+        )
+        .await;
+        assert!(unsafe_host.get("error").is_some(), "{unsafe_host}");
+    }
+    let malformed = rpc_value(
+        state,
+        &token,
+        "work.egress.check",
+        json!({
+            "bear_slug": bear_slug, "work_run_id": "not-a-uuid", "host": "docs.example.com",
+        }),
+    )
+    .await;
+    assert!(malformed.get("error").is_some(), "{malformed}");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn workspace_tool_check_requires_owned_hat_session_and_exact_live_grant(pool: sqlx::PgPool) {
     use den_core::ids::{BearId, UserId};
     use den_service::bears::hats::{

@@ -369,6 +369,7 @@ pub async fn diagnose_for_bear_slug(
 
 #[derive(Debug, Clone)]
 pub struct ArmatureTokenAuth {
+    pub token_id: Uuid,
     pub user_id: i32,
     pub scopes: serde_json::Value,
 }
@@ -406,7 +407,11 @@ pub async fn authenticate_for_bear_slug_with_scopes(
         .execute(pool)
         .await?;
 
-    Ok(Some(ArmatureTokenAuth { user_id, scopes }))
+    Ok(Some(ArmatureTokenAuth {
+        token_id,
+        user_id,
+        scopes,
+    }))
 }
 
 pub fn scopes_contains(scopes: &serde_json::Value, required_scope: &str) -> bool {

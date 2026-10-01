@@ -242,6 +242,11 @@ pub(crate) async fn rpc(
                 .await,
             "BearWire client.permission.result failed",
         ),
+        "work.egress.check" => method_response(
+            request.id,
+            methods::work::work_egress_check_result(&state, &headers, &request.params).await,
+            "BearWire work.egress.check failed",
+        ),
         "work.checkout" => method_response(
             request.id,
             methods::work::work_checkout_result(&state, &headers, &request.params).await,

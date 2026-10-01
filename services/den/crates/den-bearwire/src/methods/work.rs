@@ -10,16 +10,21 @@
 
 use axum::http::{header, HeaderMap};
 use bearwire_protocol::compatibility::{CompatibilityManifest, REQUIRED_WORK_CAPABILITIES};
+use bearwire_protocol::methods::WorkEgressCheckRequest;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use den_core::{ids::BearId, BearProfile};
+use den_core::{
+    ids::{BearId, UserId},
+    BearProfile,
+};
 use den_docket::{
     work_runs, DocketCheckpointDirectiveAcknowledge, DocketService, DocketWorkBoundaryCheck,
     DocketWorkBoundarySignal, PgDocketService, TaskListVisibility,
 };
 use den_http::{armature_tokens, errors::CustomError};
+use den_service::bears::hats::access::HttpsHost;
 use den_service::client_sessions;
 use den_service::{
     artifacts::{
@@ -35,6 +40,48 @@ use den_service::{
 
 use crate::auth::authenticated_bear;
 use crate::methods::parse_params;
+
+/// The relay presents the *run-minted* Bear token on each new connection.
+/// Bear membership alone, a remembered ceiling, or an ordinary IDE token
+/// cannot open outbound Work egress. A provider unable to reach Den denies.
+pub(crate) async fn work_egress_check_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let request: WorkEgressCheckRequest = parse_params(params)?;
+    let raw_token = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .map(str::trim)
+        .filter(|value| armature_tokens::is_armature_token(value))
+        .ok_or_else(|| CustomError::Authentication("run-minted Bear token required".into()))?;
+    let auth = armature_tokens::authenticate_for_bear_slug_with_scopes(
+        &state.sqlx_pool,
+        raw_token,
+        &request.bear_slug,
+    )
+    .await?
+    .filter(|auth| {
+        armature_tokens::scopes_contains(&auth.scopes, armature_tokens::armature_chat_scope())
+    })
+    .ok_or_else(|| CustomError::Authorization("Work egress token is no longer active".into()))?;
+    let bear = bears_db::bear_for_user_by_slug(&state.sqlx_pool, auth.user_id, &request.bear_slug)
+        .await?
+        .ok_or_else(|| CustomError::Authorization("Bear membership was revoked".into()))?;
+    let host = HttpsHost::parse(&request.host)?;
+    let allowed = den_runtime::work_dispatch::allow_work_egress_connection(
+        &state.sqlx_pool,
+        BearId::new(bear.id),
+        UserId::new(auth.user_id),
+        auth.token_id,
+        request.work_run_id,
+        &host,
+    )
+    .await?;
+    Ok(json!({"allowed": allowed}))
+}
 
 // Resolve the canonical Work run -> Job relationship before consulting any run,
 // attempt, directive, or prompt content. Never authorize from a caller-supplied

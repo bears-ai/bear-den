@@ -14,7 +14,11 @@ use sqlx::PgPool;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use den_core::{config::Config, ids::BearId, DenError};
+use den_core::{
+    config::Config,
+    ids::{BearId, UserId},
+    DenError,
+};
 use den_docket::work_runs::{
     self, WorkRunDispatchContext, WorkRunFinalize, WorkRunProvisioned, WorkRunRow, WorkRunState,
 };
@@ -23,7 +27,7 @@ use den_sandbox::protocol::{
     CreateSandboxRequest, NetworkMode, PublishRequest, SandboxLimits, SandboxType,
 };
 use den_sandbox::SandboxClient;
-use den_service::bears::hats::memory_binding;
+use den_service::bears::hats::{access::HttpsHost, memory_binding};
 
 use crate::runtime_exception_events::{
     self, NewRuntimeExceptionEvent, RuntimeExceptionContext, RuntimeExceptionSeverity,
@@ -39,6 +43,40 @@ const DIFF_PATCH_BYTES: u64 = 256 * 1024;
 /// Margin under the container timeout so the armature self-kills (and reports)
 /// before the provider's reaper hard-destroys the sandbox.
 const DEADLINE_MARGIN_SECS: u64 = 60;
+
+/// Advisory permit for a *new* restricted Work relay connection. The caller
+/// must authenticate the raw run-minted token and supply its verified token ID;
+/// the relay may connect only when this exact run, actor, snapshot, hat and
+/// assigned surface still admit the destination. Nothing here authorizes a
+/// provider-owned upstream operation or a connection already in flight.
+pub async fn allow_work_egress_connection(
+    pool: &PgPool,
+    bear_id: BearId,
+    actor: UserId,
+    token_id: Uuid,
+    work_run_id: Uuid,
+    host: &HttpsHost,
+) -> Result<bool, DenError> {
+    let Some(run) = work_runs::get_work_run(pool, work_run_id).await? else {
+        return Ok(false);
+    };
+    if run.bear_id != bear_id.as_uuid()
+        || run
+            .result_refs
+            .as_ref()
+            .and_then(|refs| refs.get("armature_token_id"))
+            .and_then(Value::as_str)
+            .and_then(|id| Uuid::parse_str(id).ok())
+            != Some(token_id)
+    {
+        return Ok(false);
+    }
+    let context = work_runs::get_work_run_dispatch_context(pool, work_run_id).await?;
+    if context.created_by_user_id != actor.get() {
+        return Ok(false);
+    }
+    network_policy::host_allowed_for_live_run(pool, &run, host).await
+}
 
 pub async fn run_work_dispatch_worker_loop(
     pool: PgPool,

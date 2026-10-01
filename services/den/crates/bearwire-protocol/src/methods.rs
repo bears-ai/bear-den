@@ -224,6 +224,16 @@ pub struct SessionHatWorkspaceToolCheckRequest {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkEgressCheckRequest {
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub bear_slug: String,
+    pub work_run_id: uuid::Uuid,
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub host: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct SessionIdRequest {
     #[serde(deserialize_with = "deserialize_required_string")]
     pub session_id: String,

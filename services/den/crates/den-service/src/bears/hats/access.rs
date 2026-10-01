@@ -106,6 +106,10 @@ impl HttpsHost {
         }
         Ok(Self(host))
     }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 /// Lexically normalized absolute workspace root. Den stores the target, not

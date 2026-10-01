@@ -6,11 +6,11 @@ use den_core::{ids::BearId, DenError};
 #[cfg(test)]
 #[path = "network_policy/tests.rs"]
 mod tests;
-use den_docket::work_runs::{WorkRunDispatchContext, WorkRunRow};
+use den_docket::work_runs::{WorkRunDispatchContext, WorkRunRow, WorkRunState};
 use den_sandbox::protocol::{AllowedOutboundHosts, HealthResponse};
 use den_service::{
     bears::hats::{
-        access,
+        access::{self, HttpsHost},
         memory_binding::{self, ResolvedMemoryBinding},
     },
     work_surfaces,
@@ -31,6 +31,60 @@ pub(super) fn snapshot(hosts: &AllowedOutboundHosts) -> Value {
     .expect("validated outbound hosts serialize")
 }
 
+fn provisioned_snapshot(run: &WorkRunRow) -> Result<RunEgressSnapshot, DenError> {
+    let value = run
+        .result_refs
+        .as_ref()
+        .and_then(|refs| refs.get("hat_egress"))
+        .ok_or_else(|| {
+            DenError::Authorization(
+                "hat-bound Work sandbox has no provisioned egress snapshot".into(),
+            )
+        })?;
+    serde_json::from_value(value.clone())
+        .map_err(|err| DenError::Authorization(format!("invalid Work egress snapshot: {err}")))
+}
+
+/// An individual new relay connection may use only a host provisioned for this
+/// sandbox and still present in the current hat ∩ assigned-surface policy.
+pub(super) async fn host_allowed_for_live_run(
+    pool: &PgPool,
+    run: &WorkRunRow,
+    host: &HttpsHost,
+) -> Result<bool, DenError> {
+    if !matches!(
+        WorkRunState::parse(&run.state),
+        Some(WorkRunState::Running | WorkRunState::Reporting)
+    ) || run.cancel_requested
+        || run.sandbox_id.is_none()
+        || run.execution_target != den_docket::work_runs::WorkExecutionTarget::Sandbox.as_str()
+    {
+        return Ok(false);
+    }
+    let bear_id = BearId::new(run.bear_id);
+    let binding = memory_binding::for_work_run(pool, bear_id, run.id).await?;
+    if !matches!(binding, ResolvedMemoryBinding::Bound(_)) {
+        return Ok(false);
+    }
+    let at_provision = provisioned_snapshot(run)?;
+    if !at_provision
+        .hosts
+        .as_slice()
+        .iter()
+        .any(|name| name == host.as_str())
+    {
+        return Ok(false);
+    }
+    let context = den_docket::work_runs::get_work_run_dispatch_context(pool, run.id).await?;
+    let root = context.work_surface_name.as_deref().ok_or_else(|| {
+        DenError::Authorization("Work run no longer has an assigned surface".into())
+    })?;
+    let current = for_run(pool, bear_id, binding, &context, root)
+        .await?
+        .ok_or_else(|| DenError::Authorization("hat-bound Work lost its egress policy".into()))?;
+    Ok(current.as_slice().iter().any(|name| name == host.as_str()))
+}
+
 /// Only an immutable audit snapshot, never another writable grant. A missing
 /// snapshot on a hat-bound active run is an authorization failure: it may be a
 /// sandbox provisioned before the per-run ceiling was deployed.
@@ -43,17 +97,7 @@ pub(super) async fn active_run_still_authorized(
     if matches!(binding, ResolvedMemoryBinding::Legacy) {
         return Ok(true);
     }
-    let value = run
-        .result_refs
-        .as_ref()
-        .and_then(|refs| refs.get("hat_egress"))
-        .ok_or_else(|| {
-            DenError::Authorization(
-                "hat-bound Work sandbox has no provisioned egress snapshot".into(),
-            )
-        })?;
-    let at_provision: RunEgressSnapshot = serde_json::from_value(value.clone())
-        .map_err(|err| DenError::Authorization(format!("invalid Work egress snapshot: {err}")))?;
+    let at_provision = provisioned_snapshot(run)?;
     let context = den_docket::work_runs::get_work_run_dispatch_context(pool, run.id).await?;
     let root = context.work_surface_name.as_deref().ok_or_else(|| {
         DenError::Authorization("Work run no longer has an assigned surface".into())

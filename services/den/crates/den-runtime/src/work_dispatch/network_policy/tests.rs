@@ -257,11 +257,86 @@ async fn run_hosts_are_bounded_by_both_the_assigned_surface_and_current_hat_gran
     )
     .await
     .unwrap();
+    let queued = den_docket::work_runs::get_work_run(&pool, run_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(active_run_still_authorized(&pool, &queued).await.unwrap());
+    let permitted_host = HttpsHost::parse("docs.example.com").unwrap();
+    assert!(!host_allowed_for_live_run(&pool, &queued, &permitted_host)
+        .await
+        .unwrap());
+    let run_token_id = Uuid::new_v4();
+    den_docket::work_runs::merge_work_run_result_refs(
+        &pool,
+        run_id,
+        &serde_json::json!({"armature_token_id": run_token_id}),
+    )
+    .await
+    .unwrap();
+    let claimed = den_docket::work_runs::claim_next_work_run(
+        &pool,
+        "egress-policy-test",
+        std::time::Duration::from_mins(2),
+    )
+    .await
+    .unwrap()
+    .expect("test Work run is claimable");
+    assert_eq!(claimed.id, run_id);
+    den_docket::work_runs::record_work_run_provisioned(
+        &pool,
+        run_id,
+        &den_docket::work_runs::WorkRunProvisioned {
+            sandbox_server_url: "https://provider.example.test".into(),
+            sandbox_id: "den-test-sandbox".into(),
+            sandbox_type: "container".into(),
+            sandbox_strength: "test".into(),
+            work_surface: serde_json::json!({}),
+            rust_dependency_preparation: None,
+        },
+    )
+    .await
+    .unwrap();
     let active = den_docket::work_runs::get_work_run(&pool, run_id)
         .await
         .unwrap()
         .unwrap();
-    assert!(active_run_still_authorized(&pool, &active).await.unwrap());
+    assert!(host_allowed_for_live_run(&pool, &active, &permitted_host)
+        .await
+        .unwrap());
+    assert!(super::super::allow_work_egress_connection(
+        &pool,
+        BearId::new(bear),
+        UserId::new(admin),
+        run_token_id,
+        run_id,
+        &permitted_host,
+    )
+    .await
+    .unwrap());
+    for (actor, token, owner) in [
+        (admin, Uuid::new_v4(), BearId::new(bear)),
+        (admin + 1, run_token_id, BearId::new(bear)),
+        (admin, run_token_id, BearId::new(Uuid::new_v4())),
+    ] {
+        assert!(!super::super::allow_work_egress_connection(
+            &pool,
+            owner,
+            UserId::new(actor),
+            token,
+            run_id,
+            &permitted_host,
+        )
+        .await
+        .unwrap());
+    }
+    assert!(!host_allowed_for_live_run(
+        &pool,
+        &active,
+        &HttpsHost::parse("registry.example.com").unwrap()
+    )
+    .await
+    .unwrap());
     access::revoke(
         &pool,
         BearId::new(bear),
@@ -290,6 +365,9 @@ async fn run_hosts_are_bounded_by_both_the_assigned_surface_and_current_hat_gran
         !active_run_still_authorized(&pool, &current).await.unwrap(),
         "removing a provisioned host must stop the running Work sandbox"
     );
+    assert!(!host_allowed_for_live_run(&pool, &current, &permitted_host)
+        .await
+        .unwrap());
     assert!(for_run(
         &pool,
         BearId::new(bear),
