@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS(SELECT 1 FROM bear_hat_access_grants\n         WHERE bear_id = $1 AND hat_id = $2 AND kind = $3\n           AND action_key = $4 AND target_kind = $5 AND target_value = $6\n           AND revoked_at IS NULL) AS \"allowed!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "allowed!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "2e17a9be3e247049f3fbc887ae304c2d00d57156030eae84ace785deee6d1a44"
+}

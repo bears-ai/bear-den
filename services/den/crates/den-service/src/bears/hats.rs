@@ -13,6 +13,7 @@ use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+pub mod access;
 pub mod bindings;
 pub mod core_review;
 pub mod curation;

@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT g.id FROM bear_hat_access_grants g\n         JOIN user_bear ub ON ub.bear_id = g.bear_id AND ub.user_id = $3\n         WHERE g.bear_id = $1 AND g.hat_id = $2\n           AND lower(btrim(coalesce(ub.role, ''))) = $4\n           AND g.kind = $5 AND g.action_key = $6\n           AND g.target_kind = $7 AND g.target_value = $8\n           AND g.revoked_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int4",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c465451b631435c90550077e84512649c150135973fa31c7dce916c47c079f4b"
+}

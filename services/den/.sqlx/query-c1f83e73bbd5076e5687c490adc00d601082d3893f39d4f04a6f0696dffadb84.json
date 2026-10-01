@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bear_hat_access_grants g SET revoked_at = now()\n         FROM user_bear ub\n         WHERE g.bear_id = $1 AND g.hat_id = $2 AND g.id = $3\n           AND g.revoked_at IS NULL\n           AND ub.bear_id = g.bear_id AND ub.user_id = $4\n           AND lower(btrim(coalesce(ub.role, ''))) = $5\n         RETURNING g.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Int4",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c1f83e73bbd5076e5687c490adc00d601082d3893f39d4f04a6f0696dffadb84"
+}

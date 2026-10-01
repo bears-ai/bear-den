@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO users (username, email) VALUES ('hatgrantadmin', 'hatgrantadmin@example.test') RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "f96ac830a5b3ae7c32935effc3640abbf55f46d4558c0cf9a8085aca2dc5b3d2"
+}
