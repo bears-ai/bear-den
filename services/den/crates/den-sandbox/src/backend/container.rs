@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const DOCKER_TIMEOUT: Duration = Duration::from_mins(2);
+const EGRESS_DNS_TIMEOUT: Duration = Duration::from_secs(10);
 const DOCKER_OUTPUT_CAP: usize = 256 * 1024;
 const CARGO_DIAGNOSTIC_CAP: usize = 4096;
 const CONTAINER_PREFIX: &str = "den-sbx-";
@@ -256,12 +257,19 @@ impl DockerCliBackend {
         }
         for (index, host) in spec.allowed_outbound_hosts.iter().enumerate() {
             let relay = egress_relay_container_name(&spec.id, index);
-            let resolved = tokio::net::lookup_host((host.as_str(), 443))
-                .await
-                .map_err(|error| BackendError::Operation {
-                    id: spec.id.clone(),
-                    detail: format!("approved egress host could not be resolved safely: {error}"),
-                })?;
+            let resolved = tokio::time::timeout(
+                EGRESS_DNS_TIMEOUT,
+                tokio::net::lookup_host((host.as_str(), 443)),
+            )
+            .await
+            .map_err(|_| BackendError::Operation {
+                id: spec.id.clone(),
+                detail: format!("approved egress host {host} DNS lookup timed out"),
+            })?
+            .map_err(|error| BackendError::Operation {
+                id: spec.id.clone(),
+                detail: format!("approved egress host could not be resolved safely: {error}"),
+            })?;
             let pinned = select_public_egress_address(resolved).map_err(|detail| {
                 BackendError::Operation {
                     id: spec.id.clone(),
@@ -778,10 +786,14 @@ async fn callback_add_host(env: &BTreeMap<String, String>) -> Option<String> {
         return None;
     }
     let port = url.port_or_known_default().unwrap_or(80);
-    let addr = tokio::net::lookup_host((host.as_str(), port))
-        .await
-        .ok()?
-        .next()?;
+    let addr = tokio::time::timeout(
+        EGRESS_DNS_TIMEOUT,
+        tokio::net::lookup_host((host.as_str(), port)),
+    )
+    .await
+    .ok()?
+    .ok()?
+    .next()?;
     Some(format!("{host}:{}", addr.ip()))
 }
 
