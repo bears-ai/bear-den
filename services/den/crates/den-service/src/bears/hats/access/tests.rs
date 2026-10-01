@@ -175,6 +175,26 @@ async fn hat_grants_are_admin_owned_idempotent_revocable_and_inert_until_enforce
     let host_grant_id = grant(&pool, first, hat.id, admin, &network, true)
         .await
         .unwrap();
+    let surface_ceiling =
+        AllowedOutboundHosts::new(vec!["example.com".into(), "other.example.com".into()]).unwrap();
+    assert_eq!(
+        intersect_surface_outbound_hosts(&pool, first, hat.id, &surface_ceiling)
+            .await
+            .unwrap()
+            .as_slice(),
+        &["example.com".to_string()],
+    );
+    assert!(
+        intersect_surface_outbound_hosts(&pool, first, other_hat.id, &surface_ceiling)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        intersect_surface_outbound_hosts(&pool, second, hat.id, &surface_ceiling)
+            .await
+            .is_err()
+    );
     assert!(
         has_web_fetch_grants_for_own_conversation(&pool, first, own.id, member, web_url,)
             .await
@@ -240,6 +260,12 @@ async fn hat_grants_are_admin_owned_idempotent_revocable_and_inert_until_enforce
     revoke(&pool, first, hat.id, admin, host_grant_id)
         .await
         .unwrap();
+    assert!(
+        intersect_surface_outbound_hosts(&pool, first, hat.id, &surface_ceiling)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     assert!(
         !has_web_fetch_grants_for_own_conversation(&pool, first, own.id, member, web_url,)
             .await

@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT target_value FROM bear_hat_access_grants\n         WHERE bear_id = $1 AND hat_id = $2 AND kind = 'network'\n           AND action_key = 'https' AND target_kind = 'host'\n           AND revoked_at IS NULL ORDER BY target_value",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "target_value",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "031bd8c94948d54e318ca73f5c318a12050625ed28127716638a5d3884bb7893"
+}

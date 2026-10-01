@@ -9,6 +9,7 @@ use den_core::{
     tools::{constants::DEN_WEB_FETCH, descriptor::builtin_den_tool_descriptor_for_provider_name},
     DenError,
 };
+use den_sandbox::protocol::AllowedOutboundHosts;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -276,4 +277,39 @@ pub async fn has_web_fetch_grants_for_own_conversation(
         return Ok(false);
     }
     has_grant_for_own_conversation(pool, bear_id, conversation_id, human, &destination).await
+}
+
+/// The network destinations a *separately authorized* Job may receive for one
+/// managed surface. An intersection is not checkout or credential authority;
+/// the caller must first verify its Job, hat, actor, and assigned surface.
+pub async fn intersect_surface_outbound_hosts(
+    pool: &PgPool,
+    bear_id: BearId,
+    hat_id: HatId,
+    surface_hosts: &AllowedOutboundHosts,
+) -> Result<AllowedOutboundHosts, DenError> {
+    super::manage::get_hat(pool, bear_id, hat_id).await?;
+    let rows = sqlx::query_scalar!(
+        "SELECT target_value FROM bear_hat_access_grants
+         WHERE bear_id = $1 AND hat_id = $2 AND kind = 'network'
+           AND action_key = 'https' AND target_kind = 'host'
+           AND revoked_at IS NULL ORDER BY target_value",
+        bear_id.as_uuid(),
+        hat_id.as_uuid(),
+    )
+    .fetch_all(pool)
+    .await?;
+    let hat_hosts = rows
+        .into_iter()
+        .map(|host| HttpsHost::parse(&host))
+        .collect::<Result<Vec<_>, _>>()?;
+    AllowedOutboundHosts::new(
+        surface_hosts
+            .as_slice()
+            .iter()
+            .filter(|host| hat_hosts.iter().any(|grant| grant.0 == **host))
+            .cloned()
+            .collect(),
+    )
+    .map_err(|err| DenError::System(format!("invalid surface egress ceiling: {err}")))
 }
