@@ -27,7 +27,9 @@ use den_core::{
     DenError,
 };
 use den_docket::{DocketFocusedSliceOutcome, DocketService};
-use den_http::{errors::CustomError, web_policy};
+use den_http::errors::CustomError;
+#[cfg(test)]
+use den_http::web_policy;
 use den_protocol::{
     RoleRuntimeBinding, RuntimeApprovalDecision, RuntimeContinuation, RuntimeConversationRef,
     RuntimeToolResultStatus,
@@ -465,32 +467,7 @@ fn continuation_conversation_id(session: &client_sessions::ClientSessionRow) -> 
         .unwrap_or_else(|| session.conversation_id.clone())
 }
 
-#[derive(Debug, Deserialize)]
-struct WebFetchPermissionPayload {
-    #[serde(rename = "tool_name")]
-    _tool_name: String,
-    arguments: WebFetchPermissionArguments,
-    #[serde(default, rename = "tool_call_id")]
-    _tool_call_id: Option<String>,
-    #[serde(default, rename = "approval_required")]
-    _approval_required: Option<bool>,
-    #[serde(default, rename = "approval_request_id")]
-    _approval_request_id: Option<String>,
-    #[serde(default, rename = "request_id")]
-    _request_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct WebFetchPermissionArguments {
-    url: Option<String>,
-    host: Option<String>,
-    site_account: Option<String>,
-}
-
-async fn record_web_fetch_approval_from_permission(
-    pool: &sqlx::PgPool,
-    bear_id: uuid::Uuid,
-    user_id: i32,
+fn validate_web_fetch_permission_decision(
     decision: PermissionDecisionInput,
     obligation_payload: &Value,
 ) -> Result<(), CustomError> {
@@ -498,98 +475,19 @@ async fn record_web_fetch_approval_from_permission(
         .get("tool_name")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    if !matches!(
-        decision,
-        PermissionDecisionInput::AllowSiteAccount | PermissionDecisionInput::AllowHost
-    ) {
-        return Ok(());
-    }
-    let Some(descriptor) =
+    let is_web_fetch =
         den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name(tool_name)
-    else {
-        return Ok(());
-    };
-    if descriptor.name != DEN_WEB_FETCH {
-        return Ok(());
+            .is_some_and(|descriptor| descriptor.name == DEN_WEB_FETCH);
+    if is_web_fetch
+        && matches!(
+            decision,
+            PermissionDecisionInput::AllowSiteAccount | PermissionDecisionInput::AllowHost
+        )
+    {
+        return Err(CustomError::ValidationError(
+            "persistent web_fetch approval must be managed as a Den-owned hat policy; choose Just this time".into(),
+        ));
     }
-    let payload: WebFetchPermissionPayload = serde_json::from_value(obligation_payload.clone())
-        .map_err(|_| {
-            CustomError::ValidationError(
-                "web_fetch permission payload has an invalid shape".to_string(),
-            )
-        })?;
-    let url = payload
-        .arguments
-        .url
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            CustomError::ValidationError("web_fetch permission payload missing url".to_string())
-        })?;
-    let (scope_kind, scope_value) = if decision == PermissionDecisionInput::AllowHost {
-        let host = match payload
-            .arguments
-            .host
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            Some(host) => web_policy::normalize_web_host(host)?,
-            None => web_policy::normalize_web_url(url)?.host,
-        };
-        ("host", host)
-    } else if decision == PermissionDecisionInput::AllowSiteAccount {
-        let scope_value = payload
-            .arguments
-            .site_account
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned)
-            .or_else(|| {
-                let normalized = web_policy::normalize_web_url(url).ok()?;
-                if normalized.host == "github.com" {
-                    let account = url
-                        .split("github.com/")
-                        .nth(1)?
-                        .split('/')
-                        .find(|segment| !segment.is_empty())?;
-                    Some(format!("github.com/{account}"))
-                } else {
-                    None
-                }
-            })
-            .ok_or_else(|| {
-                CustomError::ValidationError(
-                    "web_fetch permission payload missing supported site account scope".to_string(),
-                )
-            })?;
-        ("site_account", scope_value)
-    } else {
-        let host = match payload
-            .arguments
-            .host
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            Some(host) => web_policy::normalize_web_host(host)?,
-            None => web_policy::normalize_web_url(url)?.host,
-        };
-        ("host", host)
-    };
-    let ttl_seconds = None;
-    web_policy::record_web_approval(
-        pool,
-        bear_id,
-        scope_kind,
-        &scope_value,
-        Some(user_id),
-        "acp",
-        ttl_seconds,
-    )
-    .await?;
     Ok(())
 }
 
@@ -1691,17 +1589,9 @@ pub(crate) async fn client_permission_result_result(
     }
     let binding_id = continuation_binding_id(&state.sqlx_pool, bear.id, &session_id).await?;
     if normalized_decision == "granted" {
-        // Validate and persist external approval before claiming the one-shot model
-        // continuation. A failure after that claim would leave the run in
-        // `continuing` with no worker able to consume it.
-        record_web_fetch_approval_from_permission(
-            &state.sqlx_pool,
-            bear.id,
-            user_id,
-            decision,
-            &obligation.request_payload,
-        )
-        .await?;
+        // Reject a stale client's persistent web choice before claiming the
+        // one-shot continuation. No ACP decision writes Bear-wide web grants.
+        validate_web_fetch_permission_decision(decision, &obligation.request_payload)?;
     }
     let coordinator_outcome = client_obligation_coordinator::record_and_settle_permission_result(
         &state.sqlx_pool,
@@ -1970,14 +1860,10 @@ mod tests {
         .await
         .unwrap();
         let url = "https://example.com/private";
-        record_web_fetch_approval_from_permission(
-            &pool,
-            bear_id,
-            1,
+        validate_web_fetch_permission_decision(
             PermissionDecisionInput::AllowOnce,
             &json!({"tool_name": DEN_WEB_FETCH, "arguments": {"url": url}}),
         )
-        .await
         .unwrap();
         assert_eq!(
             web_policy::decide_web_fetch_approval(&pool, bear_id, url)
@@ -1989,25 +1875,19 @@ mod tests {
     }
 
     #[test]
-    fn web_fetch_permission_payload_extracts_scope_from_extensible_wait_envelope() {
-        let payload = json!({
-            "den_process_epoch_id": Uuid::new_v4(),
-            "tool_name": DEN_WEB_FETCH,
-            "arguments": {
-                "url": "https://example.com/docs",
-                "max_chars": 4_000,
-            },
-            "approval_required": true,
-            "execution_target": "den",
-            "policy": { "execution_target": "den" },
-        });
-
-        let parsed = serde_json::from_value::<WebFetchPermissionPayload>(payload)
-            .expect("current wait envelope should remain forward-compatible");
-        assert_eq!(
-            parsed.arguments.url.as_deref(),
-            Some("https://example.com/docs")
-        );
+    fn permanent_web_fetch_permission_cannot_create_bear_wide_approval() {
+        for decision in [
+            PermissionDecisionInput::AllowHost,
+            PermissionDecisionInput::AllowSiteAccount,
+        ] {
+            for name in [DEN_WEB_FETCH, "web_fetch"] {
+                assert!(validate_web_fetch_permission_decision(
+                    decision,
+                    &json!({"tool_name": name, "arguments": {"url": "https://example.com/docs"}}),
+                )
+                .is_err());
+            }
+        }
     }
 
     #[test]
