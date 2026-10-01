@@ -349,6 +349,18 @@ async fn oriented_child_count_policy_error(
     Ok(None)
 }
 
+fn require_tool_output_read_origin(origin: TurnExecutionOrigin) -> Result<(), DenError> {
+    let descriptor = builtin_den_tool_descriptor_for_provider_name(DEN_TOOL_OUTPUT_READ)
+        .expect("Den tool output read has a builtin descriptor");
+    if descriptor.allows_origin(origin) {
+        Ok(())
+    } else {
+        Err(DenError::Authorization(
+            "tool output artifacts are unavailable to this execution origin".into(),
+        ))
+    }
+}
+
 async fn tool_output_read_result(
     pool: &sqlx::PgPool,
     bear_id: uuid::Uuid,
@@ -919,7 +931,12 @@ impl SessionTrackingStream {
                 return Err(DenError::ValidationError(error));
             }
             let result = if canonical == DEN_TOOL_OUTPUT_READ {
-                tool_output_read_result(&pool, bear_id, &client_session_id, args).await
+                match require_tool_output_read_origin(origin) {
+                    Ok(()) => {
+                        tool_output_read_result(&pool, bear_id, &client_session_id, args).await
+                    }
+                    Err(error) => Err(error),
+                }
             } else {
                 invoker
                     .invoke(crate::native_runtime::RuntimeToolInvocation {
@@ -2893,6 +2910,10 @@ impl Stream for SessionTrackingStream {
 #[cfg(test)]
 #[path = "session_stream/hat_web_fetch_tests.rs"]
 mod hat_web_fetch_tests;
+
+#[cfg(test)]
+#[path = "session_stream/tool_output_tests.rs"]
+mod tool_output_tests;
 
 #[cfg(test)]
 mod tests {
