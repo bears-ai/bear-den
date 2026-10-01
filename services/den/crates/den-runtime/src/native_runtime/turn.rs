@@ -64,7 +64,10 @@ use crate::{
     native_runtime::{
         profile::NativeCapabilityProfile,
         search_availability,
-        tools::{is_work_tool_provider_name, merge_den_and_client_tools_with_search},
+        tools::{
+            is_work_tool_provider_name, merge_den_and_client_tools_with_search,
+            omit_unbounded_cargo_helper,
+        },
     },
     turn_runner::{
         materialize_runtime_conversation_if_needed, RunRecoveryDisposition, TurnContinueRequest,
@@ -977,7 +980,7 @@ async fn build_session(
         user_id,
     )
     .await?;
-    let tools = merge_den_and_client_tools_with_search(
+    let mut tools = merge_den_and_client_tools_with_search(
         deps.config,
         origin,
         bear.work_enabled,
@@ -987,6 +990,17 @@ async fn build_session(
         human_message,
         search_available,
     )?;
+    if matches!(origin, den_core::TurnExecutionOrigin::AuthorizedWorkRun(_)) {
+        let work_run_id = work_run_id.ok_or_else(|| {
+            DenError::Authorization("Work turn has no live Job-run binding".into())
+        })?;
+        if matches!(
+            memory_binding::for_work_run(deps.pool, BearId::new(bear_id), work_run_id).await?,
+            memory_binding::ResolvedMemoryBinding::Bound(_)
+        ) {
+            omit_unbounded_cargo_helper(&mut tools);
+        }
+    }
     let execution_id = run_id
         .map(str::to_string)
         .or_else(|| request_id.map(|id| id.to_string()))

@@ -13,8 +13,8 @@ use den_core::{
         DEN_TASK_LIST_CHECKOUT_PROVIDER, DEN_TASK_LIST_PROVIDER, DEN_TASK_LIST_SYNC_PROVIDER,
         DEN_TASK_SELECT_PROVIDER, DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER,
         DEN_TASK_UPDATE_PROVIDER, DEN_WEB_SEARCH, DEN_WORK_CATALOG_PROVIDER,
-        DEN_WORK_DISPATCH_PROVIDER, DEN_WORK_RUN_CANCEL_PROVIDER, DEN_WORK_RUN_GET_PROVIDER,
-        DEN_WORK_RUN_LIST_PROVIDER,
+        DEN_WORK_DISPATCH_PROVIDER, DEN_WORK_PREPARE_RUST_DEPENDENCIES,
+        DEN_WORK_RUN_CANCEL_PROVIDER, DEN_WORK_RUN_GET_PROVIDER, DEN_WORK_RUN_LIST_PROVIDER,
     },
     DenError, TurnExecutionOrigin,
 };
@@ -55,6 +55,13 @@ fn den_tools_for_origin(
         .into_iter()
         .map(|descriptor| den_tool_to_llm_definition(&descriptor, true))
         .collect()
+}
+
+pub(crate) fn omit_unbounded_cargo_helper(tools: &mut Vec<LlmToolDefinition>) {
+    tools.retain(|tool| {
+        !builtin_den_tool_descriptor_for_provider_name(&tool.name)
+            .is_some_and(|descriptor| descriptor.name == DEN_WORK_PREPARE_RUST_DEPENDENCIES)
+    });
 }
 
 pub fn is_work_tool_provider_name(name: &str) -> bool {
@@ -312,6 +319,32 @@ mod tests {
 
     fn native_test_config() -> Config {
         Config::test_stub()
+    }
+
+    #[test]
+    fn hat_work_roster_can_remove_the_unbounded_cargo_helper() {
+        let config = native_test_config();
+        let mut tools = super::merge_den_and_client_tools(
+            &config,
+            TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Absent),
+            true,
+            true,
+            true,
+            None,
+            None,
+        )
+        .unwrap();
+        let before = tools.len();
+        assert!(tools.iter().any(|tool| {
+            builtin_den_tool_descriptor_for_provider_name(&tool.name)
+                .is_some_and(|descriptor| descriptor.name == DEN_WORK_PREPARE_RUST_DEPENDENCIES)
+        }));
+        omit_unbounded_cargo_helper(&mut tools);
+        assert_eq!(tools.len(), before - 1);
+        assert!(!tools.iter().any(|tool| {
+            builtin_den_tool_descriptor_for_provider_name(&tool.name)
+                .is_some_and(|descriptor| descriptor.name == DEN_WORK_PREPARE_RUST_DEPENDENCIES)
+        }));
     }
 
     #[test]

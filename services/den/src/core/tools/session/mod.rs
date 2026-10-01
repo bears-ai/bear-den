@@ -25,7 +25,7 @@ use den_core::tools::{
 use den_core::TurnExecutionOrigin;
 use den_docket::{DocketService, PgDocketService, TaskListHandoffRequest};
 use den_memory::MemoryStoreManager;
-use den_service::bears::BearProfile;
+use den_service::bears::{hats::memory_binding::ResolvedMemoryBinding, BearProfile};
 use den_service::conversation::persistence as conversation_persistence;
 
 // The per-call context value now lives in `den-tools` (it is data, not a
@@ -256,6 +256,38 @@ async fn invoke_den_tool_with_origin(
     }
 }
 
+fn require_bounded_dependency_preparation(
+    binding: ResolvedMemoryBinding,
+) -> Result<(), den_core::DenError> {
+    if matches!(binding, ResolvedMemoryBinding::Bound(_)) {
+        return Err(den_core::DenError::Authorization(
+            "hosted Cargo preparation uses an unrestricted helper network; hat-bound Work must wait for a grant-enforced helper".into(),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod dependency_preparation_policy_tests {
+    use super::*;
+    use den_core::ids::HatId;
+    use den_memory::{scoped::MemoryReadGrant, MemorySource};
+    use uuid::Uuid;
+
+    #[test]
+    fn hat_bound_cargo_helper_cannot_escape_its_network_policy() {
+        assert!(require_bounded_dependency_preparation(ResolvedMemoryBinding::Legacy).is_ok());
+        let bound = ResolvedMemoryBinding::Bound(MemoryReadGrant::new(
+            MemorySource::WorkRun(Uuid::new_v4()),
+            Some(HatId::new(Uuid::new_v4())),
+        ));
+        assert!(matches!(
+            require_bounded_dependency_preparation(bound),
+            Err(den_core::DenError::Authorization(_))
+        ));
+    }
+}
+
 /// Den-owned bridge from an authorized work run to its active sandbox provider.
 struct SandboxRustDependencyPreparationRunner<'a> {
     pool: &'a PgPool,
@@ -280,6 +312,13 @@ impl den_service::rust_dependencies::RustDependencyPreparationRunner
                     "work run is not authorized for this invocation".to_string(),
                 )
             })?;
+        let binding = den_service::bears::hats::memory_binding::for_work_run(
+            self.pool,
+            den_core::ids::BearId::new(self.bear_id),
+            run.id,
+        )
+        .await?;
+        require_bounded_dependency_preparation(binding)?;
         let sandbox_id = run.sandbox_id.ok_or_else(|| {
             den_core::DenError::ValidationError("work run has no active sandbox".to_string())
         })?;
