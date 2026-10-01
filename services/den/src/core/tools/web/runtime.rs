@@ -17,7 +17,7 @@ use den_core::DenError;
 
 use crate::{
     config::Config,
-    core::{tools::support::validate_public_http_url, web_policy},
+    core::{tools::support::resolve_public_http_target, web_policy},
     errors::CustomError,
 };
 
@@ -121,23 +121,32 @@ impl WebFetcher for DenWebFetcher<'_> {
     }
 
     async fn http_get(&self, url: &str) -> Result<WebHttpResponse, DenError> {
-        let parsed = validate_public_http_url(url)?;
-        let client = reqwest::Client::builder()
+        let parsed = resolve_public_http_target(url)?;
+        let mut builder = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(20))
             .connect_timeout(std::time::Duration::from_secs(5))
             // An approval for one URL must not follow a redirect to a second
             // destination without another explicit authorization decision.
             .redirect(reqwest::redirect::Policy::none())
+            .no_proxy();
+        if let Some(url::Host::Domain(host)) = parsed.url.host() {
+            builder = builder.resolve_to_addrs(host, &parsed.resolved_addrs);
+        }
+        let client = builder
             .build()
             .map_err(|e| DenError::System(format!("web fetch client build failed: {e}")))?;
         let resp = client
-            .get(parsed.as_str())
+            .get(parsed.url.as_str())
             .header(reqwest::header::USER_AGENT, "BEARS Den web_fetch/0.1")
             .send()
             .await
             .map_err(|e| DenError::System(format!("web fetch request failed: {e}")))?;
         let final_url = resp.url().clone();
-        validate_public_http_url(final_url.as_str())?;
+        if final_url != parsed.url {
+            return Err(DenError::Authorization(
+                "web fetch cannot follow a redirect".into(),
+            ));
+        }
         let status = resp.status();
         let content_type = resp
             .headers()

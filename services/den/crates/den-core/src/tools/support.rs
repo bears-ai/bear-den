@@ -6,7 +6,7 @@
 //! in the `den` crate so existing `support::*` callers keep resolving.
 
 use std::{
-    net::{IpAddr, ToSocketAddrs},
+    net::{IpAddr, SocketAddr, ToSocketAddrs},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -224,7 +224,19 @@ pub fn memory_write_scopes(role: BearProfile) -> Vec<&'static str> {
     }
 }
 
-pub fn validate_public_http_url(raw: &str) -> Result<url::Url, DenError> {
+#[derive(Debug, Clone)]
+pub struct ValidatedPublicHttpTarget {
+    pub url: url::Url,
+    pub resolved_addrs: Vec<SocketAddr>,
+}
+
+#[cfg(test)]
+#[path = "support/tests.rs"]
+mod tests;
+
+/// Resolve once and retain the vetted addresses for the HTTP client. Checking
+/// DNS and then resolving again at connection time permits DNS rebinding.
+pub fn resolve_public_http_target(raw: &str) -> Result<ValidatedPublicHttpTarget, DenError> {
     let url = url::Url::parse(raw.trim())
         .map_err(|e| DenError::ValidationError(format!("url must be a valid HTTP(S) URL: {e}")))?;
     match url.scheme() {
@@ -244,17 +256,26 @@ pub fn validate_public_http_url(raw: &str) -> Result<url::Url, DenError> {
             "localhost URLs are not allowed for den.web.fetch".to_string(),
         ));
     }
-    if let Ok(ip) = lower_host.parse::<IpAddr>() {
-        if !is_public_ip(ip) {
-            return Err(DenError::ValidationError("private, loopback, link-local, multicast, and unspecified IP URLs are not allowed for den.web.fetch".to_string()));
-        }
-        return Ok(url);
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| DenError::ValidationError("URL has no supported HTTP(S) port".into()))?;
+    let ip_host = lower_host.trim_start_matches('[').trim_end_matches(']');
+    let addrs: Vec<SocketAddr> = if let Ok(ip) = ip_host.parse::<IpAddr>() {
+        vec![SocketAddr::new(ip, port)]
+    } else {
+        (host, port)
+            .to_socket_addrs()
+            .map_err(|e| {
+                DenError::ValidationError(format!("url host could not be resolved safely: {e}"))
+            })?
+            .collect()
+    };
+    if addrs.is_empty() {
+        return Err(DenError::ValidationError(
+            "URL host has no resolved addresses".into(),
+        ));
     }
-    let port = url.port_or_known_default().unwrap_or(443);
-    let addrs = (host, port).to_socket_addrs().map_err(|e| {
-        DenError::ValidationError(format!("url host could not be resolved safely: {e}"))
-    })?;
-    for addr in addrs {
+    for addr in &addrs {
         if !is_public_ip(addr.ip()) {
             return Err(DenError::ValidationError(format!(
                 "url host resolves to a non-public address: {}",
@@ -262,7 +283,10 @@ pub fn validate_public_http_url(raw: &str) -> Result<url::Url, DenError> {
             )));
         }
     }
-    Ok(url)
+    Ok(ValidatedPublicHttpTarget {
+        url,
+        resolved_addrs: addrs,
+    })
 }
 
 pub fn is_public_ip(ip: IpAddr) -> bool {
@@ -277,6 +301,9 @@ pub fn is_public_ip(ip: IpAddr) -> bool {
                 || ip.octets()[0] == 0)
         }
         IpAddr::V6(ip) => {
+            if let Some(v4) = ip.to_ipv4_mapped() {
+                return is_public_ip(IpAddr::V4(v4));
+            }
             !(ip.is_loopback()
                 || ip.is_unspecified()
                 || ip.is_multicast()
