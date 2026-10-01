@@ -82,7 +82,7 @@ pub(crate) async fn run_headless(http: &reqwest::Client, runtime: &RuntimeConfig
         .context("headless: Den BearWire preflight failed")?;
 
     let session_id = format!("headless-{}", Uuid::new_v4().simple());
-    let (mut adapter_state, shared_state) = headless_adapter_state();
+    let (mut adapter_state, shared_state) = headless_adapter_state(http.clone());
     let context = headless_session_context(&env);
     adapter_state
         .session_contexts
@@ -201,11 +201,12 @@ pub(crate) async fn run_headless(http: &reqwest::Client, runtime: &RuntimeConfig
     outcome
 }
 
-fn headless_adapter_state() -> (AdapterState, AdapterSharedState) {
+fn headless_adapter_state(http: reqwest::Client) -> (AdapterState, AdapterSharedState) {
     let adapter_state = AdapterState::default();
     let (cancellation_tx, _) = broadcast::channel(64);
     let shared_state = AdapterSharedState {
         transport: adapter_state.transport.clone(),
+        http,
         client_capabilities: Arc::new(TokioMutex::new(Value::Null)),
         session_contexts: Arc::new(TokioMutex::new(HashMap::new())),
         last_plan_update_hashes: Arc::new(TokioMutex::new(HashMap::new())),

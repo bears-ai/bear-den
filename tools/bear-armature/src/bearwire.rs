@@ -3236,6 +3236,7 @@ mod tests {
         let mut cancellation_rx = cancellation_tx.subscribe();
         let shared_state = crate::AdapterSharedState {
             transport: crate::JsonRpcTransport::default(),
+            http: reqwest::Client::new(),
             client_capabilities: std::sync::Arc::new(tokio::sync::Mutex::new(Value::Null)),
             session_contexts: std::sync::Arc::new(tokio::sync::Mutex::new(
                 std::collections::HashMap::new(),

@@ -312,8 +312,28 @@ impl ApprovalCache {
     }
 
     pub(crate) async fn clear_session(&self, _session_id: &str) {
-        // Persistent approvals intentionally survive ACP session boundaries.
-        // Use BEARS_ACP_CLEAR_APPROVALS=1 or remove the cache file to revoke.
+        // No-hat legacy approvals survive ACP session boundaries.
+    }
+
+    /// Historical Bear/client approvals cannot be attributed to a canonical
+    /// hat. Drop only this runtime identity's records, leaving other Bears'
+    /// cache entries untouched. A failed Den hat lookup also calls this path.
+    pub(crate) async fn clear_for_identity(&self) {
+        let Some(persistence) = self.persistence.as_ref() else {
+            return;
+        };
+        let mut entries = self.entries.lock().await;
+        let before = entries.len();
+        entries.retain(|_, record| {
+            record.api_url != persistence.api_url
+                || record.bear != persistence.bear
+                || record.client != persistence.client
+        });
+        let changed = entries.len() != before;
+        drop(entries);
+        if changed {
+            self.save().await;
+        }
     }
 
     async fn save(&self) {
@@ -546,6 +566,41 @@ pub(crate) fn approval_workspace_scope_label(context: &SessionContext) -> String
     } else {
         "workspace roots".to_string()
     }
+}
+
+/// A hat-bound (or unverifiable) session can only obtain one exact decision.
+/// Legacy remembered scopes remain available only after a verified no-hat
+/// response from Den, never from a client-supplied hat label.
+pub(crate) fn permission_options_for_verified_session(
+    legacy_no_hats: bool,
+    context: Option<&SessionContext>,
+    target_path: Option<&Path>,
+    target_url: Option<&str>,
+    target_command: Option<&str>,
+    permission_family_label: &str,
+) -> Vec<PermissionOption> {
+    if !legacy_no_hats {
+        return vec![
+            PermissionOption::new(
+                "allow_once",
+                "Just this time",
+                PermissionOptionKind::AllowOnce,
+            ),
+            PermissionOption::new("reject_once", "Deny", PermissionOptionKind::RejectOnce),
+            PermissionOption::new(
+                "reject_always",
+                "Always deny",
+                PermissionOptionKind::RejectAlways,
+            ),
+        ];
+    }
+    permission_options_for_context(
+        context,
+        target_path,
+        target_url,
+        target_command,
+        permission_family_label,
+    )
 }
 
 pub(crate) fn permission_options_for_context(
@@ -802,6 +857,72 @@ mod tests {
                 .is_allowed(&context, "fs_read_text_file", Some(target))
                 .await
         );
+    }
+
+    #[tokio::test]
+    async fn hat_cutover_discards_only_this_bear_client_identity() {
+        let cache = test_approval_cache("http://den.test", "meta", "zed");
+        let context = workspace_context("/workspace");
+        let path = Path::new("/workspace/src/main.rs");
+        cache
+            .remember(
+                &context,
+                "fs_edit_file",
+                "writes_workspace",
+                ApprovalScope::Workspace,
+                Some(path),
+            )
+            .await;
+        let mut foreign = cache.entries.lock().await.values().next().unwrap().clone();
+        foreign.bear = "another-bear".into();
+        let key = ApprovalCache::key(
+            &foreign.api_url,
+            &foreign.bear,
+            &foreign.client,
+            &foreign.permission_class,
+            &foreign.scope_kind,
+            &foreign.scope_fingerprint,
+        );
+        cache.entries.lock().await.insert(key, foreign);
+        cache.clear_for_identity().await;
+        assert!(!cache.is_allowed(&context, "fs_edit_file", Some(path)).await);
+        let entries = &cache.entries.lock().await;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries.values().next().unwrap().bear, "another-bear");
+        let path = &cache.persistence.as_ref().unwrap().path;
+        let saved: ApprovalCacheFile =
+            serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(saved.entries.len(), 1);
+        assert_eq!(saved.entries[0].bear, "another-bear");
+    }
+
+    #[test]
+    fn configured_or_unknown_hat_never_offers_local_remembered_scopes() {
+        let context = workspace_context("/workspace");
+        let options = permission_options_for_verified_session(
+            false,
+            Some(&context),
+            Some(Path::new("/workspace/src/main.rs")),
+            None,
+            None,
+            "editing files",
+        );
+        let ids = options
+            .iter()
+            .map(|option| option.option_id.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, ["allow_once", "reject_once", "reject_always"]);
+        let legacy = permission_options_for_verified_session(
+            true,
+            Some(&context),
+            Some(Path::new("/workspace/src/main.rs")),
+            None,
+            None,
+            "editing files",
+        );
+        assert!(legacy
+            .iter()
+            .any(|option| option.option_id.to_string() == "allow_directory"));
     }
 
     #[test]

@@ -118,7 +118,7 @@ use bearwire_protocol::surface::SurfaceHistoryEvent;
 
 use approvals::{
     approval_url_host_scope, parse_permission_decision, permission_class_for_tool,
-    permission_options_for_context, ApprovalCache, ApprovalScope, ApprovalTarget,
+    permission_options_for_verified_session, ApprovalCache, ApprovalScope, ApprovalTarget,
     PermissionDecision,
 };
 use axum::{extract::State, response::IntoResponse};
@@ -242,6 +242,7 @@ struct AdapterState {
 #[derive(Clone)]
 struct AdapterSharedState {
     transport: JsonRpcTransport,
+    http: reqwest::Client,
     client_capabilities: Arc<TokioMutex<Value>>,
     session_contexts: Arc<TokioMutex<HashMap<String, SessionContext>>>,
     last_plan_update_hashes: Arc<TokioMutex<HashMap<String, u64>>>,
@@ -1794,6 +1795,7 @@ async fn run() -> Result<()> {
     let (cancellation_tx, _) = broadcast::channel(64);
     let shared_state = AdapterSharedState {
         transport: adapter_state.transport.clone(),
+        http: http.clone(),
         client_capabilities: Arc::new(TokioMutex::new(Value::Null)),
         session_contexts: Arc::new(TokioMutex::new(HashMap::new())),
         last_plan_update_hashes: Arc::new(TokioMutex::new(HashMap::new())),
@@ -5503,6 +5505,43 @@ async fn write_prompt_end_turn_response(response_id: Value) -> Result<()> {
     write_response(response_id, Ok(prompt_end_turn_response_value()?)).await
 }
 
+#[derive(Deserialize)]
+struct VerifiedHatDirectory {
+    hats: Vec<VerifiedHatRef>,
+    selected_hat_id: Option<Uuid>,
+}
+
+#[derive(Deserialize)]
+struct VerifiedHatRef {
+    #[serde(rename = "id")]
+    _id: Uuid,
+}
+
+fn verified_no_hats(value: Value) -> bool {
+    serde_json::from_value::<VerifiedHatDirectory>(value)
+        .is_ok_and(|listing| listing.hats.is_empty() && listing.selected_hat_id.is_none())
+}
+
+async fn legacy_approval_cache_available(
+    config: &Config,
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+) -> bool {
+    let no_hats = bearwire::rpc_call(
+        &shared_state.http,
+        config,
+        "hats.list",
+        json!({"bear_slug": config.bear, "session_id": session_id}),
+    )
+    .await
+    .ok()
+    .is_some_and(verified_no_hats);
+    if !no_hats {
+        shared_state.approval_cache.clear_for_identity().await;
+    }
+    no_hats
+}
+
 async fn hat_report(
     http: &reqwest::Client,
     config: &Config,
@@ -8733,16 +8772,22 @@ async fn handle_tool_request_event(
         });
     let target_url_for_approval = tool_url(event).map(str::to_string);
     let target_command_for_approval = tool_command(event).map(str::to_string);
-    let approval_reused = if let Some(context) = context_for_approval.as_ref() {
-        approval_cache
-            .is_allowed_for_target(
-                context,
-                tool_name,
-                target_path_for_approval.as_deref(),
-                target_url_for_approval.as_deref(),
-                target_command_for_approval.as_deref(),
-            )
-            .await
+    let legacy_no_hats = approval_required_from_event(event)
+        && legacy_approval_cache_available(config, shared_state, session_id).await;
+    let approval_reused = if legacy_no_hats {
+        if let Some(context) = context_for_approval.as_ref() {
+            approval_cache
+                .is_allowed_for_target(
+                    context,
+                    tool_name,
+                    target_path_for_approval.as_deref(),
+                    target_url_for_approval.as_deref(),
+                    target_command_for_approval.as_deref(),
+                )
+                .await
+        } else {
+            false
+        }
     } else {
         false
     };
@@ -8811,6 +8856,7 @@ async fn handle_tool_request_event(
                 target_path: target_path_for_approval.as_deref(),
                 target_url: target_url_for_approval.as_deref(),
                 target_command: target_command_for_approval.as_deref(),
+                legacy_no_hats,
             },
         )
         .await;
@@ -8871,9 +8917,10 @@ async fn handle_tool_request_event(
                 ToolTaskPhase::PermissionGranted,
             )
             .await;
-        if permission_decision
-            .as_ref()
-            .is_ok_and(|decision| decision.remember)
+        if legacy_no_hats
+            && permission_decision
+                .as_ref()
+                .is_ok_and(|decision| decision.remember)
         {
             if let Some(context) = context_for_approval.as_ref() {
                 let scope = permission_decision
@@ -9724,6 +9771,7 @@ struct PermissionRequestContext<'a> {
     target_path: Option<&'a Path>,
     target_url: Option<&'a str>,
     target_command: Option<&'a str>,
+    legacy_no_hats: bool,
 }
 
 async fn request_tool_permission(
@@ -9741,6 +9789,7 @@ async fn request_tool_permission(
         target_path,
         target_url,
         target_command,
+        legacy_no_hats,
     } = request_context;
     let path = tool_args_from_event(event)
         .and_then(|v| v.get("path"))
@@ -9801,7 +9850,8 @@ async fn request_tool_permission(
         meta.insert("argumentsSummary".to_string(), arguments_summary.clone());
     }
     let tool_call = ToolCallUpdate::new(tool_call_id.to_string(), fields).meta(Some(meta.clone()));
-    let options = permission_options_for_context(
+    let options = permission_options_for_verified_session(
+        legacy_no_hats,
         context,
         target_path,
         target_url,
@@ -9835,7 +9885,7 @@ async fn request_tool_permission(
         scope = decision.scope.as_str(),
         "ACP permission response received"
     );
-    if decision.approved {
+    if decision.approved && (legacy_no_hats || !decision.remember) {
         Ok(decision)
     } else {
         Err(anyhow!("permission denied for {tool_name} on {path}"))
@@ -10623,6 +10673,8 @@ pub(crate) async fn handle_permission_request_event(
         }
         meta
     }));
+    let legacy_no_hats =
+        !is_plan_mode && legacy_approval_cache_available(config, shared_state, session_id).await;
     let options = if is_plan_mode {
         vec![
             agent_client_protocol::schema::PermissionOption::new(
@@ -10637,7 +10689,8 @@ pub(crate) async fn handle_permission_request_event(
             ),
         ]
     } else if is_command_permission {
-        permission_options_for_context(
+        permission_options_for_verified_session(
+            legacy_no_hats,
             adapter_state.session_contexts.get(session_id),
             None,
             None,
@@ -10645,7 +10698,8 @@ pub(crate) async fn handle_permission_request_event(
             "commands",
         )
     } else {
-        permission_options_for_context(
+        permission_options_for_verified_session(
+            legacy_no_hats,
             context_for_approval.as_ref(),
             target_path_for_approval.as_deref(),
             url,
@@ -10654,17 +10708,21 @@ pub(crate) async fn handle_permission_request_event(
         )
     };
     let request = RequestPermissionRequest::new(session_id.to_string(), tool_call, options);
-    let auto_allowed = if let Some(context) = context_for_approval.as_ref() {
-        shared_state
-            .approval_cache
-            .is_allowed_for_target(
-                context,
-                tool_name,
-                target_path_for_approval.as_deref(),
-                url,
-                command_line.as_deref(),
-            )
-            .await
+    let auto_allowed = if legacy_no_hats {
+        if let Some(context) = context_for_approval.as_ref() {
+            shared_state
+                .approval_cache
+                .is_allowed_for_target(
+                    context,
+                    tool_name,
+                    target_path_for_approval.as_deref(),
+                    url,
+                    command_line.as_deref(),
+                )
+                .await
+        } else {
+            false
+        }
     } else {
         false
     };
@@ -10767,7 +10825,16 @@ pub(crate) async fn handle_permission_request_event(
             }
         }
     };
-    if decision.approved && decision.remember {
+    let decision = if !legacy_no_hats && decision.remember {
+        PermissionDecision {
+            approved: false,
+            remember: false,
+            scope: ApprovalScope::Workspace,
+        }
+    } else {
+        decision
+    };
+    if legacy_no_hats && decision.approved && decision.remember {
         if let Some(context) = context_for_approval.as_ref() {
             shared_state
                 .approval_cache
@@ -12748,6 +12815,7 @@ mod tests {
         let (cancellation_tx, _) = broadcast::channel(8);
         AdapterSharedState {
             transport: JsonRpcTransport::default(),
+            http: reqwest::Client::new(),
             client_capabilities: Arc::new(TokioMutex::new(Value::Null)),
             session_contexts: Arc::new(TokioMutex::new(HashMap::new())),
             last_plan_update_hashes: Arc::new(TokioMutex::new(HashMap::new())),
@@ -13827,6 +13895,22 @@ mod tests {
     }
 
     #[test]
+    fn only_a_complete_den_verified_no_hat_listing_admits_legacy_cached_approvals() {
+        assert!(verified_no_hats(
+            json!({"hats": [], "selected_hat_id": null})
+        ));
+        for listing in [
+            json!({"hats": [], "selected_hat_id": Uuid::new_v4()}),
+            json!({"hats": [{"id": Uuid::new_v4()}], "selected_hat_id": null}),
+            json!({"hats": [{"id": "not-a-uuid"}], "selected_hat_id": null}),
+            json!({"selected_hat_id": null}),
+            json!({"hats": "not-an-array", "selected_hat_id": null}),
+        ] {
+            assert!(!verified_no_hats(listing));
+        }
+    }
+
+    #[test]
     fn hat_slash_reserves_the_first_productive_interaction() {
         assert_eq!(
             parse_local_slash_command("/hat Security review"),
@@ -13865,6 +13949,16 @@ mod tests {
             "session-two",
             Some("/hat Security review")
         ));
+    }
+
+    #[tokio::test]
+    async fn configured_hat_approvals_never_reuse_the_legacy_client_cache() {
+        let (api_url, _paths, methods) =
+            start_bearwire_test_server_with_events_and_methods(false, vec![]).await;
+        let config = test_config(api_url);
+        let shared_state = test_shared_state();
+        assert!(!legacy_approval_cache_available(&config, &shared_state, "ide-test").await);
+        assert_eq!(methods.lock().await.as_slice(), ["hats.list"]);
     }
 
     #[tokio::test]
