@@ -190,6 +190,16 @@ def test_workspace_hat_grant_check_rejects_a_nonexistent_session():
     assert "error" in body, body
 
 
+def test_work_egress_check_does_not_accept_a_bear_token_without_its_run():
+    if not API:
+        pytest.skip("Den API service is disabled")
+    result = bearwire_rpc("work.egress.check", {
+        "work_run_id": str(uuid.uuid4()),
+        "host": "docs.example.com",
+    })
+    assert result["result"]["allowed"] is False, result
+
+
 def test_live_armature_acp_focus_flow_has_one_terminal_response():
     if not API:
         pytest.skip("Den API service is disabled")
