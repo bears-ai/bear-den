@@ -145,80 +145,6 @@ fn compact_client_tool_description(description: Option<&str>) -> Option<String> 
     Some(compact)
 }
 
-/// Browser chat turns omit the full Den tool surface unless the prompt suggests tool-relevant work.
-pub fn chat_turn_needs_full_tool_surface(prompt: Option<&str>) -> bool {
-    let Some(prompt) = prompt.map(str::trim).filter(|s| !s.is_empty()) else {
-        return false;
-    };
-    if chat_turn_is_capabilities_meta_query(prompt) {
-        return false;
-    }
-    let lower = prompt.to_ascii_lowercase();
-    const PHRASES: &[&str] = &["work plan", "rename conversation", "plan mode", "https://"];
-    const WORDS: &[&str] = &[
-        "memory",
-        "remember",
-        "recall",
-        "search",
-        "browse",
-        "workboard",
-        "handoff",
-        "fetch",
-        "http",
-        "url",
-        "web",
-        "title",
-        "policy",
-        "members",
-        "proposal",
-        "review",
-        "curate",
-        "write",
-        "save",
-        "update",
-        "file",
-        "code",
-        "workspace",
-    ];
-    PHRASES.iter().any(|phrase| lower.contains(phrase))
-        || WORDS.iter().any(|word| contains_ascii_word(&lower, word))
-}
-
-fn contains_ascii_word(haystack: &str, word: &str) -> bool {
-    haystack.match_indices(word).any(|(start, matched)| {
-        let end = start + matched.len();
-        is_word_boundary(haystack[..start].chars().next_back())
-            && is_word_boundary(haystack[end..].chars().next())
-    })
-}
-
-fn is_word_boundary(ch: Option<char>) -> bool {
-    ch.is_none_or(|ch| !ch.is_ascii_alphanumeric() && ch != '_')
-}
-
-pub fn chat_turn_is_capabilities_meta_query(message: &str) -> bool {
-    let lower = message.to_ascii_lowercase();
-    const PHRASES: &[&str] = &[
-        "list capabilities",
-        "list your capabilities",
-        "list tools",
-        "list your tools",
-        "what tools",
-        "what capabilities",
-        "which tools",
-        "which capabilities",
-        "what can you do",
-        "what do you have access",
-        "show me your tools",
-        "show your tools",
-        "available tools",
-        "available capabilities",
-        "tools do you have",
-        "capabilities do you have",
-    ];
-    PHRASES.iter().any(|phrase| lower.contains(phrase))
-}
-
 pub fn merge_den_and_client_tools(
     _config: &Config,
     origin: TurnExecutionOrigin,
@@ -226,22 +152,12 @@ pub fn merge_den_and_client_tools(
     cabinet_enabled: bool,
     may_define_task: bool,
     client_tools: Option<&Value>,
-    pair_turn_prompt: Option<&str>,
+    _pair_turn_prompt: Option<&str>,
 ) -> Result<Vec<LlmToolDefinition>, DenError> {
     let effective_policy =
         den_core::EffectivePolicy::compile_for_origin(origin, den_core::Governance::Interactive);
     let role = effective_policy.trust_profile;
-    let mut merged = if role == BearProfile::Chat
-        && !chat_turn_needs_full_tool_surface(pair_turn_prompt)
-    {
-        tracing::info!(
-            role = %role.as_str(),
-            "native chat turn using empty tool surface (informational prompt; tool list is in system context)"
-        );
-        Vec::new()
-    } else {
-        den_tools_for_profile(role, &effective_policy.capabilities)
-    };
+    let mut merged = den_tools_for_profile(role, &effective_policy.capabilities);
     if !work_enabled {
         merged.retain(|tool| !is_work_tool_provider_name(&tool.name));
     }
@@ -669,7 +585,7 @@ mod tests {
     }
 
     #[test]
-    fn chat_capabilities_query_omits_den_tools() {
+    fn chat_capabilities_query_retains_den_tools() {
         let config = native_test_config();
         let merged = merge_den_and_client_tools(
             &config,
@@ -681,7 +597,7 @@ mod tests {
             Some("list your capabilities"),
         )
         .unwrap();
-        assert!(merged.is_empty());
+        assert!(merged.iter().any(|tool| tool.name == "session_info"));
     }
 
     #[test]
@@ -703,16 +619,25 @@ mod tests {
     }
 
     #[test]
-    fn chat_prompt_keyword_matching_avoids_substring_false_positives() {
-        assert!(!chat_turn_needs_full_tool_surface(Some(
-            "research preview webhook ideas"
-        )));
-        assert!(chat_turn_needs_full_tool_surface(Some(
-            "please search memory"
-        )));
-        assert!(chat_turn_needs_full_tool_surface(Some(
-            "fetch https://example.com"
-        )));
+    fn chat_tool_roster_does_not_change_with_prompt_phrasing() {
+        let config = native_test_config();
+        let rosters = [
+            None,
+            Some("list your capabilities"),
+            Some("search memory"),
+            Some("hello"),
+        ]
+        .into_iter()
+        .map(|prompt| {
+            merge_den_and_client_tools(&config, BearProfile::Chat, true, true, true, None, prompt)
+                .unwrap()
+                .into_iter()
+                .map(|tool| tool.name)
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+        assert!(!rosters[0].is_empty());
+        assert!(rosters.windows(2).all(|pair| pair[0] == pair[1]));
     }
 
     #[test]
@@ -729,16 +654,5 @@ mod tests {
         )
         .unwrap();
         assert!(!merged.is_empty());
-    }
-
-    #[test]
-    fn chat_turn_is_capabilities_meta_query_matches_common_phrases() {
-        assert!(chat_turn_is_capabilities_meta_query("list your tools"));
-        assert!(chat_turn_is_capabilities_meta_query(
-            "What capabilities do you have?"
-        ));
-        assert!(!chat_turn_is_capabilities_meta_query(
-            "search memory for onboarding"
-        ));
     }
 }

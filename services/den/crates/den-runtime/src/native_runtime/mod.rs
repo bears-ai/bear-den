@@ -27,10 +27,7 @@ pub use openai_stream::{
 };
 pub use profile::{is_native_api_direct_role, NativeCapabilityProfile};
 pub use profile_briefing::compose_curate_briefing_prompt;
-pub use tools::{
-    chat_turn_is_capabilities_meta_query, is_task_definition_or_delegation_tool_provider_name,
-    merge_den_and_client_tools,
-};
+pub use tools::{is_task_definition_or_delegation_tool_provider_name, merge_den_and_client_tools};
 pub use turn::{
     continue_native_client_turn_event_stream, native_client_run_exists,
     record_native_client_tool_result, remove_native_client_run,
