@@ -164,6 +164,32 @@ def test_bearwire_rejects_unauthenticated_session_open():
 
 
 
+def test_workspace_hat_grant_check_rejects_a_nonexistent_session():
+    if not API:
+        pytest.skip("Den API service is disabled")
+    response = request_with_retries(
+        "POST",
+        f"{API}/bearwire/v1/rpc",
+        headers=bearwire_headers(),
+        json={
+            "jsonrpc": "2.0",
+            "id": f"smoke-{uuid.uuid4()}",
+            "method": "hats.workspace_tool.check",
+            "params": {
+                "bear_slug": SEEDED_BEAR_SLUG,
+                "session_id": f"missing-hat-session-{uuid.uuid4()}",
+                "tool_name": "fs_read_text_file",
+                "workspace_root": "/workspace",
+            },
+        },
+        timeout=10,
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert "result" not in body or body["result"].get("allowed") is False, body
+    assert "error" in body, body
+
+
 def test_live_armature_acp_focus_flow_has_one_terminal_response():
     if not API:
         pytest.skip("Den API service is disabled")
