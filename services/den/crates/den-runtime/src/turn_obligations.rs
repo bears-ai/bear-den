@@ -637,6 +637,43 @@ pub async fn mark_result_received(
     Ok(row)
 }
 
+/// A winning Den-owned workspace grant has already committed with its
+/// permission-result row. Promote its local tool exactly once: duplicate
+/// replies cannot reopen an obligation after it becomes a tool-result wait.
+pub async fn promote_workspace_grant_permission_to_tool_result(
+    pool: &PgPool,
+    obligation_id: Uuid,
+    result_payload: Value,
+) -> Result<Option<TurnObligationRow>, DenError> {
+    let row = sqlx::query_as!(TurnObligationRow,
+        r#"
+        UPDATE turn_obligations
+        SET kind = 'tool_result',
+            expected_responder_action = 'tool_result',
+            state = 'waiting_for_client',
+            result_payload = $2,
+            request_payload = jsonb_set(
+                jsonb_set(request_payload, '{approval_required}', 'false'::jsonb, true),
+                '{permission_granted}', 'true'::jsonb, true
+            ),
+            updated_at = NOW()
+        WHERE id = $1
+          AND kind = 'permission_decision'
+          AND expected_responder_action = 'permission_decision'
+          AND state IN ('requested','waiting_for_client','result_received')
+          AND tool_call_id IS NOT NULL
+        RETURNING id, run_id, session_id, kind, expected_responder_action,
+                  tool_call_id, permission_id, NULL::text AS "responder_ref_id?", state, turn_step_id, request_payload, result_payload,
+                  created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at
+        "#,
+        obligation_id,
+        result_payload,
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
 pub async fn mark_waiting_for_tool_result(
     pool: &PgPool,
     obligation_id: Uuid,

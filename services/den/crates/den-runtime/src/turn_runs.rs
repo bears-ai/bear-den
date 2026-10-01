@@ -311,6 +311,18 @@ pub enum TurnObligationResultRecord {
     DuplicateConflict { existing_hash: String },
 }
 
+/// Typed Den-owned policy change requested by one authenticated Bear-admin
+/// permission result. The conversation, member and bound hat are locked again
+/// inside the winning-result transaction; caller-supplied labels grant nothing.
+#[derive(Debug, Clone)]
+pub struct WorkspacePermissionGrant {
+    pub bear_id: den_core::ids::BearId,
+    pub conversation_id: Uuid,
+    pub actor: den_core::ids::UserId,
+    pub action: den_service::bears::hats::access::ReadOnlyWorkspaceAction,
+    pub root: den_service::bears::hats::access::WorkspaceRoot,
+}
+
 fn result_hash(payload: &serde_json::Value) -> Result<String, DenError> {
     let bytes = serde_json::to_vec(payload).map_err(|err| {
         DenError::System(format!("serialize BearWire client result failed: {err}"))
@@ -459,6 +471,101 @@ pub async fn record_claimed_tool_result_for_step(
     };
     tx.commit().await?;
     Ok(ClaimedToolResultRecord::Recorded(record))
+}
+
+/// Claim only an open permission obligation and its active run, then persist
+/// the result together with the workspace grant. Competing/late decisions
+/// cannot persist a grant; a failed hat-policy write rolls the result back.
+pub async fn record_permission_result_with_workspace_grant(
+    pool: &PgPool,
+    run_id: &str,
+    session_id: &str,
+    obligation_id: Uuid,
+    permission_id: &str,
+    turn_step_id: Option<Uuid>,
+    payload_json: serde_json::Value,
+    grant: &WorkspacePermissionGrant,
+) -> Result<Option<TurnObligationResultRecord>, DenError> {
+    let mut tx = pool.begin().await?;
+    let active = sqlx::query_scalar!(
+        "SELECT id FROM turn_runs WHERE run_id = $1 AND session_id = $2
+           AND bear_id = $3 AND user_id = $4
+           AND state IN ('accepted', 'running', 'waiting_for_client', 'continuing')
+         FOR UPDATE",
+        run_id,
+        session_id,
+        grant.bear_id.as_uuid(),
+        grant.actor.get(),
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    if active.is_none() {
+        return Ok(None);
+    }
+    let waiting = sqlx::query_scalar!(
+        "SELECT id FROM turn_obligations WHERE id = $1 AND run_id = $2
+           AND session_id = $3 AND permission_id = $4
+           AND kind = 'permission_decision'
+           AND expected_responder_action = 'permission_decision'
+           AND state IN ('requested', 'waiting_for_client')
+         FOR UPDATE",
+        obligation_id,
+        run_id,
+        session_id,
+        permission_id,
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    if waiting.is_none() {
+        return Ok(None);
+    }
+    let hash = result_hash(&payload_json)?;
+    let inserted = sqlx::query_as!(
+        TurnObligationResultRow,
+        r#"
+        INSERT INTO turn_obligation_results (
+            run_id, turn_step_id, obligation_kind, obligation_id, result_hash, payload_json
+        ) VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (run_id, obligation_kind, obligation_id) DO NOTHING
+        RETURNING id, run_id, obligation_kind, obligation_id, result_hash,
+                  payload_json AS "payload_json: serde_json::Value",
+                  turn_step_id AS "turn_step_id?", created_at
+        "#,
+        run_id,
+        turn_step_id,
+        "permission",
+        permission_id,
+        &hash,
+        &payload_json,
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(row) = inserted else {
+        tx.rollback().await?;
+        return existing_client_result_for_payload(
+            pool,
+            run_id,
+            "permission",
+            permission_id,
+            &payload_json,
+        )
+        .await?
+        .map(Some)
+        .ok_or_else(|| {
+            DenError::System("competing permission result disappeared before comparison".into())
+        });
+    };
+    den_service::bears::hats::access::grant_workspace_read_for_own_conversation_in_tx(
+        &mut tx,
+        grant.bear_id,
+        grant.conversation_id,
+        grant.actor,
+        grant.action,
+        &grant.root,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Some(TurnObligationResultRecord::Inserted { row }))
 }
 
 pub async fn record_client_result_for_step(

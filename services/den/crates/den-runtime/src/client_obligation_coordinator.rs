@@ -359,6 +359,77 @@ pub async fn record_and_settle_tool_result_for_step(
     }
 }
 
+/// Claim a local-tool permission and its Den-owned workspace grant together.
+/// Only an inserted result can create policy; duplicate identical replies may
+/// complete an interrupted transition, but cannot insert another grant.
+pub async fn record_and_settle_workspace_hat_permission_result(
+    pool: &PgPool,
+    run: &turn_runs::TurnRunRow,
+    obligation: &turn_obligations::TurnObligationRow,
+    permission_id: &str,
+    result_payload: Value,
+    grant: &turn_runs::WorkspacePermissionGrant,
+) -> Result<PermissionResultCoordinatorOutcome, DenError> {
+    let recorded = turn_runs::record_permission_result_with_workspace_grant(
+        pool,
+        &run.run_id,
+        &run.session_id,
+        obligation.id,
+        permission_id,
+        obligation.turn_step_id,
+        result_payload.clone(),
+        grant,
+    )
+    .await?;
+    let row = match recorded {
+        Some(
+            turn_runs::TurnObligationResultRecord::Inserted { row }
+            | turn_runs::TurnObligationResultRecord::DuplicateIdentical { row },
+        ) => row,
+        Some(turn_runs::TurnObligationResultRecord::DuplicateConflict { existing_hash }) => {
+            return Ok(PermissionResultCoordinatorOutcome::DuplicateConflict { existing_hash });
+        }
+        None => {
+            return Ok(PermissionResultCoordinatorOutcome::IgnoredLateResult {
+                run_state: run.state.clone(),
+                obligation_state: obligation.state.clone(),
+            });
+        }
+    };
+    let Some(tool_obligation) =
+        turn_obligations::promote_workspace_grant_permission_to_tool_result(
+            pool,
+            obligation.id,
+            result_payload,
+        )
+        .await?
+    else {
+        return Ok(PermissionResultCoordinatorOutcome::DuplicateIdentical {
+            result: row,
+            run_state: run.state.clone(),
+        });
+    };
+    let tool_call_id = obligation.tool_call_id.clone().ok_or_else(|| {
+        DenError::ValidationError("workspace-granted permission has no tool call".into())
+    })?;
+    let transitioned = turn_runs::transition_run(
+        pool,
+        &run.run_id,
+        turn_runs::TurnRunState::WaitingForClient,
+        None,
+    )
+    .await?;
+    let payload = local_tool_request_payload(&obligation.request_payload)?;
+    Ok(PermissionResultCoordinatorOutcome::DispatchLocalTool {
+        run: transitioned,
+        tool_obligation: Box::new(tool_obligation),
+        tool_call_id,
+        tool_name: payload.tool_name,
+        args: payload.arguments,
+        result: Some(row),
+    })
+}
+
 pub async fn record_and_settle_permission_result(
     pool: &PgPool,
     run: &turn_runs::TurnRunRow,

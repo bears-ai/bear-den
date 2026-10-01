@@ -770,7 +770,7 @@ pub(crate) async fn hat_workspace_tool_check_result(
         &grant,
     )
     .await?;
-    Ok(json!({ "allowed": allowed }))
+    Ok(json!({ "allowed": allowed, "eligible": true }))
 }
 
 pub(crate) async fn session_hat_select_result(

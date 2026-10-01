@@ -76,6 +76,8 @@ pub(crate) enum ApprovalScope {
     Workspace,
     /// Persisted only by Den for an authenticated Bear-admin hat owner.
     HatHost,
+    /// Den-owned, exact editor root and supported read-only filesystem action.
+    HatWorkspaceRead,
     Command,
     CommandExactWorkspace,
     CommandFamilyWorkspace,
@@ -88,6 +90,7 @@ impl ApprovalScope {
             Self::Directory => "directory",
             Self::Workspace => "workspace",
             Self::HatHost => "hat_host",
+            Self::HatWorkspaceRead => "hat_workspace_read",
             Self::Command => "command",
             Self::CommandExactWorkspace => "command_exact_workspace",
             Self::CommandFamilyWorkspace => "command_family_workspace",
@@ -479,7 +482,7 @@ fn approval_scope_fingerprint(
             approval_directory_scope(context, target.path).map(|path| path.display().to_string())
         }
         ApprovalScope::Workspace => Some(approval_root_fingerprint(context)),
-        ApprovalScope::HatHost => None,
+        ApprovalScope::HatHost | ApprovalScope::HatWorkspaceRead => None,
         ApprovalScope::Command => target.command.map(normalize_command),
         ApprovalScope::CommandExactWorkspace => target
             .command
@@ -748,6 +751,11 @@ pub(crate) fn permission_decision_from_option_id(id: &str) -> PermissionDecision
             approved: true,
             remember: false,
             scope: ApprovalScope::HatHost,
+        },
+        "allow_hat_workspace_read" => PermissionDecision {
+            approved: true,
+            remember: false,
+            scope: ApprovalScope::HatWorkspaceRead,
         },
         "allow_directory" => PermissionDecision {
             approved: true,

@@ -418,6 +418,7 @@ pub enum PermissionDecisionInput {
     AllowSiteAccount,
     AllowHost,
     AllowHatHost,
+    AllowHatWorkspaceRead,
     Denied,
     Deny,
     Rejected,
@@ -434,7 +435,7 @@ struct PermissionDecisionDescriptor {
     normalized: &'static str,
 }
 
-const PERMISSION_DECISION_DESCRIPTORS: [PermissionDecisionDescriptor; 16] = [
+const PERMISSION_DECISION_DESCRIPTORS: [PermissionDecisionDescriptor; 17] = [
     PermissionDecisionDescriptor {
         raw: "approved",
         normalized: "granted",
@@ -465,6 +466,10 @@ const PERMISSION_DECISION_DESCRIPTORS: [PermissionDecisionDescriptor; 16] = [
     },
     PermissionDecisionDescriptor {
         raw: "allow_hat_host",
+        normalized: "granted",
+    },
+    PermissionDecisionDescriptor {
+        raw: "allow_hat_workspace_read",
         normalized: "granted",
     },
     PermissionDecisionDescriptor {
@@ -512,14 +517,15 @@ impl PermissionDecisionInput {
             Self::AllowSiteAccount => 5,
             Self::AllowHost => 6,
             Self::AllowHatHost => 7,
-            Self::Denied => 8,
-            Self::Deny => 9,
-            Self::Rejected => 10,
-            Self::Reject => 11,
-            Self::RejectOnce => 12,
-            Self::RejectAlways => 13,
-            Self::Timeout => 14,
-            Self::TimedOut => 15,
+            Self::AllowHatWorkspaceRead => 8,
+            Self::Denied => 9,
+            Self::Deny => 10,
+            Self::Rejected => 11,
+            Self::Reject => 12,
+            Self::RejectOnce => 13,
+            Self::RejectAlways => 14,
+            Self::Timeout => 15,
+            Self::TimedOut => 16,
         }
     }
 
@@ -552,6 +558,8 @@ pub struct ClientPermissionResultRequest {
     pub obligation_id: Option<String>,
     #[serde(default = "default_permission_decision")]
     pub decision: PermissionDecisionInput,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub workspace_root: Option<String>,
     /// Intentionally raw: reason may be string or structured adapter metadata.
     #[serde(default)]
     pub reason: Option<Value>,
@@ -567,6 +575,25 @@ mod tests {
         assert_eq!(decision, PermissionDecisionInput::AllowHatHost);
         assert_eq!(decision.normalized(), "granted");
         assert_eq!(decision.raw(), "allow_hat_host");
+    }
+
+    #[test]
+    fn hat_workspace_read_decision_is_distinct_and_scopes_its_root() {
+        let request: ClientPermissionResultRequest = serde_json::from_value(serde_json::json!({
+            "run_id": "run-1", "session_id": "session-1", "permission_id": "perm-1",
+            "decision": "allow_hat_workspace_read", "workspace_root": " /workspace/project ",
+        }))
+        .unwrap();
+        assert_eq!(
+            request.decision,
+            PermissionDecisionInput::AllowHatWorkspaceRead
+        );
+        assert_eq!(request.decision.normalized(), "granted");
+        assert_eq!(request.decision.raw(), "allow_hat_workspace_read");
+        assert_eq!(
+            request.workspace_root.as_deref(),
+            Some("/workspace/project")
+        );
     }
 
     #[test]

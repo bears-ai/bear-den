@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id FROM turn_obligations WHERE id = $1 AND run_id = $2\n           AND session_id = $3 AND permission_id = $4\n           AND kind = 'permission_decision'\n           AND expected_responder_action = 'permission_decision'\n           AND state IN ('requested', 'waiting_for_client')\n         FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "b409b611d5cc3b4ab03c30a7789b2087f0566c4cf6c813b45a91b5402f34fcbc"
+}

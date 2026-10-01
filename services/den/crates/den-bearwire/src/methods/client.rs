@@ -465,6 +465,7 @@ fn continuation_conversation_id(session: &client_sessions::ClientSessionRow) -> 
 }
 
 mod hat_web_permission;
+mod hat_workspace_permission;
 use hat_web_permission::{
     persist as persist_hat_web_fetch_permission,
     validate_decision as validate_web_fetch_permission_decision,
@@ -1472,6 +1473,12 @@ pub(crate) async fn client_permission_result_result(
     let permission_id = request.permission_id;
     let obligation_id = request.obligation_id;
     let decision = request.decision;
+    let workspace_root = request.workspace_root;
+    if decision != PermissionDecisionInput::AllowHatWorkspaceRead && workspace_root.is_some() {
+        return Err(CustomError::ValidationError(
+            "workspace_root is only valid for a hat workspace-read decision".into(),
+        ));
+    }
     let Some(run) = turn_runs::get_run(&state.sqlx_pool, &run_id).await? else {
         return Ok(json!({
             "ok": false,
@@ -1536,7 +1543,7 @@ pub(crate) async fn client_permission_result_result(
         }));
     }
     let normalized_decision = decision.normalized();
-    let payload = json!({
+    let mut payload = json!({
         "permission_id": permission_id,
         "decision": normalized_decision,
         "reason": request.reason.unwrap_or(Value::Null),
@@ -1567,22 +1574,62 @@ pub(crate) async fn client_permission_result_result(
         ));
     }
     let binding_id = continuation_binding_id(&state.sqlx_pool, bear.id, &session_id).await?;
+    let workspace_grant = if decision == PermissionDecisionInput::AllowHatWorkspaceRead {
+        let raw_root = workspace_root.as_deref().ok_or_else(|| {
+            CustomError::ValidationError("hat workspace approval requires an exact root".into())
+        })?;
+        if den_docket::work_runs::get_work_run_by_session(&state.sqlx_pool, &session_id)
+            .await?
+            .is_some()
+        {
+            return Err(CustomError::Authorization(
+                "Work sessions cannot persist interactive workspace-read grants".into(),
+            ));
+        }
+        let grant = hat_workspace_permission::validated_grant(
+            &state.sqlx_pool,
+            den_core::ids::BearId::new(bear.id),
+            den_core::ids::UserId::new(user_id),
+            &continuation_conversation_id,
+            &session,
+            &obligation.request_payload,
+            raw_root,
+        )
+        .await?;
+        payload["policy_decision"] = json!(decision.raw());
+        payload["workspace_root"] = json!(grant.root.as_str());
+        Some(grant)
+    } else {
+        None
+    };
     if normalized_decision == "granted" {
         validate_web_fetch_permission_decision(decision, &obligation.request_payload)?;
         if decision == PermissionDecisionInput::AllowHatHost {
             hat_web_permission::validate_destination(&obligation.request_payload)?;
         }
     }
-    let coordinator_outcome = client_obligation_coordinator::record_and_settle_permission_result(
-        &state.sqlx_pool,
-        &run,
-        &obligation,
-        normalized_decision,
-        "permission",
-        &permission_id,
-        payload.clone(),
-    )
-    .await?;
+    let coordinator_outcome = if let Some(grant) = workspace_grant.as_ref() {
+        client_obligation_coordinator::record_and_settle_workspace_hat_permission_result(
+            &state.sqlx_pool,
+            &run,
+            &obligation,
+            &permission_id,
+            payload.clone(),
+            grant,
+        )
+        .await?
+    } else {
+        client_obligation_coordinator::record_and_settle_permission_result(
+            &state.sqlx_pool,
+            &run,
+            &obligation,
+            normalized_decision,
+            "permission",
+            &permission_id,
+            payload.clone(),
+        )
+        .await?
+    };
     match coordinator_outcome {
         PermissionResultCoordinatorOutcome::DuplicateConflict { existing_hash } => {
             Err(CustomError::ValidationError(format!(
@@ -1595,6 +1642,7 @@ pub(crate) async fn client_permission_result_result(
             "result_id": result.id,
             "run_state": run_state,
             "obligation_state": obligation.state,
+            "hat_grant_status": if workspace_grant.is_some() { "already_processed" } else { "not_requested" },
         })),
         PermissionResultCoordinatorOutcome::IgnoredLateResult {
             run_state,
@@ -1614,6 +1662,14 @@ pub(crate) async fn client_permission_result_result(
             result,
         } => {
             let result = require_settlement_result(result, "record-and-settle permission outcome")?;
+            if workspace_grant.is_some() && transitioned.is_none() {
+                return Ok(json!({
+                    "ok": false,
+                    "duplicate": false,
+                    "result_id": result.id,
+                    "hat_grant_status": "not_executable",
+                }));
+            }
             den_docket::work_runs::settle_attached_work_run_permission(
                 &state.sqlx_pool,
                 &session_id,
@@ -1678,6 +1734,7 @@ pub(crate) async fn client_permission_result_result(
                 "run_state": transitioned.map(|run| run.state).unwrap_or_else(|| "unknown".to_string()),
                 "continuation": "waiting_for_tool_result",
                 "obligation_state": tool_obligation.state,
+                "hat_grant_status": if workspace_grant.is_some() { "persisted" } else { "not_requested" },
                 "local_tool_request": {
                     "tool_call_id": tool_call_id,
                     "tool_name": tool_name,

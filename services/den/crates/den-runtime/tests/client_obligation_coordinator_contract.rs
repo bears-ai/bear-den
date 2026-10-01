@@ -1,8 +1,19 @@
+use den_core::ids::{BearId, UserId};
 use den_runtime::{
     client_obligation_coordinator::{
         self, PermissionResultCoordinatorOutcome, ToolResultCoordinatorOutcome,
     },
     turn_obligations, turn_runs, turn_steps,
+};
+use den_service::{
+    bears::{
+        db,
+        hats::{
+            self,
+            access::{self, HatAccessGrant, ReadOnlyWorkspaceAction, WorkspaceRoot},
+        },
+    },
+    conversation::persistence,
 };
 use serde_json::json;
 use uuid::Uuid;
@@ -414,6 +425,326 @@ async fn duplicate_conflicting_tool_result_is_owned_by_coordinator(pool: sqlx::P
     assert!(matches!(
         conflict,
         ToolResultCoordinatorOutcome::DuplicateConflict { .. }
+    ));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn workspace_grant_is_claimed_with_one_permission_result_and_replay_cannot_regrant(
+    pool: sqlx::PgPool,
+) {
+    let (run, step, session_id) = create_run_with_step(&pool).await;
+    let bear = BearId::new(run.bear_id);
+    let admin = UserId::new(run.user_id);
+    db::grant_membership(
+        &pool,
+        admin.get(),
+        bear.as_uuid(),
+        Some(db::BEAR_ROLE_ADMIN),
+    )
+    .await
+    .unwrap();
+    let hat = hats::create_hat(&pool, bear, admin, "Reader", "Read repo")
+        .await
+        .unwrap();
+    let conversation = persistence::ensure_conversation_for_external_id(
+        &pool,
+        bear.as_uuid(),
+        Some(admin.get()),
+        "workspace-grant-contract",
+        Some(&session_id),
+        None,
+    )
+    .await
+    .unwrap();
+    hats::bindings::bind_conversation_hat(&pool, bear, conversation.id, hat.id)
+        .await
+        .unwrap();
+    let action = ReadOnlyWorkspaceAction::from_provider_name("fs_read_text_file").unwrap();
+    let root = WorkspaceRoot::parse("/workspace/project").unwrap();
+    let grant = turn_runs::WorkspacePermissionGrant {
+        bear_id: bear,
+        conversation_id: conversation.id,
+        actor: admin,
+        action,
+        root: root.clone(),
+    };
+    let obligation = turn_obligations::upsert_permission_decision_obligation_for_step(
+        &pool, &run.run_id, &session_id, Some(step.id), "perm-workspace", Some("call-workspace"),
+        json!({ "tool_name": "fs_read_text_file", "arguments": { "path": "/workspace/project/a.txt" } }),
+    ).await.unwrap();
+    let payload = json!({
+        "permission_id": "perm-workspace", "decision": "granted",
+        "policy_decision": "allow_hat_workspace_read", "workspace_root": root.as_str(),
+    });
+    let outcome = client_obligation_coordinator::record_and_settle_workspace_hat_permission_result(
+        &pool,
+        &run,
+        &obligation,
+        "perm-workspace",
+        payload.clone(),
+        &grant,
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        outcome,
+        PermissionResultCoordinatorOutcome::DispatchLocalTool { ref tool_obligation, ref tool_call_id, ref tool_name, result: Some(_), .. }
+            if tool_obligation.kind == "tool_result"
+                && tool_call_id == "call-workspace" && tool_name == "fs_read_text_file"
+    ));
+    let stored = HatAccessGrant::ReadOnlyToolInWorkspace(action, root);
+    assert!(
+        access::has_grant_for_own_conversation(&pool, bear, conversation.id, admin, &stored)
+            .await
+            .unwrap()
+    );
+    let replay = client_obligation_coordinator::record_and_settle_workspace_hat_permission_result(
+        &pool,
+        &run,
+        &obligation,
+        "perm-workspace",
+        payload,
+        &grant,
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        replay,
+        PermissionResultCoordinatorOutcome::IgnoredLateResult { .. }
+            | PermissionResultCoordinatorOutcome::DuplicateIdentical { .. }
+    ));
+    let losing_once = client_obligation_coordinator::record_and_settle_permission_result(
+        &pool,
+        &run,
+        &obligation,
+        "granted",
+        "permission",
+        "perm-workspace",
+        json!({"permission_id": "perm-workspace", "decision": "granted", "policy_decision": "allow_once"}),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        losing_once,
+        PermissionResultCoordinatorOutcome::DuplicateConflict { .. }
+    ));
+    let mut other_grant = grant.clone();
+    other_grant.root = WorkspaceRoot::parse("/workspace/other").unwrap();
+    let conflicting_root = client_obligation_coordinator::record_and_settle_workspace_hat_permission_result(
+        &pool, &run, &obligation, "perm-workspace",
+        json!({"permission_id": "perm-workspace", "decision": "granted", "policy_decision": "allow_hat_workspace_read", "workspace_root": "/workspace/other"}),
+        &other_grant,
+    ).await.unwrap();
+    assert!(matches!(
+        conflicting_root,
+        PermissionResultCoordinatorOutcome::IgnoredLateResult { .. }
+    ));
+    assert_eq!(
+        access::workspace_read_grants_for_hat(&pool, bear, hat.id)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn workspace_grant_claim_recovers_after_commit_before_tool_promotion(pool: sqlx::PgPool) {
+    let (run, step, session_id) = create_run_with_step(&pool).await;
+    let bear = BearId::new(run.bear_id);
+    let admin = UserId::new(run.user_id);
+    db::grant_membership(
+        &pool,
+        admin.get(),
+        bear.as_uuid(),
+        Some(db::BEAR_ROLE_ADMIN),
+    )
+    .await
+    .unwrap();
+    let hat = hats::create_hat(&pool, bear, admin, "Recovery reader", "Read repo")
+        .await
+        .unwrap();
+    let conversation = persistence::ensure_conversation_for_external_id(
+        &pool,
+        bear.as_uuid(),
+        Some(admin.get()),
+        "workspace-claim-recovery",
+        Some(&session_id),
+        None,
+    )
+    .await
+    .unwrap();
+    hats::bindings::bind_conversation_hat(&pool, bear, conversation.id, hat.id)
+        .await
+        .unwrap();
+    let action = ReadOnlyWorkspaceAction::from_provider_name("fs_read_text_file").unwrap();
+    let root = WorkspaceRoot::parse("/workspace/project").unwrap();
+    let grant = turn_runs::WorkspacePermissionGrant {
+        bear_id: bear,
+        conversation_id: conversation.id,
+        actor: admin,
+        action,
+        root: root.clone(),
+    };
+    let obligation = turn_obligations::upsert_permission_decision_obligation_for_step(
+        &pool, &run.run_id, &session_id, Some(step.id), "perm-recovery", Some("call-recovery"),
+        json!({ "tool_name": "fs_read_text_file", "arguments": { "path": "/workspace/project/a.txt" } }),
+    ).await.unwrap();
+    let payload = json!({
+        "permission_id": "perm-recovery", "decision": "granted",
+        "policy_decision": "allow_hat_workspace_read", "workspace_root": root.as_str(),
+    });
+    assert!(matches!(
+        turn_runs::record_permission_result_with_workspace_grant(
+            &pool,
+            &run.run_id,
+            &session_id,
+            obligation.id,
+            "perm-recovery",
+            obligation.turn_step_id,
+            payload.clone(),
+            &grant,
+        )
+        .await
+        .unwrap(),
+        Some(turn_runs::TurnObligationResultRecord::Inserted { .. })
+    ));
+    assert!(access::has_grant_for_own_conversation(
+        &pool,
+        bear,
+        conversation.id,
+        admin,
+        &HatAccessGrant::ReadOnlyToolInWorkspace(action, root),
+    )
+    .await
+    .unwrap());
+    let recovered =
+        client_obligation_coordinator::record_and_settle_workspace_hat_permission_result(
+            &pool,
+            &run,
+            &obligation,
+            "perm-recovery",
+            payload.clone(),
+            &grant,
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        recovered,
+        PermissionResultCoordinatorOutcome::DispatchLocalTool { .. }
+    ));
+    let replay = client_obligation_coordinator::record_and_settle_workspace_hat_permission_result(
+        &pool,
+        &run,
+        &obligation,
+        "perm-recovery",
+        payload,
+        &grant,
+    )
+    .await
+    .unwrap();
+    assert!(!matches!(
+        replay,
+        PermissionResultCoordinatorOutcome::DispatchLocalTool { .. }
+    ));
+    assert_eq!(
+        access::workspace_read_grants_for_hat(&pool, bear, hat.id)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn failed_workspace_grant_rolls_back_the_claim_and_can_be_retried(pool: sqlx::PgPool) {
+    let (run, step, session_id) = create_run_with_step(&pool).await;
+    let bear = BearId::new(run.bear_id);
+    let admin = UserId::new(run.user_id);
+    let hat = hats::create_hat(&pool, bear, admin, "Reader", "Read repo")
+        .await
+        .unwrap();
+    let conversation = persistence::ensure_conversation_for_external_id(
+        &pool,
+        bear.as_uuid(),
+        Some(admin.get()),
+        "workspace-grant-retry",
+        Some(&session_id),
+        None,
+    )
+    .await
+    .unwrap();
+    hats::bindings::bind_conversation_hat(&pool, bear, conversation.id, hat.id)
+        .await
+        .unwrap();
+    let action = ReadOnlyWorkspaceAction::from_provider_name("fs_read_text_file").unwrap();
+    let root = WorkspaceRoot::parse("/workspace/project").unwrap();
+    let grant = turn_runs::WorkspacePermissionGrant {
+        bear_id: bear,
+        conversation_id: conversation.id,
+        actor: admin,
+        action,
+        root: root.clone(),
+    };
+    let obligation = turn_obligations::upsert_permission_decision_obligation_for_step(
+        &pool, &run.run_id, &session_id, Some(step.id), "perm-retry", Some("call-retry"),
+        json!({ "tool_name": "fs_read_text_file", "arguments": { "path": "/workspace/project/a.txt" } }),
+    ).await.unwrap();
+    let payload = json!({
+        "permission_id": "perm-retry", "decision": "granted",
+        "policy_decision": "allow_hat_workspace_read", "workspace_root": root.as_str(),
+    });
+    assert!(
+        client_obligation_coordinator::record_and_settle_workspace_hat_permission_result(
+            &pool,
+            &run,
+            &obligation,
+            "perm-retry",
+            payload.clone(),
+            &grant,
+        )
+        .await
+        .is_err()
+    );
+    assert!(turn_runs::existing_client_result_for_payload(
+        &pool,
+        &run.run_id,
+        "permission",
+        "perm-retry",
+        &payload,
+    )
+    .await
+    .unwrap()
+    .is_none());
+    assert!(!access::has_grant_for_own_conversation(
+        &pool,
+        bear,
+        conversation.id,
+        admin,
+        &HatAccessGrant::ReadOnlyToolInWorkspace(action, root.clone())
+    )
+    .await
+    .is_ok_and(|allowed| allowed));
+    db::grant_membership(
+        &pool,
+        admin.get(),
+        bear.as_uuid(),
+        Some(db::BEAR_ROLE_ADMIN),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        client_obligation_coordinator::record_and_settle_workspace_hat_permission_result(
+            &pool,
+            &run,
+            &obligation,
+            "perm-retry",
+            payload,
+            &grant,
+        )
+        .await
+        .unwrap(),
+        PermissionResultCoordinatorOutcome::DispatchLocalTool { .. }
     ));
 }
 

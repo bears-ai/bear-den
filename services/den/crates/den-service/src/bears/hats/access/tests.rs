@@ -297,6 +297,59 @@ async fn hat_grants_are_admin_owned_idempotent_revocable_and_scoped(pool: PgPool
     hats::bindings::bind_conversation_hat(&pool, first, admin_other_hat.id, other_hat.id)
         .await
         .unwrap();
+    let read_action = ReadOnlyWorkspaceAction::from_provider_name("fs_read_text_file").unwrap();
+    let read_root = WorkspaceRoot::parse("/workspace/transactional").unwrap();
+    let transactional_grant =
+        HatAccessGrant::ReadOnlyToolInWorkspace(read_action, read_root.clone());
+    let mut tx = pool.begin().await.unwrap();
+    assert_eq!(
+        grant_workspace_read_for_own_conversation_in_tx(
+            &mut tx,
+            first,
+            admin_other_hat.id,
+            admin,
+            read_action,
+            &read_root,
+        )
+        .await
+        .unwrap(),
+        other_hat.id,
+    );
+    tx.rollback().await.unwrap();
+    assert!(
+        !has_current(&pool, first, other_hat.id, &transactional_grant)
+            .await
+            .unwrap()
+    );
+    let mut tx = pool.begin().await.unwrap();
+    assert!(grant_workspace_read_for_own_conversation_in_tx(
+        &mut tx,
+        first,
+        own.id,
+        member,
+        read_action,
+        &read_root,
+    )
+    .await
+    .is_err());
+    tx.rollback().await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    grant_workspace_read_for_own_conversation_in_tx(
+        &mut tx,
+        first,
+        admin_other_hat.id,
+        admin,
+        read_action,
+        &read_root,
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    assert!(
+        has_current(&pool, first, other_hat.id, &transactional_grant)
+            .await
+            .unwrap()
+    );
     assert!(
         !has_grant_for_own_conversation(&pool, first, own.id, member, &tool)
             .await

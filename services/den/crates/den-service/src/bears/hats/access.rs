@@ -132,6 +132,10 @@ impl WorkspaceRoot {
         }
         Ok(Self(raw.to_string()))
     }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 /// Initially only read-only filesystem actions can be scoped to a workspace.
@@ -163,6 +167,10 @@ impl ReadOnlyWorkspaceAction {
                 title: tool.descriptor().title,
             })
             .collect()
+    }
+
+    pub fn canonical_name(self) -> &'static str {
+        self.0.descriptor().canonical_name
     }
 
     pub fn from_provider_name(name: &str) -> Result<Self, DenError> {
@@ -363,6 +371,58 @@ pub async fn grant_web_fetch_host_for_own_conversation(
         .await?;
     }
     tx.commit().await?;
+    Ok(HatId::new(hat_id))
+}
+
+/// Called only while the winning ACP permission result is being claimed in the
+/// same transaction. A failed membership/hat check rolls back both the result
+/// and its grant, so another attempt may still choose a one-time decision.
+pub async fn grant_workspace_read_for_own_conversation_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    bear_id: BearId,
+    conversation_id: Uuid,
+    actor: UserId,
+    action: ReadOnlyWorkspaceAction,
+    root: &WorkspaceRoot,
+) -> Result<HatId, DenError> {
+    let hat_id = sqlx::query_scalar!(
+        "SELECT h.id FROM conversations c
+         JOIN bear_hats h ON h.id = c.hat_id AND h.bear_id = c.bear_id
+         JOIN user_bear ub ON ub.bear_id = c.bear_id AND ub.user_id = $3
+         WHERE c.bear_id = $1 AND c.id = $2 AND c.status = 'active'
+           AND c.created_by_user_id = $3
+           AND lower(btrim(coalesce(ub.role, ''))) = $4
+         FOR UPDATE OF c, h, ub",
+        bear_id.as_uuid(),
+        conversation_id,
+        actor.get(),
+        crate::bears::db::BEAR_ROLE_ADMIN,
+    )
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or_else(|| {
+        DenError::Authorization(
+            "current conversation owner and Bear-admin hat manager are required".into(),
+        )
+    })?;
+    let grant = HatAccessGrant::ReadOnlyToolInWorkspace(action, root.clone());
+    let (kind, action_key, target_kind, target_value) = grant.storage();
+    sqlx::query!(
+        "INSERT INTO bear_hat_access_grants
+                (bear_id, hat_id, kind, action_key, target_kind, target_value, created_by_user_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             ON CONFLICT (bear_id, hat_id, kind, action_key, target_kind, target_value)
+               WHERE revoked_at IS NULL DO NOTHING",
+        bear_id.as_uuid(),
+        hat_id,
+        kind,
+        action_key,
+        target_kind,
+        target_value,
+        actor.get(),
+    )
+    .execute(&mut **tx)
+    .await?;
     Ok(HatId::new(hat_id))
 }
 

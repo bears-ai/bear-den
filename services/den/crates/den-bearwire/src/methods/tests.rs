@@ -120,6 +120,7 @@ async fn workspace_tool_check_requires_owned_hat_session_and_exact_live_grant(po
     )
     .await;
     assert_eq!(denied["result"]["allowed"], false, "{denied}");
+    assert_eq!(denied["result"]["eligible"], true, "{denied}");
     let grant = HatAccessGrant::ReadOnlyToolInWorkspace(
         ReadOnlyWorkspaceAction::from_provider_name("fs_read_text_file").unwrap(),
         WorkspaceRoot::parse("/workspace/project").unwrap(),
@@ -156,6 +157,10 @@ async fn workspace_tool_check_requires_owned_hat_session_and_exact_live_grant(po
     .unwrap();
     let other_root = check(&token, &session_id, "fs_read_text_file", "/workspace/other").await;
     assert_eq!(other_root["result"]["allowed"], false, "{other_root}");
+    assert!(
+        other_root["result"].get("eligible").is_none(),
+        "{other_root}"
+    );
     let write = check(&token, &session_id, "fs_edit_file", "/workspace/project").await;
     assert!(write.get("error").is_some(), "{write}");
     let member = create_test_user(&pool).await;
@@ -240,6 +245,244 @@ async fn workspace_tool_check_requires_owned_hat_session_and_exact_live_grant(po
         revoked_member["result"]["allowed"], false,
         "{revoked_member}"
     );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn admin_acp_workspace_choice_persists_only_the_winning_local_permission(pool: sqlx::PgPool) {
+    use den_core::ids::{BearId, UserId};
+    use den_service::bears::hats::{self, access};
+
+    let admin = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, admin, bear_id).await;
+    let bear = BearId::new(bear_id);
+    let hat = hats::create_hat(&pool, bear, UserId::new(admin), "Reader", "Read code")
+        .await
+        .unwrap();
+    hats::set_ide_default_hat(&pool, bear, hat.id)
+        .await
+        .unwrap();
+    let mut config = den_core::config::Config::test_stub();
+    config.den_secret_encryption_key = "bearwire-test-secret-key".into();
+    config.llm_api_url = start_mock_openai_sse_server();
+    config.default_llm_model = "openai/bearwire-test-model".into();
+    seed_test_bifrost_virtual_key(&pool, bear_id, &config).await;
+    let state = test_state_with_config(pool.clone(), config);
+    let session_id = format!("hat-acp-workspace-{}", Uuid::new_v4());
+    let opened = rpc_value(
+        state.clone(),
+        &token,
+        "session.open",
+        json!({
+            "bear_slug": bear_slug, "session_id": session_id, "client": "zed",
+            "cwd": "/workspace/project",
+        }),
+    )
+    .await;
+    assert_eq!(opened["result"]["ok"], true, "{opened}");
+    set_next_scripted_runtime_streams(&session_id, vec![ScriptedRuntimeStream::Pending]);
+    let started = rpc_value(
+        state.clone(),
+        &token,
+        "run.start",
+        json!({
+            "bear_slug": bear_slug, "session_id": session_id, "prompt": "Read the selected file",
+            "client": "zed",
+        }),
+    )
+    .await;
+    let run_id = started["result"]["run_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("run.start failed: {started}"));
+    for _ in 0..30 {
+        if den_runtime::native_runtime::native_client_run_exists(
+            opened["result"]["session"]["resolved_conversation_id"]
+                .as_str()
+                .unwrap(),
+            &session_id,
+            run_id,
+        ) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let permission_id = "perm-hat-workspace-claim";
+    turn_obligations::upsert_permission_decision_obligation(
+        &pool, run_id, &session_id, permission_id, Some("call-hat-workspace"),
+        json!({"tool_name": "fs_read_text_file", "arguments": {"path": "/workspace/project/README.md"}}),
+    ).await.unwrap();
+    let member = create_test_user(&pool).await;
+    let member_token = create_member_token(&pool, member, bear_id).await;
+    let stolen = rpc_value(
+        state.clone(),
+        &member_token,
+        "client.permission.result",
+        json!({
+            "bear_slug": bear_slug, "session_id": session_id, "run_id": run_id,
+            "permission_id": permission_id, "decision": "allow_hat_workspace_read",
+            "workspace_root": "/workspace/project",
+        }),
+    )
+    .await;
+    assert!(stolen.get("error").is_some(), "{stolen}");
+    let wrong_root = rpc_value(
+        state.clone(),
+        &token,
+        "client.permission.result",
+        json!({
+            "bear_slug": bear_slug, "session_id": session_id, "run_id": run_id,
+            "permission_id": permission_id, "decision": "allow_hat_workspace_read",
+            "workspace_root": "/workspace/other",
+        }),
+    )
+    .await;
+    assert!(wrong_root.get("error").is_some(), "{wrong_root}");
+    assert!(access::workspace_read_grants_for_hat(&pool, bear, hat.id)
+        .await
+        .unwrap()
+        .is_empty());
+    let decision = rpc_value(
+        state.clone(),
+        &token,
+        "client.permission.result",
+        json!({
+            "bear_slug": bear_slug, "session_id": session_id, "run_id": run_id,
+            "permission_id": permission_id, "decision": "allow_hat_workspace_read",
+            "workspace_root": "/workspace/project",
+        }),
+    )
+    .await;
+    assert_eq!(decision["result"]["ok"], true, "{decision}");
+    assert_eq!(
+        decision["result"]["hat_grant_status"], "persisted",
+        "{decision}"
+    );
+    assert_eq!(
+        decision["result"]["local_tool_request"]["tool_name"],
+        "fs_read_text_file"
+    );
+    let grants = access::workspace_read_grants_for_hat(&pool, bear, hat.id)
+        .await
+        .unwrap();
+    assert_eq!(grants.len(), 1);
+    let replay = rpc_value(
+        state.clone(),
+        &token,
+        "client.permission.result",
+        json!({
+            "bear_slug": bear_slug, "session_id": session_id, "run_id": run_id,
+            "permission_id": permission_id, "decision": "allow_hat_workspace_read",
+            "workspace_root": "/workspace/project",
+        }),
+    )
+    .await;
+    assert!(replay["result"]["local_tool_request"].is_null(), "{replay}");
+    assert_eq!(
+        access::workspace_read_grants_for_hat(&pool, bear, hat.id)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    access::revoke(&pool, bear, hat.id, UserId::new(admin), grants[0].id)
+        .await
+        .unwrap();
+    let after_revocation = rpc_value(
+        state.clone(),
+        &token,
+        "client.permission.result",
+        json!({
+            "bear_slug": bear_slug, "session_id": session_id, "run_id": run_id,
+            "permission_id": permission_id, "decision": "allow_hat_workspace_read",
+            "workspace_root": "/workspace/project",
+        }),
+    )
+    .await;
+    assert!(
+        after_revocation["result"]["local_tool_request"].is_null(),
+        "{after_revocation}"
+    );
+    assert!(access::workspace_read_grants_for_hat(&pool, bear, hat.id)
+        .await
+        .unwrap()
+        .is_empty());
+
+    let member_session = format!("member-hat-acp-{}", Uuid::new_v4());
+    let member_opened = rpc_value(
+        state.clone(),
+        &member_token,
+        "session.open",
+        json!({
+            "bear_slug": bear_slug, "session_id": member_session,
+            "client": "zed", "cwd": "/workspace/project",
+        }),
+    )
+    .await;
+    assert_eq!(member_opened["result"]["ok"], true, "{member_opened}");
+    set_next_scripted_runtime_streams(&member_session, vec![ScriptedRuntimeStream::Pending]);
+    let member_started = rpc_value(
+        state.clone(),
+        &member_token,
+        "run.start",
+        json!({
+            "bear_slug": bear_slug, "session_id": member_session,
+            "prompt": "Read the selected file", "client": "zed",
+        }),
+    )
+    .await;
+    let member_run = member_started["result"]["run_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("member run.start failed: {member_started}"));
+    for _ in 0..30 {
+        if den_runtime::native_runtime::native_client_run_exists(
+            member_opened["result"]["session"]["resolved_conversation_id"]
+                .as_str()
+                .unwrap(),
+            &member_session,
+            member_run,
+        ) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let member_permission_id = "perm-member-hat-workspace";
+    turn_obligations::upsert_permission_decision_obligation(
+        &pool, member_run, &member_session, member_permission_id, Some("call-member-hat"),
+        json!({"tool_name": "fs_read_text_file", "arguments": {"path": "/workspace/project/README.md"}}),
+    ).await.unwrap();
+    let member_denied = rpc_value(
+        state.clone(),
+        &member_token,
+        "client.permission.result",
+        json!({
+            "bear_slug": bear_slug, "session_id": member_session, "run_id": member_run,
+            "permission_id": member_permission_id, "decision": "allow_hat_workspace_read",
+            "workspace_root": "/workspace/project",
+        }),
+    )
+    .await;
+    assert!(member_denied.get("error").is_some(), "{member_denied}");
+    assert!(turn_runs::existing_client_result_for_payload(
+        &pool, member_run, "permission", member_permission_id,
+        &json!({"permission_id": member_permission_id, "decision": "granted", "reason": null,
+                 "policy_decision": "allow_hat_workspace_read", "workspace_root": "/workspace/project"}),
+    ).await.unwrap().is_none());
+    let one_time = rpc_value(
+        state,
+        &member_token,
+        "client.permission.result",
+        json!({
+            "bear_slug": bear_slug, "session_id": member_session, "run_id": member_run,
+            "permission_id": member_permission_id, "decision": "allow_once",
+        }),
+    )
+    .await;
+    assert_eq!(one_time["result"]["ok"], true, "{one_time}");
+    assert_eq!(one_time["result"]["hat_grant_status"], "not_requested");
+    assert!(access::workspace_read_grants_for_hat(&pool, bear, hat.id)
+        .await
+        .unwrap()
+        .is_empty());
 }
 
 #[sqlx::test(migrations = "../../migrations")]

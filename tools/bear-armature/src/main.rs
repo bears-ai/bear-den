@@ -5571,10 +5571,16 @@ async fn verified_approval_scope(
     scope
 }
 
-/// An exact Den-owned grant is only a positive policy input. The local target
-/// must also exist within this connection's canonical workspace, and Den must
-/// recheck the current owner, hat and revocation on every attempted reuse.
-async fn verified_hat_workspace_read_grant(
+#[derive(Debug)]
+struct VerifiedHatWorkspaceToolPolicy {
+    allowed: bool,
+    eligible: bool,
+    workspace_root: String,
+}
+
+/// The local target must exist within this connection's canonical workspace;
+/// a Den policy read never overrides local root, symlink or sensitive-file rules.
+async fn verified_hat_workspace_tool_policy(
     config: &Config,
     shared_state: &AdapterSharedState,
     session_id: &str,
@@ -5582,32 +5588,24 @@ async fn verified_hat_workspace_read_grant(
     context: &SessionContext,
     tool_name: &str,
     raw_path: &str,
-) -> bool {
+) -> Option<VerifiedHatWorkspaceToolPolicy> {
     if !matches!(scope, VerifiedPermissionScope::CurrentHat { .. }) {
-        return false;
+        return None;
     }
-    let Ok(target) = paths::resolve_fs_target(context, raw_path) else {
-        return false;
-    };
+    let target = paths::resolve_fs_target(context, raw_path).ok()?;
     if paths::is_sensitive_path(&target.resolved_path) {
-        return false;
+        return None;
     }
-    let (Ok(root), Ok(path)) = (
-        std::fs::canonicalize(&target.workspace_root),
-        std::fs::canonicalize(&target.resolved_path),
-    ) else {
-        return false;
-    };
+    let root = std::fs::canonicalize(&target.workspace_root).ok()?;
+    let path = std::fs::canonicalize(&target.resolved_path).ok()?;
     if !path.starts_with(&root) || paths::is_sensitive_path(&path) {
-        return false;
+        return None;
     }
     // The administrator grants the editor's exact reported root. Resolve it
     // to check containment, but send its original spelling to Den so a
     // legitimate symlinked workspace root (for example /var on macOS) matches.
-    let Some(declared_root) = target.workspace_root.to_str() else {
-        return false;
-    };
-    bearwire::rpc_call(
+    let declared_root = target.workspace_root.to_str()?;
+    let response = bearwire::rpc_call(
         &shared_state.http,
         config,
         "hats.workspace_tool.check",
@@ -5619,9 +5617,58 @@ async fn verified_hat_workspace_read_grant(
         }),
     )
     .await
-    .ok()
-    .and_then(|response| response.get("allowed").and_then(Value::as_bool))
-        == Some(true)
+    .ok()?;
+    Some(VerifiedHatWorkspaceToolPolicy {
+        allowed: response.get("allowed")?.as_bool()?,
+        eligible: response.get("eligible")?.as_bool()?,
+        workspace_root: declared_root.to_string(),
+    })
+}
+
+async fn verified_hat_workspace_read_grant(
+    config: &Config,
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    scope: &VerifiedPermissionScope,
+    context: &SessionContext,
+    tool_name: &str,
+    raw_path: &str,
+) -> bool {
+    verified_hat_workspace_tool_policy(
+        config,
+        shared_state,
+        session_id,
+        scope,
+        context,
+        tool_name,
+        raw_path,
+    )
+    .await
+    .is_some_and(|policy| policy.allowed && policy.eligible)
+}
+
+fn hat_workspace_read_permission_option(
+    scope: &VerifiedPermissionScope,
+    policy: &VerifiedHatWorkspaceToolPolicy,
+    operation: &str,
+) -> Option<agent_client_protocol::schema::PermissionOption> {
+    let VerifiedPermissionScope::CurrentHat {
+        name,
+        can_manage: true,
+    } = scope
+    else {
+        return None;
+    };
+    policy.eligible.then(|| {
+        agent_client_protocol::schema::PermissionOption::new(
+            "allow_hat_workspace_read",
+            format!(
+                "Always for {name}: {operation} in {} (future editor conversations; Work is excluded)",
+                policy.workspace_root,
+            ),
+            agent_client_protocol::schema::PermissionOptionKind::AllowAlways,
+        )
+    })
 }
 
 fn hat_web_fetch_permission_option(
@@ -9955,6 +10002,15 @@ struct PermissionRequestContext<'a> {
     legacy_no_hats: bool,
 }
 
+fn accepts_local_permission_decision(decision: &PermissionDecision, legacy_no_hats: bool) -> bool {
+    decision.approved
+        && !matches!(
+            decision.scope,
+            ApprovalScope::HatHost | ApprovalScope::HatWorkspaceRead
+        )
+        && (legacy_no_hats || !decision.remember)
+}
+
 async fn request_tool_permission(
     adapter_state: &mut AdapterState,
     session_id: &str,
@@ -10066,10 +10122,7 @@ async fn request_tool_permission(
         scope = decision.scope.as_str(),
         "ACP permission response received"
     );
-    if decision.approved
-        && decision.scope != ApprovalScope::HatHost
-        && (legacy_no_hats || !decision.remember)
-    {
+    if accepts_local_permission_decision(&decision, legacy_no_hats) {
         Ok(decision)
     } else {
         Err(anyhow!("permission denied for {tool_name} on {path}"))
@@ -10870,15 +10923,16 @@ pub(crate) async fn handle_permission_request_event(
         .and_then(Value::as_str)
         .and_then(|url| hat_web_fetch_permission_option(&verified_scope, tool_name, url));
     let hat_option_available = hat_option.is_some();
-    let hat_workspace_auto = if let (Some(context), Some(raw_path)) = (
+    let hat_workspace_policy = if let (Some(context), Some(raw_path)) = (
         context_for_approval.as_ref(),
         canonical
             .tool_call
             .arguments
             .get("path")
+            .or_else(|| canonical.tool_call.arguments.get("root"))
             .and_then(Value::as_str),
     ) {
-        verified_hat_workspace_read_grant(
+        verified_hat_workspace_tool_policy(
             config,
             shared_state,
             session_id,
@@ -10889,8 +10943,15 @@ pub(crate) async fn handle_permission_request_event(
         )
         .await
     } else {
-        false
+        None
     };
+    let hat_workspace_auto = hat_workspace_policy
+        .as_ref()
+        .is_some_and(|policy| policy.allowed && policy.eligible);
+    let hat_workspace_option = hat_workspace_policy.as_ref().and_then(|policy| {
+        hat_workspace_read_permission_option(&verified_scope, policy, &display.permission_operation)
+    });
+    let hat_workspace_option_available = hat_workspace_option.is_some();
     let mut options = if is_plan_mode {
         vec![
             agent_client_protocol::schema::PermissionOption::new(
@@ -10924,6 +10985,9 @@ pub(crate) async fn handle_permission_request_event(
         )
     };
     if let Some(option) = hat_option {
+        options.insert(1, option);
+    }
+    if let Some(option) = hat_workspace_option {
         options.insert(1, option);
     }
     let request = RequestPermissionRequest::new(session_id.to_string(), tool_call, options);
@@ -11046,6 +11110,7 @@ pub(crate) async fn handle_permission_request_event(
     };
     let decision = if (!legacy_no_hats && decision.remember)
         || (decision.scope == ApprovalScope::HatHost && !hat_option_available)
+        || (decision.scope == ApprovalScope::HatWorkspaceRead && !hat_workspace_option_available)
     {
         PermissionDecision {
             approved: false,
@@ -11082,6 +11147,7 @@ pub(crate) async fn handle_permission_request_event(
     } else {
         match decision.scope {
             ApprovalScope::HatHost if decision.approved => "allow_hat_host",
+            ApprovalScope::HatWorkspaceRead if decision.approved => "allow_hat_workspace_read",
             ApprovalScope::Workspace
             | ApprovalScope::Directory
             | ApprovalScope::Command
@@ -11104,6 +11170,11 @@ pub(crate) async fn handle_permission_request_event(
             "obligation_id": obligation_id,
             "plan_mode_id": plan_mode_id,
             "run_id": event.get("run_id").and_then(Value::as_str),
+            "workspace_root": if decision.scope == ApprovalScope::HatWorkspaceRead {
+                hat_workspace_policy.as_ref().map(|policy| policy.workspace_root.as_str())
+            } else {
+                None
+            },
             "reason": if hat_workspace_auto && auto_allowed {
                 json!({"approval_source": "den_hat_workspace_read_grant"})
             } else {
@@ -11112,9 +11183,11 @@ pub(crate) async fn handle_permission_request_event(
         }),
     )
     .await?;
-    if decision.scope == ApprovalScope::HatHost
-        && (response.get("ok").and_then(Value::as_bool) != Some(true)
-            || response.get("hat_grant_status").and_then(Value::as_str) != Some("persisted"))
+    if matches!(
+        decision.scope,
+        ApprovalScope::HatHost | ApprovalScope::HatWorkspaceRead
+    ) && (response.get("ok").and_then(Value::as_bool) != Some(true)
+        || response.get("hat_grant_status").and_then(Value::as_str) != Some("persisted"))
     {
         let _ = send_tool_call_update(
             session_id,
@@ -11122,7 +11195,7 @@ pub(crate) async fn handle_permission_request_event(
             tool_name,
             ToolCallUpdatePayload {
                 status: "failed",
-                text: "Den did not save the hat's HTTPS-host grant. The request was not approved as a persistent policy change.",
+                text: "Den did not save the hat's requested grant. The request was not approved as a persistent policy change.",
                 request: Some(ToolRequestPresentation::from_event(tool_call_id, tool_name, event)),
                 raw_output: Some(json!({"hat_grant_status": "not_persisted"})),
                 extra_content: Vec::new(),
@@ -11159,7 +11232,8 @@ pub(crate) async fn handle_permission_request_event(
     }
     if let Some(local_tool) = response.get("local_tool_request") {
         let mut request_event = approved_local_tool_request_event(event, local_tool)?;
-        if hat_workspace_auto && auto_allowed {
+        if (hat_workspace_auto && auto_allowed) || decision.scope == ApprovalScope::HatWorkspaceRead
+        {
             request_event["hat_workspace_grant_auto_approved"] = json!(true);
         }
         spawn_tool_request_task(
@@ -11878,6 +11952,7 @@ fn tool_path(event: &Value) -> Option<&str> {
     tool_args_from_event(event)
         .and_then(|v| {
             v.get("path")
+                .or_else(|| v.get("root"))
                 .or_else(|| v.get("source_path"))
                 .or_else(|| v.get("destination_path"))
                 .or_else(|| v.get("base_path"))
@@ -12808,7 +12883,7 @@ mod tests {
             }),
             Some("hats.workspace_tool.check") => json!({
                 "jsonrpc": "2.0", "id": id,
-                "result": {"allowed": state.hat_workspace_grant_allowed}
+                "result": {"allowed": state.hat_workspace_grant_allowed, "eligible": true}
             }),
             Some("session.state") => {
                 if let Some(session_id) =
@@ -14220,6 +14295,62 @@ mod tests {
             "https://docs.example.com/review"
         )
         .is_none());
+    }
+
+    #[test]
+    fn local_fallback_cannot_treat_a_persistent_hat_choice_as_once() {
+        let selected =
+            crate::approvals::permission_decision_from_option_id("allow_hat_workspace_read");
+        assert!(!accepts_local_permission_decision(&selected, false));
+        assert!(!accepts_local_permission_decision(&selected, true));
+        let once = crate::approvals::permission_decision_from_option_id("allow_once");
+        assert!(accepts_local_permission_decision(&once, false));
+    }
+
+    #[test]
+    fn explicit_find_root_is_a_local_workspace_permission_target() {
+        assert_eq!(tool_path(&json!({"args": {"root": "docs"}})), Some("docs"));
+    }
+
+    #[test]
+    fn only_admins_see_the_den_owned_workspace_read_choice() {
+        let policy = VerifiedHatWorkspaceToolPolicy {
+            allowed: false,
+            eligible: true,
+            workspace_root: "/workspace/project".into(),
+        };
+        let admin = VerifiedPermissionScope::CurrentHat {
+            name: "Security review".into(),
+            can_manage: true,
+        };
+        let option = hat_workspace_read_permission_option(&admin, &policy, "read a file")
+            .expect("verified Den eligibility and current admin");
+        let value = serde_json::to_value(option).unwrap();
+        assert_eq!(value["optionId"], "allow_hat_workspace_read");
+        let label = value.to_string();
+        assert!(label.contains("Security review"), "{label}");
+        assert!(label.contains("/workspace/project"), "{label}");
+        assert!(label.contains("future editor conversations"), "{label}");
+        assert!(label.contains("Work is excluded"), "{label}");
+        let ordinary = VerifiedPermissionScope::CurrentHat {
+            name: "Security review".into(),
+            can_manage: false,
+        };
+        assert!(hat_workspace_read_permission_option(&ordinary, &policy, "read a file").is_none());
+        assert!(hat_workspace_read_permission_option(
+            &admin,
+            &VerifiedHatWorkspaceToolPolicy {
+                eligible: false,
+                ..policy
+            },
+            "read a file",
+        )
+        .is_none());
+        let decision =
+            crate::approvals::permission_decision_from_option_id("allow_hat_workspace_read");
+        assert!(decision.approved);
+        assert!(!decision.remember);
+        assert_eq!(decision.scope, ApprovalScope::HatWorkspaceRead);
     }
 
     #[test]

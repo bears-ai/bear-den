@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id FROM turn_runs WHERE run_id = $1 AND session_id = $2\n           AND bear_id = $3 AND user_id = $4\n           AND state IN ('accepted', 'running', 'waiting_for_client', 'continuing')\n         FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "04f756b132b8ae35b9d2e90d4a6e3f34c00968a204d2af76f482879c50deb6f1"
+}
