@@ -195,17 +195,26 @@ async fn workspace_tool_check_requires_owned_hat_session_and_exact_live_grant(po
     )
     .await;
     assert_eq!(different_hat["result"]["allowed"], false, "{different_hat}");
-    access::revoke(&pool, bear, hat.id, UserId::new(admin), id)
+    let owner_session =
+        client_sessions::find_for_user_bear_session_id(&pool, admin, bear_id, &session_id)
+            .await
+            .unwrap()
+            .unwrap();
+    client_sessions::mark_closed(&pool, owner_session.id)
         .await
         .unwrap();
-    let revoked = check(
+    let closed = check(
         &token,
         &session_id,
         "fs_read_text_file",
         "/workspace/project",
     )
     .await;
-    assert_eq!(revoked["result"]["allowed"], false, "{revoked}");
+    assert!(closed.get("error").is_some(), "{closed}");
+    access::revoke(&pool, bear, hat.id, UserId::new(admin), id)
+        .await
+        .unwrap();
+
     let revoked_member = check(
         &member_token,
         &member_session,

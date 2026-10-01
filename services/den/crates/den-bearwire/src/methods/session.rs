@@ -726,6 +726,11 @@ pub(crate) async fn hat_workspace_tool_check_result(
     )
     .await?
     .ok_or_else(|| CustomError::NotFound("IDE session not found".into()))?;
+    if session.closed_at.is_some() || session.archived_at.is_some() {
+        return Err(CustomError::Authorization(
+            "closed or archived IDE sessions cannot use hat workspace grants".into(),
+        ));
+    }
     if den_docket::work_runs::get_work_run_by_session(&state.sqlx_pool, session_id.as_str())
         .await?
         .is_some()
