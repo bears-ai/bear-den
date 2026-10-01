@@ -63,7 +63,7 @@ Editor ──ACP stdio──► bears-acp-adapter
 
 | Route | Role |
 | --- | --- |
-| `POST /internal/den-tools/invoke` | Server-executed Den tools (adapter calls with internal token) |
+| Former `POST /internal/den-tools/invoke` | Historical baseline only. The pre-release branch removed this caller-context HTTP RPC; Den-hosted tools now use the in-process runtime invoker. |
 
 ### Event stream (adapter-SSE today)
 

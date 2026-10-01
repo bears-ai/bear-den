@@ -53,10 +53,8 @@ pub fn canonical_builtin_den_tool(name: &str) -> Option<&'static str> {
 
 /// True when `name` is the canonical or provider name of a builtin Den tool.
 ///
-/// Derived from [`builtin_den_tool_descriptors`] rather than a hand-kept list:
-/// the invocation gate on `/internal/den-tools/invoke` is the only consumer, and
-/// a list maintained beside the descriptor table drifts from it silently — every
-/// missed entry 404s a tool the dispatcher can actually run.
+/// Derived from [`builtin_den_tool_descriptors`] rather than a hand-kept list;
+/// canonical and provider aliases share one descriptor-owned resolver.
 pub fn is_builtin_den_tool(name: &str) -> bool {
     canonical_builtin_den_tool(name).is_some()
 }

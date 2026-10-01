@@ -9,7 +9,6 @@ pub use den_core::config;
 pub use den_http::auth_backend;
 pub use den_http::build_info;
 pub mod core;
-pub mod internal_tools;
 pub use den_http::errors;
 pub mod import_legacy_memory;
 pub mod reindex;
@@ -297,10 +296,8 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
             // Composition root: wire peer HTTP edges together. den-api owns the
             // JSON/REST + OAuth app; BearWire is injected here as a peer router so
             // neither edge depends on the other (ADR-0043).
-            let peer_routers: Vec<(&'static str, axum::Router<den_service::DenState>)> = vec![
-                ("/internal", crate::internal_tools::router()),
-                ("/bearwire", den_bearwire::router()),
-            ];
+            let peer_routers: Vec<(&'static str, axum::Router<den_service::DenState>)> =
+                vec![("/bearwire", den_bearwire::router())];
             let api_app =
                 api::create_api_app(den_state.clone(), session_store.clone(), peer_routers)
                     .await

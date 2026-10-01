@@ -7,8 +7,13 @@
 
 use std::sync::Arc;
 
+use axum::{
+    body::Body,
+    http::{Request, StatusCode},
+};
 use den::{api, config::Config, web};
 use sqlx::postgres::PgPoolOptions;
+use tower::ServiceExt;
 use tower_sessions_sqlx_store::PostgresStore;
 
 fn lazy_pool() -> sqlx::PgPool {
@@ -34,10 +39,7 @@ async fn api_router_builds_without_startup_route_conflicts() {
     let config = Arc::new(Config::test_stub());
     let pool = lazy_pool();
     let store = PostgresStore::new(pool.clone());
-    let peer_routers = vec![
-        ("/internal", den::internal_tools::router()),
-        ("/bearwire", den_bearwire::router()),
-    ];
+    let peer_routers = vec![("/bearwire", den_bearwire::router())];
 
     let memory_stores = den_memory::MemoryStoreManager::new(config.as_ref());
     let state = den_service::DenState::new(
@@ -46,7 +48,18 @@ async fn api_router_builds_without_startup_route_conflicts() {
         Arc::new(den_service::bifrost::BifrostClient::new(config.as_ref())),
         memory_stores,
     );
-    let _app = api::create_api_app(state, store, peer_routers)
+    let app = api::create_api_app(state, store, peer_routers)
         .await
         .expect("API router should build without Axum route conflicts");
+    let response = app.oneshot(Request::builder()
+        .method("POST")
+        .uri("/internal/den-tools/invoke")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"tool_name":"den.bear.get_self","context":{"bear_id":"00000000-0000-0000-0000-000000000000","bear_slug":"probe","binding_id":"probe","user_id":0,"conversation_id":"probe","session_id":"probe"}}"#))
+        .unwrap()).await.unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::NOT_FOUND,
+        "caller-context internal tool RPC must stay retired"
+    );
 }

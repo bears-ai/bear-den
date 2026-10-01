@@ -105,8 +105,8 @@ impl SandboxErrorKind {
 /// at the composition root so this crate never reads the environment itself.
 #[derive(Clone, Debug)]
 pub struct SandboxServerConfig {
-    /// Static bearer token protecting the API. Empty = auth disabled
-    /// (same convention as `DEN_INTERNAL_TOKEN`).
+    /// Static bearer token protecting the provider API. Empty disables its
+    /// token check; deploy with a nonempty secret.
     pub service_token: String,
     /// Directory holding pristine clones, ephemeral workspaces, and the
     /// persisted Den-managed config.

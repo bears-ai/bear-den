@@ -226,15 +226,15 @@ fn all_descriptors_are_known_tools() {
         .collect::<Vec<_>>();
     assert!(
         unknown.is_empty(),
-        "descriptors the invocation gate would reject: {unknown:?}"
+        "descriptors without canonical alias resolution: {unknown:?}"
     );
 }
 
 #[test]
-fn builtin_tool_gate_accepts_advertised_names() {
+fn descriptor_resolver_accepts_advertised_names() {
     // Models invoke provider names, while execution uses canonical names. Both
-    // advertised forms must pass the internal gate; unadvertised legacy aliases
-    // and unknown names must not.
+    // forms must resolve from descriptors; unadvertised legacy aliases and
+    // unknown names must not.
     assert!(is_builtin_den_tool(DEN_JOB_RECONCILE));
     assert!(is_builtin_den_tool(DEN_JOB_SETTLE_TASK));
     assert!(is_builtin_den_tool(DEN_JOB_RECONCILE_PROVIDER));

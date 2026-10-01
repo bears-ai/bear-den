@@ -146,8 +146,6 @@ pub struct Config {
     /// Public base URL for the **API** service (no trailing slash).
     pub api_server_url: String,
 
-    /// Shared secret for internal API endpoints (`DEN_INTERNAL_TOKEN`). Empty disables the internal tool endpoint.
-    pub den_internal_token: String,
     /// Secret used to encrypt Den-managed credentials at rest (`DEN_SECRET_ENCRYPTION_KEY`).
     /// Empty means no new encrypted secret values can be stored.
     pub den_secret_encryption_key: String,
@@ -228,7 +226,7 @@ pub struct Config {
     pub embedding_dimensions: u32,
 
     /// Static bearer token protecting the sandbox provider API (`SANDBOX_SERVICE_TOKEN`).
-    /// Empty = auth disabled, same convention as `DEN_INTERNAL_TOKEN`.
+    /// Empty = auth disabled (provider service configuration; set an actual secret in production).
     pub sandbox_service_token: String,
     /// Directory holding pristine clones, ephemeral sandbox workspaces, and
     /// the persisted Den-managed config
@@ -450,7 +448,6 @@ impl Config {
                 .unwrap_or_else(|| "noreply@bears.artificial.design".to_string())
         });
 
-        let den_internal_token = std::env::var("DEN_INTERNAL_TOKEN").unwrap_or_default();
         let den_secret_encryption_key =
             std::env::var("DEN_SECRET_ENCRYPTION_KEY").unwrap_or_default();
 
@@ -731,7 +728,7 @@ impl Config {
             sandbox_port,
             web_server_url,
             api_server_url,
-            den_internal_token,
+
             den_secret_encryption_key,
             bifrost_base_url,
             bifrost_management_url,
@@ -958,7 +955,7 @@ impl Config {
             sandbox_port: 3002,
             web_server_url: "http://localhost:3000".into(),
             api_server_url: "http://localhost:3001".into(),
-            den_internal_token: String::new(),
+
             den_secret_encryption_key: String::new(),
             bifrost_base_url: String::new(),
             bifrost_management_url: String::new(),

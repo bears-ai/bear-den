@@ -129,7 +129,7 @@ Existing HTTP routes map to BearWire methods (see implementation plan for the fu
 | `POST …/mode` | `session.state` / plan-mode side effect |
 | `GET …/sessions`, `GET …/history` | `session.state`, history read methods |
 
-Server-only paths such as `/internal/den-tools/invoke` remain **internal Den RPC**, not BearWire surface (armatures call them only via Den-mediated tool execution, not as a second public wire).
+Den-hosted tools are **server-executed**, not a second public BearWire surface. The former `/internal/den-tools/invoke` RPC was retired on the pre-release branch because a service token could not prove its caller-supplied tool context; current execution uses the in-process Den runtime invoker.
 
 ### 6. Event rename: adapter-SSE → BearWire
 
