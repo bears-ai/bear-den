@@ -755,6 +755,7 @@ async fn health(State(state): State<Arc<ProviderState>>) -> Json<HealthResponse>
         backend_available,
         active_sandboxes,
         roots,
+        run_outbound_ceiling_supported: true,
     })
 }
 
@@ -1661,6 +1662,7 @@ mod tests {
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         let health: HealthResponse = serde_json::from_slice(&bytes).unwrap();
         assert!(health.ok);
+        assert!(health.run_outbound_ceiling_supported);
         assert_eq!(health.active_sandboxes, 0);
     }
 

@@ -284,6 +284,16 @@ async fn provision_run(
         .await;
         return;
     }
+    if allowed_outbound_hosts.is_some() {
+        match client.health().await {
+            Ok(health) if network_policy::require_provider_run_ceiling(&health).is_ok() => {}
+            Ok(_) | Err(_) => {
+                fail_run(pool, run, "work_hat_provider_capability",
+                    "hat-bound Work needs a reachable provider that enforces run-scoped outbound ceilings", None).await;
+                return;
+            }
+        }
+    }
 
     // Docket owns sibling ordering. Claim the exact runnable task before
     // minting credentials or creating a sandbox, so an out-of-order run never

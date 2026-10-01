@@ -7,12 +7,21 @@ use den_core::{ids::BearId, DenError};
 #[path = "network_policy/tests.rs"]
 mod tests;
 use den_docket::work_runs::WorkRunDispatchContext;
-use den_sandbox::protocol::AllowedOutboundHosts;
+use den_sandbox::protocol::{AllowedOutboundHosts, HealthResponse};
 use den_service::{
     bears::hats::{access, memory_binding::ResolvedMemoryBinding},
     work_surfaces,
 };
 use sqlx::PgPool;
+
+pub(super) fn require_provider_run_ceiling(health: &HealthResponse) -> Result<(), DenError> {
+    if !health.ok || !health.backend_available || !health.run_outbound_ceiling_supported {
+        return Err(DenError::Authorization(
+            "the sandbox provider must be healthy and enforce run-scoped outbound ceilings for hat-bound Work".into(),
+        ));
+    }
+    Ok(())
+}
 
 pub(super) async fn for_run(
     pool: &PgPool,

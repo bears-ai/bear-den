@@ -13,6 +13,20 @@ use den_service::{
 };
 use uuid::Uuid;
 
+#[test]
+fn a_provider_missing_the_run_ceiling_capability_is_not_eligible() {
+    let old: HealthResponse = serde_json::from_value(serde_json::json!({
+        "ok": true, "backend_available": true, "active_sandboxes": 0, "roots": []
+    }))
+    .unwrap();
+    assert!(require_provider_run_ceiling(&old).is_err());
+    let mut current = old;
+    current.run_outbound_ceiling_supported = true;
+    assert!(require_provider_run_ceiling(&current).is_ok());
+    current.backend_available = false;
+    assert!(require_provider_run_ceiling(&current).is_err());
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn run_hosts_are_bounded_by_both_the_assigned_surface_and_current_hat_grants(pool: PgPool) {
     let bear = db::create_bear(

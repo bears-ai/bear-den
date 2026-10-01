@@ -473,6 +473,10 @@ pub struct HealthResponse {
     pub backend_available: bool,
     pub active_sandboxes: usize,
     pub roots: Vec<RootStatus>,
+    /// Missing on old providers: Den must not send a hat-bound run ceiling
+    /// to a provider that would silently ignore the request field.
+    #[serde(default)]
+    pub run_outbound_ceiling_supported: bool,
 }
 
 /// Uniform error body for non-2xx provider responses.
