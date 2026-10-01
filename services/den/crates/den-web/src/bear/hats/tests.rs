@@ -939,7 +939,7 @@ async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn hat_web_fetch_grants_are_admin_managed_and_revoke_immediately(pool: PgPool) {
+async fn hat_web_grants_are_admin_managed_and_revoke_immediately(pool: PgPool) {
     use den_service::bears::hats::access;
     let bear = bears_db::create_bear(
         &pool,
@@ -997,7 +997,7 @@ async fn hat_web_fetch_grants_are_admin_managed_and_revoke_immediately(pool: PgP
     let path = format!("{detail}/access");
     let (status, page, _) = request(&app, &admin_cookie, "GET", &detail, "").await;
     assert_eq!(status, StatusCode::OK, "{page}");
-    assert!(page.contains("Den web fetch policy"));
+    assert!(page.contains("Den web tool and host policy"));
     assert!(page.contains("per-call approval in ACP"));
     assert_eq!(
         request(
@@ -1041,10 +1041,11 @@ async fn hat_web_fetch_grants_are_admin_managed_and_revoke_immediately(pool: PgP
         .0,
         StatusCode::SEE_OTHER
     );
-    let summary = access::web_fetch_grants_for_hat(&pool, BearId::new(bear), hat.id)
+    let summary = access::web_grants_for_hat(&pool, BearId::new(bear), hat.id)
         .await
         .unwrap();
-    assert!(summary.tool_grant_id.is_none());
+    assert!(summary.fetch_tool_grant_id.is_none());
+    assert!(summary.search_tool_grant_id.is_none());
     assert_eq!(summary.hosts.len(), 1);
     assert_eq!(summary.hosts[0].host, "example.com");
     assert_eq!(
@@ -1059,13 +1060,67 @@ async fn hat_web_fetch_grants_are_admin_managed_and_revoke_immediately(pool: PgP
         .0,
         StatusCode::SEE_OTHER
     );
-    let summary = access::web_fetch_grants_for_hat(&pool, BearId::new(bear), hat.id)
+    let summary = access::web_grants_for_hat(&pool, BearId::new(bear), hat.id)
         .await
         .unwrap();
-    assert!(summary.tool_grant_id.is_some());
+    assert!(summary.fetch_tool_grant_id.is_some());
     let (_, page, _) = request(&app, &admin_cookie, "GET", &detail, "").await;
     assert!(page.contains("Web-fetch tool: granted"));
+    assert!(page.contains("Web-search tool: not granted"));
+    assert!(page.contains("api.search.brave.com"));
     assert!(page.contains("example.com"));
+    assert_eq!(
+        request(
+            &app,
+            &member_cookie,
+            "POST",
+            &path,
+            "action=enable_search&confirm_future_job_audience=true"
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        request(&app, &admin_cookie, "POST", &path, "action=enable_search")
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        request(
+            &app,
+            &admin_cookie,
+            "POST",
+            &path,
+            "action=enable_search&confirm_future_job_audience=true"
+        )
+        .await
+        .0,
+        StatusCode::SEE_OTHER
+    );
+    let search_grant = access::web_grants_for_hat(&pool, BearId::new(bear), hat.id)
+        .await
+        .unwrap()
+        .search_tool_grant_id
+        .unwrap();
+    assert_eq!(
+        request(
+            &app,
+            &admin_cookie,
+            "POST",
+            &path,
+            &format!("action=revoke&grant_id={search_grant}")
+        )
+        .await
+        .0,
+        StatusCode::SEE_OTHER
+    );
+    assert!(access::web_grants_for_hat(&pool, BearId::new(bear), hat.id)
+        .await
+        .unwrap()
+        .search_tool_grant_id
+        .is_none());
 
     assert_eq!(
         request(
@@ -1091,13 +1146,11 @@ async fn hat_web_fetch_grants_are_admin_managed_and_revoke_immediately(pool: PgP
         .0,
         StatusCode::SEE_OTHER
     );
-    assert!(
-        access::web_fetch_grants_for_hat(&pool, BearId::new(bear), hat.id)
-            .await
-            .unwrap()
-            .hosts
-            .is_empty()
-    );
+    assert!(access::web_grants_for_hat(&pool, BearId::new(bear), hat.id)
+        .await
+        .unwrap()
+        .hosts
+        .is_empty());
     assert_eq!(
         request(
             &app,
@@ -1116,19 +1169,20 @@ async fn hat_web_fetch_grants_are_admin_managed_and_revoke_immediately(pool: PgP
             &admin_cookie,
             "POST",
             &path,
-            &format!("action=revoke&grant_id={}", summary.tool_grant_id.unwrap())
+            &format!(
+                "action=revoke&grant_id={}",
+                summary.fetch_tool_grant_id.unwrap()
+            )
         )
         .await
         .0,
         StatusCode::SEE_OTHER
     );
-    assert!(
-        access::web_fetch_grants_for_hat(&pool, BearId::new(bear), hat.id)
-            .await
-            .unwrap()
-            .tool_grant_id
-            .is_none()
-    );
+    assert!(access::web_grants_for_hat(&pool, BearId::new(bear), hat.id)
+        .await
+        .unwrap()
+        .fetch_tool_grant_id
+        .is_none());
 }
 
 #[sqlx::test(migrations = "../../migrations")]

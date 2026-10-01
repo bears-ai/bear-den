@@ -49,10 +49,10 @@ impl WebFetcher for MockTransport<'_> {
         5
     }
 
-    async fn provider_search(&self, _query: &str, _limit: usize) -> Result<Value, DenError> {
-        Err(DenError::Authorization(
-            "search is not part of this test".into(),
-        ))
+    async fn provider_search(&self, query: &str, _limit: usize) -> Result<Value, DenError> {
+        Ok(
+            json!({"results": [{"url": "https://example.com/docs", "title": "Synthetic result", "snippet": query}]}),
+        )
     }
 }
 
@@ -130,16 +130,19 @@ async fn exact_web_fetch_approval_is_consumed_once_without_a_bear_wide_grant(poo
         config: &config,
     };
     let correct = context(bear_id, "client-session-one", request_id);
-    assert!(
-        matches!(
-            den_core::tools::web::web_search(
-                &MockTransport(DenWebFetcher { pool: &pool, config: &config }),
-                &correct,
-                json!({"query": "test"}),
-            ).await,
-            Err(DenError::Authorization(reason)) if reason == "search is not part of this test"
-        ),
-        "a no-hat Bear still reaches the configured search provider"
+    assert_eq!(
+        den_core::tools::web::web_search(
+            &MockTransport(DenWebFetcher {
+                pool: &pool,
+                config: &config
+            }),
+            &correct,
+            json!({"query": "test"}),
+        )
+        .await
+        .unwrap()["results"][0]["snippet"],
+        "test",
+        "a no-hat Bear still reaches the configured search provider",
     );
     for (candidate, target) in [
         (context(bear_id, "client-session-two", request_id), url),
@@ -334,7 +337,8 @@ async fn configured_hat_fetch_ignores_bear_wide_allows_and_checks_owner_and_revo
     .await
     .unwrap();
     sqlx::query!("INSERT INTO bear_web_sources (bear_id, scope_kind, scope_value, policy) VALUES ($1, 'host', 'example.com', 'allowed')", bear).execute(&pool).await.unwrap();
-    let config = Config::test_stub();
+    let mut config = Config::test_stub();
+    config.den_search_provider = "brave".into();
     let fetcher = DenWebFetcher {
         pool: &pool,
         config: &config,
@@ -401,6 +405,80 @@ async fn configured_hat_fetch_ignores_bear_wide_allows_and_checks_owner_and_revo
             Err(DenError::Authorization(_))
         ),
         "a web-fetch grant cannot authorize a different network tool"
+    );
+    let search_tool =
+        HatAccessGrant::ToolForHat(ToolActionKey::from_provider_name("web_search").unwrap());
+    let provider_host =
+        HatAccessGrant::HttpsHost(HttpsHost::parse("api.search.brave.com").unwrap());
+    access::grant(
+        &pool,
+        BearId::new(bear),
+        a.id,
+        UserId::new(admin),
+        &search_tool,
+        true,
+    )
+    .await
+    .unwrap();
+    assert!(
+        fetcher.authorize_search(&ctx).await.is_err(),
+        "a search-tool grant alone is insufficient"
+    );
+    let provider_host_id = access::grant(
+        &pool,
+        BearId::new(bear),
+        a.id,
+        UserId::new(admin),
+        &provider_host,
+        true,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        den_core::tools::web::web_search(
+            &MockTransport(DenWebFetcher {
+                pool: &pool,
+                config: &config
+            }),
+            &ctx,
+            json!({"query": "reviewed public data"}),
+        )
+        .await
+        .unwrap()["results"][0]["snippet"],
+        "reviewed public data",
+    );
+    let mut other_hat_search = ctx.clone();
+    other_hat_search.conversation_id = "hat-fetch-other".into();
+    other_hat_search.user_id = admin;
+    assert!(fetcher.authorize_search(&other_hat_search).await.is_err());
+    sqlx::query!("INSERT INTO bear_web_sources (bear_id, scope_kind, scope_value, policy) VALUES ($1, 'host', $2, 'blocked')", bear, "api.search.brave.com").execute(&pool).await.unwrap();
+    assert!(
+        matches!(
+            fetcher.authorize_search(&ctx).await,
+            Err(DenError::Authorization(_))
+        ),
+        "a Bear web block beats both hat grants"
+    );
+    sqlx::query!(
+        "DELETE FROM bear_web_sources WHERE bear_id = $1 AND scope_value = $2",
+        bear,
+        "api.search.brave.com"
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    access::revoke(
+        &pool,
+        BearId::new(bear),
+        a.id,
+        UserId::new(admin),
+        provider_host_id,
+    )
+    .await
+    .unwrap();
+    assert!(
+        fetcher.authorize_search(&ctx).await.is_err(),
+        "provider-host revocation takes effect on the next call"
     );
     let response = den_core::tools::web::web_fetch(
         &MockTransport(DenWebFetcher {

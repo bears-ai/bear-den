@@ -57,12 +57,12 @@
   {% else %}<p>No work surfaces are assigned to this Bear yet.</p>{% endif %}
 </div>
 <div class="box">
-  <h3>Den web fetch policy</h3>
-  <p class="form-hint">A conversation wearing this hat can fetch an exact HTTPS host only when both the web-fetch tool and that host are granted. The current human must own the conversation; Den still applies block rules, public-DNS checks, and per-call approval in ACP. This does not enable Job sandbox egress, add a credential, or let a disconnected armature use local tools. Old Bear-wide approvals do not carry into this hat. Web search is a separate provider call and is disabled for configured hats until its own network policy is enforced.</p>
-  {% if web_fetch_grants.tool_grant_id %}
+  <h3>Den web tool and host policy</h3>
+  <p class="form-hint">A conversation wearing this hat can fetch an exact HTTPS host only when both the web-fetch tool and that host are granted. The current human must own the conversation; Den still applies block rules, public-DNS checks, and per-call approval in ACP. This does not enable Job sandbox egress, add a credential, or let a disconnected armature use local tools. Old Bear-wide approvals do not carry into this hat. Search sends the query to an external provider: it requires its own tool grant and the exact provider host <code>api.search.brave.com</code>, not a web-fetch tool grant. Search uses a separately configured server-side provider key and may incur network, privacy, and usage costs; Jobs and other providers do not inherit this permission.</p>
+  {% if web_grants.fetch_tool_grant_id %}
   <p>Web-fetch tool: granted</p>
   <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/access">
-    <input type="hidden" name="grant_id" value="{{ web_fetch_grants.tool_grant_id }}">
+    <input type="hidden" name="grant_id" value="{{ web_grants.fetch_tool_grant_id }}">
     <button type="submit" name="action" value="revoke">Revoke web-fetch tool grant</button>
   </form>
   {% else %}
@@ -72,9 +72,22 @@
     <button type="submit" name="action" value="enable_fetch">Grant web-fetch tool to this hat</button>
   </form>
   {% endif %}
+  {% if web_grants.search_tool_grant_id %}
+  <p>Web-search tool: granted</p>
+  <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/access">
+    <input type="hidden" name="grant_id" value="{{ web_grants.search_tool_grant_id }}">
+    <button type="submit" name="action" value="revoke">Revoke web-search tool grant</button>
+  </form>
+  {% else %}
+  <p>Web-search tool: not granted</p>
+  <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/access">
+    <label><input type="checkbox" name="confirm_future_job_audience" value="true" required> I understand search queries may be sent to the configured provider using its server-side key, with usage costs, and this grant is shared with future conversations and eligible Job runs wearing this hat once their separate policies allow it.</label>
+    <button type="submit" name="action" value="enable_search">Grant web-search tool to this hat</button>
+  </form>
+  {% endif %}
   <h4>Exact HTTPS hosts</h4>
-  {% if web_fetch_grants.hosts %}
-  <ul>{% for grant in web_fetch_grants.hosts %}
+  {% if web_grants.hosts %}
+  <ul>{% for grant in web_grants.hosts %}
     <li>{{ grant.host | e }}
       <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/access">
         <input type="hidden" name="grant_id" value="{{ grant.id }}">

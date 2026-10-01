@@ -1,4 +1,4 @@
-//! Bear-admin editing of the Den-owned web-fetch policy for one hat.
+//! Bear-admin editing of Den-owned web tool and HTTPS-host policy for one hat.
 
 use axum::{
     extract::{Path, State},
@@ -9,7 +9,7 @@ use axum::{
 use axum_extra::{extract::Form, routing::RouterExt};
 use den_core::{
     ids::{BearId, HatId, UserId},
-    tools::constants::DEN_WEB_FETCH,
+    tools::constants::{DEN_WEB_FETCH, DEN_WEB_SEARCH},
 };
 use den_service::bears::hats::access::{
     self as hat_access, HatAccessGrant, HttpsHost, ToolActionKey,
@@ -31,6 +31,7 @@ pub(super) fn router() -> Router<AppState> {
 #[serde(rename_all = "snake_case")]
 enum Action {
     EnableFetch,
+    EnableSearch,
     AllowHost,
     Revoke,
 }
@@ -71,6 +72,19 @@ async fn update(
             )
             .await?;
         }
+        Action::EnableSearch => {
+            let tool =
+                HatAccessGrant::ToolForHat(ToolActionKey::from_provider_name(DEN_WEB_SEARCH)?);
+            hat_access::grant(
+                state.sqlx_pool(),
+                bear_id,
+                hat_id,
+                actor,
+                &tool,
+                form.confirm_future_job_audience,
+            )
+            .await?;
+        }
         Action::AllowHost => {
             let host = form.host.as_deref().ok_or_else(|| {
                 CustomError::ValidationError("exact HTTPS hostname is required".into())
@@ -91,11 +105,13 @@ async fn update(
                 .grant_id
                 .ok_or_else(|| CustomError::ValidationError("hat grant ID is required".into()))?;
             let current =
-                hat_access::web_fetch_grants_for_hat(state.sqlx_pool(), bear_id, hat_id).await?;
-            if current.tool_grant_id != Some(id) && !current.hosts.iter().any(|host| host.id == id)
+                hat_access::web_grants_for_hat(state.sqlx_pool(), bear_id, hat_id).await?;
+            if current.fetch_tool_grant_id != Some(id)
+                && current.search_tool_grant_id != Some(id)
+                && !current.hosts.iter().any(|host| host.id == id)
             {
                 return Err(CustomError::ValidationError(
-                    "this is not a current web-fetch grant for this hat".into(),
+                    "this is not a current web grant for this hat".into(),
                 ));
             }
             hat_access::revoke(state.sqlx_pool(), bear_id, hat_id, actor, id).await?;

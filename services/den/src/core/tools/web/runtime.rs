@@ -15,10 +15,14 @@ use den_core::tools::{
 };
 use den_core::{
     ids::{BearId, UserId},
+    tools::constants::DEN_WEB_SEARCH,
     DenError,
 };
 use den_service::{
-    bears::hats::{access, memory_binding},
+    bears::hats::{
+        access::{self, HatAccessGrant, HttpsHost, ToolActionKey},
+        memory_binding,
+    },
     conversation::{persistence, viewer::ConversationViewer},
 };
 
@@ -31,6 +35,8 @@ use crate::{
 #[cfg(test)]
 #[path = "runtime/tests.rs"]
 mod tests;
+
+const BRAVE_SEARCH_URL: &str = "https://api.search.brave.com/res/v1/web/search";
 
 pub(crate) struct DenWebFetcher<'a> {
     pub(crate) pool: &'a PgPool,
@@ -272,13 +278,84 @@ impl WebFetcher for DenWebFetcher<'_> {
     }
 
     async fn authorize_search(&self, context: &DenToolInvocationContext) -> Result<(), DenError> {
-        // Search sends the entire query to an external provider, not to the
-        // web-fetch destination. Until provider credentials, DNS, and hat tool
-        // and destination grants share an effect-time resolver, no configured
-        // hat may use the old Bear-wide search configuration as authority.
-        memory_binding::legacy_only_without_hats(self.pool, BearId::new(context.bear_id))
-            .await
-            .map(|_| ())
+        let bear_id = BearId::new(context.bear_id);
+        let binding = match memory_binding::for_external_conversation(
+            self.pool,
+            bear_id,
+            &context.conversation_id,
+        )
+        .await
+        {
+            Ok(binding) => binding,
+            Err(DenError::NotFound(_)) => {
+                memory_binding::legacy_only_without_hats(self.pool, bear_id).await?
+            }
+            Err(err) => return Err(err),
+        };
+        if let memory_binding::ResolvedMemoryBinding::Bound(_) = binding {
+            if context.work_run_id.is_some() {
+                return Err(DenError::Authorization(
+                    "Job search requires verified Job and provider egress policy".into(),
+                ));
+            }
+            let provider_url = match self.config.den_search_provider.as_str() {
+                "brave" => BRAVE_SEARCH_URL,
+                _ => return Err(DenError::Authorization(
+                    "a supported search provider must be configured before granting search to a hat".into(),
+                )),
+            };
+            if web_policy::decide_web_fetch_approval(self.pool, context.bear_id, provider_url)
+                .await
+                .map_err(CustomError::into_den)?
+                .1
+                == web_policy::WebApprovalDecision::Blocked
+            {
+                return Err(DenError::Authorization(
+                    "search provider is blocked by Bear web policy".into(),
+                ));
+            }
+            let conversation = persistence::get_conversation_for_external_id(
+                self.pool,
+                context.bear_id,
+                &context.conversation_id,
+            )
+            .await?
+            .ok_or_else(|| {
+                DenError::Authorization("canonical conversation required for search".into())
+            })?;
+            let human = UserId::new(context.user_id);
+            let tool =
+                HatAccessGrant::ToolForHat(ToolActionKey::from_provider_name(DEN_WEB_SEARCH)?);
+            let provider_host = url::Url::parse(provider_url)
+                .map_err(|err| DenError::System(format!("invalid search provider URL: {err}")))?
+                .host_str()
+                .ok_or_else(|| DenError::System("search provider URL is missing a host".into()))?
+                .to_string();
+            let host = HatAccessGrant::HttpsHost(HttpsHost::parse(&provider_host)?);
+            if !access::has_grant_for_own_conversation(
+                self.pool,
+                bear_id,
+                conversation.id,
+                human,
+                &tool,
+            )
+            .await?
+                || !access::has_grant_for_own_conversation(
+                    self.pool,
+                    bear_id,
+                    conversation.id,
+                    human,
+                    &host,
+                )
+                .await?
+            {
+                return Err(DenError::Authorization(
+                    "web search requires this hat's search-tool and exact provider-host grants"
+                        .into(),
+                ));
+            }
+        }
+        Ok(())
     }
 
     async fn preferred_hosts(&self, bear_id: Uuid) -> Result<Vec<String>, DenError> {
@@ -331,13 +408,20 @@ async fn brave_web_search(
             "DEN_SEARCH_PROVIDER=brave requires BRAVE_SEARCH_API_KEY".to_string(),
         ));
     }
-    let client = reqwest::Client::builder()
+    let target = resolve_public_http_target(BRAVE_SEARCH_URL).map_err(CustomError::from)?;
+    let mut builder = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .connect_timeout(std::time::Duration::from_secs(5))
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy();
+    if let Some(url::Host::Domain(host)) = target.url.host() {
+        builder = builder.resolve_to_addrs(host, &target.resolved_addrs);
+    }
+    let client = builder
         .build()
         .map_err(|e| CustomError::System(format!("Brave search client build failed: {e}")))?;
     let resp = client
-        .get("https://api.search.brave.com/res/v1/web/search")
+        .get(target.url.as_str())
         .header("X-Subscription-Token", key)
         .header(reqwest::header::ACCEPT, "application/json")
         .query(&[("q", query), ("count", &max_results.to_string())])

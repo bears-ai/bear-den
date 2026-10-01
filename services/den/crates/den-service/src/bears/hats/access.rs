@@ -1,5 +1,5 @@
 //! Canonical, Den-owned hat access grants. Only the configured-hat Den
-//! web-fetch decision consumes them today; other effect paths need the shared
+//! web-fetch and Brave search decisions consume them today; other effect paths need the shared
 //! actor, resource, and egress resolver.
 
 use std::net::IpAddr;
@@ -7,7 +7,10 @@ use std::net::IpAddr;
 use den_core::{
     client_tools::ClientToolName,
     ids::{BearId, HatId, UserId},
-    tools::{constants::DEN_WEB_FETCH, descriptor::builtin_den_tool_descriptor_for_provider_name},
+    tools::{
+        constants::{DEN_WEB_FETCH, DEN_WEB_SEARCH},
+        descriptor::builtin_den_tool_descriptor_for_provider_name,
+    },
     DenError,
 };
 use den_sandbox::protocol::AllowedOutboundHosts;
@@ -109,22 +112,23 @@ pub struct WebFetchHostGrant {
 }
 
 #[derive(Debug, Serialize)]
-pub struct WebFetchGrantSummary {
-    pub tool_grant_id: Option<Uuid>,
+pub struct HatWebGrantSummary {
+    pub fetch_tool_grant_id: Option<Uuid>,
+    pub search_tool_grant_id: Option<Uuid>,
     pub hosts: Vec<WebFetchHostGrant>,
 }
 
-/// Read only the two grant dimensions used by Den's configured-hat web fetch.
+/// Read only the tool and host grants used by Den's configured-hat web tools.
 /// The Bear-admin page provides the authorization for presenting this summary;
 /// this is not a model-facing or effect-time authorization resolver.
-pub async fn web_fetch_grants_for_hat(
+pub async fn web_grants_for_hat(
     pool: &PgPool,
     bear_id: BearId,
     hat_id: HatId,
-) -> Result<WebFetchGrantSummary, DenError> {
+) -> Result<HatWebGrantSummary, DenError> {
     super::manage::get_hat(pool, bear_id, hat_id).await?;
     let action = ToolActionKey::from_provider_name(DEN_WEB_FETCH)?;
-    let tool_grant_id = sqlx::query_scalar!(
+    let fetch_tool_grant_id = sqlx::query_scalar!(
         "SELECT id FROM bear_hat_access_grants
          WHERE bear_id = $1 AND hat_id = $2 AND kind = 'tool'
            AND action_key = $3 AND target_kind = 'hat' AND target_value = ''
@@ -132,6 +136,18 @@ pub async fn web_fetch_grants_for_hat(
         bear_id.as_uuid(),
         hat_id.as_uuid(),
         action.0,
+    )
+    .fetch_optional(pool)
+    .await?;
+    let search_action = ToolActionKey::from_provider_name(DEN_WEB_SEARCH)?;
+    let search_tool_grant_id = sqlx::query_scalar!(
+        "SELECT id FROM bear_hat_access_grants
+         WHERE bear_id = $1 AND hat_id = $2 AND kind = 'tool'
+           AND action_key = $3 AND target_kind = 'hat' AND target_value = ''
+           AND revoked_at IS NULL",
+        bear_id.as_uuid(),
+        hat_id.as_uuid(),
+        search_action.0,
     )
     .fetch_optional(pool)
     .await?;
@@ -151,8 +167,9 @@ pub async fn web_fetch_grants_for_hat(
         host: row.target_value,
     })
     .collect();
-    Ok(WebFetchGrantSummary {
-        tool_grant_id,
+    Ok(HatWebGrantSummary {
+        fetch_tool_grant_id,
+        search_tool_grant_id,
         hosts,
     })
 }
