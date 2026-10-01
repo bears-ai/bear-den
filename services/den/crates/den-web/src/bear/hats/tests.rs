@@ -957,6 +957,17 @@ async fn hat_web_grants_are_admin_managed_and_revoke_immediately(pool: PgPool) {
     .unwrap();
     let admin = user(&pool, bear, "hatfetchadmin", BEAR_ROLE_ADMIN).await;
     let member = user(&pool, bear, "hatfetchmember", BEAR_ROLE_MEMBER).await;
+    den_http::web_policy::record_web_approval(
+        &pool,
+        bear,
+        "host",
+        "example.com",
+        Some(admin),
+        "admin",
+        None,
+    )
+    .await
+    .unwrap();
     let hat = hats::create_hat(
         &pool,
         BearId::new(bear),
@@ -982,6 +993,7 @@ async fn hat_web_grants_are_admin_managed_and_revoke_immediately(pool: PgPool) {
     sessions.migrate().await.unwrap();
     let app = Router::new()
         .merge(router())
+        .merge(super::super::settings::router())
         .route("/test-login/{user_id}", get(login))
         .with_state(state)
         .layer(
@@ -994,6 +1006,41 @@ async fn hat_web_grants_are_admin_managed_and_revoke_immediately(pool: PgPool) {
     let admin_cookie = cookie(&app, admin).await;
     let member_cookie = cookie(&app, member).await;
     let detail = format!("/bear/hatfetchui/hats/{}", hat.id);
+    let active_legacy = sqlx::query_scalar!(
+        "SELECT count(*) AS \"count!: i64\" FROM bear_web_approvals WHERE bear_id = $1 AND revoked_at IS NULL",
+        bear,
+    ).fetch_one(&pool).await.unwrap();
+    assert_eq!(active_legacy, 0);
+    let resources = "/bear/hatfetchui/resources";
+    let (status, page, _) = request(&app, &admin_cookie, "GET", resources, "").await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("Old Bear-wide allows and approvals do not authorize a configured hat"));
+    assert!(!page.contains("Record approval"));
+    assert!(!page.contains("<option value=\"allowed\">"));
+    assert_eq!(
+        request(
+            &app,
+            &admin_cookie,
+            "POST",
+            "/bear/hatfetchui/web-approvals",
+            "scope_kind=host&scope_value=example.com"
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        request(
+            &app,
+            &admin_cookie,
+            "POST",
+            "/bear/hatfetchui/web-sources",
+            "scope_kind=host&scope_value=example.com&policy=allowed"
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
     let path = format!("{detail}/access");
     let (status, page, _) = request(&app, &admin_cookie, "GET", &detail, "").await;
     assert_eq!(status, StatusCode::OK, "{page}");

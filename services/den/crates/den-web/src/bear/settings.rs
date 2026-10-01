@@ -2916,6 +2916,9 @@ async fn policy_view(
         Err(r) => return Ok(r.into_response()),
     };
     let id = bear.id;
+    let hats_configured = !hats::list_hats(state.sqlx_pool(), BearId::new(id))
+        .await?
+        .is_empty();
     let web_sources: Vec<BearWebSourceRow> = bear_web_sources(state.sqlx_pool(), id).await?;
     let web_approvals: Vec<BearWebApprovalRow> = bear_web_approvals(state.sqlx_pool(), id).await?;
     let web_fetches: Vec<BearWebFetchRow> = bear_web_fetches(state.sqlx_pool(), id).await?;
@@ -2928,6 +2931,7 @@ async fn policy_view(
             web_sources,
             web_approvals,
             web_fetches,
+            hats_configured,
             plan_mode_rows,
             message => query.message,
             can_manage_bear,
@@ -3375,6 +3379,16 @@ async fn add_web_source_action(
             .into_response());
         }
     };
+    if policy == "allowed"
+        && !hats::list_hats(state.sqlx_pool(), BearId::new(bear.id))
+            .await?
+            .is_empty()
+    {
+        return Err(CustomError::ValidationError(
+            "Bear-wide web allows cannot be created after configuring hats; grant hosts on a hat"
+                .into(),
+        ));
+    }
     sqlx::query!(
         r#"
         INSERT INTO bear_web_sources (bear_id, scope_kind, scope_value, label, policy, priority)

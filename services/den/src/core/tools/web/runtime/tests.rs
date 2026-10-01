@@ -269,6 +269,17 @@ async fn configured_hat_fetch_ignores_bear_wide_allows_and_checks_owner_and_revo
     db::grant_membership(&pool, member, bear, Some(db::BEAR_ROLE_MEMBER))
         .await
         .unwrap();
+    web_policy::record_web_approval(
+        &pool,
+        bear,
+        "host",
+        "example.com",
+        Some(admin),
+        "admin",
+        None,
+    )
+    .await
+    .unwrap();
     hats::create_hat(
         &pool,
         BearId::new(other_bear),
@@ -323,19 +334,24 @@ async fn configured_hat_fetch_ignores_bear_wide_allows_and_checks_owner_and_revo
         .await
         .unwrap();
     let url = "https://example.com/first";
-    // Neither an old per-Bear host approval nor an allowed source is an
-    // authorization for either configured hat.
-    web_policy::record_web_approval(
+    // The first hat revokes historical unscoped grants; later writes cannot
+    // resurrect them, and an allowed source is not hat authority either.
+    let active_legacy = sqlx::query_scalar!(
+        "SELECT count(*) AS \"count!: i64\" FROM bear_web_approvals WHERE bear_id = $1 AND revoked_at IS NULL",
+        bear,
+    ).fetch_one(&pool).await.unwrap();
+    assert_eq!(active_legacy, 0);
+    assert!(web_policy::record_web_approval(
         &pool,
         bear,
         "host",
         "example.com",
         Some(admin),
         "admin",
-        None,
+        None
     )
     .await
-    .unwrap();
+    .is_err());
     sqlx::query!("INSERT INTO bear_web_sources (bear_id, scope_kind, scope_value, policy) VALUES ($1, 'host', 'example.com', 'allowed')", bear).execute(&pool).await.unwrap();
     let mut config = Config::test_stub();
     config.den_search_provider = "brave".into();
@@ -589,6 +605,59 @@ async fn configured_hat_fetch_ignores_bear_wide_allows_and_checks_owner_and_revo
     );
     db::revoke_membership(&pool, member, bear).await.unwrap();
     assert!(fetcher.decide_fetch_approval(&ctx, url).await.is_err());
+}
+
+#[sqlx::test]
+async fn concurrent_first_hat_and_legacy_approval_leave_no_unscoped_access(pool: PgPool) {
+    use den_core::ids::{BearId, UserId};
+    use den_service::bears::hats;
+
+    let bear = db::create_bear(
+        &pool,
+        db::BearParams {
+            slug: "racehatweb",
+            name: "Race web approvals",
+            description: "",
+            system_prompt: "",
+            default_model: None,
+            tools_enabled: None,
+            context_profile: None,
+        },
+    )
+    .await
+    .unwrap();
+    let admin = sqlx::query_scalar!("INSERT INTO users (username, email) VALUES ('racehatadmin', 'racehatadmin@example.test') RETURNING id")
+        .fetch_one(&pool).await.unwrap();
+    db::grant_membership(&pool, admin, bear, Some(db::BEAR_ROLE_ADMIN))
+        .await
+        .unwrap();
+    let (hat, approval) = tokio::join!(
+        hats::create_hat(
+            &pool,
+            BearId::new(bear),
+            UserId::new(admin),
+            "Research",
+            "Research"
+        ),
+        web_policy::record_web_approval(
+            &pool,
+            bear,
+            "host",
+            "example.com",
+            Some(admin),
+            "admin",
+            None
+        ),
+    );
+    hat.unwrap();
+    // Either the approval won the lock and was revoked by hat creation, or it
+    // lost the lock and was refused. Neither order leaves an active grant.
+    assert!(approval.is_ok() || matches!(approval, Err(CustomError::ValidationError(_))));
+    assert_eq!(
+        sqlx::query_scalar!("SELECT count(*) AS \"count!: i64\" FROM bear_web_approvals WHERE bear_id = $1 AND revoked_at IS NULL", bear)
+            .fetch_one(&pool).await.unwrap(),
+        0,
+    );
 }
 
 fn ctx_with_bear(ctx: &DenToolInvocationContext, bear: Uuid) -> DenToolInvocationContext {

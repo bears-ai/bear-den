@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO bear_web_approvals\n           (bear_id, scope_kind, scope_value, approved_by_user_id, source, expires_at)\n         VALUES ($1, $2, $3, $4, $5,\n           CASE WHEN $6::bigint IS NULL THEN NULL\n                ELSE now() + ($6::bigint * interval '1 second') END)\n         ON CONFLICT (bear_id, scope_kind, scope_value) WHERE revoked_at IS NULL\n         DO UPDATE SET approved_by_user_id = EXCLUDED.approved_by_user_id,\n                       source = EXCLUDED.source,\n                       expires_at = EXCLUDED.expires_at",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Int4",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ac37ac9ea027d0958e7755a0033a3b5b64d2018b2066f6587fda2f50edde0192"
+}

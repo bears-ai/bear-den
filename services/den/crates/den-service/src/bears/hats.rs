@@ -113,6 +113,15 @@ pub async fn create_hat_with_summary(
             "hat name and purpose must be present; purpose must be at most 4000 bytes".to_string(),
         ));
     }
+    let mut tx = pool.begin().await?;
+    // The same Bear row is locked by legacy approval writes. A concurrent
+    // approval cannot slip between creating the first hat and revocation.
+    sqlx::query_scalar!(
+        "SELECT id FROM bears WHERE id = $1 FOR UPDATE",
+        bear_id.as_uuid()
+    )
+    .fetch_one(&mut *tx)
+    .await?;
     let row = sqlx::query_as!(
         BearHatRow,
         r#"INSERT INTO bear_hats (bear_id, name, purpose, identity_prompt, created_by_user_id, short_summary)
@@ -124,7 +133,7 @@ pub async fn create_hat_with_summary(
         created_by_user_id.get(),
         short_summary,
     )
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await
     .map_err(|err| match err {
         sqlx::Error::Database(db) if db.is_unique_violation() => DenError::ValidationError(
@@ -132,6 +141,14 @@ pub async fn create_hat_with_summary(
         ),
         other => other.into(),
     })?;
+    sqlx::query!(
+        "UPDATE bear_web_approvals SET revoked_at = now()
+         WHERE bear_id = $1 AND revoked_at IS NULL",
+        bear_id.as_uuid(),
+    )
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
     Ok(row.into())
 }
 

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bear_web_approvals SET revoked_at = now()\n         WHERE bear_id = $1 AND revoked_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9e2202215691f91235c1e00d7600c8fbbc0b94ee175561ca712835a9e75adf02"
+}

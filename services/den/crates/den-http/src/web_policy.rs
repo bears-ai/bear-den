@@ -236,37 +236,43 @@ pub async fn record_web_approval(
             "web approval scope_kind must be url or host".to_string(),
         ));
     }
-    let expires_expr = ttl_seconds
-        .map(|seconds| format!("now() + interval '{} seconds'", seconds.clamp(1, 86_400)));
-    let sql = if expires_expr.is_some() {
-        r"
-        INSERT INTO bear_web_approvals (bear_id, scope_kind, scope_value, approved_by_user_id, source, expires_at)
-        VALUES ($1, $2, $3, $4, $5, now() + ($6::text || ' seconds')::interval)
-        ON CONFLICT (bear_id, scope_kind, scope_value) WHERE revoked_at IS NULL
-        DO UPDATE SET approved_by_user_id = EXCLUDED.approved_by_user_id,
-                      source = EXCLUDED.source,
-                      expires_at = EXCLUDED.expires_at
-        "
-    } else {
-        r"
-        INSERT INTO bear_web_approvals (bear_id, scope_kind, scope_value, approved_by_user_id, source, expires_at)
-        VALUES ($1, $2, $3, $4, $5, NULL)
-        ON CONFLICT (bear_id, scope_kind, scope_value) WHERE revoked_at IS NULL
-        DO UPDATE SET approved_by_user_id = EXCLUDED.approved_by_user_id,
-                      source = EXCLUDED.source,
-                      expires_at = NULL
-        "
-    };
-    let mut query = sqlx::query(sql)
-        .bind(bear_id)
-        .bind(scope_kind)
-        .bind(scope_value)
-        .bind(approved_by_user_id)
-        .bind(source);
-    if let Some(seconds) = ttl_seconds {
-        query = query.bind(seconds.to_string());
+    let mut tx = pool.begin().await?;
+    // Serialize with hat creation on the Bear row. The hat check must run in
+    // a fresh statement after acquiring this lock, not in the INSERT snapshot.
+    sqlx::query_scalar!("SELECT id FROM bears WHERE id = $1 FOR UPDATE", bear_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    let has_hats = sqlx::query_scalar!(
+        "SELECT EXISTS(SELECT 1 FROM bear_hats WHERE bear_id = $1) AS \"has_hats!\"",
+        bear_id,
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    if has_hats {
+        return Err(CustomError::ValidationError(
+            "Bear-wide web approvals cannot be created after configuring hats; manage exact hosts on a hat".into(),
+        ));
     }
-    query.execute(pool).await?;
+    sqlx::query!(
+        "INSERT INTO bear_web_approvals
+           (bear_id, scope_kind, scope_value, approved_by_user_id, source, expires_at)
+         VALUES ($1, $2, $3, $4, $5,
+           CASE WHEN $6::bigint IS NULL THEN NULL
+                ELSE now() + ($6::bigint * interval '1 second') END)
+         ON CONFLICT (bear_id, scope_kind, scope_value) WHERE revoked_at IS NULL
+         DO UPDATE SET approved_by_user_id = EXCLUDED.approved_by_user_id,
+                       source = EXCLUDED.source,
+                       expires_at = EXCLUDED.expires_at",
+        bear_id,
+        scope_kind,
+        scope_value,
+        approved_by_user_id,
+        source,
+        ttl_seconds.map(|seconds| seconds.clamp(1, 86_400)),
+    )
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
     Ok(())
 }
 

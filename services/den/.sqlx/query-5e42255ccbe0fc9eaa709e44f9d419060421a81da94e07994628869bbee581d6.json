@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS(SELECT 1 FROM bear_hats WHERE bear_id = $1) AS \"has_hats!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "has_hats!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "5e42255ccbe0fc9eaa709e44f9d419060421a81da94e07994628869bbee581d6"
+}
