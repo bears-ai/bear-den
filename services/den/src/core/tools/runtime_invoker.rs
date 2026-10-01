@@ -3,8 +3,11 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
-use den_core::tools::constants::{DEN_TASK_FOCUS, DEN_TASK_FOCUS_PROVIDER};
-use den_core::DenError;
+use den_core::tools::{
+    constants::{DEN_TASK_FOCUS, DEN_TASK_FOCUS_PROVIDER},
+    context::DenToolInvocationContext,
+};
+use den_core::{DenError, EffectivePolicy};
 use den_runtime::native_runtime::{RuntimeToolInvocation, RuntimeToolInvoker};
 use den_service::DenState;
 
@@ -21,6 +24,22 @@ impl DenRuntimeToolInvoker {
     }
 }
 
+fn require_origin_profile(
+    context: &DenToolInvocationContext,
+    effective_policy: &EffectivePolicy,
+) -> Result<(), DenError> {
+    if context.profile != Some(effective_policy.trust_profile) {
+        return Err(DenError::Authorization(
+            "Den tool context profile does not match the verified execution origin".into(),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "runtime_invoker/tests.rs"]
+mod tests;
+
 #[async_trait]
 impl RuntimeToolInvoker for DenRuntimeToolInvoker {
     async fn invoke(&self, invocation: RuntimeToolInvocation) -> Result<Value, DenError> {
@@ -32,6 +51,10 @@ impl RuntimeToolInvoker for DenRuntimeToolInvoker {
             origin_run_id,
             tool_call_id,
         } = invocation;
+        // The runtime's verified origin is the authority. A forged/supplied
+        // compatibility profile or binding cannot turn a Pair/Channel run
+        // into an internal Curate/Work Den tool invocation.
+        require_origin_profile(&context, &effective_policy)?;
         if matches!(tool_name.as_str(), DEN_TASK_FOCUS | DEN_TASK_FOCUS_PROVIDER) {
             effective_policy
                 .capabilities

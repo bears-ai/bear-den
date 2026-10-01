@@ -7,6 +7,7 @@ use den_core::{
     governance::Governance,
     profile::BearProfile,
     tools::capability_catalog::{CapabilityEntry, SessionCapabilityDescriptor},
+    TurnExecutionOrigin,
 };
 use den_docket::TaskListProjection;
 use den_protocol::ContextBudgetReport;
@@ -143,6 +144,9 @@ pub struct AgentLoopSession {
     /// source of truth for focused work; behavior decisions should resolve
     /// `RuntimeTaskContext` instead of treating this cache as authoritative.
     pub cached_activity_plan_projection: Option<TaskListProjection>,
+    /// Verified at turn start and retained across in-process continuations.
+    /// The compatibility profile below is a projection, not an origin grant.
+    pub origin: TurnExecutionOrigin,
     pub profile: BearProfile,
     pub overflow_retry_attempted: bool,
     pub overflow_compaction_recovered: bool,
@@ -493,6 +497,9 @@ mod tests {
             conversation_id: "den-conv-test".to_string(),
             client_session_id: "client-test".to_string(),
             work_run_id: None,
+            origin: TurnExecutionOrigin::ArmatureConversation(
+                den_core::ArmatureAvailability::Connected,
+            ),
             checkpoint_audit_context: None,
             workspace_roots: vec!["/workspace".to_string()],
             session_capabilities: vec![],

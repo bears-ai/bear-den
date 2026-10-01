@@ -68,7 +68,7 @@ use den_core::{
     config::Config,
     governance::Governance,
     profile::BearProfile,
-    DenError,
+    ArmatureAvailability, DenError, EffectivePolicy, TurnExecutionOrigin,
 };
 use den_docket::TaskListProjection;
 
@@ -427,6 +427,7 @@ pub struct SessionTrackingStream {
     dispatch_mode: NativeToolDispatchMode,
     config: Arc<Config>,
     profile: BearProfile,
+    origin: TurnExecutionOrigin,
     may_define_task: bool,
 }
 
@@ -485,6 +486,7 @@ impl SessionTrackingStream {
             dispatch_mode,
             config,
             profile,
+            origin: session.origin,
             may_define_task,
         }
     }
@@ -669,6 +671,30 @@ impl SessionTrackingStream {
             && provider_tool_supports_unilateral_execution(tool_name)
             && (self.may_define_task
                 || !is_task_definition_or_delegation_tool_provider_name(tool_name))
+    }
+
+    fn effective_server_tool_policy(
+        &self,
+        governance: Governance,
+    ) -> Result<EffectivePolicy, DenError> {
+        let origin = match (self.origin, self.dispatch_mode) {
+            (
+                TurnExecutionOrigin::ArmatureConversation(_),
+                NativeToolDispatchMode::ServerSideInProcess,
+            ) => TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Absent),
+            (
+                TurnExecutionOrigin::AuthorizedWorkRun(_),
+                NativeToolDispatchMode::ServerSideInProcess,
+            ) => TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Absent),
+            (origin, _) => origin,
+        };
+        let policy = EffectivePolicy::compile_for_origin(origin, governance);
+        if policy.trust_profile != self.profile {
+            return Err(DenError::Authorization(
+                "native runtime profile does not match the verified execution origin".into(),
+            ));
+        }
+        Ok(policy)
     }
 
     fn task_definition_policy_error(
@@ -857,13 +883,13 @@ impl SessionTrackingStream {
             .map_or(den_core::Governance::Interactive, |session| {
                 session.governance
             });
-        let armature = if self.dispatch_mode == NativeToolDispatchMode::DeferToClient {
-            den_core::ArmatureAvailability::Connected
-        } else {
-            den_core::ArmatureAvailability::Absent
+        let effective_policy = match self.effective_server_tool_policy(governance) {
+            Ok(policy) => policy,
+            Err(error) => {
+                self.pending_server_tool = Some(Box::pin(async move { Err(error) }));
+                return;
+            }
         };
-        let effective_policy =
-            den_core::EffectivePolicy::compile(self.profile, governance, armature);
         let focus_promotion = canonical == DEN_TASK_FOCUS;
         let context = self.server_tool_context();
         let origin_run_id = self.run_id.clone();
@@ -2928,6 +2954,9 @@ mod tests {
             conversation_id: "den-conv-test".to_string(),
             client_session_id: "client-test".to_string(),
             work_run_id: None,
+            origin: den_core::TurnExecutionOrigin::ArmatureConversation(
+                den_core::ArmatureAvailability::Connected,
+            ),
             checkpoint_audit_context: None,
             workspace_roots: vec!["/workspace".to_string()],
             session_capabilities: vec![],
@@ -4532,6 +4561,9 @@ mod tests {
         let session_key = "den-conv-test:client-test";
         let mut session = test_session(session_key, bear_id);
         session.work_run_id = Some(work_run_id);
+        session.origin = den_core::TurnExecutionOrigin::AuthorizedWorkRun(
+            den_core::ArmatureAvailability::Connected,
+        );
         let store = AgentLoopSessionStore::default();
         store.insert(session.clone());
         let stream = SessionTrackingStream::new(
@@ -4552,6 +4584,58 @@ mod tests {
         );
 
         assert_eq!(stream.server_tool_context().work_run_id, Some(work_run_id));
+    }
+
+    #[tokio::test]
+    async fn server_tool_policy_uses_verified_origin_not_compatibility_profile() {
+        let bear_id = uuid::Uuid::new_v4();
+        let mut session = test_session("den-conv-origin:client-test", bear_id);
+        session.origin = TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Connected);
+        let store = AgentLoopSessionStore::default();
+        store.insert(session.clone());
+        let stream = SessionTrackingStream::new(
+            Box::pin(futures::stream::empty()),
+            &session,
+            store,
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop").unwrap(),
+            bear_id,
+            session.bear_slug.clone(),
+            session.user_id,
+            session.conversation_id.clone(),
+            session.client_session_id.clone(),
+            session.request_id.clone(),
+            Arc::new(Config::test_stub()),
+            BearProfile::Pair,
+            NativeToolDispatchMode::DeferToClient,
+        );
+        assert!(matches!(
+            stream.effective_server_tool_policy(Governance::Interactive),
+            Err(DenError::Authorization(_))
+        ));
+        let mut session = session;
+        session.origin = TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected);
+        let store = AgentLoopSessionStore::default();
+        store.insert(session.clone());
+        let stream = SessionTrackingStream::new(
+            Box::pin(futures::stream::empty()),
+            &session,
+            store,
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop").unwrap(),
+            bear_id,
+            session.bear_slug.clone(),
+            session.user_id,
+            session.conversation_id.clone(),
+            session.client_session_id.clone(),
+            session.request_id.clone(),
+            Arc::new(Config::test_stub()),
+            BearProfile::Pair,
+            NativeToolDispatchMode::ServerSideInProcess,
+        );
+        assert!(!stream
+            .effective_server_tool_policy(Governance::Interactive)
+            .unwrap()
+            .capabilities
+            .contains(den_core::BearCapability::UseArmatureTools));
     }
 
     #[tokio::test]

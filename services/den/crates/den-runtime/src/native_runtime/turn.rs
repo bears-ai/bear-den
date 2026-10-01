@@ -1116,6 +1116,7 @@ async fn build_session(
         conversation_id: conversation_id.to_string(),
         client_session_id: client_session_id.to_string(),
         work_run_id,
+        origin,
         checkpoint_audit_context,
         workspace_roots: workspace_roots
             .map(|items| items.to_vec())
@@ -2493,6 +2494,7 @@ mod tests {
         resolve_agent_loop_control, AgentLoopControlResolutionInput, FreeformPolicy,
         PostMutationVerificationWindow, StrategyProfile, ToolCallBudgetLimits, TurnBudgetPolicy,
     };
+    use den_core::TurnExecutionOrigin;
 
     #[sqlx::test(migrations = "../../migrations")]
     async fn continuation_binding_cannot_switch_a_work_turn_to_pair(pool: PgPool) {
@@ -2758,6 +2760,9 @@ mod tests {
             conversation_id: "conv".to_string(),
             client_session_id: "session".to_string(),
             work_run_id: None,
+            origin: TurnExecutionOrigin::ArmatureConversation(
+                den_core::ArmatureAvailability::Connected,
+            ),
             checkpoint_audit_context: None,
             workspace_roots: vec![],
             session_capabilities: vec![],
@@ -2874,6 +2879,9 @@ mod tests {
             conversation_id: "conv".to_string(),
             client_session_id: "session".to_string(),
             work_run_id: None,
+            origin: TurnExecutionOrigin::ArmatureConversation(
+                den_core::ArmatureAvailability::Connected,
+            ),
             checkpoint_audit_context: None,
             workspace_roots: vec![],
             session_capabilities: vec![],
@@ -2968,6 +2976,9 @@ mod tests {
             conversation_id: "conv".to_string(),
             client_session_id: "session".to_string(),
             work_run_id: None,
+            origin: TurnExecutionOrigin::ArmatureConversation(
+                den_core::ArmatureAvailability::Connected,
+            ),
             checkpoint_audit_context: None,
             workspace_roots: vec![],
             session_capabilities: vec![],
@@ -3033,6 +3044,9 @@ mod tests {
             conversation_id: "conv".to_string(),
             client_session_id: "session".to_string(),
             work_run_id: None,
+            origin: TurnExecutionOrigin::ArmatureConversation(
+                den_core::ArmatureAvailability::Connected,
+            ),
             checkpoint_audit_context: None,
             workspace_roots: vec![],
             session_capabilities: vec![],
@@ -3232,6 +3246,9 @@ mod tests {
             conversation_id: conversation_id.clone(),
             client_session_id: client_session_id.clone(),
             work_run_id: None,
+            origin: TurnExecutionOrigin::ArmatureConversation(
+                den_core::ArmatureAvailability::Connected,
+            ),
             checkpoint_audit_context: None,
             workspace_roots: vec!["/workspace".to_string()],
             session_capabilities: vec![],
@@ -3338,6 +3355,9 @@ mod tests {
             conversation_id: conversation_id.clone(),
             client_session_id: client_session_id.clone(),
             work_run_id: None,
+            origin: TurnExecutionOrigin::ArmatureConversation(
+                den_core::ArmatureAvailability::Connected,
+            ),
             checkpoint_audit_context: None,
             workspace_roots: vec!["/workspace".to_string()],
             session_capabilities: vec![],
@@ -3539,6 +3559,9 @@ mod tests {
             conversation_id: conversation_id.clone(),
             client_session_id: client_session_id.clone(),
             work_run_id: None,
+            origin: TurnExecutionOrigin::ArmatureConversation(
+                den_core::ArmatureAvailability::Connected,
+            ),
             checkpoint_audit_context: None,
             workspace_roots: vec!["/workspace".to_string()],
             session_capabilities: vec![],
@@ -3706,6 +3729,9 @@ mod tests {
             conversation_id: conversation_id.clone(),
             client_session_id: client_session_id.clone(),
             work_run_id: None,
+            origin: TurnExecutionOrigin::ArmatureConversation(
+                den_core::ArmatureAvailability::Connected,
+            ),
             checkpoint_audit_context: None,
             workspace_roots: vec!["/workspace".to_string()],
             session_capabilities: vec![],
