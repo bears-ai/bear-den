@@ -22,11 +22,14 @@ use sqlx::PgPool;
 #[derive(Serialize, Deserialize)]
 struct RunEgressSnapshot {
     hosts: AllowedOutboundHosts,
+    #[serde(default)]
+    dynamic_authorization: bool,
 }
 
 pub(super) fn snapshot(hosts: &AllowedOutboundHosts) -> Value {
     serde_json::to_value(RunEgressSnapshot {
         hosts: hosts.clone(),
+        dynamic_authorization: true,
     })
     .expect("validated outbound hosts serialize")
 }
@@ -67,6 +70,9 @@ pub(super) async fn host_allowed_for_live_run(
         return Ok(false);
     }
     let at_provision = provisioned_snapshot(run)?;
+    if !at_provision.dynamic_authorization {
+        return Ok(false);
+    }
     if !at_provision
         .hosts
         .as_slice()
@@ -98,6 +104,11 @@ pub(super) async fn active_run_still_authorized(
         return Ok(true);
     }
     let at_provision = provisioned_snapshot(run)?;
+    if !at_provision.dynamic_authorization {
+        return Err(DenError::Authorization(
+            "hat-bound Work sandbox predates Den-checked outbound relays".into(),
+        ));
+    }
     let context = den_docket::work_runs::get_work_run_dispatch_context(pool, run.id).await?;
     let root = context.work_surface_name.as_deref().ok_or_else(|| {
         DenError::Authorization("Work run no longer has an assigned surface".into())
@@ -113,9 +124,13 @@ pub(super) async fn active_run_still_authorized(
 }
 
 pub(super) fn require_provider_run_ceiling(health: &HealthResponse) -> Result<(), DenError> {
-    if !health.ok || !health.backend_available || !health.run_outbound_ceiling_supported {
+    if !health.ok
+        || !health.backend_available
+        || !health.run_outbound_ceiling_supported
+        || !health.dynamic_egress_supported
+    {
         return Err(DenError::Authorization(
-            "the sandbox provider must be healthy and enforce run-scoped outbound ceilings for hat-bound Work".into(),
+            "the sandbox provider must be healthy and enforce run-scoped ceilings and per-connection egress checks for hat-bound Work".into(),
         ));
     }
     Ok(())

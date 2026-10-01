@@ -22,7 +22,7 @@ use den_core::{
 use den_docket::work_runs::{
     self, WorkRunDispatchContext, WorkRunFinalize, WorkRunProvisioned, WorkRunRow, WorkRunState,
 };
-use den_docket::{PgDocketService, TaskDispatcher};
+use den_docket::{DocketService, PgDocketService, TaskDispatcher};
 use den_sandbox::protocol::{
     CreateSandboxRequest, NetworkMode, PublishRequest, SandboxLimits, SandboxType,
 };
@@ -73,6 +73,15 @@ pub async fn allow_work_egress_connection(
     }
     let context = work_runs::get_work_run_dispatch_context(pool, work_run_id).await?;
     if context.created_by_user_id != actor.get() {
+        return Ok(false);
+    }
+    let Some(job) = PgDocketService::from_pool(pool)
+        .get_job(run.bear_id, run.job_id)
+        .await?
+    else {
+        return Ok(false);
+    };
+    if job.job.lifecycle_intent.is_some() || job.job.current_run_id != Some(run.job_run_id) {
         return Ok(false);
     }
     network_policy::host_allowed_for_live_run(pool, &run, host).await
@@ -327,7 +336,7 @@ async fn provision_run(
             Ok(health) if network_policy::require_provider_run_ceiling(&health).is_ok() => {}
             Ok(_) | Err(_) => {
                 fail_run(pool, run, "work_hat_provider_capability",
-                    "hat-bound Work needs a reachable provider that enforces run-scoped outbound ceilings", None).await;
+                    "hat-bound Work needs a reachable provider that enforces run-scoped ceilings and per-connection egress checks", None).await;
                 return;
             }
         }

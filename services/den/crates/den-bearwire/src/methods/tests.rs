@@ -115,6 +115,174 @@ async fn work_egress_check_rejects_missing_run_token_and_unsafe_host(pool: sqlx:
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn work_egress_connection_checks_the_run_token_and_revocation(pool: sqlx::PgPool) {
+    use den_core::ids::{BearId, UserId};
+    use den_service::{
+        bears::hats::{
+            self,
+            access::{self, HatAccessGrant, HttpsHost},
+        },
+        work_surfaces::{self, NewWorkSurface},
+    };
+
+    let admin = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let ordinary_token = create_token_for_bear(&pool, admin, bear_id).await;
+    let run_token = armature_tokens::create_for_bear(&pool, admin, bear_id, "exact work-run token")
+        .await
+        .unwrap();
+    let bear = BearId::new(bear_id);
+    let hat = hats::create_hat(
+        &pool,
+        bear,
+        UserId::new(admin),
+        "Work review",
+        "Review code",
+    )
+    .await
+    .unwrap();
+    let surface = work_surfaces::create_surface(
+        &pool,
+        admin,
+        NewWorkSurface {
+            name: "egress-check-surface".into(),
+            description: None,
+            upstream_url: "https://example.test/repo.git".into(),
+            default_ref: "main".into(),
+            default_image: None,
+            allowed_outbound_hosts: vec!["docs.example.com".into()],
+            credential: None,
+        },
+        "",
+    )
+    .await
+    .unwrap();
+    work_surfaces::assign_bear(&pool, surface.id, bear_id, admin)
+        .await
+        .unwrap();
+    hats::allow_surface(&pool, bear, hat.id, surface.id)
+        .await
+        .unwrap();
+    sqlx::query!(
+        "UPDATE bear_hats SET work_enabled = true WHERE id = $1",
+        hat.id.as_uuid()
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let host = HatAccessGrant::HttpsHost(HttpsHost::parse("docs.example.com").unwrap());
+    let host_grant = access::grant(&pool, bear, hat.id, UserId::new(admin), &host, true)
+        .await
+        .unwrap();
+    let job_id = sqlx::query_scalar!(
+        "INSERT INTO bear_jobs (bear_id, created_by_user_id, created_by_role, goal)
+         VALUES ($1, $2, 'ui', 'Egress check') RETURNING id",
+        bear_id,
+        admin,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query!(
+        "INSERT INTO job_work_surface_assignments (job_id, work_surface_id) VALUES ($1, $2)",
+        job_id,
+        surface.id
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    hats::bindings::bind_job_hat(&pool, bear, job_id, hat.id)
+        .await
+        .unwrap();
+    let job_run = sqlx::query_scalar!(
+        "INSERT INTO bear_job_runs (job_id) VALUES ($1) RETURNING id",
+        job_id,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query!(
+        "UPDATE bear_jobs SET current_run_id = $2, updated_at = NOW() WHERE id = $1",
+        job_id,
+        job_run,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let work_run_id = sqlx::query_scalar!(
+        "INSERT INTO bear_work_runs (bear_id, job_id, job_run_id)
+         VALUES ($1, $2, $3) RETURNING id",
+        bear_id,
+        job_id,
+        job_run,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let claimed = claim_next_work_run(&pool, "egress-test-worker", Duration::from_secs(60))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed.id, work_run_id);
+    record_work_run_provisioned(
+        &pool,
+        work_run_id,
+        &WorkRunProvisioned {
+            sandbox_server_url: "http://provider.test".into(),
+            sandbox_id: "test-sandbox".into(),
+            sandbox_type: "container".into(),
+            sandbox_strength: "test".into(),
+            work_surface: json!({}),
+            rust_dependency_preparation: None,
+        },
+    )
+    .await
+    .unwrap();
+    den_docket::work_runs::merge_work_run_result_refs(
+        &pool,
+        work_run_id,
+        &json!({"armature_token_id": run_token.id, "hat_egress": {"hosts": ["docs.example.com"]}}),
+    )
+    .await
+    .unwrap();
+    let state = test_state(pool.clone());
+    let check = |token: &str, host: &str| {
+        let token = token.to_string();
+        let params = json!({"bear_slug": bear_slug, "work_run_id": work_run_id, "host": host});
+        let state = state.clone();
+        async move { rpc_value(state, &token, "work.egress.check", params).await }
+    };
+    let pre_gateway = check(&run_token.raw_token, "docs.example.com").await;
+    assert_eq!(pre_gateway["result"]["allowed"], false, "{pre_gateway}");
+    den_docket::work_runs::merge_work_run_result_refs(
+        &pool,
+        work_run_id,
+        &json!({"hat_egress": {"hosts": ["docs.example.com"], "dynamic_authorization": true}}),
+    )
+    .await
+    .unwrap();
+    let allowed = check(&run_token.raw_token, "docs.example.com").await;
+    assert_eq!(allowed["result"]["allowed"], true, "{allowed}");
+    let unrelated_token = check(&ordinary_token, "docs.example.com").await;
+    assert_eq!(
+        unrelated_token["result"]["allowed"], false,
+        "{unrelated_token}"
+    );
+    let other_host = check(&run_token.raw_token, "registry.example.com").await;
+    assert_eq!(other_host["result"]["allowed"], false, "{other_host}");
+    access::revoke(&pool, bear, hat.id, UserId::new(admin), host_grant)
+        .await
+        .unwrap();
+    let revoked = check(&run_token.raw_token, "docs.example.com").await;
+    assert_eq!(revoked["result"]["allowed"], false, "{revoked}");
+    den_docket::work_runs::request_work_run_cancel(&pool, work_run_id, bear_id)
+        .await
+        .unwrap();
+    let cancelled = check(&run_token.raw_token, "docs.example.com").await;
+    assert_eq!(cancelled["result"]["allowed"], false, "{cancelled}");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn workspace_tool_check_requires_owned_hat_session_and_exact_live_grant(pool: sqlx::PgPool) {
     use den_core::ids::{BearId, UserId};
     use den_service::bears::hats::{

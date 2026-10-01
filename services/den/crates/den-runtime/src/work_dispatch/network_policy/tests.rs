@@ -22,6 +22,8 @@ fn a_provider_missing_the_run_ceiling_capability_is_not_eligible() {
     assert!(require_provider_run_ceiling(&old).is_err());
     let mut current = old;
     current.run_outbound_ceiling_supported = true;
+    assert!(require_provider_run_ceiling(&current).is_err());
+    current.dynamic_egress_supported = true;
     assert!(require_provider_run_ceiling(&current).is_ok());
     current.backend_available = false;
     assert!(require_provider_run_ceiling(&current).is_err());
@@ -230,6 +232,14 @@ async fn run_hosts_are_bounded_by_both_the_assigned_surface_and_current_hat_gran
     .fetch_one(&pool)
     .await
     .unwrap();
+    sqlx::query!(
+        "UPDATE bear_jobs SET current_run_id = $2, updated_at = NOW() WHERE id = $1",
+        job,
+        job_run,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
     let run_id = sqlx::query_scalar!(
         "INSERT INTO bear_work_runs (bear_id, job_id, job_run_id)
          VALUES ($1, $2, $3) RETURNING id",
@@ -250,6 +260,20 @@ async fn run_hosts_are_bounded_by_both_the_assigned_surface_and_current_hat_gran
             .is_err(),
         "a pre-cutover sandbox without a recorded hat ceiling fails closed"
     );
+    den_docket::work_runs::merge_work_run_result_refs(
+        &pool,
+        run_id,
+        &serde_json::json!({"hat_egress": {"hosts": ["docs.example.com"]}}),
+    )
+    .await
+    .unwrap();
+    let pre_gateway = den_docket::work_runs::get_work_run(&pool, run_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(active_run_still_authorized(&pool, &pre_gateway)
+        .await
+        .is_err());
     den_docket::work_runs::merge_work_run_result_refs(
         &pool,
         run_id,
@@ -314,6 +338,35 @@ async fn run_hosts_are_bounded_by_both_the_assigned_surface_and_current_hat_gran
     )
     .await
     .unwrap());
+    sqlx::query!(
+        "UPDATE bear_jobs SET current_run_id = $2, updated_at = NOW() WHERE id = $1",
+        job,
+        None::<Uuid>,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert!(
+        !super::super::allow_work_egress_connection(
+            &pool,
+            BearId::new(bear),
+            UserId::new(admin),
+            run_token_id,
+            run_id,
+            &permitted_host,
+        )
+        .await
+        .unwrap(),
+        "a displaced Job run cannot open another connection"
+    );
+    sqlx::query!(
+        "UPDATE bear_jobs SET current_run_id = $2, updated_at = NOW() WHERE id = $1",
+        job,
+        job_run,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
     for (actor, token, owner) in [
         (admin, Uuid::new_v4(), BearId::new(bear)),
         (admin + 1, run_token_id, BearId::new(bear)),

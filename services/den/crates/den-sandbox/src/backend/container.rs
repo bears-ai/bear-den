@@ -20,6 +20,7 @@ use crate::protocol::{
 };
 use std::collections::BTreeMap;
 use std::future::Future;
+use std::io::Write;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -184,7 +185,13 @@ impl DockerCliBackend {
             NetworkMode::Open => add_host.as_deref(),
             NetworkMode::Restricted => None,
         };
-        let env_file = self.write_env_file(&spec.id, &env)?;
+        let env_file = match self.write_env_file(&spec.id, &env) {
+            Ok(path) => path,
+            Err(error) => {
+                self.cleanup_network_resources(&spec.id).await;
+                return Err(error);
+            }
+        };
         let args = sandbox_run_args(
             spec,
             &container,
@@ -279,8 +286,13 @@ impl DockerCliBackend {
                 port: 443,
                 path: String::new(),
             };
-            self.start_relay(&network, spec, &target, &relay, Some(host), None)
-                .await?;
+            if spec.dynamic_egress_required {
+                self.start_guarded_egress_relay(&network, spec, &relay, host, pinned, add_host)
+                    .await?;
+            } else {
+                self.start_relay(&network, spec, &target, &relay, Some(host), None)
+                    .await?;
+            }
         }
         Ok(network)
     }
@@ -309,6 +321,113 @@ impl DockerCliBackend {
                 detail: format!("relay start failed: {}", out.stderr_lossy().trim()),
             });
         }
+        self.attach_relay_to_network(network, &spec.id, relay, alias)
+            .await
+    }
+
+    async fn start_guarded_egress_relay(
+        &self,
+        network: &str,
+        spec: &ProvisionSpec,
+        relay: &str,
+        host: &str,
+        pinned: Ipv4Addr,
+        add_host: Option<&str>,
+    ) -> Result<(), BackendError> {
+        let required = |key| {
+            spec.env
+                .get(key)
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| BackendError::Operation {
+                    id: spec.id.clone(),
+                    detail: format!("hat-bound egress missing Den-owned {key}"),
+                })
+        };
+        let callback = required("DEN_API_URL")?;
+        let callback_url = reqwest::Url::parse(callback).map_err(|_| BackendError::Operation {
+            id: spec.id.clone(),
+            detail: "hat-bound egress has an invalid Den callback URL".into(),
+        })?;
+        if callback_url.scheme() != "http"
+            || !callback_url.username().is_empty()
+            || callback_url.password().is_some()
+            || callback_url.query().is_some()
+            || callback_url.fragment().is_some()
+        {
+            return Err(BackendError::Operation {
+                id: spec.id.clone(),
+                detail:
+                    "hat-bound egress requires a private HTTP Den callback without URL credentials"
+                        .into(),
+            });
+        }
+        let run_id = required("DEN_WORK_ORDER_ID")?;
+        if uuid::Uuid::parse_str(run_id).is_err() {
+            return Err(BackendError::Operation {
+                id: spec.id.clone(),
+                detail: "hat-bound egress requires a Den-issued Work-run ID".into(),
+            });
+        }
+        let relay_env = BTreeMap::from([
+            (
+                "DEN_EGRESS_API_URL".into(),
+                callback.trim_end_matches('/').to_string(),
+            ),
+            (
+                "DEN_EGRESS_BEAR_SLUG".into(),
+                required("BEAR_SLUG")?.clone(),
+            ),
+            ("DEN_EGRESS_RUN_ID".into(), run_id.clone()),
+            ("DEN_EGRESS_HOST".into(), host.to_string()),
+            ("DEN_EGRESS_IP".into(), pinned.to_string()),
+            ("DEN_EGRESS_TOKEN".into(), required("DEN_TOKEN")?.clone()),
+        ]);
+        let env_file = self.write_env_file(relay, &relay_env)?;
+        let args = guarded_relay_run_args(relay, &spec.id, &spec.image, &env_file, add_host);
+        let started = self.docker_owned(&args, None).await;
+        let _ = std::fs::remove_file(&env_file);
+        let started = started?;
+        if !started.success() {
+            return Err(BackendError::Operation {
+                id: spec.id.clone(),
+                detail: format!(
+                    "guarded egress relay start failed: {}",
+                    started.stderr_lossy().trim()
+                ),
+            });
+        }
+        // `docker run -d` can succeed even when an old/custom sandbox image
+        // immediately exits because the relay script is absent. Never connect
+        // an unverified relay to the task's internal network.
+        let check = self
+            .docker_owned(
+                &[
+                    "exec".into(),
+                    relay.into(),
+                    "test".into(),
+                    "-x".into(),
+                    "/usr/local/bin/bears-egress-relay".into(),
+                ],
+                None,
+            )
+            .await?;
+        if !check.success() {
+            return Err(BackendError::Operation {
+                id: spec.id.clone(),
+                detail: "hat-bound egress requires the upgraded relay image".into(),
+            });
+        }
+        self.attach_relay_to_network(network, &spec.id, relay, Some(host))
+            .await
+    }
+
+    async fn attach_relay_to_network(
+        &self,
+        network: &str,
+        id: &str,
+        relay: &str,
+        alias: Option<&str>,
+    ) -> Result<(), BackendError> {
         let mut args = vec!["network".to_string(), "connect".to_string()];
         if let Some(alias) = alias {
             args.extend(["--alias".to_string(), alias.to_string()]);
@@ -317,7 +436,7 @@ impl DockerCliBackend {
         let out = self.docker_owned(&args, None).await?;
         if !out.success() {
             return Err(BackendError::Operation {
-                id: spec.id.clone(),
+                id: id.to_string(),
                 detail: format!(
                     "relay network connect failed: {}",
                     out.stderr_lossy().trim()
@@ -619,7 +738,9 @@ impl DockerCliBackend {
             id: id.to_string(),
             detail: format!("create env-file dir: {e}"),
         })?;
-        let path = self.env_file_dir.join(format!("{id}.env"));
+        let path = self
+            .env_file_dir
+            .join(format!("{id}-{}.env", uuid::Uuid::new_v4().simple()));
         let mut body = String::new();
         for (key, value) in env {
             // --env-file format is KEY=VALUE per line; values with newlines
@@ -635,14 +756,23 @@ impl DockerCliBackend {
             body.push_str(value);
             body.push('\n');
         }
-        std::fs::write(&path, body).map_err(|e| BackendError::Operation {
-            id: id.to_string(),
-            detail: format!("write env file: {e}"),
-        })?;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&path).map_err(|e| BackendError::Operation {
+            id: id.to_string(),
+            detail: format!("create private env file: {e}"),
+        })?;
+        if let Err(error) = file.write_all(body.as_bytes()) {
+            let _ = std::fs::remove_file(&path);
+            return Err(BackendError::Operation {
+                id: id.to_string(),
+                detail: format!("write private env file: {error}"),
+            });
         }
         Ok(path)
     }
@@ -836,6 +966,37 @@ fn select_public_egress_address(
         .ok_or("DNS returned no usable public IPv4 address")
 }
 
+fn guarded_relay_run_args(
+    relay: &str,
+    id: &str,
+    image: &str,
+    env_file: &Path,
+    add_host: Option<&str>,
+) -> Vec<String> {
+    let mut args = vec![
+        "run".into(),
+        "-d".into(),
+        "--name".into(),
+        relay.into(),
+        "--label".into(),
+        format!("{RELAY_LABEL}={id}"),
+        "--add-host".into(),
+        "host.docker.internal:host-gateway".into(),
+        "--env-file".into(),
+        env_file.display().to_string(),
+    ];
+    if let Some(mapping) = add_host {
+        args.extend(["--add-host".into(), mapping.into()]);
+    }
+    args.extend([
+        "--entrypoint".into(),
+        "/usr/local/bin/bears-egress-relay".into(),
+        image.into(),
+        "serve".into(),
+    ]);
+    args
+}
+
 fn relay_run_args(
     relay: &str,
     id: &str,
@@ -983,6 +1144,26 @@ mod tests {
         assert_eq!(name.strip_prefix(CONTAINER_PREFIX), Some("abc123"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn relay_secrets_are_written_private_from_creation() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("den-relay-env-{}", uuid::Uuid::new_v4()));
+        let backend = DockerCliBackend::new(dir.clone(), 1024);
+        let env = BTreeMap::from([("DEN_EGRESS_TOKEN".to_string(), "test-secret".to_string())]);
+        let first = backend.write_env_file("relay", &env).unwrap();
+        let second = backend.write_env_file("relay", &env).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(
+            std::fs::metadata(&first).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert!(std::fs::read_to_string(&first)
+            .unwrap()
+            .contains("test-secret"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn env_file_rejects_newlines() {
         let backend = DockerCliBackend::new(std::env::temp_dir().join("den-sbx-env-test"), 1024);
@@ -1001,6 +1182,7 @@ mod tests {
             env: BTreeMap::new(),
             network,
             allowed_outbound_hosts: Vec::new(),
+            dynamic_egress_required: false,
             memory_mb: None,
             cpus: None,
             pids: None,
@@ -1155,6 +1337,56 @@ mod tests {
             egress_relay_container_name("abc123", 0),
             "den-sbx-egress-abc123-0"
         );
+    }
+
+    #[tokio::test]
+    async fn hat_relay_fails_before_docker_without_a_run_token() {
+        let backend = DockerCliBackend::new(std::env::temp_dir(), 1024);
+        let mut spec = spec(NetworkMode::Restricted);
+        spec.dynamic_egress_required = true;
+        spec.env
+            .insert("DEN_API_URL".into(), "http://bears-den:3001".into());
+        spec.env.insert("BEAR_SLUG".into(), "test-bear".into());
+        spec.env
+            .insert("DEN_WORK_ORDER_ID".into(), uuid::Uuid::new_v4().to_string());
+        let error = backend
+            .start_guarded_egress_relay(
+                "den-sbx-net-abc123",
+                &spec,
+                "den-sbx-egress-abc123-0",
+                "docs.example.com",
+                "1.1.1.1".parse().unwrap(),
+                None,
+            )
+            .await
+            .expect_err("missing run token must fail before starting a relay");
+        assert!(error.to_string().contains("DEN_TOKEN"), "{error}");
+    }
+
+    #[test]
+    fn hat_relay_requires_the_guarded_entrypoint_without_exposing_its_token_in_args() {
+        let args = guarded_relay_run_args(
+            "den-sbx-egress-abc123-0",
+            "abc123",
+            "bears/sandbox:latest",
+            Path::new("/tmp/relay-private.env"),
+            Some("bears-den:172.20.0.5"),
+        );
+        let joined = args.join(" ");
+        assert!(
+            joined.contains("--entrypoint /usr/local/bin/bears-egress-relay"),
+            "{joined}"
+        );
+        assert!(
+            joined.contains("--env-file /tmp/relay-private.env"),
+            "{joined}"
+        );
+        assert!(
+            joined.contains("--add-host bears-den:172.20.0.5"),
+            "{joined}"
+        );
+        assert!(!joined.contains("TCP:"), "{joined}");
+        assert!(!joined.contains("DEN_EGRESS_TOKEN"), "{joined}");
     }
 
     #[test]

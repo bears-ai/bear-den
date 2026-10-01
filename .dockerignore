@@ -1,0 +1,11 @@
+.git
+.Trash-0
+.docker-cache
+.pytest_cache
+**/target
+**/node_modules
+**/__pycache__
+.env
+.env.*
+**/.env
+**/.env.*

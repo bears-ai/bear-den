@@ -23,13 +23,15 @@ ENV BEAR_ARMATURE_BUILD_SHA=${BEAR_ARMATURE_BUILD_SHA}
 RUN cargo build --release --manifest-path tools/bear-armature/Cargo.toml
 
 FROM debian:bookworm-slim
-# socat: this image doubles as the egress relay for restricted-network
-# sandboxes (the provider runs it with `--entrypoint socat`).
+# The provider also runs this image as the restricted-network relay. Hat-bound
+# external hosts use the Den-checking script; the Den callback and no-hat
+# compatibility relay still use socat directly.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git ca-certificates curl ripgrep socat \
+    && apt-get install -y --no-install-recommends git ca-certificates curl ripgrep socat jq coreutils \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 10001 bear
 COPY --from=build /src/tools/bear-armature/target/release/bear-armature /usr/local/bin/bear-armature
+COPY --chmod=0755 packaging/sandbox-image/egress-relay.sh /usr/local/bin/bears-egress-relay
 USER bear
 WORKDIR /workspace
 ENTRYPOINT ["bear-armature", "headless"]

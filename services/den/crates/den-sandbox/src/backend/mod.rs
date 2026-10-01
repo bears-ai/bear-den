@@ -35,6 +35,9 @@ pub struct ProvisionSpec {
     pub network: crate::protocol::NetworkMode,
     /// Exact HTTPS hosts permitted by the root's saved egress allowlist.
     pub allowed_outbound_hosts: Vec<String>,
+    /// A Den-issued run ceiling requires a Den-checked relay on every new
+    /// external connection; even an empty ceiling is never open network.
+    pub dynamic_egress_required: bool,
     pub memory_mb: Option<u64>,
     pub cpus: Option<f64>,
     pub pids: Option<u64>,

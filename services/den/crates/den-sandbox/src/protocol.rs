@@ -477,6 +477,10 @@ pub struct HealthResponse {
     /// to a provider that would silently ignore the request field.
     #[serde(default)]
     pub run_outbound_ceiling_supported: bool,
+    /// Per-connection Den authorization for hat-bound external HTTPS relays.
+    /// Old providers deserialize as false and must not receive hat-bound Work.
+    #[serde(default)]
+    pub dynamic_egress_supported: bool,
 }
 
 /// Uniform error body for non-2xx provider responses.

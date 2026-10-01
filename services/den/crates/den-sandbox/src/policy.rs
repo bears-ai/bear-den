@@ -18,6 +18,8 @@ pub enum PolicyError {
     UnknownRoot { name: String },
     #[error("a run-scoped outbound ceiling requires a restricted sandbox network")]
     OpenNetworkWithRunCeiling,
+    #[error("hat-bound Rust Work cannot use the unrestricted Cargo preparation helper; use a grant-enforced dependency cache")]
+    UnboundedCargoPreparation,
 }
 
 pub struct PolicyContext {
@@ -62,6 +64,19 @@ pub fn validate_selection(
             active: ctx.active_sandboxes,
             max: ctx.max_concurrent,
         });
+    }
+    Ok(())
+}
+
+/// Cargo fetch runs in a separate bridge-network helper, not in the restricted
+/// task sandbox. Until that helper enforces hat hosts, it must not run during
+/// hat-bound provisioning even for an otherwise eligible Rust workspace.
+pub fn require_bounded_cargo_preparation(
+    run_ceiling: Option<&AllowedOutboundHosts>,
+    cargo_manifests: &[String],
+) -> Result<(), PolicyError> {
+    if run_ceiling.is_some() && !cargo_manifests.is_empty() {
+        return Err(PolicyError::UnboundedCargoPreparation);
     }
     Ok(())
 }
@@ -156,6 +171,18 @@ mod tests {
             validate_selection(&request(SandboxType::Container, true), &ctx),
             Err(PolicyError::RuntimeUnavailable { .. })
         ));
+    }
+
+    #[test]
+    fn cargo_helper_cannot_bypass_a_hat_run_ceiling_during_provisioning() {
+        let empty_ceiling = AllowedOutboundHosts::default();
+        let manifest = vec!["Cargo.toml".to_string()];
+        assert_eq!(
+            require_bounded_cargo_preparation(Some(&empty_ceiling), &manifest),
+            Err(PolicyError::UnboundedCargoPreparation)
+        );
+        assert!(require_bounded_cargo_preparation(Some(&empty_ceiling), &[]).is_ok());
+        assert!(require_bounded_cargo_preparation(None, &manifest).is_ok());
     }
 
     #[test]

@@ -9,7 +9,10 @@
 use crate::backend::container::DockerCliBackend;
 use crate::backend::{Backend, BackendError, ProvisionSpec};
 use crate::metrics;
-use crate::policy::{effective_outbound_hosts, validate_selection, PolicyContext, PolicyError};
+use crate::policy::{
+    effective_outbound_hosts, require_bounded_cargo_preparation, validate_selection, PolicyContext,
+    PolicyError,
+};
 use crate::proc::{run_command, CommandSpec};
 use crate::protocol::{
     CatalogImage, CatalogResponse, CatalogRoot, CleanupState, CreateSandboxRequest, DiffResponse,
@@ -44,6 +47,7 @@ enum SandboxErrorKind {
     UnimplementedType,
     ReadonlyWriteConflict,
     OpenNetworkWithRunCeiling,
+    UnboundedCargoPreparation,
     UnknownRoot,
     UnknownImage,
     PublishUnsupported,
@@ -75,6 +79,7 @@ impl SandboxErrorKind {
             Self::UnimplementedType => "unimplemented_type",
             Self::ReadonlyWriteConflict => "readonly_write_conflict",
             Self::OpenNetworkWithRunCeiling => "open_network_with_run_ceiling",
+            Self::UnboundedCargoPreparation => "unbounded_cargo_preparation",
             Self::UnknownRoot => "unknown_root",
             Self::UnknownImage => "unknown_image",
             Self::PublishUnsupported => "publish_unsupported",
@@ -345,6 +350,10 @@ fn policy_error_response(err: &PolicyError) -> Response {
         PolicyError::OpenNetworkWithRunCeiling => (
             StatusCode::UNPROCESSABLE_ENTITY,
             SandboxErrorKind::OpenNetworkWithRunCeiling,
+        ),
+        PolicyError::UnboundedCargoPreparation => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            SandboxErrorKind::UnboundedCargoPreparation,
         ),
         PolicyError::RuntimeUnavailable { .. } => (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -756,6 +765,7 @@ async fn health(State(state): State<Arc<ProviderState>>) -> Json<HealthResponse>
         active_sandboxes,
         roots,
         run_outbound_ceiling_supported: true,
+        dynamic_egress_supported: true,
     })
 }
 
@@ -935,6 +945,11 @@ async fn provision(
     }
 
     let work_surface = recognize_work_surface(&workspace).await;
+    require_bounded_cargo_preparation(
+        request.allowed_outbound_hosts.as_ref(),
+        &work_surface.cargo_manifest_paths,
+    )
+    .map_err(|err| policy_error_response(&err))?;
 
     let workspace_bind_source = host_bind_source(
         &workspace,
@@ -1001,6 +1016,7 @@ async fn provision(
             &root.allowed_outbound_hosts,
             request.allowed_outbound_hosts.as_ref(),
         ),
+        dynamic_egress_required: request.allowed_outbound_hosts.is_some(),
         memory_mb: request.limits.memory_mb,
         cpus: request.limits.cpus,
         pids: request.limits.pids,
@@ -1663,6 +1679,7 @@ mod tests {
         let health: HealthResponse = serde_json::from_slice(&bytes).unwrap();
         assert!(health.ok);
         assert!(health.run_outbound_ceiling_supported);
+        assert!(health.dynamic_egress_supported);
         assert_eq!(health.active_sandboxes, 0);
     }
 
