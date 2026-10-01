@@ -19,7 +19,7 @@ use crate::{
     memory::{record_reflection_outcome_complete, record_reflection_outcome_start},
     memory_curate_executor::{self, MemoryCurateRunOutput},
     native_runtime::{
-        compose_curate_briefing_prompt, run_native_profile_turn_collect_assistant_text,
+        compose_curate_briefing_prompt, run_native_curate_briefing_collect_assistant_text,
         NativeRuntimeDeps,
     },
     recall::{reconcile_bear, QdrantRecall},
@@ -788,10 +788,9 @@ async fn maybe_run_native_curate_briefing_turn(
         config,
         stores,
     };
-    match run_native_profile_turn_collect_assistant_text(
+    match run_native_curate_briefing_collect_assistant_text(
         &deps,
         bear_id,
-        BearProfile::Curate,
         conversation_id,
         &session_id,
         &prompt,

@@ -25,7 +25,7 @@ use den_runtime::{
     agent_loop::{LedgerEvidenceRef, LoopControlDecisionKind, LoopControlLedgerInput},
     bearwire_events,
     current_task::preview_session_current_task_selection,
-    native_runtime::start_native_profile_turn_event_stream,
+    native_runtime::start_native_turn_event_stream,
     runtime::bearwire_projection::wire::runtime_stream_event_to_bearwire_events,
     runtime_error_ux::{log_sample, run_failure_projection, runtime_event_history_marker},
     runtime_exception_events::{
@@ -2712,7 +2712,7 @@ async fn run_start_with_recovery_source(
                     None
                 }
             };
-        let stream_result = start_native_profile_turn_event_stream(
+        let stream_result = start_native_turn_event_stream(
             TurnStartRequest {
                 sqlx_pool: &pool,
                 config: config.as_ref(),
@@ -2753,7 +2753,7 @@ async fn run_start_with_recovery_source(
                 api_style: Some(api_style_for_task),
                 supports_reasoning_effort: supports_reasoning_effort_for_task,
             },
-            stance,
+            origin,
         )
         .await;
 

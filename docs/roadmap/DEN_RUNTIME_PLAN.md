@@ -72,8 +72,8 @@ Foundational; parallelizable with Phase 1. Replaces the git MemFS sidecar so the
 - `RuntimeTurnBackend` / `LettaRuntimeTurnBackend` / `DenRuntimeAcpTurnRunner` are gone; ACP turn dispatch is an edge wrapper over native runtime functions.
 - Dead `LettaAcpConversationRuntime` and stale Letta runner cleanup paths are removed. Stale runtime cleanup is now in-process (`run_ids` empty) and no longer issues external agent-wide cancels under native runtime.
 - Native continuation, stream diagnostics, and pair turn comments use runtime/native terminology instead of Letta-facing labels.
-- Stance turn entry points (`start_native_profile_turn_event_stream`, `continue_native_profile_turn_event_stream`) are exported for `curate`/`watch` capability stances over one Den loop.
-- Native curate briefing is wired: rule-based `memory_curate_executor` runs first; when briefing items remain, `run_native_profile_turn_collect_assistant_text` runs a Curate stance LLM turn and projects assistant text into the memory_curate conversation (`NATIVE_CURATE_LLM_BRIEFING=0` disables).
+- `start_native_turn_event_stream` takes the Den-verified execution origin for BearWire turns; `continue_native_profile_turn_event_stream` remains a compatibility continuation entry point over the same Den loop.
+- Native curate briefing is wired: rule-based `memory_curate_executor` runs first; when briefing items remain, `run_native_curate_briefing_collect_assistant_text` runs an internal Curate LLM turn and projects assistant text into the memory_curate conversation (`NATIVE_CURATE_LLM_BRIEFING=0` disables).
 - Letta/Codepool/MemFS runtime removal is complete in production. Remaining references are documentation/schema/UI naming cleanup, not runtime migration work.
 
 ### Phase 6 — Den-native stance registry (replace provisioning) — Closed

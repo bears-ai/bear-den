@@ -829,7 +829,7 @@ fn wrap_session_stream(
 }
 
 struct BuildSessionInput<'a> {
-    profile: NativeCapabilityProfile,
+    origin: den_core::TurnExecutionOrigin,
     bear_id: Uuid,
     conversation_id: &'a str,
     client_session_id: &'a str,
@@ -871,7 +871,7 @@ async fn build_session(
     input: BuildSessionInput<'_>,
 ) -> Result<AgentLoopSession, DenError> {
     let BuildSessionInput {
-        profile,
+        origin,
         bear_id,
         conversation_id,
         client_session_id,
@@ -894,6 +894,10 @@ async fn build_session(
         technical_budget_recovery_start_payload,
         tool_messages,
     } = input;
+    let role =
+        den_core::EffectivePolicy::compile_for_origin(origin, den_core::Governance::Interactive)
+            .trust_profile;
+    let profile = NativeCapabilityProfile::for_profile(role);
     let llm = LlmClient::new(deps.config);
     let bear = den_service::bears::db::get_bear(deps.pool, bear_id)
         .await?
@@ -963,7 +967,7 @@ async fn build_session(
     };
     let tools = merge_den_and_client_tools(
         deps.config,
-        profile.profile,
+        origin,
         bear.work_enabled,
         bear.cabinet_enabled,
         may_define_task,
@@ -1278,19 +1282,18 @@ mod session_task_run_tests {
     }
 }
 
-pub async fn run_native_profile_turn_collect_assistant_text(
+pub async fn run_native_curate_briefing_collect_assistant_text(
     deps: &NativeRuntimeDeps<'_>,
     bear_id: Uuid,
-    role: BearProfile,
     conversation_id: &str,
     session_id: &str,
     prompt: &str,
 ) -> Result<String, DenError> {
-    let profile = NativeCapabilityProfile::for_profile(role);
+    let role = BearProfile::Curate;
     let session = build_session(
         deps,
         BuildSessionInput {
-            profile,
+            origin: den_core::TurnExecutionOrigin::InternalCuration,
             bear_id,
             conversation_id,
             client_session_id: session_id,
@@ -1352,11 +1355,10 @@ pub async fn start_native_web_chat_turn_event_stream(
     params: NativeWebChatTurnParams<'_>,
 ) -> Result<RuntimeEventStream, DenError> {
     let assembly_started = std::time::Instant::now();
-    let profile = NativeCapabilityProfile::for_profile(BearProfile::Chat);
     let session = build_session(
         params.deps,
         BuildSessionInput {
-            profile,
+            origin: den_core::TurnExecutionOrigin::ChannelConversation,
             bear_id: params.bear_id,
             conversation_id: params.conversation_id,
             client_session_id: params.session_id,
@@ -1423,14 +1425,22 @@ pub async fn start_native_web_chat_turn_event_stream(
 pub async fn start_native_client_turn_event_stream(
     request: TurnStartRequest<'_>,
 ) -> Result<RuntimeEventStream, DenError> {
-    start_native_profile_turn_event_stream(request, BearProfile::Pair).await
+    start_native_turn_event_stream(
+        request,
+        den_core::TurnExecutionOrigin::ArmatureConversation(
+            den_core::ArmatureAvailability::Connected,
+        ),
+    )
+    .await
 }
 
-pub async fn start_native_profile_turn_event_stream(
+pub async fn start_native_turn_event_stream(
     request: TurnStartRequest<'_>,
-    role: BearProfile,
+    origin: den_core::TurnExecutionOrigin,
 ) -> Result<RuntimeEventStream, DenError> {
-    let profile = NativeCapabilityProfile::for_profile(role);
+    let role =
+        den_core::EffectivePolicy::compile_for_origin(origin, den_core::Governance::Interactive)
+            .trust_profile;
     let runtime_conversations =
         NativeRuntimeConversationBackend::with_pool(request.sqlx_pool.clone());
     let materialized =
@@ -1450,7 +1460,7 @@ pub async fn start_native_profile_turn_event_stream(
             stores: request.memory_stores,
         },
         BuildSessionInput {
-            profile,
+            origin,
             bear_id: request.bear_id,
             conversation_id: &conversation_id,
             client_session_id,

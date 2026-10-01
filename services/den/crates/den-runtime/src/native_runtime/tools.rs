@@ -15,7 +15,7 @@ use den_core::{
         DEN_TASK_UPDATE_PROVIDER, DEN_WORK_CATALOG_PROVIDER, DEN_WORK_DISPATCH_PROVIDER,
         DEN_WORK_RUN_CANCEL_PROVIDER, DEN_WORK_RUN_GET_PROVIDER, DEN_WORK_RUN_LIST_PROVIDER,
     },
-    DenError,
+    DenError, TurnExecutionOrigin,
 };
 use serde_json::Value;
 
@@ -221,22 +221,16 @@ pub fn chat_turn_is_capabilities_meta_query(message: &str) -> bool {
 
 pub fn merge_den_and_client_tools(
     _config: &Config,
-    role: BearProfile,
+    origin: TurnExecutionOrigin,
     work_enabled: bool,
     cabinet_enabled: bool,
     may_define_task: bool,
     client_tools: Option<&Value>,
     pair_turn_prompt: Option<&str>,
 ) -> Result<Vec<LlmToolDefinition>, DenError> {
-    let effective_policy = den_core::EffectivePolicy::compile(
-        role,
-        den_core::Governance::Interactive,
-        if client_tools.is_some() {
-            den_core::ArmatureAvailability::Connected
-        } else {
-            den_core::ArmatureAvailability::Absent
-        },
-    );
+    let effective_policy =
+        den_core::EffectivePolicy::compile_for_origin(origin, den_core::Governance::Interactive);
+    let role = effective_policy.trust_profile;
     let mut merged = if role == BearProfile::Chat
         && !chat_turn_needs_full_tool_surface(pair_turn_prompt)
     {
@@ -332,10 +326,92 @@ pub fn merge_den_and_client_tools(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use den_core::config::Config;
+    use den_core::{config::Config, ArmatureAvailability};
+
+    // Exercise the compatibility profiles through the origin-owned production
+    // roster; the profile is never passed to the actual policy compiler.
+    fn merge_den_and_client_tools(
+        config: &Config,
+        role: BearProfile,
+        work_enabled: bool,
+        cabinet_enabled: bool,
+        may_define_task: bool,
+        client_tools: Option<&Value>,
+        prompt: Option<&str>,
+    ) -> Result<Vec<LlmToolDefinition>, DenError> {
+        let armature = if client_tools.is_some() {
+            ArmatureAvailability::Connected
+        } else {
+            ArmatureAvailability::Absent
+        };
+        let origin = match role {
+            BearProfile::Chat => TurnExecutionOrigin::ChannelConversation,
+            BearProfile::Pair => TurnExecutionOrigin::ArmatureConversation(armature),
+            BearProfile::Work => TurnExecutionOrigin::AuthorizedWorkRun(armature),
+            BearProfile::Curate => TurnExecutionOrigin::InternalCuration,
+            BearProfile::Watch => TurnExecutionOrigin::InboundObservation,
+        };
+        super::merge_den_and_client_tools(
+            config,
+            origin,
+            work_enabled,
+            cabinet_enabled,
+            may_define_task,
+            client_tools,
+            prompt,
+        )
+    }
 
     fn native_test_config() -> Config {
         Config::test_stub()
+    }
+
+    #[test]
+    fn verified_origin_controls_native_tool_roster_even_with_forwarded_client_descriptors() {
+        let config = native_test_config();
+        let fake = serde_json::json!([
+            {"name": "fs_read_text_file", "parameters": {"type": "object"}},
+            {"name": "mcp__outside__send", "parameters": {"type": "object"}}
+        ]);
+        for origin in [
+            TurnExecutionOrigin::ChannelConversation,
+            TurnExecutionOrigin::BrowserTaskSession,
+            TurnExecutionOrigin::InternalCuration,
+            TurnExecutionOrigin::InboundObservation,
+            TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Absent),
+        ] {
+            let tools = super::merge_den_and_client_tools(
+                &config,
+                origin,
+                true,
+                true,
+                true,
+                Some(&fake),
+                Some("use a tool"),
+            )
+            .unwrap();
+            assert!(
+                !tools.iter().any(|tool| tool.name == "fs_read_text_file"),
+                "{origin:?}"
+            );
+            assert!(
+                !tools.iter().any(|tool| tool.name == "mcp__outside__send"),
+                "{origin:?}"
+            );
+        }
+        let work = super::merge_den_and_client_tools(
+            &config,
+            TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Connected),
+            true,
+            true,
+            true,
+            Some(&fake),
+            None,
+        )
+        .unwrap();
+        assert!(work.iter().any(|tool| tool.name == "fs_read_text_file"));
+        assert!(work.iter().any(|tool| tool.name == "mcp__outside__send"));
+        assert!(!work.iter().any(|tool| tool.name == "create_job"));
     }
 
     #[test]

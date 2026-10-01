@@ -1,12 +1,10 @@
 //! Den-native in-process turn runtime ([ADR-0035](../../../docs/decisions/adr-0035-den-native-in-process-agent-runtime.md)).
 //!
-//! `start_native_profile_turn_event_stream` / `continue_native_profile_turn_event_stream` are the
-//! capability-profile entry points for API-direct operating profiles (`pair`, `curate`; `watch`
-//! stays rule-based). Browser web chat uses `start_native_web_chat_turn_event_stream` for
-//! `BearProfile::Chat` when `AGENT_RUNTIME=native`. Rule-based curate (`memory_curate_executor`)
-//! runs first; when briefing items remain under native runtime,
-//! `run_native_profile_turn_collect_assistant_text` can add an LLM briefing turn projected into the
-//! memory_curate conversation.
+//! `start_native_turn_event_stream` accepts Den-verified origin for BearWire turns;
+//! browser chat and internal Curate use their own typed entry paths. Continuations
+//! and model request metadata still carry compatibility profile labels. Rule-based
+//! Curate (`memory_curate_executor`) may add an internal briefing turn via
+//! `run_native_curate_briefing_collect_assistant_text`.
 
 pub mod legacy_memory_tools;
 mod openai_stream;
@@ -35,8 +33,8 @@ pub use tools::{
 pub use turn::{
     continue_native_client_turn_event_stream, continue_native_profile_turn_event_stream,
     native_client_run_exists, record_native_client_tool_result, remove_native_client_run,
-    run_native_profile_turn_collect_assistant_text, start_native_client_turn_event_stream,
-    start_native_profile_turn_event_stream, start_native_web_chat_turn_event_stream,
+    run_native_curate_briefing_collect_assistant_text, start_native_client_turn_event_stream,
+    start_native_turn_event_stream, start_native_web_chat_turn_event_stream,
     update_native_client_session_cached_activity_plan_projection, NativeRuntimeConversationBackend,
     NativeRuntimeDeps, NativeWebChatTurnParams,
 };
