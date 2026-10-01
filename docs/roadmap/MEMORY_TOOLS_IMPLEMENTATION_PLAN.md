@@ -131,7 +131,7 @@ Future tools:
 
 | Canonical | Provider-safe | Roles | Purpose |
 |---|---|---|---|
-| `den.memory.request_review` | `memory_request_review` | currently `pair` | Legacy no-hat Pair uses role-local paths; bound Pair with a Work-off, autonomous-learning-enabled hat may request `propose_hat` by its own canonical `source_memory_id`. The request itself does not publish. |
+| `den.memory.request_review` | `memory_request_review` | currently `pair` | Legacy no-hat Pair uses role-local paths; bound Pair wearing an automatic-sharing-enabled hat may request `propose_hat` by its own canonical `source_memory_id`. The request itself does not publish. |
 | `den.memory.list_proposals` | `memory_list_proposals` | `curate` | List memory review proposals. |
 | `den.memory.read_proposal` | `memory_read_proposal` | `curate` | Read one memory review proposal with source pointers and status. |
 | `den.memory.resolve_proposal` | `memory_resolve_proposal` | `curate` | Resolve a proposal as approved, rejected, retained local, deferred, superseded, or human-review-needed. |
@@ -142,7 +142,7 @@ Future tools:
 | `den.memory.recall` | `memory_recall` | role-scoped by recall-scope/policy | Hybrid semantic recall over the derived Qdrant index ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)). May be folded into a hybrid `memory_search` instead of a separate tool. |
 | `den.memory.index_curated_summary` | `memory_index_curated_summary` | `curate` / Den internal | Request recall indexing of selected curated summaries/pointers. |
 
-`den.memory.request_review` supersedes narrower producer-side names such as `den.memory.propose_core_write` or `den.memory.propose_core_update`. `propose_hat` intake records a Den-verified source/hat link in SQLite; the worker may now call a tool-free Curate model and apply its bounded typed decision to an opted-in Work-off hat. Missing keys or synthesis failure leave the private proposal pending with two bounded delayed retries; a denied publication leaves it pending without retry. Recovery after three attempts remains open ([hats plan](HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md)); no path or model-supplied JSON grants publication.
+`den.memory.request_review` supersedes narrower producer-side names such as `den.memory.propose_core_write` or `den.memory.propose_core_update`. `propose_hat` intake records a Den-verified source/hat link in SQLite; tool-free Curate may rewrite a verified note into that opted-in hat for all authorized wearers, including eligible Job runs. Missing keys or synthesis failures leave the proposal private with durable delayed recovery; disabled-sharing and authorization denials do not retry. A bounded sweep can recover eligible pending proposals without a queued successor ([hats plan](HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md)). No path or model-supplied JSON grants publication.
 
 ### P5 — Derived recall (Qdrant)
 

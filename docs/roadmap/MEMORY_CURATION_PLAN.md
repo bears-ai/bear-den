@@ -165,13 +165,13 @@ Non-curate roles should not write `core/` or Cabinet directly. They can request 
 |---|---|---|---|
 | `den.memory.request_review` | `memory_request_review` | `chat`, `pair`, `work`, `watch` | Request curation of role-local memory without choosing the final outcome. |
 
-`den.memory.request_review` supersedes narrower producer-side names such as `den.memory.propose_core_update`, `den.memory.propose_core_write`, and `den.memory.propose_cabinet_update`. The model-advertised request may include supported hints such as `propose_hat`, `cabinet_update`, `skill_review`, `retain_profile_local`, `delete_after_review`, `human_review`, or `unspecified`. `propose_hat` requires a canonical source-note UUID in a Bear-admin opted-in Work-off hat: Curate's tool-free synthesis may publish only newly authored text after Den rechecks source and audience. The model does not choose a target hat or authorization. The former `summarize_into_core` and `promote_to_core` hints are rejected for new model requests; historical proposals with those actions are resolved as rejected without publication or a human-review queue.
+`den.memory.request_review` supersedes narrower producer-side names such as `den.memory.propose_core_update`, `den.memory.propose_core_write`, and `den.memory.propose_cabinet_update`. The model-advertised request may include supported hints such as `propose_hat`, `cabinet_update`, `skill_review`, `retain_profile_local`, `delete_after_review`, `human_review`, or `unspecified`. `propose_hat` requires a canonical source-note UUID in a Bear-admin opted-in hat: Curate's tool-free synthesis may publish newly authored text to that hat for all authorized wearers, including eligible Job runs, after Den rechecks source and audience. The model does not choose a target hat or authorization. The former `summarize_into_core` and `promote_to_core` hints are rejected for new model requests; historical proposals with those actions are resolved as rejected without publication or a human-review queue.
 
 Configured-Bear Pair intake uses `source_memory_id` (a current UUID note from this conversation), not a role/path label. Den derives the hat from the authenticated conversation and records it separately from proposal JSON. Legacy no-hat Pair requests still reference role-local `source_paths`; neither request itself publishes shared content.
 
 Initial `den.memory.request_review` input shape:
 
-- `source_paths`: legacy no-hat Pair role-local paths; alternatively, `source_memory_id` supports a bound Pair's own canonical source-local note when autonomous learning is enabled for its Work-off hat;
+- `source_paths`: legacy no-hat Pair role-local paths; alternatively, `source_memory_id` supports a bound Pair's own canonical source-local note when automatic memory sharing is enabled for its hat;
 - `title`: concise review title;
 - `summary`: what the source memory says;
 - `rationale`: why review is useful;
