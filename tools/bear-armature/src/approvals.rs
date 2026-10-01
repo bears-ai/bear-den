@@ -217,6 +217,9 @@ impl ApprovalCache {
         let Some(persistence) = self.persistence.as_ref() else {
             return;
         };
+        if !candidate_approval_scopes(target.path, target.url, target.command).contains(&scope) {
+            return;
+        }
         let root_fingerprint = approval_root_fingerprint(context);
         let Some(scope_fingerprint) = approval_scope_fingerprint(context, scope, &target) else {
             return;
@@ -484,8 +487,10 @@ pub(crate) fn candidate_approval_scopes(
             scopes.push(ApprovalScope::SiteAccount);
         }
         scopes.push(ApprovalScope::Host);
-        scopes.push(ApprovalScope::Global);
         return scopes;
+    }
+    if target_url.is_some() {
+        return Vec::new();
     }
     if target_command.map(str::trim).is_some_and(|s| !s.is_empty()) {
         return vec![
@@ -570,7 +575,7 @@ pub(crate) fn permission_options_for_context(
 ) -> Vec<PermissionOption> {
     let mut options = vec![PermissionOption::new(
         "allow_once",
-        "Only this time",
+        "Just this time",
         PermissionOptionKind::AllowOnce,
     )];
     if let Some(site_account) = target_url.and_then(approval_url_site_account_scope) {
@@ -638,11 +643,13 @@ pub(crate) fn permission_options_for_context(
             PermissionOptionKind::AllowAlways,
         ));
     }
-    options.push(PermissionOption::new(
-        "allow_global",
-        format!("Always allow {permission_family_label} globally"),
-        PermissionOptionKind::AllowAlways,
-    ));
+    if target_url.is_none() {
+        options.push(PermissionOption::new(
+            "allow_global",
+            format!("Always allow {permission_family_label} globally"),
+            PermissionOptionKind::AllowAlways,
+        ));
+    }
     options.push(PermissionOption::new(
         "reject_once",
         "Deny",
@@ -990,9 +997,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn approval_cache_global_scope_crosses_url_hosts_for_same_identity_and_class() {
+    async fn legacy_global_network_approval_is_not_reused_or_offered() {
         let cache = test_approval_cache("http://den.test", "meta", "zed");
         let context = workspace_context("/workspace");
+        let old = ApprovalRecord {
+            api_url: "http://den.test".into(),
+            bear: "meta".into(),
+            client: "zed".into(),
+            tool_name: "web_fetch".into(),
+            permission_class: "network".into(),
+            root_fingerprint: approval_root_fingerprint(&context),
+            scope_kind: "global".into(),
+            scope_fingerprint: "global".into(),
+            risk: "read_only".into(),
+            created_at_secs: now_secs(),
+            expires_at_secs: now_secs() + 3600,
+        };
+        cache.entries.lock().await.insert(
+            ApprovalCache::key(
+                "http://den.test",
+                "meta",
+                "zed",
+                "network",
+                "global",
+                "global",
+            ),
+            old,
+        );
+        for url in [
+            "https://docs.example.test/reference/page",
+            "https://api.example.test/v1",
+        ] {
+            assert!(
+                !cache
+                    .is_allowed_for_url(&context, "web_fetch", Some(url))
+                    .await,
+                "{url}"
+            );
+        }
         cache
             .remember_for_url(
                 &context,
@@ -1002,16 +1044,25 @@ mod tests {
                 Some("https://docs.example.test/reference/page"),
             )
             .await;
-        assert!(
-            cache
-                .is_allowed_for_url(&context, "web_fetch", Some("https://api.example.test/v1"))
-                .await
+        assert_eq!(
+            cache.entries.lock().await.len(),
+            1,
+            "URL decisions cannot add global grants"
         );
-        assert!(
-            !cache
-                .is_allowed_for_url(&context, "process_run", Some("https://api.example.test/v1"))
-                .await
+        let options = permission_options_for_context(
+            Some(&context),
+            None,
+            Some("https://docs.example.test/reference/page"),
+            None,
+            "network tools",
         );
+        let ids = options
+            .iter()
+            .map(|option| option.option_id.to_string())
+            .collect::<Vec<_>>();
+        assert!(ids.contains(&"allow_once".to_string()));
+        assert!(ids.contains(&"allow_host".to_string()));
+        assert!(!ids.contains(&"allow_global".to_string()));
     }
 
     #[tokio::test]
@@ -1118,15 +1169,11 @@ mod tests {
     fn candidate_approval_scopes_prefers_host_for_urls() {
         assert_eq!(
             candidate_approval_scopes(None, Some("https://example.test:3030/path"), None),
-            vec![ApprovalScope::Host, ApprovalScope::Global]
+            vec![ApprovalScope::Host]
         );
         assert_eq!(
             candidate_approval_scopes(None, Some("https://github.com/bears-ai/bear-den"), None),
-            vec![
-                ApprovalScope::SiteAccount,
-                ApprovalScope::Host,
-                ApprovalScope::Global
-            ]
+            vec![ApprovalScope::SiteAccount, ApprovalScope::Host,]
         );
         assert_eq!(
             candidate_approval_scopes(Some(Path::new("/workspace/src/main.rs")), None, None),
@@ -1345,13 +1392,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             option_ids,
-            vec![
-                "allow_once",
-                "allow_host",
-                "allow_global",
-                "reject_once",
-                "reject_always",
-            ]
+            vec!["allow_once", "allow_host", "reject_once", "reject_always"]
         );
         assert!(serialized
             .to_string()
@@ -1381,7 +1422,6 @@ mod tests {
                 "allow_once",
                 "allow_site_account",
                 "allow_host",
-                "allow_global",
                 "reject_once",
                 "reject_always",
             ]
