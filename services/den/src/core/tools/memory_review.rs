@@ -309,9 +309,9 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
                 .ok_or_else(|| DenError::Authorization("bound conversation has no hat".into()))?;
             let hat =
                 hats::manage::get_hat(self.pool, BearId::new(request.bear_id), hat_id).await?;
-            if !hat.auto_curate_enabled || hat.work_enabled {
+            if !hat.auto_curate_enabled {
                 return Err(DenError::Authorization(
-                    "autonomous curation is not enabled for this Work-off hat".into(),
+                    "automatic memory sharing is not enabled for this hat".into(),
                 ));
             }
             let owned = sqlx::query_scalar!(

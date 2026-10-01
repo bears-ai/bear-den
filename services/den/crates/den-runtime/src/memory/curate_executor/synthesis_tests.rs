@@ -54,7 +54,7 @@ impl HatSynthesizer for OfflineCurator {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn verified_curate_synthesis_publishes_work_off_but_never_work_on(pool: PgPool) {
+async fn verified_curate_synthesis_publishes_for_every_authorized_hat_use(pool: PgPool) {
     let user = sqlx::query_scalar!(
         "INSERT INTO users (email, username) VALUES ('curatesynth@example.test', 'curatesynth') RETURNING id"
     ).fetch_one(&pool).await.unwrap();
@@ -286,7 +286,7 @@ async fn verified_curate_synthesis_publishes_work_off_but_never_work_on(pool: Pg
     .execute(&pool)
     .await
     .unwrap();
-    let withheld = execute_memory_curate_proposals_with_synth(
+    let shared_with_work = execute_memory_curate_proposals_with_synth(
         &pool,
         &config,
         &stores,
@@ -297,27 +297,23 @@ async fn verified_curate_synthesis_publishes_work_off_but_never_work_on(pool: Pg
     )
     .await
     .unwrap();
-    assert_eq!(withheld.outcomes[0].status, "pending");
-    assert_eq!(withheld.outcomes[0].retry_reason, None);
-    assert_eq!(
-        calls.load(Ordering::SeqCst),
-        2,
-        "Work-on must not send private notes to a synthesizer"
-    );
+    assert_eq!(shared_with_work.outcomes[0].status, "approved");
+    assert_eq!(shared_with_work.outcomes[0].retry_reason, None);
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
     assert_eq!(
         den_memory::get_memory_proposal(&store, &third.id.to_string())
             .await
             .unwrap()
             .unwrap()
             .status,
-        "pending"
+        "approved"
     );
     assert_eq!(
         library::recent(&store, &CuratedMemoryGrant::new(vec![hat.id]), 10)
             .await
             .unwrap()
             .len(),
-        1
+        2
     );
 
     sqlx::query!(
@@ -344,7 +340,7 @@ async fn verified_curate_synthesis_publishes_work_off_but_never_work_on(pool: Pg
     assert_eq!(rejected.outcomes[0].retry_reason, None);
     assert_eq!(
         calls.load(Ordering::SeqCst),
-        2,
+        3,
         "former members' notes never reach the model"
     );
 }

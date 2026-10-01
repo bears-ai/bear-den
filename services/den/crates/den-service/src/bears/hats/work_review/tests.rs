@@ -211,10 +211,7 @@ async fn populated_hat_requires_a_fresh_complete_admin_review_before_work(pool: 
     assert_eq!(receipt.record_count, 2);
     let enabled = hats::manage::get_hat(&pool, bear, hat.id).await.unwrap();
     assert!(enabled.work_enabled);
-    assert!(
-        !enabled.auto_curate_enabled,
-        "review-based Work enablement must reset auto-curation"
-    );
+    assert!(enabled.auto_curate_enabled);
     let stored = sqlx::query!(
         "SELECT reviewed_by_user_id, record_count, identity_sha256 FROM bear_hat_work_reviews WHERE id = $1 AND bear_id = $2 AND hat_id = $3",
         receipt.id, bear.as_uuid(), hat.id.as_uuid(),

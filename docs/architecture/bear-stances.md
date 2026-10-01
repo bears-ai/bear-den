@@ -48,7 +48,7 @@ The five-stance model supports five product and safety goals at once:
 
 1. **One coherent Bear, many contexts.** Users experience one assistant, while the system routes different contexts to the right internal stance.
 2. **Better concurrency.** Chat, IDE collaboration, background work, and inbound events can proceed without all traffic bottlenecking through one stateful agent.
-3. **Cleaner memory.** Bound turns keep raw notes in their own conversation or Work run. Explicit review may promote safe knowledge to their hat and then to Bear `core/`; legacy no-hat turns retain profile-local branches.
+3. **Cleaner memory.** Bound turns keep raw notes in their own conversation or Work run. Opted-in Curate can rewrite a verified conversation note into its hat for all authorized wearers, including Job runs. Bear-wide `core/` publication is explicit; no-hat turns retain profile-local branches.
 4. **Safer autonomy.** No single stance combines broad private data, outbound external communication, and unrestricted durable state mutation.
 5. **Clearer boundaries.** Each internal mode has a defined policy role, while hat identity and concrete authorization are legible in the Bear-admin experience.
 
@@ -104,7 +104,7 @@ The five-stance model supports five product and safety goals at once:
 
 ### `curate`: internal integrator
 
-`curate` is the Bear's internal integrator. It reads across the Bear's branches, reflects on and reorganizes accumulated activity, promotes durable knowledge into shared `core/`, reviews task intents and watch observations, promotes work results, and governs skill learning.
+`curate` is the Bear's internal integrator. It may rewrite verified private notes as knowledge for their bound hat when sharing is enabled. Bear-wide `core/` publication remains a separate explicit decision. Other curation responsibilities include reflecting on activity, reviewing task intents and observations, and interpreting work results.
 
 It is the primary semantic authority for what becomes shared Bear memory or shared Bear capability. Den enforces and installs those decisions.
 

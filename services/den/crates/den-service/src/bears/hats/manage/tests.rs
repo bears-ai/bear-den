@@ -163,13 +163,28 @@ async fn admin_configuration_narrows_surfaces_and_requires_empty_memory_before_w
         .unwrap();
     let enabled_hat = get_hat(&pool, bear, hat.id).await.unwrap();
     assert!(enabled_hat.work_enabled);
+    assert!(enabled_hat.auto_curate_enabled);
+    set_auto_curate_enabled(&pool, bear, hat.id, false, false)
+        .await
+        .unwrap();
     assert!(
-        !enabled_hat.auto_curate_enabled,
-        "Work enablement must reset autonomous curation"
+        !get_hat(&pool, bear, hat.id)
+            .await
+            .unwrap()
+            .auto_curate_enabled
     );
-    assert!(set_auto_curate_enabled(&pool, bear, hat.id, true, true)
+    assert!(set_auto_curate_enabled(&pool, bear, hat.id, true, false)
         .await
         .is_err());
+    set_auto_curate_enabled(&pool, bear, hat.id, true, true)
+        .await
+        .unwrap();
+    assert!(
+        get_hat(&pool, bear, hat.id)
+            .await
+            .unwrap()
+            .auto_curate_enabled
+    );
     assert!(matches!(
         update_hat(
             &pool,

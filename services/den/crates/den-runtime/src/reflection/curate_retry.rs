@@ -195,8 +195,7 @@ pub async fn recover_exhausted_once(
             Err(DenError::NotFound(_)) => continue,
             Err(error) => return Err(error),
         };
-        if hat.work_enabled
-            || !hat.auto_curate_enabled
+        if !hat.auto_curate_enabled
             || !verified_hat_candidate_is_current(pool, stores, candidate.bear_id, verified).await?
         {
             continue;

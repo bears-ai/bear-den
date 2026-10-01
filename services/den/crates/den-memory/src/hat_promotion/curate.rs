@@ -1,5 +1,5 @@
 //! SQLite half of an internal Curate-owned source→hat publication. The service
-//! must hold a Postgres lock on the selected Work-off hat and source conversation
+//! must hold a Postgres lock on the selected hat and source conversation
 //! through this transaction; this function alone cannot establish that audience.
 
 use den_core::DenError;
@@ -124,7 +124,6 @@ pub async fn promote_curated_proposal_to_hat(
         "source_sequence_no": source.sequence_no,
         "proposal_id": proposal_id,
         "curated_by_agent_id": curator_agent_id,
-        "promotion_policy": "autonomous_curate_work_off_hat",
     });
     sqlx::query(
         "INSERT INTO memory_records (memory_id, bear_id, sequence_no, scope_type,

@@ -449,7 +449,7 @@ async fn resolve_curate_proposal<S: HatSynthesizer>(
             return Ok(outcome);
         }
         let hat = hats::manage::get_hat(pool, BearId::new(bear_id), verified.hat_id).await?;
-        if hat.work_enabled || !hat.auto_curate_enabled {
+        if !hat.auto_curate_enabled {
             return Ok(outcome);
         }
         let decision = match synthesizer

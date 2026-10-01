@@ -42,12 +42,12 @@ pub async fn promote_curated_proposal(
             "only canonical conversation notes can enter the current Curate lane".into(),
         ));
     };
-    // The admin Work-enablement paths lock the same hat row. Publishing into a
-    // Work-off hat first makes subsequent enablement review its new memory;
-    // Work-on first denies this publication. No model flag widens that audience.
+    // Work enablement locks this hat before inspecting its historical memory.
+    // Once enabled, the same hat audience includes eligible current and future
+    // Job runs; Curate cannot choose an audience or grant execution authority.
     let mut tx = pool.begin().await?;
-    let work_enabled = sqlx::query!(
-        "SELECT h.work_enabled, h.auto_curate_enabled FROM bear_hats h JOIN conversations c
+    let auto_curate_enabled = sqlx::query_scalar!(
+        "SELECT h.auto_curate_enabled FROM bear_hats h JOIN conversations c
          ON c.hat_id = h.id AND c.bear_id = h.bear_id
          JOIN user_bear member ON member.bear_id = c.bear_id
            AND member.user_id = c.created_by_user_id
@@ -63,9 +63,9 @@ pub async fn promote_curated_proposal(
     .ok_or_else(|| {
         DenError::Authorization("verified source or Bear hat binding is no longer current".into())
     })?;
-    if work_enabled.work_enabled || !work_enabled.auto_curate_enabled {
+    if !auto_curate_enabled {
         return Err(DenError::Authorization(
-            "autonomous Curate publication requires an opted-in Work-off hat".into(),
+            "Curate publication requires this hat's automatic memory-sharing opt-in".into(),
         ));
     }
     let outcome = hat_promotion::promote_curated_proposal_to_hat(

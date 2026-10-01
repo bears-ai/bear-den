@@ -101,8 +101,8 @@ pub async fn set_short_summary(
     Ok(())
 }
 
-/// One-time Bear-admin opt-in. Enabling Work later resets this preference so
-/// disabling Work cannot silently resume cross-session autonomous sharing.
+/// Bear-admin opt-in to Curate sharing verified private notes with every
+/// authorized wearer of this hat, including future Job runs.
 pub async fn set_auto_curate_enabled(
     pool: &PgPool,
     bear_id: BearId,
@@ -112,13 +112,13 @@ pub async fn set_auto_curate_enabled(
 ) -> Result<(), DenError> {
     if enabled && !confirm_audience {
         return Err(DenError::ValidationError(
-            "confirm that Curate may read private notes and publish derived knowledge to this hat"
+            "confirm that Curate may read private notes and share derived knowledge with this hat's members and eligible Job runs"
                 .into(),
         ));
     }
     let updated = sqlx::query!(
         "UPDATE bear_hats SET auto_curate_enabled = $3, updated_at = NOW()
-         WHERE bear_id = $1 AND id = $2 AND (NOT $3 OR NOT work_enabled)",
+         WHERE bear_id = $1 AND id = $2",
         bear_id.as_uuid(),
         hat_id.as_uuid(),
         enabled,
@@ -126,12 +126,6 @@ pub async fn set_auto_curate_enabled(
     .execute(pool)
     .await?;
     if updated.rows_affected() == 0 {
-        let hat = get_hat(pool, bear_id, hat_id).await?;
-        if hat.work_enabled {
-            return Err(DenError::Authorization(
-                "disable Work before enabling autonomous hat curation".into(),
-            ));
-        }
         return Err(DenError::NotFound("hat not found for this Bear".into()));
     }
     Ok(())
@@ -275,7 +269,7 @@ pub async fn enable_work_if_empty(
             return Err(DenError::Authorization("this hat already has reviewed memory; Work enablement requires a separate memory review".into()));
         }
         sqlx::query!(
-            "UPDATE bear_hats SET work_enabled = true, auto_curate_enabled = false, updated_at = NOW() WHERE bear_id = $1 AND id = $2",
+            "UPDATE bear_hats SET work_enabled = true, updated_at = NOW() WHERE bear_id = $1 AND id = $2",
             bear_id.as_uuid(), hat_id.as_uuid(),
         ).execute(&mut *tx).await?;
         tx.commit().await?;

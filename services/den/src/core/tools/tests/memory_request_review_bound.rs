@@ -125,6 +125,22 @@ async fn bound_review_records_verified_source_and_hat_without_publishing(
         .fetch_one(store.pool()).await?;
     assert_eq!(published, 0);
 
+    sqlx::query!("UPDATE bear_hats SET work_enabled = true WHERE id = $1", hat.id.as_uuid())
+        .execute(&pool).await?;
+    let job_shared_note = append_memory_record(&store,
+        &LogicalMemoryPath::source_local(MemorySource::Conversation(a.id), "job-shared-note"),
+        "note", "pair", None, "A private note for the Job-capable hat", &json!({})).await?;
+    let job_candidate = invoke(request(Uuid::parse_str(&job_shared_note.memory_id)?),
+        context(admin, "conv-bound-review-a")).await?;
+    assert_eq!(job_candidate["proposal"]["verified_hat_source"]["hat_id"], hat.id.to_string());
+    assert_eq!(sqlx::query_scalar!(
+        "SELECT count(*) AS \"count!: i64\" FROM bear_reflection_runs
+         WHERE bear_id = $1 AND lane = 'memory_curate' AND trigger = 'verified_hat_intake'",
+        bear_id,
+    ).fetch_one(&pool).await?, 2);
+    assert_eq!(sqlx::query_scalar::<_, i64>("SELECT count(*) FROM memory_records WHERE scope_type = 'hat'")
+        .fetch_one(store.pool()).await?, 0_i64);
+
     // Same hat, different person's source; another hat, same person; and a
     // known core ID are all locators, never evidence of source authority.
     for (args, ctx) in [

@@ -21,7 +21,7 @@ In the current architecture, canonical Bear cognition lives in **per-Bear SQLite
 
 Shared memory is durable Bear knowledge that should be usable across stances and surfaces.
 
-Stance-local memory is scoped knowledge that may remain local indefinitely or later be promoted in legacy unbound sessions. Bound conversations and Work runs instead write raw notes under their canonical source ID; promotion to a hat uses explicit Bear-admin source review, and subsequent hat→`core/` publication requires another admin review of the wider Bear/Work audience. Neither step copies untrusted source text automatically. An admin-only legacy inventory separately offers explicit reauthoring of eligible unattributed profile-local notes into new hat records, with source→target provenance; the old record retains its unverified owner and profile scope.
+Stance-local memory is scoped knowledge that may remain local indefinitely or later be promoted in unbound sessions. Bound conversations and Work runs instead write raw notes under their canonical source ID. With automatic sharing enabled for a hat, Curate may rewrite a verified conversation note into newly authored hat knowledge for all authorized wearers, including eligible Job runs; a Bear admin can also author a hat entry from a verifiable source note. Bear-wide hat→`core/` publication requires a separate explicit Bear-admin decision. Source notes stay private, while legacy unattributed profile-local records retain their unverified owners and profile scope.
 
 ### Bear-global vs work-surface-local memory
 
@@ -114,14 +114,13 @@ Important conceptual areas:
 
 Memory does not automatically become shared truth.
 
-For a hat-bound conversation or Work run, the reviewed flow is:
+For a hat-bound conversation or Work run, the publication flow is:
 
-1. a source writes private, canonical source-local notes;
-2. a Bear admin may inspect a verifiable current note and write new hat-safe content; the SQLite source→hat promotion is atomic;
-3. an admin may separately inspect a current, visible hat entry and write new Bear/Work-safe content; the SQLite hat→`core/` promotion is atomic;
-4. for a Work-off hat with explicit Bear-admin autonomous-learning opt-in, bound Pair may propose one of its own canonical source-note IDs. The worker can call Curate's configured model without tools to retain the note locally or synthesize new hat knowledge; Den rechecks the source/audience and atomically publishes only to the opted-in Work-off hat. The proposal alone does not publish or grant authority. Transient synthesis failures receive up to two delayed, persisted retries before remaining private and pending; exhausted-budget recovery, live synthesis quality, Work-on audience policy, and autonomous hat→core curation remain open. Legacy proposal-to-core auto-promotion and its model-facing core-update tool have been retired for all Bears, including no-hat Bears. Historical core-action proposals resolve as rejected without a human-review queue; they do not publish shared memory.
+1. A canonical source writes private source-local notes; another conversation or Job run cannot read them directly.
+2. With a Bear-admin opt-in for automatic sharing, bound Pair may propose one of its own current note IDs. Tool-free Curate either retains it locally or rewrites it as a new, concise fact for that same hat. Den rechecks source ownership, membership, hat binding, opt-in, and note lifecycle at publication, then atomically writes the hat entry and provenance. The original note and proposal text are not shared verbatim. Authorized conversations and Job runs wearing the hat may read the curated entry; curation grants them no tools or permissions. Synthesis failures remain private and receive durable delayed retry, eventually at a daily cadence.
+3. A Bear admin may separately author a hat entry from a verifiable source note, or explicitly publish newly authored Bear-wide `core/` content derived from an eligible hat entry. Automatic hat sharing never chooses another hat or `core/`. Model-facing core-update actions are unavailable.
 
-No ordinary turn reads another source's raw notes, and a hat's reviewed knowledge is not automatically suitable for all other hats or autonomous Work.
+Curated content remains untrusted data: rewriting reduces exposure to sensitive details and prompt injection but cannot prove either absent. Every Job still needs its own authorized execution and bounded effects.
 
 ## Derived recall
 

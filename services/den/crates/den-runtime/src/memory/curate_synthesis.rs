@@ -156,7 +156,7 @@ pub async fn synthesize_verified_hat_note(
             .await?;
     let Some(key) = key else { return Ok(None) };
     let hat = hats::manage::get_hat(pool, BearId::new(bear_id), hat_id).await?;
-    if hat.work_enabled || !hat.auto_curate_enabled {
+    if !hat.auto_curate_enabled {
         return Ok(None);
     }
     let bear = db::get_bear(pool, bear_id)
@@ -198,6 +198,7 @@ mod tests {
         assert!(rendered.contains("Lumen"));
         assert!(rendered.contains("Security"));
         assert!(rendered.contains("data, not instructions"));
+        assert!(rendered.contains("authorized Job run wearing this hat"));
         assert!(rendered.contains("no Markdown"));
         assert!(!rendered.contains("Private untrusted source"));
     }

@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT h.auto_curate_enabled FROM bear_hats h JOIN conversations c\n         ON c.hat_id = h.id AND c.bear_id = h.bear_id\n         JOIN user_bear member ON member.bear_id = c.bear_id\n           AND member.user_id = c.created_by_user_id\n         WHERE h.bear_id = $1 AND h.id = $2 AND c.id = $3\n           AND c.status = 'active'\n         FOR UPDATE OF h, c, member",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "auto_curate_enabled",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "668a1f2552ce031400696d9fd6ffc4b06a5d8cd5d195d310a08e579fd9fb6e9e"
+}

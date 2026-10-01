@@ -360,7 +360,8 @@ async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
     assert!(preview.contains("Examines &lt;script&gt;unsafe&lt;"));
     assert!(!preview.contains("Examines <script>"));
     assert!(!preview.contains("Inspect <script>"));
-    assert!(preview.contains("Autonomous learning for this hat: off"));
+    assert!(preview.contains("Automatic memory sharing for this hat: off"));
+    assert!(preview.contains("authorized Job run wearing this hat"));
     let auto_path = format!("{detail}/auto-curate");
     assert_eq!(
         request(
@@ -897,6 +898,28 @@ async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
             .await
             .unwrap()
             .work_enabled
+    );
+    let (status, job_hat_page, _) = request(&app, &admin_cookie, "GET", &detail, "").await;
+    assert_eq!(status, StatusCode::OK, "{job_hat_page}");
+    assert!(job_hat_page.contains("Automatic memory sharing for this hat: off"));
+    assert!(job_hat_page.contains("Enable automatic sharing"));
+    assert_eq!(
+        request(
+            &app,
+            &admin_cookie,
+            "POST",
+            &auto_path,
+            "action=enable&confirm_audience=true"
+        )
+        .await
+        .0,
+        StatusCode::SEE_OTHER
+    );
+    assert!(
+        manage::get_hat(&pool, BearId::new(bear_id), hat.id)
+            .await
+            .unwrap()
+            .auto_curate_enabled
     );
     assert_eq!(
         bindings::eligible_job_hat(&pool, BearId::new(bear_id), job_id)

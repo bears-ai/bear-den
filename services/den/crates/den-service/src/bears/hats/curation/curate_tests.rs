@@ -33,7 +33,7 @@ async fn promote_curated_proposal(
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn internal_curate_publication_is_atomic_verified_and_work_off_only(pool: PgPool) {
+async fn internal_curate_publication_is_atomic_verified_and_shared_with_job_runs(pool: PgPool) {
     let bear_id = db::create_bear(
         &pool,
         db::BearParams {
@@ -370,6 +370,9 @@ async fn internal_curate_publication_is_atomic_verified_and_work_off_only(pool: 
     .execute(&pool)
     .await
     .unwrap();
+    hats::manage::set_auto_curate_enabled(&pool, bear, work_hat.id, false, false)
+        .await
+        .unwrap();
     assert!(promote_curated_proposal(
         &pool,
         &stores,
@@ -397,13 +400,9 @@ async fn internal_curate_publication_is_atomic_verified_and_work_off_only(pool: 
     .await
     .unwrap()
     .is_empty());
-    sqlx::query!(
-        "UPDATE bear_hats SET work_enabled = false WHERE id = $1",
-        work_hat.id.as_uuid()
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
+    hats::manage::set_auto_curate_enabled(&pool, bear, work_hat.id, true, true)
+        .await
+        .unwrap();
     let work_outcome = promote_curated_proposal(
         &pool,
         &stores,
@@ -422,6 +421,31 @@ async fn internal_curate_publication_is_atomic_verified_and_work_off_only(pool: 
     .await
     .unwrap()
     .is_some());
+    let job_reader = den_memory::scoped::MemoryReadGrant::new(
+        MemorySource::WorkRun(Uuid::new_v4()),
+        Some(work_hat.id),
+    );
+    let recalled = den_memory::scoped::search(
+        &store,
+        job_reader,
+        &den_memory::access::AccessContext::empty(),
+        "Work knowledge",
+        10,
+    )
+    .await
+    .unwrap();
+    assert_eq!(recalled.len(), 1);
+    assert_eq!(recalled[0].content_text, "Work knowledge");
+    assert!(den_memory::scoped::search(
+        &store,
+        job_reader,
+        &den_memory::access::AccessContext::empty(),
+        "Private Work-facing source",
+        10,
+    )
+    .await
+    .unwrap()
+    .is_empty());
 
     let departed_source = append_memory_record(
         &store,
