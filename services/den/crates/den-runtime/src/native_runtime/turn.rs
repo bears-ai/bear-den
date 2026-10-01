@@ -1072,22 +1072,15 @@ async fn build_session(
     // `work.checkout` binds the Armature session before the native loop starts.
     // Carry that authoritative binding into hosted-tool invocations instead of
     // deriving authority from a model-provided path or identifier.
-    let work_run_id = if profile.profile == BearProfile::Work {
+    let work_run_id = if matches!(origin, den_core::TurnExecutionOrigin::AuthorizedWorkRun(_)) {
         den_docket::work_runs::get_live_work_run_by_session(deps.pool, client_session_id)
             .await?
             .map(|run| run.id)
     } else {
         None
     };
-    let effective_policy = den_core::EffectivePolicy::compile(
-        profile.profile,
-        den_core::Governance::Interactive,
-        if client_tools.is_some() {
-            den_core::ArmatureAvailability::Connected
-        } else {
-            den_core::ArmatureAvailability::Absent
-        },
-    );
+    let effective_policy =
+        den_core::EffectivePolicy::compile_for_origin(origin, den_core::Governance::Interactive);
     let run_id = ensure_session_task_run(
         deps.pool,
         &effective_policy.capabilities,
@@ -2152,10 +2145,9 @@ async fn execute_approved_den_tool_for_session(
             tool_name: canonical,
             arguments: args,
             context,
-            effective_policy: den_core::EffectivePolicy::compile(
-                session.profile,
+            effective_policy: den_core::EffectivePolicy::compile_for_origin(
+                session.origin,
                 session.governance,
-                den_core::ArmatureAvailability::Connected,
             ),
             origin_run_id: session
                 .run_id
@@ -2178,6 +2170,15 @@ async fn execute_approved_den_tool_for_session(
     })
 }
 
+fn require_same_work_run(bound: Option<Uuid>, live: Uuid) -> Result<(), DenError> {
+    if bound != Some(live) {
+        return Err(DenError::Authorization(
+            "Work continuation's live Job run differs from its verified session binding".into(),
+        ));
+    }
+    Ok(())
+}
+
 pub async fn continue_native_client_turn_event_stream(
     request: TurnContinueRequest<'_>,
 ) -> Result<(RuntimeStreamContinuation, RuntimeEventStream), DenError> {
@@ -2192,12 +2193,24 @@ pub async fn continue_native_client_turn_event_stream(
         .clone()
         .ok_or_else(|| DenError::System("native agent loop session not found".to_string()))?;
     let profile = prior_session.profile;
-    if profile == BearProfile::Work {
+    if den_core::EffectivePolicy::compile_for_origin(prior_session.origin, prior_session.governance)
+        .trust_profile
+        != profile
+    {
+        return Err(DenError::Authorization(
+            "native continuation profile does not match its verified origin".into(),
+        ));
+    }
+    if matches!(
+        prior_session.origin,
+        den_core::TurnExecutionOrigin::AuthorizedWorkRun(_)
+    ) {
         let run = work_runs::get_live_work_run_by_session(request.sqlx_pool, client_session_id)
             .await?
             .ok_or_else(|| {
                 DenError::Authorization("Work continuation has no live Job run".into())
             })?;
+        require_same_work_run(prior_session.work_run_id, run.id)?;
         memory_binding::for_work_run(
             request.sqlx_pool,
             BearId::new(prior_session.bear_id),
@@ -2495,6 +2508,20 @@ mod tests {
         PostMutationVerificationWindow, StrategyProfile, ToolCallBudgetLimits, TurnBudgetPolicy,
     };
     use den_core::TurnExecutionOrigin;
+
+    #[test]
+    fn work_continuation_requires_the_exact_live_run_not_just_the_same_profile() {
+        let original = Uuid::new_v4();
+        assert!(require_same_work_run(Some(original), original).is_ok());
+        assert!(matches!(
+            require_same_work_run(None, original),
+            Err(DenError::Authorization(_))
+        ));
+        assert!(matches!(
+            require_same_work_run(Some(Uuid::new_v4()), original),
+            Err(DenError::Authorization(_))
+        ));
+    }
 
     #[sqlx::test(migrations = "../../migrations")]
     async fn continuation_binding_cannot_switch_a_work_turn_to_pair(pool: PgPool) {
