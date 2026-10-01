@@ -4,9 +4,9 @@
 <div class="box">
     <h2>Tools</h2>
     <p class="form-hint">
-        Everything this Bear can call — one row per tool. A tool's identity,
-        origin, and (eventually) its configuration and enabling connection
-        are properties of the tool; stances only gate where it is available.
+        Typical availability by verified execution context. A tool is available
+        only when the current human, channel or connected armature, hat, Job,
+        work surface, policy, and approvals permit it. A dot is not a grant.
     </p>
 
     {% if tools and tools | length > 0 %}
@@ -15,11 +15,11 @@
             <tr>
                 <th>Tool</th>
                 <th>Origin</th>
-                <th>chat</th>
-                <th>pair</th>
-                <th>curate</th>
-                <th>work</th>
-                <th>watch</th>
+                <th>Chat</th>
+                <th>Editor</th>
+                <th>Job run</th>
+                <th>Curation</th>
+                <th>Observation</th>
                 <th>Notes</th>
             </tr>
         </thead>
@@ -28,7 +28,7 @@
             <tr>
                 <td><code>{{ tool.name | e }}</code></td>
                 <td>{{ tool.origin | e }}</td>
-                {% for available in tool.stances %}
+                {% for available in tool.contexts %}
                 <td>
                     {% if available %}<span aria-label="available">●</span
                     >{% else %}<span class="form-hint" aria-label="not available"
@@ -46,9 +46,9 @@
     {% endif %}
 
     <p class="form-hint">
-        Remote (MCP) tool servers are not yet available in this build; when
-        they land, their tools appear as rows here tagged with the server
-        they come from, alongside the connection that enables them.
+        The local rows describe potential armature tools. Which local and
+        forwarded MCP tools a model actually receives depends on the connected
+        client and this turn's policy; they are not a Bear-wide capability.
     </p>
 </div>
 {% endblock %}

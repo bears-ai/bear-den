@@ -108,6 +108,12 @@ fn test_state(pool: sqlx::PgPool) -> AppState {
             include_str!("../../templates/bear/manage/identity.html"),
         )
         .expect("add identity template");
+    template_env
+        .add_template(
+            "bear/manage/tools.html",
+            include_str!("../../templates/bear/manage/tools.html"),
+        )
+        .expect("add tools template");
     for (page, source) in [
         (
             "conversations",
@@ -393,6 +399,12 @@ async fn inspection_gets_require_bear_admin_but_overview_remains_member_viewable
     assert_eq!(status, StatusCode::OK, "admin identity: {body}");
     assert!(body.contains(&format!("/bear/{slug}/hats/{}", hat.id)));
     assert!(!body.contains("<h3>Stances</h3>"));
+    let (status, tools) = get_as(&app, &member_cookie, &format!("/bear/{slug}/tools")).await;
+    assert_eq!(status, StatusCode::OK, "member tools: {tools}");
+    assert!(tools.contains("<th>Job run</th>"));
+    assert!(tools.contains("<th>Editor</th>"));
+    assert!(!tools.contains("<th>pair</th>"));
+    assert!(!tools.contains("not yet available in this build"));
 
     for path in [
         "activity".to_string(),

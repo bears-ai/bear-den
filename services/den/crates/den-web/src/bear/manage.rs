@@ -15,7 +15,7 @@ use den_core::{
     client_tools::ClientToolName,
     ids::{BearId, HatId},
     tools::descriptor::builtin_den_tool_descriptors,
-    BearProfile,
+    ArmatureAvailability, BearCapability, EffectivePolicy, Governance, TurnExecutionOrigin,
 };
 use den_service::bears::hats;
 use minijinja::context;
@@ -36,23 +36,24 @@ struct HatIdentityRow {
     short_summary: Option<String>,
 }
 
-/// One tool, one row: identity and (future) configuration are per-tool;
-/// stances only gate availability, expressed as the boolean columns.
+/// A static description of where a tool may be offered; it does not grant
+/// access to any particular person, session, Job, or work surface.
 #[derive(Serialize)]
 struct ToolMatrixRow {
     name: &'static str,
     origin: &'static str,
     note: &'static str,
-    stances: Vec<bool>,
+    contexts: Vec<bool>,
 }
 
-/// Build the tool matrix for the Tools management page: unique tools as
-/// rows, stance availability as columns.
-///
-/// Source: `den_core::tools::descriptor::builtin_den_tool_descriptors()` for
-/// Den-hosted tools (each descriptor carries `allowed_roles`, so per-stance
-/// availability is exact), plus `den_core::client_tools::ClientToolName::all()`
-/// for armature-local tools, which are only ever exposed on the pair stance.
+const TOOL_CONTEXTS: [TurnExecutionOrigin; 5] = [
+    TurnExecutionOrigin::ChannelConversation,
+    TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+    TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Connected),
+    TurnExecutionOrigin::InternalCuration,
+    TurnExecutionOrigin::InboundObservation,
+];
+
 fn tool_matrix_context() -> Vec<ToolMatrixRow> {
     let mut rows: Vec<ToolMatrixRow> = builtin_den_tool_descriptors()
         .iter()
@@ -60,9 +61,14 @@ fn tool_matrix_context() -> Vec<ToolMatrixRow> {
             name: descriptor.name,
             origin: "built-in",
             note: descriptor.label,
-            stances: BearProfile::ALL
+            contexts: TOOL_CONTEXTS
                 .iter()
-                .map(|stance| descriptor.allowed_roles.contains(&stance.as_str()))
+                .map(|origin| {
+                    let profile =
+                        EffectivePolicy::compile_for_origin(*origin, Governance::Interactive)
+                            .trust_profile;
+                    descriptor.allowed_roles.contains(&profile.as_str())
+                })
                 .collect(),
         })
         .collect();
@@ -72,13 +78,32 @@ fn tool_matrix_context() -> Vec<ToolMatrixRow> {
             name: descriptor.provider_name,
             origin: "local (armature)",
             note: descriptor.title,
-            stances: BearProfile::ALL
+            contexts: TOOL_CONTEXTS
                 .iter()
-                .map(|stance| *stance == BearProfile::Pair)
+                .map(|origin| {
+                    EffectivePolicy::compile_for_origin(*origin, Governance::Interactive)
+                        .capabilities
+                        .contains(BearCapability::UseArmatureTools)
+                })
                 .collect(),
         }
     }));
     rows
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_matrix_uses_execution_contexts_for_local_tool_availability() {
+        let rows = tool_matrix_context();
+        let read = rows
+            .iter()
+            .find(|row| row.name == ClientToolName::ReadTextFile.descriptor().provider_name)
+            .expect("local read tool is listed");
+        assert_eq!(read.contexts, [false, true, true, false, false]);
+    }
 }
 
 pub fn router() -> Router<AppState> {
