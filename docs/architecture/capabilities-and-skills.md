@@ -45,7 +45,7 @@ Examples:
 - inspect a browser page;
 - run a command in a sandbox.
 
-Tool access is stance-scoped and policy-scoped. A tool that is safe for `pair` may be unsafe for `chat`; a tool that is valid for `work` may be invalid for `watch`.
+**Current:** some tool descriptors and Den-hosted execution checks still use `chat`/`pair`/`work`/`curate`/`watch` profile roles. **Target:** the Bear-owned hat supplies positive tool/action and outbound-network grants; verified channel/armature or Job origin, membership, workspace and surface bounds, credential scope, and Den safety policy narrow them. Internal curation/observation has separate Den-owned authority, not an implicit hat. See the [hat access plan](../roadmap/HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md#gate-0a--hat-owned-tool-and-network-permissions-accepted-target-not-deployed); no profile label or hat prose itself can authorize an action.
 
 ## Skills
 

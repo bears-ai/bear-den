@@ -12,8 +12,15 @@
 - [ADR-0028 — Environment affordance and resource boundaries](adr-0028-environment-affordance-and-resource-boundaries.md)
 - [`interactive-stances-and-role-axes.md`](../architecture/interactive-stances-and-role-axes.md)
 - [`work-surfaces-and-conversations.md`](../guides/work-surfaces-and-conversations.md)
+- [Hat-owned tool and network authorization plan](../roadmap/HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md#gate-0a--hat-owned-tool-and-network-permissions-accepted-target-not-deployed)
 - [`den-runtime.md`](../architecture/den-runtime.md)
 - [`DEN_NATIVE_RUNTIME_PLAN.md`](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md) Phase 7
+
+## Hat access-policy amendment (accepted 2026-10-01; implementation pending)
+
+Positive tool and outbound-network authorization belongs to the canonical Bear-owned hat, shared by authorized conversations and Job runs wearing it. The per-surface outbound-host list in §5.1 remains a **resource-specific maximum** intersected with hat-authorized destinations, not a second independent permission source. A host must pass both bounds; a surface suggestion alone grants nothing, and a hat host grant cannot expand a surface's reachable network. Membership, actor/Connection credential scope, Den network safety rules, Job assignment, and a connected armature where needed remain separate hard constraints. Internal curation/observation use Den-owned system authority rather than borrowing a hat. No credential is placed inside the sandbox by a hat grant.
+
+This amendment does not assert deployment. Current Den web approvals are Bear-scoped, the armature caches its own remembered approvals, and sandbox outbound-host rules are configured per work surface. The [active implementation plan](../roadmap/HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md#gate-0a--hat-owned-tool-and-network-permissions-accepted-target-not-deployed) owns their fail-closed cutover and the one-time versus hat-persistent permission UX.
 
 ## Context
 

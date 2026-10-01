@@ -11,7 +11,7 @@ It defines:
 - copy and state rules for tool activity and permission prompts;
 - data requirements for the presentation layer.
 
-This is a product and edge-projection spec. It does not move ACP semantics into Den core.
+This is a product and edge-projection spec. It does not move ACP semantics into Den core. The [hat access plan](../roadmap/HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md#gate-0a--hat-owned-tool-and-network-permissions-accepted-target-not-deployed) owns the intended grant policy; this document specifies how the armature presents it. Current armature approval caching and Den web approvals are not yet hat-scoped.
 
 ## Goals
 
@@ -158,22 +158,22 @@ Canonical scopes:
 - `host`
 - `command_exact_workspace`
 - `command_family_workspace`
-- `global`
+- `hat_wide` (an action family within one hat, subject to all other hard bounds)
 
 ### Scope matrix by action family
 
-| Action family | Once | Directory | Workspace | Site account | Host | Command exact in workspace | Command family in workspace | Global |
+| Action family | Once | Directory | Workspace | Site account | Host | Command exact in workspace | Command family in workspace | Hat-wide action |
 |------|------|-----------|-----------|--------------|------|-----------------------------|-----------------------------|--------|
 | `read` | yes | yes | yes | no | no | no | no | yes |
 | `search` | yes | yes when path-bounded | yes | no | no | no | no | yes |
 | `edit` | yes | yes when path-bounded | yes | no | no | no | no | yes |
 | `delete` | yes | yes when path-bounded | yes | no | no | no | no | cautious yes |
 | `move` | yes | yes when path-bounded | yes | no | no | no | no | cautious yes |
-| `execute` | yes | no | limited yes | no | no | yes | yes when safe family exists | cautious yes |
-| `fetch` | yes | no | optional product policy only if tied to workspace context | known-site accounts only | yes | no | no | yes |
-| `browse` | yes | no | optional product policy only if tied to workspace context | known-site accounts only | yes | no | no | yes |
+| `execute` | yes | no | limited yes | no | no | yes | yes when safe family exists | no arbitrary commands |
+| `fetch` | yes | no | optional product policy only if tied to workspace context | known-site accounts only | yes | no | no | no arbitrary hosts |
+| `browse` | yes | no | optional product policy only if tied to workspace context | known-site accounts only | yes | no | no | no arbitrary hosts |
 | `plan` | once-only by default | no | no | no | no | no | no | no |
-| `other` | yes | case by case | case by case | case by case | case by case | no | no | cautious yes |
+| `other` | yes | case by case | case by case | case by case | case by case | no | no | only with a descriptor-owned bounded target |
 
 ### Scope policy rules
 
@@ -184,8 +184,9 @@ Canonical scopes:
 5. Exact-URL remembered approval should not be offered.
 6. `command_exact_workspace` should be available for command execution when a stable command string exists.
 7. `command_family_workspace` should only appear for explicitly whitelisted safe command families.
-8. `global` may exist for most families but should be visually de-emphasized for higher-risk actions.
+8. Every remembered scope is qualified by the canonical hat ID, regardless of its narrower directory, workspace, command, host, or account target. A hat-wide action-family option is exceptional for higher-risk actions and never means any outbound host.
 9. `plan` approvals are intentionally not remembered by default.
+10. `once` settles only the matching tool/permission obligation; a time-to-live Bear-wide approval is not an implementation of `once`. `Always for [hat]` includes eligible future Job runs and requires hat-policy management authority. Current human membership, connected armature for local tools, workspace and surface bounds, actor credentials, Job scope and Den safety policy still apply.
 
 ### Known-site account scope
 
@@ -209,16 +210,16 @@ Option labels should describe the policy created.
 
 Preferred patterns:
 
-- `Only this time`
-- `Always allow this directory ({path})`
-- `Always allow reading files in this workspace`
-- `Always allow editing files in this workspace`
-- `Always allow deleting files in this workspace`
-- `Always allow this GitHub account ({account})`
-- `Always allow this host ({host})`
-- `Always allow this command in this workspace`
-- `Always allow safe {family} commands in this workspace`
-- `Always allow {action family phrase} globally`
+- `Just this time`
+- `Always for {hat}: read this directory ({path})`
+- `Always for {hat}: read files in this workspace`
+- `Always for {hat}: edit files in this workspace`
+- `Always for {hat}: delete files in this workspace`
+- `Always for {hat}: access this GitHub account ({account})`
+- `Always for {hat}: access this host ({host})`
+- `Always for {hat}: run this command in this workspace`
+- `Always for {hat}: run safe {family} commands in this workspace`
+- `Always for {hat}: allow this bounded action family`
 - `Deny`
 - `Always deny`
 
@@ -255,8 +256,11 @@ Every permission prompt should include:
 
 - action summary;
 - primary target summary;
+- the currently verified hat's name and narrower workspace/directory/host/account scope;
+- whether a remembered grant will be available to future conversations and eligible Job runs wearing that hat;
+- who is authorized to create that hat-wide grant;
 - enough context to judge the request;
-- the scope options.
+- `Just this time` and, when the approver may manage shared hat policy, `Always for [hat]` with its actual bounded target. Other members may request a persistent grant from the hat manager.
 
 ### By action family
 

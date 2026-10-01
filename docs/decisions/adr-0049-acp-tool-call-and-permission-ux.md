@@ -10,8 +10,11 @@
 - [ADR-0048: Core turn/client-obligation coordinator](adr-0048-core-turn-client-obligation-coordinator.md)
 - [ADR-0025: Tool naming and execution strategy](adr-0025-tool-naming-and-execution-strategy.md)
 - [ACP Runtime Contract](../architecture/acp-runtime-contract.md)
+- [Hat-owned tool/network access policy](../roadmap/HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md#gate-0a--hat-owned-tool-and-network-permissions-accepted-target-not-deployed)
 - [Chat UX guidelines](../guides/chat-ux-guidelines.md)
 - [Agent Client Protocol: Tool calls](https://agentclientprotocol.com/protocol/v1/tool-calls)
+
+**Hat-qualified scope target (accepted direction 2026-10-01; not deployed):** A remembered tool or network permission is a Den-owned grant for the currently verified hat plus the narrower action/target scope shown to the approver. Interactive prompts offer `Just this time` (one exact obligation, no reusable approval) and, to an authorized hat-policy manager, `Always for [hat]` (including future eligible Job runs wearing it). Non-managers may request a persistent hat grant but cannot create one. Workspace, directory, command, account, and host constraints remain intersections, not alternate Bear-wide authorizations. This qualifies the unscoped examples below; the [ACP UX spec](../architecture/acp-tool-call-permission-ux-spec.md) gives target copy. Current Bear-wide approvals and armature-local cache do not satisfy this decision yet.
 
 ## Context
 
@@ -82,13 +85,13 @@ Remembered permission choices should be offered in scopes the user can naturally
 - this host;
 - this exact command in this workspace;
 - this safe command family in this workspace;
-- globally.
+- always for the selected hat within an explicit action/target scope.
 
 Scope availability should not be an accidental consequence of the raw event shape. It should be determined by explicit product policy per action family.
 
 ### 5. Workspace-scoped approval is a normal case for trusted local work
 
-For workspace-bounded armature actions such as reading files, searching files, many file edits, and git-read operations, "always for this workspace" should be a common and expected option.
+For workspace-bounded armature actions such as reading files, searching files, many file edits, and git-read operations, "always for [hat] in this workspace" should be a common and expected option.
 
 It should not be treated as a rare special case.
 
@@ -142,9 +145,9 @@ Blind approvals should be avoided when the product already has enough informatio
 
 Remembered approval options should be phrased as the policy they create, for example:
 
-- `Always allow reading files in this workspace`
-- `Always allow opening pages on github.com`
-- `Always allow this command in this workspace`
+- `Always for Security Review: read files in this workspace`
+- `Always for Security Review: open pages on github.com`
+- `Always for Security Review: run this command in this workspace`
 
 Avoid leaking internal identifiers such as `allow_workspace` or generic labels such as `Allow always` without scope context.
 

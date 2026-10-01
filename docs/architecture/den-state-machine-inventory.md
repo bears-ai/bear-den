@@ -107,6 +107,10 @@ Exit gate for the reduced authority model:
 - projections, caches, labels, model choice, prompt text, and compaction state
   cannot expand authority or manufacture task selection/Work assignment.
 
+## Planned hat access-policy owner (not implemented)
+
+A Den-owned hat policy will own positive tool/action and outbound-network grants keyed by canonical `(bear_id, hat_id)`. This is distinct from the existing durable conversation/Job hat binding: that binding selects **which** policy can apply but grants no action on its own. A remembered `Always for [hat]` decision updates that one policy with a descriptor action and bounded target; `Just this time` belongs only to the open turn obligation and does not create durable approval state. Human membership and manager authority, verified execution origin, connected client, credential actor, current work surface, Job/run, and platform safety restrictions intersect the hat grant. Revocation must invalidate every derived projection, client hint, and gateway policy before the next execution. Current profile-based descriptor checks, Bear-scoped web approvals, surface host authorization and armature-local approval cache remain separate writable surfaces until the [hat access cutover](../roadmap/HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md#gate-0a--hat-owned-tool-and-network-permissions-accepted-target-not-deployed) proves they cannot widen the new canonical state.
+
 ## Ownership summary
 
 | Axis | Primary owner | Scope/lifetime | Notes |

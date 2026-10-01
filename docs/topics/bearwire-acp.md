@@ -12,6 +12,8 @@ Den owns run and obligation state; BearWire carries it to the armature, which pr
 
 ## Intended behavior and gaps
 
+The [hat access plan](../roadmap/HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md#gate-0a--hat-owned-tool-and-network-permissions-accepted-target-not-deployed) makes Den's canonical hat policy the owner of persistent tool and network permissions. For an interactive action the armature should project `Just this time` (one exact obligation, no remembered grant) and `Always for [hat]` intersected with the relevant workspace, directory, command, host, or account scope. The latter requires hat-policy management authority and must disclose that eligible future Job runs can use it. The armature's local approval cache is not a second authority; this is a target, not the behavior of current BearWire permission decisions.
+
 The [protocol refinement roadmap](../roadmap/BEARWIRE_V1_PROTOCOL_REFINEMENT_ROADMAP.md) is a draft design, not the description of the deployed wire. The [completed focused-execution plan](../roadmap/pair-execution-authority-and-debug-tracing-plan.md) is delivery history, not a current roadmap. Check code and validation before promoting any planned statement to this page.
 
 ## Read deeper

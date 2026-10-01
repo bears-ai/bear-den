@@ -16,6 +16,10 @@
 
 > **State-inventory maintenance.** This ADR owns the trust-profile and governance axes in the Den state machine inventory. Changes to trust profiles, governance values, governance transitions, or effective-policy derivation must update that inventory and include behavior-level tests or replay assertions for affected transitions.
 
+## Hat authorization amendment (accepted 2026-10-01; implementation pending)
+
+The Bear-owned hat is the canonical owner of positive tool/action and outbound-network grants for conversations and eligible Job runs wearing it. Typed, Den-verified execution origin and governance determine which effect surfaces can be used; human membership, the current connected armature, credential actor, work-surface bounds, Job/run assignment, and Den safety policy intersect the hat grant. A remembered interactive approval must be stored under the hat plus its action/target scope; `Just this time` is an exact open obligation, not a durable Bear-wide grant. Internal Curate and Watch activity receives separate Den-owned system authority rather than inheriting a hat. The [active hats plan](../roadmap/HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md#gate-0a--hat-owned-tool-and-network-permissions-accepted-target-not-deployed) defines the phased fail-closed cutover. The profile-derived authority described below is still current in Den-hosted tool execution and must not be treated as retired until the route-level denial matrix passes.
+
 ## Context
 
 Bear Den models capability-specific runtimes as **profiles** (`chat`, `pair`, `curate`, `work`, `watch`) over one Den-native agent loop ([ADR-0035](adr-0035-den-native-in-process-agent-runtime.md), [ADR-0036](adr-0036-bear-profile-registry.md)). A profile bundles a trust boundary (which memory branches are readable/writable, approval/autonomy defaults, cross-role visibility) with a default compiled prompt and tool roster.
