@@ -138,3 +138,21 @@ fn direct_invoker_requires_work_run_binding_only_for_work_origin() {
         Err(DenError::Authorization(_))
     ));
 }
+
+#[sqlx::test]
+async fn work_tool_rechecks_the_live_run_at_effect_time(pool: PgPool) -> Result<(), DenError> {
+    let work_origin = TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Absent);
+    let mut work = context(BearProfile::Work);
+    work.work_run_id = Some(Uuid::new_v4());
+    assert!(matches!(
+        require_live_work_tool_source(&pool, &work, work_origin).await,
+        Err(DenError::Authorization(_))
+    ));
+    let pair_origin = TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected);
+    assert!(
+        require_live_work_tool_source(&pool, &context(BearProfile::Pair), pair_origin)
+            .await
+            .is_ok()
+    );
+    Ok(())
+}

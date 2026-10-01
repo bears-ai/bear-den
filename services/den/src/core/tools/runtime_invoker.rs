@@ -8,9 +8,10 @@ use den_core::tools::{
     context::DenToolInvocationContext,
     descriptor::builtin_den_tool_descriptor_for_provider_name,
 };
-use den_core::{DenError, EffectivePolicy, TurnExecutionOrigin};
+use den_core::{ids::BearId, DenError, EffectivePolicy, TurnExecutionOrigin};
 use den_runtime::native_runtime::{RuntimeToolInvocation, RuntimeToolInvoker};
-use den_service::DenState;
+use den_service::{bears::hats::memory_binding, DenState};
+use sqlx::PgPool;
 
 use crate::core::tools::{context::DenToolContext, session::invoke_den_tool};
 use crate::errors::CustomError;
@@ -59,6 +60,31 @@ fn require_origin_policy_and_descriptor(
     Ok(())
 }
 
+async fn require_live_work_tool_source(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    origin: TurnExecutionOrigin,
+) -> Result<(), DenError> {
+    if !matches!(origin, TurnExecutionOrigin::AuthorizedWorkRun(_)) {
+        return Ok(());
+    }
+    let work_run_id = context.work_run_id.ok_or_else(|| {
+        DenError::Authorization("Work tool invocation is missing its Work-run binding".into())
+    })?;
+    let run = den_docket::work_runs::get_live_work_run_by_session(pool, &context.session_id)
+        .await?
+        .filter(|run| {
+            run.id == work_run_id && run.bear_id == context.bear_id && !run.cancel_requested
+        })
+        .ok_or_else(|| {
+            DenError::Authorization(
+                "Work tool invocation is not bound to its live, uncancelled Job run".into(),
+            )
+        })?;
+    memory_binding::for_work_run(pool, BearId::new(context.bear_id), run.id).await?;
+    Ok(())
+}
+
 #[cfg(test)]
 #[path = "runtime_invoker/tests.rs"]
 mod tests;
@@ -79,6 +105,7 @@ impl RuntimeToolInvoker for DenRuntimeToolInvoker {
         // compatibility profile or binding cannot turn a Pair/Channel run
         // into an internal Curate/Work Den tool invocation.
         require_origin_policy_and_descriptor(&context, &effective_policy, origin, &tool_name)?;
+        require_live_work_tool_source(&self.state.sqlx_pool, &context, origin).await?;
         if matches!(tool_name.as_str(), DEN_TASK_FOCUS | DEN_TASK_FOCUS_PROVIDER) {
             effective_policy
                 .capabilities
