@@ -1982,25 +1982,13 @@ fn call_is_den_web_fetch(call: &ChatToolCall) -> bool {
     provider_tool_is_den_web_fetch(&call.function.name)
 }
 
-fn normalize_approved_web_url(raw: &str) -> Result<String, DenError> {
-    let mut url = url::Url::parse(raw.trim())
-        .map_err(|err| DenError::ValidationError(format!("web_fetch url is invalid: {err}")))?;
-    match url.scheme() {
-        "http" | "https" => {}
-        _ => {
-            return Err(DenError::ValidationError(
-                "web_fetch url scheme must be http or https".to_string(),
-            ));
-        }
-    }
-    url.set_fragment(None);
-    Ok(url.to_string())
-}
-
-async fn record_web_fetch_url_approval(
+async fn bind_web_fetch_approval_to_continuation(
     pool: &PgPool,
     bear_id: Uuid,
-    user_id: Option<i32>,
+    conversation_id: &str,
+    client_session_id: &str,
+    approval_id: &str,
+    continuation_request_id: Uuid,
     call: &ChatToolCall,
 ) -> Result<(), DenError> {
     let args = parse_args_or_empty_object(&call.function.arguments);
@@ -2008,25 +1996,35 @@ async fn record_web_fetch_url_approval(
         .get("url")
         .and_then(|value| value.as_str())
         .ok_or_else(|| DenError::ValidationError("web_fetch args missing url".to_string()))?;
-    let normalized_url = normalize_approved_web_url(raw_url)?;
-    sqlx::query!(
-        r#"
-        INSERT INTO bear_web_approvals (bear_id, scope_kind, scope_value, approved_by_user_id, source, expires_at)
-        VALUES ($1, 'url', $2, $3, 'acp', now() + interval '1 hour')
-        ON CONFLICT (bear_id, scope_kind, scope_value) WHERE revoked_at IS NULL
-        DO UPDATE SET approved_by_user_id = EXCLUDED.approved_by_user_id,
-                      source = EXCLUDED.source,
-                      expires_at = EXCLUDED.expires_at
-        "#,
+    let bound = sqlx::query_scalar!(
+        "UPDATE runtime_approvals SET execution_request_id = $1
+         WHERE approval_id = $2 AND bear_id = $3 AND conversation_id = $4
+           AND client_session_id = $5 AND tool_call_id = $6 AND tool_name = $7
+           AND arguments_json ->> 'url' = $8 AND status = 'approved'
+           AND execution_request_id IS NULL AND consumed_at IS NULL
+         RETURNING approval_id",
+        continuation_request_id,
+        approval_id,
         bear_id,
-        normalized_url,
-        user_id
+        conversation_id,
+        client_session_id,
+        call.id,
+        call.function.name,
+        raw_url,
     )
-    .execute(pool)
-    .await
-    .map_err(|err| DenError::Database(format!("record web_fetch approval: {err}")))?;
+    .fetch_optional(pool)
+    .await?;
+    if bound.is_none() {
+        return Err(DenError::Authorization(
+            "one-time web fetch approval is not bound to this call".into(),
+        ));
+    }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "turn/approval_tests.rs"]
+mod approval_tests;
 
 async fn require_continuation_binding(
     pool: &PgPool,
@@ -2056,8 +2054,32 @@ async fn execute_approved_den_tool_for_session(
     require_continuation_binding(request.sqlx_pool, session.bear_id, profile, request.binding)
         .await?;
     if call_is_den_web_fetch(call) {
-        record_web_fetch_url_approval(request.sqlx_pool, session.bear_id, session.user_id, call)
-            .await?;
+        let RuntimeContinuation::ApprovalDecision {
+            approval_request_id,
+            tool_call_id: Some(tool_call_id),
+            decision: den_protocol::RuntimeApprovalDecision::Approve,
+            ..
+        } = &request.continuation
+        else {
+            return Err(DenError::Authorization(
+                "web fetch requires an approved permission obligation".into(),
+            ));
+        };
+        if tool_call_id != &call.id {
+            return Err(DenError::Authorization(
+                "approved web fetch tool call does not match pending call".into(),
+            ));
+        }
+        bind_web_fetch_approval_to_continuation(
+            request.sqlx_pool,
+            session.bear_id,
+            &session.conversation_id,
+            &session.client_session_id,
+            approval_request_id,
+            request.request_id,
+            call,
+        )
+        .await?;
     }
     let Some(invoker) = super::tool_invoker() else {
         return Err(DenError::System(

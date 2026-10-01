@@ -9,8 +9,9 @@ use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use den_core::tools::web::{
-    max_fetch_bytes, WebApproval, WebFetchAudit, WebFetcher, WebHttpResponse, WebUrl,
+use den_core::tools::{
+    context::DenToolInvocationContext,
+    web::{max_fetch_bytes, WebApproval, WebFetchAudit, WebFetcher, WebHttpResponse, WebUrl},
 };
 use den_core::DenError;
 
@@ -19,6 +20,10 @@ use crate::{
     core::{tools::support::validate_public_http_url, web_policy},
     errors::CustomError,
 };
+
+#[cfg(test)]
+#[path = "runtime/tests.rs"]
+mod tests;
 
 pub(crate) struct DenWebFetcher<'a> {
     pub(crate) pool: &'a PgPool,
@@ -36,22 +41,61 @@ const fn map_decision(decision: web_policy::WebApprovalDecision) -> WebApproval 
     }
 }
 
+/// Atomically consume a Den-bound approval. A supplied request ID has no
+/// authority without the matching approved row and exact original URL.
+async fn consume_web_fetch_once(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    raw_url: &str,
+) -> Result<bool, DenError> {
+    let Some(request_id) = context
+        .request_id
+        .as_deref()
+        .and_then(|id| Uuid::parse_str(id).ok())
+    else {
+        return Ok(false);
+    };
+    let consumed = sqlx::query_scalar!(
+        "UPDATE runtime_approvals SET consumed_at = now()
+         WHERE execution_request_id = $1 AND bear_id = $2
+           AND conversation_id = $3 AND client_session_id = $4
+           AND arguments_json ->> 'url' = $5 AND status = 'approved'
+           AND consumed_at IS NULL
+         RETURNING approval_id",
+        request_id,
+        context.bear_id,
+        context.conversation_id,
+        context.session_id,
+        raw_url,
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(consumed.is_some())
+}
+
 impl WebFetcher for DenWebFetcher<'_> {
     async fn decide_fetch_approval(
         &self,
-        bear_id: Uuid,
+        context: &DenToolInvocationContext,
         raw_url: &str,
     ) -> Result<(WebUrl, WebApproval), DenError> {
         let (normalized, decision) =
-            web_policy::decide_web_fetch_approval(self.pool, bear_id, raw_url)
+            web_policy::decide_web_fetch_approval(self.pool, context.bear_id, raw_url)
                 .await
                 .map_err(CustomError::into_den)?;
+        let decision = if decision == web_policy::WebApprovalDecision::RequiresApproval
+            && consume_web_fetch_once(self.pool, context, raw_url).await?
+        {
+            WebApproval::ApprovedOnce
+        } else {
+            map_decision(decision)
+        };
         Ok((
             WebUrl {
                 url: normalized.url,
                 host: normalized.host,
             },
-            map_decision(decision),
+            decision,
         ))
     }
 
@@ -81,7 +125,9 @@ impl WebFetcher for DenWebFetcher<'_> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(20))
             .connect_timeout(std::time::Duration::from_secs(5))
-            .redirect(reqwest::redirect::Policy::limited(5))
+            // An approval for one URL must not follow a redirect to a second
+            // destination without another explicit authorization decision.
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|e| DenError::System(format!("web fetch client build failed: {e}")))?;
         let resp = client

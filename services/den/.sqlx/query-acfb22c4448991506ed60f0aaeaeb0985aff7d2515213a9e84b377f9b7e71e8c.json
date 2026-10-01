@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE runtime_approvals SET execution_request_id = $1 WHERE approval_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "acfb22c4448991506ed60f0aaeaeb0985aff7d2515213a9e84b377f9b7e71e8c"
+}

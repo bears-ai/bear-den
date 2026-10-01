@@ -66,11 +66,11 @@ pub async fn decide_native_approval(
     reason: Option<&str>,
 ) -> Result<(), DenError> {
     let status = decision.status();
-    sqlx::query!(
+    let updated = sqlx::query!(
         r"
         UPDATE runtime_approvals
         SET status = $2, decision_reason = $3, decided_at = NOW()
-        WHERE approval_id = $1
+        WHERE approval_id = $1 AND consumed_at IS NULL
         ",
         approval_id,
         status,
@@ -79,6 +79,11 @@ pub async fn decide_native_approval(
     .execute(pool)
     .await
     .map_err(|e| DenError::System(format!("decide runtime approval failed: {e}")))?;
+    if updated.rows_affected() != 1 {
+        return Err(DenError::Authorization(
+            "runtime approval is missing or already consumed".into(),
+        ));
+    }
     Ok(())
 }
 

@@ -8,7 +8,7 @@
 //!
 //! See `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md` (Phase B).
 
-use crate::DenError;
+use crate::{tools::context::DenToolInvocationContext, DenError};
 use uuid::Uuid;
 
 /// Per-bear policy outcome for a candidate URL. Mirrors `web_policy`'s decision.
@@ -18,6 +18,7 @@ pub enum WebApproval {
     Allowed,
     ApprovedUrl,
     ApprovedHost,
+    ApprovedOnce,
     Blocked,
     RequiresApproval,
 }
@@ -30,6 +31,7 @@ impl WebApproval {
             Self::Allowed => "allowed",
             Self::ApprovedUrl => "user_url",
             Self::ApprovedHost => "user_host",
+            Self::ApprovedOnce => "approved_once",
             Self::Blocked => "denied",
             Self::RequiresApproval => "requires_approval",
         }
@@ -38,7 +40,11 @@ impl WebApproval {
     pub fn is_approved(self) -> bool {
         matches!(
             self,
-            Self::Preferred | Self::Allowed | Self::ApprovedUrl | Self::ApprovedHost
+            Self::Preferred
+                | Self::Allowed
+                | Self::ApprovedUrl
+                | Self::ApprovedHost
+                | Self::ApprovedOnce
         )
     }
 
@@ -96,10 +102,12 @@ pub struct WebHttpResponse {
 // concrete impls only (never `dyn`), so Send flows through monomorphization.
 #[allow(async_fn_in_trait)]
 pub trait WebFetcher: Send + Sync {
-    /// Normalize `raw_url` and resolve the bear's policy decision for it.
+    /// Normalize `raw_url`, recheck Bear policy, and consume only an exact
+    /// Den-bound one-shot approval for this invocation when needed. Context
+    /// fields are data, not grants; the runtime verifies the persisted approval.
     async fn decide_fetch_approval(
         &self,
-        bear_id: Uuid,
+        context: &DenToolInvocationContext,
         raw_url: &str,
     ) -> Result<(WebUrl, WebApproval), DenError>;
 

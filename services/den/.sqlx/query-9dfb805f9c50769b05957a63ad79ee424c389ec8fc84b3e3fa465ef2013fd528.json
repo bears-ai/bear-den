@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE runtime_approvals\n        SET status = $2, decision_reason = $3, decided_at = NOW()\n        WHERE approval_id = $1 AND consumed_at IS NULL\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9dfb805f9c50769b05957a63ad79ee424c389ec8fc84b3e3fa465ef2013fd528"
+}

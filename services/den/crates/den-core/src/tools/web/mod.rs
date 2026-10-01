@@ -10,7 +10,7 @@ pub mod text;
 
 pub use fetcher::{WebApproval, WebFetchAudit, WebFetcher, WebHttpResponse, WebUrl};
 
-use crate::DenError;
+use crate::{tools::context::DenToolInvocationContext, DenError};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -60,14 +60,15 @@ async fn record_unexecuted_fetch_attempt(
 /// `web_fetch`: policy-gated, SSRF-validated, bounded page fetch.
 pub async fn web_fetch(
     ctx: &impl WebFetcher,
-    bear_id: Uuid,
-    session_id: &str,
+    context: &DenToolInvocationContext,
     arguments: Value,
 ) -> Result<Value, DenError> {
+    let bear_id = context.bear_id;
+    let session_id = context.session_id.as_str();
     let args: WebFetchArguments = serde_json::from_value(arguments)?;
     let max_chars = args.max_chars.unwrap_or(8_000).clamp(1, 20_000);
 
-    let (web_url, decision) = ctx.decide_fetch_approval(bear_id, &args.url).await?;
+    let (web_url, decision) = ctx.decide_fetch_approval(context, &args.url).await?;
 
     if decision.is_blocked() {
         record_unexecuted_fetch_attempt(ctx, bear_id, session_id, &web_url, &decision).await?;

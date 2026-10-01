@@ -10,7 +10,7 @@ use uuid::Uuid;
 use bearwire_protocol::{
     methods::{
         deserialize_optional_string, deserialize_required_string, deserialize_string,
-        ClientPermissionResultRequest,
+        ClientPermissionResultRequest, PermissionDecisionInput,
     },
     wire::{BearWireEvent, ExecutionTargetWire, ToolCallFinishWire, ToolCallRequestedWire},
 };
@@ -491,14 +491,17 @@ async fn record_web_fetch_approval_from_permission(
     pool: &sqlx::PgPool,
     bear_id: uuid::Uuid,
     user_id: i32,
-    decision: &str,
+    decision: PermissionDecisionInput,
     obligation_payload: &Value,
 ) -> Result<(), CustomError> {
     let tool_name = obligation_payload
         .get("tool_name")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    if !matches!(decision, "allow_once" | "allow_site_account" | "allow_host") {
+    if !matches!(
+        decision,
+        PermissionDecisionInput::AllowSiteAccount | PermissionDecisionInput::AllowHost
+    ) {
         return Ok(());
     }
     let Some(descriptor) =
@@ -524,7 +527,7 @@ async fn record_web_fetch_approval_from_permission(
         .ok_or_else(|| {
             CustomError::ValidationError("web_fetch permission payload missing url".to_string())
         })?;
-    let (scope_kind, scope_value) = if decision == "allow_host" {
+    let (scope_kind, scope_value) = if decision == PermissionDecisionInput::AllowHost {
         let host = match payload
             .arguments
             .host
@@ -536,7 +539,7 @@ async fn record_web_fetch_approval_from_permission(
             None => web_policy::normalize_web_url(url)?.host,
         };
         ("host", host)
-    } else if decision == "allow_site_account" {
+    } else if decision == PermissionDecisionInput::AllowSiteAccount {
         let scope_value = payload
             .arguments
             .site_account
@@ -576,11 +579,7 @@ async fn record_web_fetch_approval_from_permission(
         };
         ("host", host)
     };
-    let ttl_seconds = if decision == "allow_once" {
-        Some(60 * 60)
-    } else {
-        None
-    };
+    let ttl_seconds = None;
     web_policy::record_web_approval(
         pool,
         bear_id,
@@ -1699,7 +1698,7 @@ pub(crate) async fn client_permission_result_result(
             &state.sqlx_pool,
             bear.id,
             user_id,
-            decision.raw(),
+            decision,
             &obligation.request_payload,
         )
         .await?;
@@ -1952,6 +1951,41 @@ mod tests {
             None
         );
         assert_eq!(permission_reason_text(&None), None);
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn allow_once_never_persists_bear_wide_web_access(pool: sqlx::PgPool) {
+        let bear_id = den_service::bears::db::create_bear(
+            &pool,
+            den_service::bears::db::BearParams {
+                slug: "bearwireoneshotweb",
+                name: "One shot web",
+                description: "",
+                system_prompt: "",
+                default_model: None,
+                tools_enabled: None,
+                context_profile: None,
+            },
+        )
+        .await
+        .unwrap();
+        let url = "https://example.com/private";
+        record_web_fetch_approval_from_permission(
+            &pool,
+            bear_id,
+            1,
+            PermissionDecisionInput::AllowOnce,
+            &json!({"tool_name": DEN_WEB_FETCH, "arguments": {"url": url}}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            web_policy::decide_web_fetch_approval(&pool, bear_id, url)
+                .await
+                .unwrap()
+                .1,
+            web_policy::WebApprovalDecision::RequiresApproval,
+        );
     }
 
     #[test]

@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE runtime_approvals SET consumed_at = now()\n         WHERE execution_request_id = $1 AND bear_id = $2\n           AND conversation_id = $3 AND client_session_id = $4\n           AND arguments_json ->> 'url' = $5 AND status = 'approved'\n           AND consumed_at IS NULL\n         RETURNING approval_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "approval_id",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a812cfc6a32bd08b115f31de1968a76e9ca57f316fdaa997a258eaa72fcc1ecb"
+}

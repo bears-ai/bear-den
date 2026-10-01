@@ -131,10 +131,10 @@ impl<'a> DenToolContext<'a> {
 impl WebFetcher for DenToolContext<'_> {
     async fn decide_fetch_approval(
         &self,
-        bear_id: Uuid,
+        context: &DenToolInvocationContext,
         raw_url: &str,
     ) -> Result<(WebUrl, WebApproval), DenError> {
-        self.web().decide_fetch_approval(bear_id, raw_url).await
+        self.web().decide_fetch_approval(context, raw_url).await
     }
 
     async fn record_fetch_attempt(&self, audit: WebFetchAudit<'_>) -> Result<(), DenError> {

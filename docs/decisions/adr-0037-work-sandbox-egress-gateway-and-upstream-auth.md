@@ -20,7 +20,7 @@
 
 Positive tool and outbound-network authorization belongs to the canonical Bear-owned hat, shared by authorized conversations and Job runs wearing it. The per-surface outbound-host list in §5.1 remains a **resource-specific maximum** intersected with hat-authorized destinations, not a second independent permission source. A host must pass both bounds; a surface suggestion alone grants nothing, and a hat host grant cannot expand a surface's reachable network. Membership, actor/Connection credential scope, Den network safety rules, Job assignment, and a connected armature where needed remain separate hard constraints. Internal curation/observation use Den-owned system authority rather than borrowing a hat. No credential is placed inside the sandbox by a hat grant.
 
-This amendment does not assert deployment. Current Den web approvals are Bear-scoped, the armature caches its own remembered approvals, and sandbox outbound-host rules are configured per work surface. The [active implementation plan](../roadmap/HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md#gate-0a--hat-owned-tool-and-network-permissions-accepted-target-not-deployed) owns their fail-closed cutover and the one-time versus hat-persistent permission UX.
+This amendment does not assert deployment. Current remembered Den web approvals are Bear-scoped, one-time Den web fetches consume a per-call runtime approval, the armature caches its own remembered approvals, and sandbox outbound-host rules are configured per work surface. The [active implementation plan](../roadmap/HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md#gate-0a--hat-owned-tool-and-network-permissions-accepted-target-not-deployed) owns their fail-closed cutover and the one-time versus hat-persistent permission UX.
 
 ## Context
 
