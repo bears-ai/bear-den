@@ -5601,7 +5601,10 @@ async fn verified_hat_workspace_read_grant(
     if !path.starts_with(&root) || paths::is_sensitive_path(&path) {
         return false;
     }
-    let Some(root) = root.to_str() else {
+    // The administrator grants the editor's exact reported root. Resolve it
+    // to check containment, but send its original spelling to Den so a
+    // legitimate symlinked workspace root (for example /var on macOS) matches.
+    let Some(declared_root) = target.workspace_root.to_str() else {
         return false;
     };
     bearwire::rpc_call(
@@ -5612,7 +5615,7 @@ async fn verified_hat_workspace_read_grant(
             "bear_slug": config.bear,
             "session_id": session_id,
             "tool_name": tool_name,
-            "workspace_root": root,
+            "workspace_root": declared_root,
         }),
     )
     .await
