@@ -193,6 +193,75 @@ async fn run_hosts_are_bounded_by_both_the_assigned_surface_and_current_hat_gran
     )
     .await
     .is_err());
+    hats::allow_surface(&pool, BearId::new(bear), first.id, surface.id)
+        .await
+        .unwrap();
+    sqlx::query!(
+        "UPDATE bear_hats SET work_enabled = true WHERE id = $1",
+        first.id.as_uuid()
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let job = sqlx::query_scalar!(
+        "INSERT INTO bear_jobs (bear_id, created_by_user_id, created_by_role, goal)
+         VALUES ($1, $2, 'ui', 'Old unbound Work') RETURNING id",
+        bear,
+        admin,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query!(
+        "INSERT INTO job_work_surface_assignments (job_id, work_surface_id) VALUES ($1, $2)",
+        job,
+        surface.id,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    hats::bindings::bind_job_hat(&pool, BearId::new(bear), job, first.id)
+        .await
+        .unwrap();
+    let job_run = sqlx::query_scalar!(
+        "INSERT INTO bear_job_runs (job_id) VALUES ($1) RETURNING id",
+        job,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let run_id = sqlx::query_scalar!(
+        "INSERT INTO bear_work_runs (bear_id, job_id, job_run_id)
+         VALUES ($1, $2, $3) RETURNING id",
+        bear,
+        job,
+        job_run,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let missing_snapshot = den_docket::work_runs::get_work_run(&pool, run_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        active_run_still_authorized(&pool, &missing_snapshot)
+            .await
+            .is_err(),
+        "a pre-cutover sandbox without a recorded hat ceiling fails closed"
+    );
+    den_docket::work_runs::merge_work_run_result_refs(
+        &pool,
+        run_id,
+        &serde_json::json!({"hat_egress": snapshot(&permitted)}),
+    )
+    .await
+    .unwrap();
+    let active = den_docket::work_runs::get_work_run(&pool, run_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(active_run_still_authorized(&pool, &active).await.unwrap());
     access::revoke(
         &pool,
         BearId::new(bear),
@@ -213,6 +282,14 @@ async fn run_hosts_are_bounded_by_both_the_assigned_surface_and_current_hat_gran
     .unwrap()
     .unwrap()
     .is_empty());
+    let current = den_docket::work_runs::get_work_run(&pool, run_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        !active_run_still_authorized(&pool, &current).await.unwrap(),
+        "removing a provisioned host must stop the running Work sandbox"
+    );
     assert!(for_run(
         &pool,
         BearId::new(bear),

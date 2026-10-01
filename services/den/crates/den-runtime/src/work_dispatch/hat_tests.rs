@@ -12,7 +12,67 @@ use den_service::{
 };
 use sqlx::PgPool;
 
-use super::provision_run;
+use super::{cancel_run, provision_run};
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn provider_teardown_failure_does_not_mark_a_reachable_sandbox_cancelled(pool: PgPool) {
+    let user = sqlx::query_scalar!(
+        "INSERT INTO users (email, username) VALUES ('dispatch-hat@example.test', 'dispatchhat') RETURNING id"
+    ).fetch_one(&pool).await.unwrap();
+    let bear = sqlx::query_scalar!(
+        "INSERT INTO bears (slug, name) VALUES ('dispatchhatbear', 'Dispatch Hat') RETURNING id"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let job = sqlx::query_scalar!(
+        "INSERT INTO bear_jobs (bear_id, created_by_user_id, created_by_role, goal)
+         VALUES ($1, $2, 'ui', 'Old unbound Work') RETURNING id",
+        bear,
+        user,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let job_run = sqlx::query_scalar!(
+        "INSERT INTO bear_job_runs (job_id) VALUES ($1) RETURNING id",
+        job,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let run_id = sqlx::query_scalar!(
+        "INSERT INTO bear_work_runs (bear_id, job_id, job_run_id)
+         VALUES ($1, $2, $3) RETURNING id",
+        bear,
+        job,
+        job_run,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let mut run = work_runs::get_work_run(&pool, run_id)
+        .await
+        .unwrap()
+        .unwrap();
+    run.sandbox_id = Some("provider-unreachable".into());
+    cancel_run(
+        &pool,
+        &Arc::new(Config::test_stub()),
+        &SandboxClient::new("http://127.0.0.1:1", "test"),
+        &run,
+    )
+    .await;
+    let after = work_runs::get_work_run(&pool, run_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        after.state, "queued",
+        "retry the teardown instead of finalizing a sandbox whose relays may remain reachable"
+    );
+    assert_eq!(after.result_refs.unwrap()["cleanup"], "failed");
+}
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn configured_hats_fail_unbound_work_before_credentials_or_sandbox_provisioning(

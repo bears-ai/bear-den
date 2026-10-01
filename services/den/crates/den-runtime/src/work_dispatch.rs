@@ -284,7 +284,7 @@ async fn provision_run(
         .await;
         return;
     }
-    if allowed_outbound_hosts.is_some() {
+    if let Some(hosts) = &allowed_outbound_hosts {
         match client.health().await {
             Ok(health) if network_policy::require_provider_run_ceiling(&health).is_ok() => {}
             Ok(_) | Err(_) => {
@@ -292,6 +292,23 @@ async fn provision_run(
                     "hat-bound Work needs a reachable provider that enforces run-scoped outbound ceilings", None).await;
                 return;
             }
+        }
+        if let Err(err) = work_runs::merge_work_run_result_refs(
+            pool,
+            run.id,
+            &json!({"hat_egress": network_policy::snapshot(hosts)}),
+        )
+        .await
+        {
+            fail_run(
+                pool,
+                run,
+                "work_hat_egress_snapshot",
+                &err.to_string(),
+                None,
+            )
+            .await;
+            return;
         }
     }
 
@@ -493,6 +510,40 @@ async fn monitor_owned_runs(
         if run.cancel_requested {
             cancel_run(pool, config, client, &run).await;
             continue;
+        }
+        if matches!(
+            run.state_enum(),
+            Some(WorkRunState::Running | WorkRunState::Reporting)
+        ) {
+            match network_policy::active_run_still_authorized(pool, &run).await {
+                Ok(true) => {}
+                decision => {
+                    tracing::warn!(work_run_id = %run.id, decision = ?decision,
+                        "Work hat/surface policy no longer permits the provisioned outbound relays");
+                    let request = work_runs::WorkRunCancelRequest {
+                        requested_by: "system:hat_egress".into(),
+                        reason: "hat or work-surface egress authority was revoked".into(),
+                    };
+                    if let Err(err) = work_runs::request_work_run_cancel_with_provenance(
+                        pool,
+                        run.id,
+                        run.bear_id,
+                        &request,
+                    )
+                    .await
+                    {
+                        tracing::warn!(error = %err, work_run_id = %run.id,
+                            "could not record hat egress cancellation; attempting teardown anyway");
+                    }
+                    let current = work_runs::get_work_run(pool, run.id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .unwrap_or(run.clone());
+                    cancel_run(pool, config, client, &current).await;
+                    continue;
+                }
+            }
         }
 
         match run.state_enum() {
@@ -832,13 +883,22 @@ async fn cancel_run(pool: &PgPool, config: &Arc<Config>, client: &SandboxClient,
     // Upgrade path: a durable cancel signal delivered through the BearWire
     // event log / an internal cancel endpoint on the API process.
     revoke_token_for_run(pool, run.id).await;
-    teardown_sandbox(pool, config, client, run, false).await;
+    if !teardown_sandbox(pool, config, client, run, false).await {
+        // A failed provider teardown may leave the relay reachable. Keep the
+        // run live with its durable cancellation request so the next tick
+        // retries instead of marking the still-running sandbox terminal.
+        return;
+    }
     let _ = work_runs::finalize_work_run(
         pool,
         run.id,
         WorkRunState::Cancelled,
         WorkRunFinalize {
-            result_summary: Some("cancelled by operator".to_string()),
+            result_summary: Some(
+                run.cancel_reason
+                    .clone()
+                    .unwrap_or_else(|| "cancelled by operator".into()),
+            ),
             ..WorkRunFinalize::default()
         },
     )
@@ -851,9 +911,9 @@ async fn teardown_sandbox(
     client: &SandboxClient,
     run: &WorkRunRow,
     failed: bool,
-) {
+) -> bool {
     let Some(sandbox_id) = run.sandbox_id.as_deref() else {
-        return;
+        return true;
     };
     let preserve = failed && config.sandbox_preserve_failed;
     match client.destroy(sandbox_id, preserve).await {
@@ -865,7 +925,9 @@ async fn teardown_sandbox(
                     &json!({ "cleanup": "failed", "cleanup_reason": reason }),
                 )
                 .await;
+                return false;
             }
+            true
         }
         Err(err) => {
             tracing::warn!(error = %err, work_run_id = %run.id, sandbox_id, "work_dispatch: sandbox destroy failed");
@@ -875,6 +937,7 @@ async fn teardown_sandbox(
                 &json!({ "cleanup": "failed", "cleanup_reason": err.to_string() }),
             )
             .await;
+            false
         }
     }
 }
