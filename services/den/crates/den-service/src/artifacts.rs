@@ -1097,17 +1097,26 @@ pub fn garage_artifact_storage_key(artifact_ref: &str) -> Result<String, DenErro
     Ok(format!("artifacts/{}/{artifact_ref}", &suffix[..2]))
 }
 
+#[cfg(test)]
+#[path = "artifacts/access_tests.rs"]
+mod access_tests;
+
 fn role_can_read_artifact(artifact: &ArtifactMetadata, context: &ArtifactAccessContext) -> bool {
+    let own_human_artifact =
+        context.user_id.is_some() && context.user_id == artifact.created_by_user_id;
+    let ownerless_internal_artifact = context.user_id.is_none()
+        && artifact.created_by_user_id.is_none()
+        && context.profile == artifact.owner_profile;
     match artifact.visibility {
-        ArtifactVisibility::PrivateToProfile => context.profile == artifact.owner_profile,
-        ArtifactVisibility::SameUser => {
-            artifact.created_by_user_id == context.user_id
-                || context.profile == artifact.owner_profile
+        ArtifactVisibility::PrivateToProfile => {
+            (own_human_artifact || ownerless_internal_artifact)
+                && context.profile == artifact.owner_profile
         }
+        ArtifactVisibility::SameUser => own_human_artifact,
         ArtifactVisibility::BearVisible => true,
         ArtifactVisibility::HandoffRequested => {
-            matches!(context.profile, BearProfile::Curate)
-                || context.profile == artifact.owner_profile
+            own_human_artifact
+                || (context.user_id.is_none() && context.profile == BearProfile::Curate)
         }
     }
 }
