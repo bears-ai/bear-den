@@ -52,6 +52,7 @@ pub async fn invoke_den_tool_for_origin(
     origin: TurnExecutionOrigin,
     governance: den_core::Governance,
 ) -> Result<Value, CustomError> {
+    origin.require_ordinary_session()?;
     reject_closed_freeform_task_definition(tool_name, &context)?;
     reject_immutable_focused_task_definition(tool_name, &context)?;
     let ctx = DenToolContext::new(pool, config, stores);

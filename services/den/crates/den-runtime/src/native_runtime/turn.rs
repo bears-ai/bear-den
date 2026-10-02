@@ -507,6 +507,14 @@ pub async fn record_native_client_tool_result(
     status: RuntimeToolResultStatus,
     content: String,
 ) -> Result<(), DenError> {
+    let run_id = run_id.ok_or_else(|| {
+        DenError::ValidationError("native client tool result requires run_id".to_string())
+    })?;
+    let session_key = agent_loop_session_key(conversation_id, client_session_id, run_id);
+    let session = SESSION_STORE
+        .get(&session_key)
+        .ok_or_else(|| DenError::System("native agent loop session not found".into()))?;
+    session.origin.require_ordinary_session()?;
     if let Some(approval_request_id) = approval_request_id {
         let approve = matches!(status, RuntimeToolResultStatus::Ok);
         record_approval_decision(
@@ -529,10 +537,6 @@ pub async fn record_native_client_tool_result(
         name: None,
         tool_calls: None,
     };
-    let run_id = run_id.ok_or_else(|| {
-        DenError::ValidationError("native client tool result requires run_id".to_string())
-    })?;
-    let session_key = agent_loop_session_key(conversation_id, client_session_id, run_id);
     SESSION_STORE.update(&session_key, |session| {
         session.request_id = Some(request_id.to_string());
         session.run_id = Some(run_id.to_string());
@@ -1466,6 +1470,7 @@ pub async fn start_native_turn_event_stream(
     request: TurnStartRequest<'_>,
     origin: den_core::TurnExecutionOrigin,
 ) -> Result<RuntimeEventStream, DenError> {
+    origin.require_ordinary_session()?;
     let role =
         den_core::EffectivePolicy::compile_for_origin(origin, den_core::Governance::Interactive)
             .trust_profile;
@@ -2054,6 +2059,9 @@ mod approval_tests;
 #[cfg(test)]
 #[path = "turn/continuation_tests.rs"]
 mod continuation_tests;
+#[cfg(test)]
+#[path = "turn/internal_route_tests.rs"]
+mod internal_route_tests;
 
 #[derive(Clone, Copy)]
 struct ContinuationSource<'a> {
@@ -2085,6 +2093,7 @@ async fn require_continuation_binding(
     session: ContinuationSource<'_>,
     binding: &RoleRuntimeBinding,
 ) -> Result<(), DenError> {
+    session.origin.require_ordinary_session()?;
     if den_core::EffectivePolicy::compile_for_origin(
         session.origin,
         den_core::Governance::Interactive,
@@ -2188,14 +2197,9 @@ async fn require_continuation_binding(
         }
         den_core::TurnExecutionOrigin::InternalCuration
         | den_core::TurnExecutionOrigin::InboundObservation => {
-            // Internal lanes do not have a human conversation or Job source yet.
-            // Keep their separate registered system authority until their source
-            // and principal are modeled and verified independently.
-            den_service::bears::db::profile_binding_id(pool, session.bear_id, session.profile)
-                .await?
-                .ok_or_else(|| {
-                    DenError::Authorization("internal runtime binding is unavailable".into())
-                })?
+            return Err(DenError::Authorization(
+                "system execution cannot continue through a conversational session".into(),
+            ));
         }
     };
     if binding.binding_id != expected {
@@ -2348,6 +2352,7 @@ pub async fn continue_native_client_turn_event_stream(
     let prior_session = existing_session
         .clone()
         .ok_or_else(|| DenError::System("native agent loop session not found".to_string()))?;
+    prior_session.origin.require_ordinary_session()?;
     let profile = prior_session.profile;
     if den_core::EffectivePolicy::compile_for_origin(prior_session.origin, prior_session.governance)
         .trust_profile

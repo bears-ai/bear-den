@@ -9,11 +9,8 @@ use uuid::Uuid;
 
 use den_core::tools::identity::{BearDirectory, BearMemberRecord, BearRecord, CurrentUser};
 
-use crate::{
-    core::user,
-    errors::{CustomError, DenError},
-};
-use den_service::bears::{db as bears_db, BearProfile};
+use crate::{core::user, errors::DenError};
+use den_service::bears::db as bears_db;
 
 fn format_rfc3339(value: time::OffsetDateTime) -> String {
     value
@@ -29,33 +26,6 @@ pub(crate) struct DenBearDirectory<'a> {
 impl BearDirectory for DenBearDirectory<'_> {
     async fn user_may_use_bear(&self, user_id: i32, bear_id: Uuid) -> Result<bool, DenError> {
         bears_db::user_may_use_bear(self.pool, user_id, bear_id).await
-    }
-
-    async fn registered_profile(
-        &self,
-        bear_id: Uuid,
-        binding_id: &str,
-    ) -> Result<Option<BearProfile>, DenError> {
-        let row: Option<(String,)> = sqlx::query_as(
-            r"
-            SELECT profile
-            FROM bear_profile_bindings
-            WHERE bear_id = $1
-              AND binding_id = $2
-            ",
-        )
-        .bind(bear_id)
-        .bind(binding_id)
-        .fetch_optional(self.pool)
-        .await
-        .map_err(|err| CustomError::from(err).into_den())?;
-        match row {
-            None => Ok(None),
-            Some((profile,)) => profile
-                .parse::<BearProfile>()
-                .map(Some)
-                .map_err(DenError::System),
-        }
     }
 
     async fn bear_self(&self, bear_id: Uuid) -> Result<Option<BearRecord>, DenError> {

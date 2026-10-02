@@ -72,6 +72,20 @@ pub enum TurnExecutionOrigin {
 }
 
 impl TurnExecutionOrigin {
+    /// Generic conversational sessions require an ordinary conversation or Job
+    /// source. System operations use their own verified, narrow entry points.
+    pub fn require_ordinary_session(self) -> Result<(), DenError> {
+        match self {
+            Self::InternalCuration | Self::InboundObservation => Err(DenError::Authorization(
+                "system execution requires a dedicated source-verified operation".into(),
+            )),
+            Self::ChannelConversation
+            | Self::BrowserTaskSession
+            | Self::ArmatureConversation(_)
+            | Self::AuthorizedWorkRun(_) => Ok(()),
+        }
+    }
+
     fn policy_inputs(self) -> (TrustProfile, ArmatureAvailability) {
         match self {
             Self::ChannelConversation => (TrustProfile::Chat, ArmatureAvailability::Absent),

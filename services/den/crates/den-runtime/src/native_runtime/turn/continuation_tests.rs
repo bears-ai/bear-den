@@ -147,7 +147,9 @@ async fn approved_tool_continuation_requires_the_same_owned_live_conversation(po
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn work_continuation_needs_exact_live_run_and_internal_lanes_keep_registration(pool: PgPool) {
+async fn work_continuation_needs_exact_live_run_and_internal_continuations_are_denied(
+    pool: PgPool,
+) {
     let bear = db::create_bear(
         &pool,
         BearParams {
@@ -209,9 +211,10 @@ async fn work_continuation_needs_exact_live_run_and_internal_lanes_keep_registra
         .await
         .unwrap()
         .unwrap();
-    require_continuation_binding(&pool, internal, &binding(registered))
-        .await
-        .unwrap();
+    assert!(matches!(
+        require_continuation_binding(&pool, internal, &binding(registered)).await,
+        Err(DenError::Authorization(_))
+    ));
     let watch = ContinuationSource {
         origin: den_core::TurnExecutionOrigin::InboundObservation,
         profile: BearProfile::Watch,
@@ -221,9 +224,10 @@ async fn work_continuation_needs_exact_live_run_and_internal_lanes_keep_registra
         .await
         .unwrap()
         .unwrap();
-    require_continuation_binding(&pool, watch, &binding(registered))
-        .await
-        .unwrap();
+    assert!(matches!(
+        require_continuation_binding(&pool, watch, &binding(registered)).await,
+        Err(DenError::Authorization(_))
+    ));
     assert!(require_continuation_binding(&pool, watch, &guessed)
         .await
         .is_err());

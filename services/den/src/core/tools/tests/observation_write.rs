@@ -6,14 +6,13 @@ use crate::{
     config::Config,
     core::{
         tools::{
-            arguments::DenToolChannelContext,
-            constants::DEN_OBSERVATION_WRITE,
-            session::{invoke_den_tool_for_origin, DenToolInvocationContext},
+            arguments::DenToolChannelContext, context::DenToolContext,
+            session::DenToolInvocationContext,
         },
         user::db::create_user,
     },
 };
-use den_core::{Governance, TurnExecutionOrigin};
+use den_core::tools::review::write_observation;
 use den_memory::MemoryStoreManager;
 use den_service::bears::{db, db::grant_membership, db::BearParams, BearProfile};
 
@@ -98,19 +97,16 @@ async fn observation_write_persists_and_enqueues_memory_curate(
     let config = Config::test_stub();
     let stores = MemoryStoreManager::new(&config);
 
-    let payload = invoke_den_tool_for_origin(
-        &pool,
-        &config,
-        &stores,
-        DEN_OBSERVATION_WRITE,
+    let tool_context = DenToolContext::new(&pool, &config, &stores);
+    let payload = write_observation(
+        &tool_context,
+        &context,
+        BearProfile::Watch,
         json!({
             "observation_id": "deploy-failure-001",
             "summary": "Deployment pipeline failed on main.",
             "salience": "high"
         }),
-        context,
-        TurnExecutionOrigin::InboundObservation,
-        Governance::AutonomousContinuation,
     )
     .await?;
 
@@ -157,22 +153,19 @@ async fn observation_write_persists_and_enqueues_memory_curate(
         request_id: Some(Uuid::new_v4().to_string()),
         channel: DenToolChannelContext::default(),
     };
-    let replay = invoke_den_tool_for_origin(
-        &pool,
-        &config,
-        &stores,
-        DEN_OBSERVATION_WRITE,
+    let replay = write_observation(
+        &tool_context,
+        &replay_context,
+        BearProfile::Watch,
         json!({
             "observation_id": "deploy-failure-001",
             "summary": "Deployment pipeline failed on main.",
             "salience": "high"
         }),
-        replay_context,
-        TurnExecutionOrigin::InboundObservation,
-        Governance::AutonomousContinuation,
     )
     .await?;
     assert_eq!(replay["idempotent_replay"], true);
+    assert_eq!(replay["proposal_id"], payload["proposal_id"]);
 
     Ok(())
 }

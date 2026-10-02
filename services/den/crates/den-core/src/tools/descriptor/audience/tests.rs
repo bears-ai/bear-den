@@ -38,6 +38,17 @@ fn typed_origin_matrix_preserves_profile_compatibility_without_using_it_as_autho
             profile
         );
     }
+    for origin in [
+        TurnExecutionOrigin::InternalCuration,
+        TurnExecutionOrigin::InboundObservation,
+    ] {
+        assert!(builtin_den_tool_descriptors_for_origin(origin).is_empty());
+        for descriptor in crate::tools::descriptor::builtin_den_tool_descriptors() {
+            assert!(!descriptor.allows_origin(origin));
+            assert!(!descriptor.allowed_roles.contains(&"curate"));
+            assert!(!descriptor.allowed_roles.contains(&"watch"));
+        }
+    }
     let fetch = builtin_den_tool_descriptor_for_provider_name("web_fetch").unwrap();
     assert_eq!(fetch.allowed_roles, vec!["pair"]);
     assert!(

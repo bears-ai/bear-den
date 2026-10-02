@@ -470,16 +470,6 @@ impl BearDirectory for DenToolContext<'_> {
         self.directory().user_may_use_bear(user_id, bear_id).await
     }
 
-    async fn registered_profile(
-        &self,
-        bear_id: Uuid,
-        binding_id: &str,
-    ) -> Result<Option<BearProfile>, DenError> {
-        self.directory()
-            .registered_profile(bear_id, binding_id)
-            .await
-    }
-
     async fn bear_self(&self, bear_id: Uuid) -> Result<Option<BearRecord>, DenError> {
         self.directory().bear_self(bear_id).await
     }

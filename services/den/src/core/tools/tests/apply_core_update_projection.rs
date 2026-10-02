@@ -10,8 +10,11 @@ use crate::core::{
     },
     user::db::create_user,
 };
-use den_core::tools::{descriptor::builtin_den_tool_descriptor_for_provider_name, dispatch::has_native_session_executor};
-use den_core::{Governance, TurnExecutionOrigin};
+use den_core::tools::{
+    descriptor::builtin_den_tool_descriptor_for_provider_name,
+    dispatch::has_native_session_executor,
+};
+use den_core::{ArmatureAvailability, Governance, TurnExecutionOrigin};
 use den_service::bears::{db, db::grant_membership, db::BearParams, BearProfile};
 
 #[sqlx::test]
@@ -55,7 +58,7 @@ async fn retired_core_update_tool_is_not_advertised_or_executable_without_hats(
         bear_id,
         bear_slug: "test-retired-memory-apply-tool-bear".to_string(),
         binding_id: agent_id,
-        profile: Some(BearProfile::Curate),
+        profile: Some(BearProfile::Pair),
         user_id,
         username: Some("tester".to_string()),
         membership_role: Some("admin".to_string()),
@@ -79,7 +82,10 @@ async fn retired_core_update_tool_is_not_advertised_or_executable_without_hats(
     let config = crate::config::Config::test_stub();
     let stores = den_memory::MemoryStoreManager::new(&config);
     assert!(builtin_den_tool_descriptor_for_provider_name(DEN_MEMORY_APPLY_CORE_UPDATE).is_none());
-    assert!(builtin_den_tool_descriptor_for_provider_name(DEN_MEMORY_APPLY_CORE_UPDATE_PROVIDER).is_none());
+    assert!(
+        builtin_den_tool_descriptor_for_provider_name(DEN_MEMORY_APPLY_CORE_UPDATE_PROVIDER)
+            .is_none()
+    );
     assert!(!has_native_session_executor(DEN_MEMORY_APPLY_CORE_UPDATE));
 
     for has_hat in [false, true] {
@@ -93,7 +99,10 @@ async fn retired_core_update_tool_is_not_advertised_or_executable_without_hats(
             )
             .await?;
         }
-        for tool_name in [DEN_MEMORY_APPLY_CORE_UPDATE, DEN_MEMORY_APPLY_CORE_UPDATE_PROVIDER] {
+        for tool_name in [
+            DEN_MEMORY_APPLY_CORE_UPDATE,
+            DEN_MEMORY_APPLY_CORE_UPDATE_PROVIDER,
+        ] {
             let blocked = invoke_den_tool_for_origin(
                 &pool,
                 &config,
@@ -106,11 +115,31 @@ async fn retired_core_update_tool_is_not_advertised_or_executable_without_hats(
                     "body": "This proposal must not become Bear-wide memory",
                 }),
                 context.clone(),
+                TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+                Governance::Interactive,
+            )
+            .await;
+            assert!(
+                matches!(blocked, Err(crate::errors::CustomError::NotFound(_))),
+                "retired tool {tool_name} unexpectedly accepted: {blocked:?}"
+            );
+            let mut internal_context = context.clone();
+            internal_context.profile = Some(BearProfile::Curate);
+            let internal = invoke_den_tool_for_origin(
+                &pool,
+                &config,
+                &stores,
+                tool_name,
+                json!({}),
+                internal_context,
                 TurnExecutionOrigin::InternalCuration,
                 Governance::AutonomousContinuation,
             )
             .await;
-            assert!(matches!(blocked, Err(crate::errors::CustomError::NotFound(_))), "retired tool {tool_name} unexpectedly accepted: {blocked:?}");
+            assert!(
+                matches!(internal, Err(crate::errors::CustomError::Authorization(_))),
+                "internal route for {tool_name} unexpectedly accepted: {internal:?}"
+            );
         }
     }
     let store = stores.store_for_bear(bear_id).await?;

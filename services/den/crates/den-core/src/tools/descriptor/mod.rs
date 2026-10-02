@@ -7,24 +7,18 @@ use serde_json::{json, Value};
 use crate::{BearProfile, TurnExecutionOrigin};
 use ToolAudience::{
     ArmatureConversation as Armature, AuthorizedWorkRun as Work, BrowserTaskSession as BrowserTask,
-    ChannelConversation as Channel, InboundObservation as Observation,
-    InternalCuration as Curation,
+    ChannelConversation as Channel,
 };
 
-const ALL_AUDIENCES: &[ToolAudience] =
-    &[Channel, Armature, BrowserTask, Curation, Work, Observation];
-const TASK_LIST_READ_AUDIENCES: &[ToolAudience] = &[Channel, Armature, BrowserTask, Curation, Work];
+const ALL_AUDIENCES: &[ToolAudience] = &[Channel, Armature, BrowserTask, Work];
+const TASK_LIST_READ_AUDIENCES: &[ToolAudience] = &[Channel, Armature, BrowserTask, Work];
 const TASK_LIST_UPDATE_AUDIENCES: &[ToolAudience] = &[Channel, Armature, BrowserTask, Work];
 const CHANNEL_ARMATURE_AUDIENCES: &[ToolAudience] = &[Channel, Armature, BrowserTask];
 const ARMATURE_AUDIENCES: &[ToolAudience] = &[Armature, BrowserTask];
 const ARMATURE_WORK_AUDIENCES: &[ToolAudience] = &[Armature, BrowserTask, Work];
-const CHANNEL_ARMATURE_CURATION_AUDIENCES: &[ToolAudience] =
-    &[Channel, Armature, BrowserTask, Curation];
 const MEMORY_READ_AUDIENCES: &[ToolAudience] = ALL_AUDIENCES;
-const ENTITY_RELATION_WRITE_AUDIENCES: &[ToolAudience] =
-    &[Channel, Armature, BrowserTask, Work, Observation];
-const CURATION_AUDIENCES: &[ToolAudience] = &[Curation];
-const OBSERVATION_AUDIENCES: &[ToolAudience] = &[Observation];
+const ENTITY_RELATION_WRITE_AUDIENCES: &[ToolAudience] = &[Channel, Armature, BrowserTask, Work];
+const NO_MODEL_AUDIENCES: &[ToolAudience] = &[];
 const WORK_AUDIENCES: &[ToolAudience] = &[Work];
 
 use crate::tools::{
@@ -439,7 +433,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Curate-only identity repair: merge a duplicate or mistaken entity into a survivor. The loser is not deleted; it forwards to the survivor and active handles are re-homed.",
             "bear.memory",
             &["entity.governance.write"],
-            CURATION_AUDIENCES,
+            NO_MODEL_AUDIENCES,
             entity_merge_schema(),
         ),
         descriptor(
@@ -448,7 +442,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Curate-only identity repair: create a new entity and move selected handles to it after an incorrect merge or over-broad identity grouping.",
             "bear.memory",
             &["entity.governance.write"],
-            CURATION_AUDIENCES,
+            NO_MODEL_AUDIENCES,
             entity_split_schema(),
         ),
         descriptor(
@@ -457,7 +451,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Curate-only visibility governance: add an access-bearing relation from a memory record to a resolved entity. Supports `audience` and `confined_to`; these relations are enforced by the memory access gate.",
             "bear.memory",
             &["entity.access_rule.write"],
-            CURATION_AUDIENCES,
+            NO_MODEL_AUDIENCES,
             entity_write_access_rule_schema(),
         ),
         descriptor(
@@ -466,7 +460,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Curate-only anchor maintenance: write an explicit canonical memory record for a resolved, anchor-eligible entity at its generated anchor path. This is the v1 source for projected entity anchors.",
             "bear.memory",
             &["entity.anchor.write", "memory.core.write"],
-            CURATION_AUDIENCES,
+            NO_MODEL_AUDIENCES,
             entity_write_anchor_schema(),
         ),
         descriptor(
@@ -538,7 +532,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "List memory review proposals for this Bear.",
             "bear.memory",
             &["memory.proposal.read"],
-            CURATION_AUDIENCES,
+            NO_MODEL_AUDIENCES,
             json!({"type":"object","properties":{"status":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":100}},"additionalProperties":false}),
         ),
         descriptor(
@@ -547,7 +541,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Read one memory review proposal with source pointers and status.",
             "bear.memory",
             &["memory.proposal.read"],
-            CURATION_AUDIENCES,
+            NO_MODEL_AUDIENCES,
             json!({"type":"object","properties":{"proposal_id":{"type":"string","format":"uuid"}},"required":["proposal_id"],"additionalProperties":false}),
         ),
         descriptor(
@@ -556,7 +550,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Resolve a memory review proposal without applying shared-memory writes.",
             "bear.memory",
             &["memory.proposal.resolve"],
-            CURATION_AUDIENCES,
+            NO_MODEL_AUDIENCES,
             json!({"type":"object","properties":{"proposal_id":{"type":"string","format":"uuid"},"status":{"enum":["rejected","retained_local","deferred","superseded","needs_human_review"]},"review_notes":{"type":"string"},"decision_summary":{"type":"string"}},"required":["proposal_id","status"],"additionalProperties":false}),
         ),
 
@@ -566,7 +560,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Curate-only lifecycle marker for existing memory records: stale, superseded, archived, archive-candidate, or active. Does not promote or rewrite content.",
             "bear.memory",
             &["memory.lifecycle.write"],
-            CURATION_AUDIENCES,
+            NO_MODEL_AUDIENCES,
             json!({"type":"object","properties":{"memory_id":{"type":"string","minLength":1,"maxLength":200},"status":{"type":"string","enum":["active","stale","superseded","archived","archive-candidate"]},"reason":{"type":"string","maxLength":1000}},"required":["memory_id","status"],"additionalProperties":false}),
         ),
         descriptor(
@@ -584,7 +578,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Approve a pending skill proposal, update the manifest, and queue reconciliation for affected roles.",
             "bear.skills",
             &["skill.proposal.approve"],
-            CURATION_AUDIENCES,
+            NO_MODEL_AUDIENCES,
             json!({"type":"object","properties":{"proposal_id":{"type":"string","format":"uuid"},"skill_name":{"type":"string"},"skill_version":{"type":"string"},"applies_to_profiles":{"type":"array","items":{"enum":ALL_AUDIENCES},"minItems":1},"review_notes":{"type":"string"}},"required":["proposal_id","applies_to_profiles"],"additionalProperties":false}),
         ),
         descriptor(
@@ -593,7 +587,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Reject a pending skill proposal with reviewer metadata and a rejection reason.",
             "bear.skills",
             &["skill.proposal.reject"],
-            CURATION_AUDIENCES,
+            NO_MODEL_AUDIENCES,
             json!({"type":"object","properties":{"proposal_id":{"type":"string","format":"uuid"},"rejection_reason":{"type":"string"},"review_notes":{"type":"string"}},"required":["proposal_id","rejection_reason"],"additionalProperties":false}),
         ),
         descriptor(
@@ -854,7 +848,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Create a new Cabinet shared-knowledge document with Markdown content. The item publishes immediately and is visible and editable by humans and other authorized Bears; write knowledge worth sharing, not session scratch or private Bear memory. Optionally attach source links recording where the knowledge came from. Search first to avoid duplicating an existing item.",
             "bear.cabinet",
             &["cabinet.write"],
-            CHANNEL_ARMATURE_CURATION_AUDIENCES,
+            CHANNEL_ARMATURE_AUDIENCES,
             json!({"type":"object","properties":{"title":{"type":"string"},"content":{"type":"string","description":"Markdown document body."},"source_links":{"type":"array","items":{"type":"object","properties":{"source_kind":{"enum":["url","offline","artifact","conversation","external_record"]},"locator":{"type":"string","description":"https URL, synthetic scheme like book://isbn/..., artifact_... ref, or conversation id, matching source_kind."},"role":{"enum":["origin","citation","related"]}},"required":["source_kind","locator","role"],"additionalProperties":false}}},"required":["title","content"],"additionalProperties":false}),
         ),
         descriptor(
@@ -863,7 +857,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Publish a new revision of a Cabinet item with the full replacement Markdown content. Requires base_version: the current version ref from a fresh cabinet_read. If someone else published a newer revision first, the update fails with the new current version ref - re-read, merge your change into the latest content, and retry. Every revision is immutable and kept in history; nothing is overwritten.",
             "bear.cabinet",
             &["cabinet.write"],
-            CHANNEL_ARMATURE_CURATION_AUDIENCES,
+            CHANNEL_ARMATURE_AUDIENCES,
             json!({"type":"object","properties":{"cabinet_ref":{"type":"string"},"content":{"type":"string","description":"Full replacement Markdown body (not a diff)."},"base_version":{"type":"string","description":"The current version ref this edit is based on, from cabinet_read."},"title":{"type":"string","description":"Optional new title."}},"required":["cabinet_ref","content","base_version"],"additionalProperties":false}),
         ),
         descriptor(
@@ -881,7 +875,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Attach or detach provenance on a Cabinet item: where its knowledge came from. Add a link when you learn the origin of material already written down; source links are provenance only, so Cabinet never stores the linked content itself. Detaching removes the link and never alters any revision.",
             "bear.cabinet",
             &["cabinet.write"],
-            CHANNEL_ARMATURE_CURATION_AUDIENCES,
+            CHANNEL_ARMATURE_AUDIENCES,
             json!({"type":"object","properties":{"cabinet_ref":{"type":"string"},"action":{"enum":["add","remove"],"description":"Defaults to add."},"source_kind":{"enum":["url","offline","artifact","conversation","external_record"],"description":"Required when adding."},"locator":{"type":"string","description":"Required when adding: https URL, synthetic scheme like book://isbn/..., artifact_... ref, or conversation id, matching source_kind."},"role":{"enum":["origin","citation","related"],"description":"Required when adding."},"source_ref":{"type":"string","description":"Required when removing: the cabinet_source_... ref from cabinet_read."}},"required":["cabinet_ref"],"additionalProperties":false}),
         ),
         descriptor(
@@ -890,7 +884,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Archive a Cabinet item so it drops out of default search, or restore an archived one. Archiving is reversible and keeps every revision readable; it does not delete anything. Prefer archiving superseded knowledge over rewriting it away. Only people can delete a Cabinet item.",
             "bear.cabinet",
             &["cabinet.write"],
-            CURATION_AUDIENCES,
+            NO_MODEL_AUDIENCES,
             json!({"type":"object","properties":{"cabinet_ref":{"type":"string"},"lifecycle":{"enum":["archived","active"],"description":"archived hides the item from default search; active restores it."}},"required":["cabinet_ref","lifecycle"],"additionalProperties":false}),
         ),
         descriptor(
@@ -1043,7 +1037,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Approve a chat/pair task intent, write the canonical core task, and update source intent audit metadata.",
             "bear.tasks",
             &["task.intent.approve"],
-            CURATION_AUDIENCES,
+            NO_MODEL_AUDIENCES,
             json!({"type":"object","properties":{"source_intent_path":{"type":"string"},"task_id":{"type":"string"},"title":{"type":"string"},"approved_scope":{"type":"object"},"allowed_tools":{"type":"array","items":{"type":"string"}},"expires_at":{"type":"string"},"review_notes":{"type":"string"}},"required":["source_intent_path","task_id","title","approved_scope","allowed_tools"],"additionalProperties":false}),
         ),
         descriptor(
@@ -1052,7 +1046,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Reject a chat/pair task intent and update source intent audit metadata with the rejection reason.",
             "bear.tasks",
             &["task.intent.reject"],
-            CURATION_AUDIENCES,
+            NO_MODEL_AUDIENCES,
             json!({"type":"object","properties":{"source_intent_path":{"type":"string"},"rejection_reason":{"type":"string"},"review_notes":{"type":"string"}},"required":["source_intent_path","rejection_reason"],"additionalProperties":false}),
         ),
         descriptor(
@@ -1061,7 +1055,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Write a curate-reviewed summary of work results into shared core memory through Den-controlled validation.",
             "bear.core",
             &["core.result_summary.write"],
-            CURATION_AUDIENCES,
+            NO_MODEL_AUDIENCES,
             json!({"type":"object","properties":{"task_id":{"type":"string"},"run_id":{"type":"string"},"summary":{"type":"string"},"durable_learnings":{"type":"array","items":{"type":"string"}},"source_result_path":{"type":"string"}},"required":["task_id","summary"],"additionalProperties":false}),
         ),
         descriptor(
@@ -1070,7 +1064,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Write a schema-validated inbound observation from a Den-delivered watch event.",
             "bear.observations",
             &["observation.write"],
-            OBSERVATION_AUDIENCES,
+            NO_MODEL_AUDIENCES,
             json!({"type":"object","properties":{"observation_id":{"type":"string"},"summary":{"type":"string"},"salience":{"type":"string"},"payload_ref":{"type":"string"},"source":{"type":"object"}},"required":["summary"],"additionalProperties":false}),
         ),
         descriptor(

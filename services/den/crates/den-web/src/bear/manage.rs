@@ -46,29 +46,23 @@ struct ToolMatrixRow {
     contexts: Vec<bool>,
 }
 
-const TOOL_CONTEXTS: [TurnExecutionOrigin; 5] = [
+const TOOL_CONTEXTS: [TurnExecutionOrigin; 3] = [
     TurnExecutionOrigin::ChannelConversation,
     TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
     TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Connected),
-    TurnExecutionOrigin::InternalCuration,
-    TurnExecutionOrigin::InboundObservation,
 ];
 
 fn tool_matrix_context() -> Vec<ToolMatrixRow> {
     let mut rows: Vec<ToolMatrixRow> = builtin_den_tool_descriptors()
         .iter()
+        .filter(|descriptor| !descriptor.allowed_origins.is_empty())
         .map(|descriptor| ToolMatrixRow {
             name: descriptor.name,
             origin: "built-in",
             note: descriptor.label,
             contexts: TOOL_CONTEXTS
                 .iter()
-                .map(|origin| {
-                    let profile =
-                        EffectivePolicy::compile_for_origin(*origin, Governance::Interactive)
-                            .trust_profile;
-                    descriptor.allowed_roles.contains(&profile.as_str())
-                })
+                .map(|origin| descriptor.allows_origin(*origin))
                 .collect(),
         })
         .collect();
@@ -102,7 +96,7 @@ mod tests {
             .iter()
             .find(|row| row.name == ClientToolName::ReadTextFile.descriptor().provider_name)
             .expect("local read tool is listed");
-        assert_eq!(read.contexts, [false, true, true, false, false]);
+        assert_eq!(read.contexts, [false, true, true]);
     }
 }
 

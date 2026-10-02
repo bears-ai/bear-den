@@ -194,6 +194,7 @@ pub async fn invoke_den_tool_for_origin(
     origin: TurnExecutionOrigin,
     governance: Governance,
 ) -> Result<Value, DenError> {
+    origin.require_ordinary_session()?;
     // Provider-facing names are advertised to models, while dispatch arms use
     // canonical names. Normalize once here so newly advertised aliases cannot
     // silently fall through as "unknown Den tool".

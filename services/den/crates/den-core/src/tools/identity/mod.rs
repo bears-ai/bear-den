@@ -2,7 +2,7 @@
 //!
 //! These executors own the JSON shaping for the `bear/*`, `user/*`, `policy/*`,
 //! `capabilities/*`, and `channel/*` read tools, plus the dispatcher's
-//! origin authorization and internal binding verification.
+//! ordinary-session origin authorization.
 //! All DB access flows through the [`BearDirectory`] seam.
 
 mod store;
@@ -216,43 +216,15 @@ pub async fn policy_self(
     }))
 }
 
-/// Resolve and verify the caller's role from its `binding_id`.
-pub async fn context_role(
-    dir: &impl BearDirectory,
-    context: &DenToolInvocationContext,
-) -> Result<BearProfile, DenError> {
-    let agent_id = context.binding_id.trim();
-    if agent_id.is_empty() {
-        return Err(DenError::Authorization(
-            "Den tool context is missing binding_id".to_string(),
-        ));
-    }
-    let registered_profile = dir
-        .registered_profile(context.bear_id, agent_id)
-        .await?
-        .ok_or_else(|| {
-            DenError::Authorization("binding_id is not registered for this bear".to_string())
-        })?;
-    if let Some(declared_profile) = context.profile {
-        if declared_profile != registered_profile {
-            return Err(DenError::Authorization(format!(
-                "Den tool context profile `{declared_profile}` does not match registered profile `{registered_profile}` for binding_id"
-            )));
-        }
-    }
-    Ok(registered_profile)
-}
-
-/// The native runtime's verified origin selects the descriptor audience.
+/// The native runtime's verified ordinary-session origin selects the descriptor audience.
 /// Ordinary turns additionally recheck canonical conversation/Work ownership
-/// in the in-process invoker; the registry is not another authority source for
-/// those turns. Internal Curate/Watch still require their explicit system
-/// registration until their own origin-specific source checks replace it.
+/// in the in-process invoker; the registry is not another authority source.
 pub async fn authorize_context_for_origin(
     dir: &impl BearDirectory,
     context: &DenToolInvocationContext,
     origin: TurnExecutionOrigin,
 ) -> Result<BearProfile, DenError> {
+    origin.require_ordinary_session()?;
     let projected = ToolAudience::from_origin(origin).compatibility_profile();
     if context.profile != Some(projected) || context.binding_id.trim().is_empty() {
         return Err(DenError::Authorization(
@@ -267,15 +239,7 @@ pub async fn authorize_context_for_origin(
             "user is not a member of this bear".into(),
         ));
     }
-    if matches!(
-        origin,
-        TurnExecutionOrigin::InternalCuration | TurnExecutionOrigin::InboundObservation
-    ) && context_role(dir, context).await? != projected
-    {
-        return Err(DenError::Authorization(
-            "internal Den tool origin does not match registered system authority".into(),
-        ));
-    }
+
     Ok(projected)
 }
 

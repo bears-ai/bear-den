@@ -717,6 +717,7 @@ impl SessionTrackingStream {
         &self,
         governance: Governance,
     ) -> Result<EffectivePolicy, DenError> {
+        self.origin.require_ordinary_session()?;
         let policy = EffectivePolicy::compile_for_origin(self.server_tool_origin(), governance);
         if policy.trust_profile != self.profile {
             return Err(DenError::Authorization(

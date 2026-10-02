@@ -4,13 +4,12 @@ use uuid::Uuid;
 
 use crate::core::{
     tools::{
-        arguments::DenToolChannelContext,
-        constants::DEN_MEMORY_RESOLVE_PROPOSAL,
-        session::{invoke_den_tool_for_origin, DenToolInvocationContext},
+        arguments::DenToolChannelContext, context::DenToolContext,
+        session::DenToolInvocationContext,
     },
     user::db::create_user,
 };
-use den_core::{Governance, TurnExecutionOrigin};
+use den_core::tools::review::resolve_memory_proposal;
 use den_service::bears::{db, db::grant_membership, db::BearParams, BearProfile};
 use den_service::memory_proposals::CreateMemoryProposal;
 
@@ -132,19 +131,16 @@ async fn memory_resolve_proposal_projects_typed_conversation_records(
         channel: DenToolChannelContext::default(),
     };
 
-    let payload = invoke_den_tool_for_origin(
-        &pool,
-        &config,
-        &stores,
-        DEN_MEMORY_RESOLVE_PROPOSAL,
+    let tool_context = DenToolContext::new(&pool, &config, &stores);
+    let payload = resolve_memory_proposal(
+        &tool_context,
+        &context,
+        BearProfile::Curate,
         json!({
             "proposal_id": proposal.id,
             "status": "rejected",
             "decision_summary": "Not suitable"
         }),
-        context,
-        TurnExecutionOrigin::InternalCuration,
-        Governance::AutonomousContinuation,
     )
     .await?;
 
@@ -187,7 +183,11 @@ async fn memory_resolve_proposal_projects_typed_conversation_records(
     )
     .await?;
 
-    assert!(messages.iter().any(|m| m.content_text.contains("Memory proposal resolved: Resolve me (rejected)")));
-    assert!(messages.iter().any(|m| m.content_text.contains("Memory proposal 'Resolve me' was rejected.")));
+    assert!(messages.iter().any(|m| m
+        .content_text
+        .contains("Memory proposal resolved: Resolve me (rejected)")));
+    assert!(messages.iter().any(|m| m
+        .content_text
+        .contains("Memory proposal 'Resolve me' was rejected.")));
     Ok(())
 }

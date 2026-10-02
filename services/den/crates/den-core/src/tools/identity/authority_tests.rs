@@ -24,17 +24,14 @@ fn immediate<T>(future: impl Future<Output = T>) -> T {
 }
 
 struct FakeDirectory {
-    member: bool,
-    registered: Option<BearProfile>,
+    member: Option<bool>,
 }
 
 impl BearDirectory for FakeDirectory {
     async fn user_may_use_bear(&self, _: i32, _: Uuid) -> Result<bool, DenError> {
-        Ok(self.member)
-    }
-
-    async fn registered_profile(&self, _: Uuid, _: &str) -> Result<Option<BearProfile>, DenError> {
-        Ok(self.registered)
+        Ok(self
+            .member
+            .expect("authorization must not query membership"))
     }
 
     async fn bear_self(&self, _: Uuid) -> Result<Option<BearRecord>, DenError> {
@@ -72,10 +69,7 @@ fn context(profile: BearProfile) -> DenToolInvocationContext {
 fn native_ordinary_authorizer_uses_origin_without_profile_registration() {
     let pair = TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected);
     let work = TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Absent);
-    let directory = FakeDirectory {
-        member: true,
-        registered: None,
-    };
+    let directory = FakeDirectory { member: Some(true) };
     assert_eq!(
         immediate(authorize_context_for_origin(
             &directory,
@@ -126,8 +120,7 @@ fn native_ordinary_authorizer_uses_origin_without_profile_registration() {
         Err(DenError::Authorization(_))
     ));
     let departed = FakeDirectory {
-        member: false,
-        registered: None,
+        member: Some(false),
     };
     assert!(matches!(
         immediate(authorize_context_for_origin(
@@ -137,31 +130,34 @@ fn native_ordinary_authorizer_uses_origin_without_profile_registration() {
         )),
         Err(DenError::Authorization(_))
     ));
+    let mut missing_binding = context(BearProfile::Pair);
+    missing_binding.binding_id = " \t".into();
+    assert!(matches!(
+        immediate(authorize_context_for_origin(
+            &directory,
+            &missing_binding,
+            pair
+        )),
+        Err(DenError::Authorization(_))
+    ));
+}
+
+#[test]
+fn internal_origins_are_denied_before_membership_or_context_checks() {
+    let directory = FakeDirectory { member: None };
     for (profile, origin) in [
         (BearProfile::Curate, TurnExecutionOrigin::InternalCuration),
         (BearProfile::Watch, TurnExecutionOrigin::InboundObservation),
     ] {
-        assert!(matches!(
-            immediate(authorize_context_for_origin(
-                &directory,
-                &context(profile),
-                origin
-            )),
-            Err(DenError::Authorization(_)),
-        ));
-        let registered = FakeDirectory {
-            member: true,
-            registered: Some(profile),
-        };
-        assert_eq!(
-            immediate(authorize_context_for_origin(
-                &registered,
-                &context(profile),
-                origin
-            ))
-            .unwrap(),
-            profile,
-        );
+        for mut call in [context(profile), context(BearProfile::Pair)] {
+            for binding in ["registered-native-binding", ""] {
+                call.binding_id = binding.into();
+                assert!(matches!(
+                    immediate(authorize_context_for_origin(&directory, &call, origin)),
+                    Err(DenError::Authorization(_)),
+                ));
+            }
+        }
     }
 }
 

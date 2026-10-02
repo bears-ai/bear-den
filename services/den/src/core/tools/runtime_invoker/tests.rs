@@ -37,6 +37,46 @@ fn context(profile: BearProfile) -> DenToolInvocationContext {
     }
 }
 
+#[tokio::test]
+async fn internal_dispatch_denies_before_argument_preflight_or_storage() {
+    let pool = sqlx::PgPool::connect_lazy("postgres://unused:unused@localhost/unused").unwrap();
+    let config = crate::config::Config::test_stub();
+    let stores = den_memory::MemoryStoreManager::new(&config);
+    let ctx = DenToolContext::new(&pool, &config, &stores);
+    for (origin, profile) in [
+        (TurnExecutionOrigin::InternalCuration, BearProfile::Curate),
+        (TurnExecutionOrigin::InboundObservation, BearProfile::Watch),
+    ] {
+        let arguments = serde_json::json!({
+            "kind": "note", "title": "Plan concepts",
+            "body": "High-level understanding of the architecture: how plan artifacts differ from live progress tracking and why the distinction matters for durable memory."
+        });
+        let tool = den_core::tools::constants::DEN_MEMORY_WRITE_ENTRY;
+        let core = den_core::tools::dispatch::invoke_den_tool_for_origin(
+            &ctx,
+            tool,
+            arguments.clone(),
+            context(profile),
+            origin,
+            Governance::Interactive,
+        )
+        .await;
+        assert!(matches!(core, Err(DenError::Authorization(_))));
+        let session = invoke_den_tool_for_origin(
+            &pool,
+            &config,
+            &stores,
+            tool,
+            arguments,
+            context(profile),
+            origin,
+            Governance::Interactive,
+        )
+        .await;
+        assert!(matches!(session, Err(CustomError::Authorization(_))));
+    }
+}
+
 #[test]
 fn direct_invoker_cannot_widen_a_pair_origin_with_a_curate_or_work_profile() {
     let origin = TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected);
@@ -113,6 +153,55 @@ fn direct_invoker_cannot_widen_a_pair_origin_with_a_curate_or_work_profile() {
         DEN_WEB_FETCH
     )
     .is_err());
+}
+
+#[tokio::test]
+async fn internal_tool_origins_are_denied_before_database_or_descriptor_lookup() {
+    use std::sync::Arc;
+
+    let pool = PgPool::connect_lazy("postgres://unused:unused@localhost/unused").unwrap();
+    let config = Arc::new(crate::config::Config::test_stub());
+    let stores = den_memory::MemoryStoreManager::new(&config);
+    let state = DenState::new(
+        pool.clone(),
+        config.clone(),
+        Arc::new(den_service::bifrost::BifrostClient::new(&config)),
+        stores.clone(),
+    );
+    let invoker = DenRuntimeToolInvoker::new(state);
+    let ctx = DenToolContext::new(&pool, &config, &stores);
+    for (profile, origin) in [
+        (BearProfile::Curate, TurnExecutionOrigin::InternalCuration),
+        (BearProfile::Watch, TurnExecutionOrigin::InboundObservation),
+    ] {
+        for tool_name in [DEN_WEB_FETCH, "unknown_den_tool"] {
+            let call = context(profile);
+            let policy =
+                EffectivePolicy::compile_for_origin(origin, Governance::AutonomousContinuation);
+            assert!(matches!(
+                invoker
+                    .invoke(RuntimeToolInvocation {
+                        tool_name: tool_name.into(),
+                        arguments: serde_json::json!({}),
+                        context: call.clone(),
+                        origin,
+                        effective_policy: policy,
+                        origin_run_id: None,
+                        tool_call_id: den_runtime::turn_ids::ToolCallId::new("internal-denied")
+                            .unwrap(),
+                    })
+                    .await,
+                Err(DenError::Authorization(_))
+            ));
+            assert!(matches!(
+                den_core::tools::dispatch::authorize_den_tool_for_origin(
+                    &ctx, tool_name, &call, origin
+                )
+                .await,
+                Err(DenError::Authorization(_))
+            ));
+        }
+    }
 }
 
 #[test]
@@ -334,10 +423,25 @@ async fn native_core_dispatcher_uses_origin_audience_at_effect_time(
     )
     .await?;
     assert_eq!(self_view["bear"]["bear_id"], bear_id.to_string());
-    assert!(matches!(
-        den_core::tools::identity::context_role(&ctx, &call).await,
-        Err(DenError::Authorization(_)),
-    ));
+    den_service::bears::db::ensure_bear_profile_binding_rows(&pool, bear_id).await?;
+    for (profile, internal_origin) in [
+        (BearProfile::Curate, TurnExecutionOrigin::InternalCuration),
+        (BearProfile::Watch, TurnExecutionOrigin::InboundObservation),
+    ] {
+        let mut internal_call = call.clone();
+        internal_call.profile = Some(profile);
+        internal_call.binding_id = profile_binding_id(&pool, bear_id, profile).await?.unwrap();
+        assert!(matches!(
+            dispatch::authorize_den_tool_for_origin(
+                &ctx,
+                DEN_BEAR_GET_SELF,
+                &internal_call,
+                internal_origin
+            )
+            .await,
+            Err(DenError::Authorization(_)),
+        ));
+    }
     assert!(matches!(
         dispatch::authorize_den_tool_for_origin(&ctx, DEN_RUN_WRITE_RESULT, &call, origin).await,
         Err(DenError::Authorization(_))

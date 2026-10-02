@@ -37,6 +37,7 @@ fn require_origin_policy_and_descriptor(
     origin: TurnExecutionOrigin,
     tool_name: &str,
 ) -> Result<(), DenError> {
+    origin.require_ordinary_session()?;
     if *effective_policy != EffectivePolicy::compile_for_origin(origin, effective_policy.governance)
     {
         return Err(DenError::Authorization(
