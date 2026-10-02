@@ -664,6 +664,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             evidence_refs: vec![],
             related_task_ids: vec![second_task_id],
             tags: vec!["inventory".to_string()],
+            question_client_session_id: None,
             actor_role: BearProfile::Pair,
             actor_user_id: Some(user_id),
             actor_agent_id: None,

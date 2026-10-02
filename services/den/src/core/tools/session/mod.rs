@@ -494,7 +494,7 @@ async fn invoke_workflow_tool(
             workflow::list_runtime_diagnostics(pool, context, arguments).await?
         }
         DEN_DOCKET_ENTRY_APPEND => {
-            workflow::append_docket_entry(pool, context, role, arguments).await?
+            workflow::append_docket_entry(pool, context, role, authority, arguments).await?
         }
         DEN_DOCKET_ENTRY_PROMOTE => {
             workflow::promote_docket_entry(pool, context, role, arguments).await?

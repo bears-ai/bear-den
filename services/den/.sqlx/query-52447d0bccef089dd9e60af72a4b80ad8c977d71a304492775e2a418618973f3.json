@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (\n                SELECT 1 FROM client_sessions s\n                JOIN conversations c ON c.bear_id = s.bear_id\n                    AND c.external_conversation_id = COALESCE(s.resolved_conversation_id, s.conversation_id)\n                JOIN user_bear membership ON membership.bear_id = s.bear_id\n                    AND membership.user_id = s.user_id\n                WHERE s.bear_id = $1 AND s.user_id = $2 AND s.client_session_id = $3\n                  AND s.closed_at IS NULL AND s.archived_at IS NULL\n                  AND c.status = 'active' AND c.created_by_user_id = s.user_id\n                  AND NOT EXISTS (\n                      SELECT 1 FROM client_sessions collision\n                      WHERE collision.client_session_id = s.client_session_id\n                        AND (collision.bear_id <> s.bear_id OR collision.user_id <> s.user_id)\n                  )\n                  AND NOT EXISTS (\n                      SELECT 1 FROM bear_work_runs work\n                      WHERE work.bearwire_session_id = s.client_session_id\n                        AND work.state IN ('claimed', 'provisioning', 'running', 'paused', 'reporting')\n                  )\n                FOR SHARE OF s, c, membership\n            ) AS \"authorized!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "authorized!: bool",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "52447d0bccef089dd9e60af72a4b80ad8c977d71a304492775e2a418618973f3"
+}

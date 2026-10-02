@@ -84,6 +84,19 @@ async fn native_effects_deny_work_dispatch_and_session_tasks_before_touching_sto
         denied_dispatch.to_string().contains("DispatchWork"),
         "{denied_dispatch}"
     );
+    let denied_question = append_docket_entry(
+        &pool,
+        &context,
+        BearProfile::Pair,
+        work,
+        json!({"job_id": Uuid::new_v4(), "scope": "job_notebook", "kind": "question", "summary": "untrusted question"}),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        denied_question.to_string().contains("OwnSessionTasks"),
+        "{denied_question}"
+    );
     let denied_session_task =
         select_current_task(&pool, &context, work, json!({"task_id": Uuid::new_v4()}))
             .await

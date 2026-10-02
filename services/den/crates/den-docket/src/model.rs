@@ -2017,6 +2017,9 @@ pub struct DocketEntryCreate {
     pub evidence_refs: Vec<serde_json::Value>,
     pub related_task_ids: Vec<Uuid>,
     pub tags: Vec<String>,
+    /// For questions, the active human session checked again by Docket. A role
+    /// label or an arbitrary Job ID cannot establish session-task authority.
+    pub question_client_session_id: Option<String>,
     pub actor_role: BearProfile,
     pub actor_user_id: Option<i32>,
     pub actor_agent_id: Option<String>,

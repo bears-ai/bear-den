@@ -430,7 +430,7 @@ pub(crate) struct DocketCurrentTaskStatusArguments {
     pub(crate) result_summary: Option<String>,
 }
 
-#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum DocketEntryAppendKind {
     Finding,
@@ -2692,9 +2692,15 @@ pub(crate) async fn append_docket_entry(
     pool: &PgPool,
     context: &DenToolInvocationContext,
     role: BearProfile,
+    authority: WorkflowAuthority,
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketEntryAppendArguments = serde_json::from_value(arguments)?;
+    if args.kind == DocketEntryAppendKind::Question {
+        effective_tool_policy(authority, context)
+            .capabilities
+            .require(den_core::BearCapability::OwnSessionTasks)?;
+    }
     if let Some(job_id) = args.job_id {
         authorize_job(pool, context, job_id).await?;
     }
@@ -2730,6 +2736,11 @@ pub(crate) async fn append_docket_entry(
             evidence_refs: args.evidence_refs,
             related_task_ids: args.related_task_ids,
             tags: args.tags,
+            question_client_session_id: if args.kind == DocketEntryAppendKind::Question {
+                context.client_session_id.clone()
+            } else {
+                None
+            },
             actor_role: role,
             actor_user_id: Some(context.user_id),
             actor_agent_id: clean_optional(&context.binding_id),

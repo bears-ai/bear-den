@@ -288,6 +288,7 @@ async fn pair_job_tools_hide_private_jobs_before_reads_or_mutations(pool: PgPool
             &pool,
             &member,
             BearProfile::Pair,
+            WorkflowAuthority::Legacy(BearProfile::Pair),
             json!({
                 "job_id": private, "scope": "job_notebook", "kind": "finding", "summary": "stolen"
             }),

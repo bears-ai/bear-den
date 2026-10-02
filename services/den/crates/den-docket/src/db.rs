@@ -3161,6 +3161,10 @@ pub(super) async fn attach_task_to_session(
     Ok(())
 }
 
+#[cfg(test)]
+#[path = "db/question_source_tests.rs"]
+mod question_source_tests;
+
 pub(super) async fn append_entry(
     pool: &PgPool,
     create: DocketEntryCreate,
@@ -3176,21 +3180,52 @@ pub(super) async fn append_entry(
             "terminal outcomes are created by task settlement".to_string(),
         ));
     }
-    if create.kind == DocketEntryKind::Question
-        && !den_core::EffectivePolicy::compile(
-            create.actor_role,
-            den_core::Governance::Interactive,
-            den_core::ArmatureAvailability::Absent,
-        )
-        .capabilities
-        .contains(den_core::BearCapability::OwnSessionTasks)
-    {
-        return Err(DenError::ValidationError(
-            "Docket questions require session-task ownership capability".to_string(),
-        ));
-    }
-
     let mut tx = pool.begin().await?;
+    if create.kind == DocketEntryKind::Question {
+        let user_id = create
+            .actor_user_id
+            .ok_or_else(|| DenError::Authorization("Docket question has no human source".into()))?;
+        let session_id = create
+            .question_client_session_id
+            .as_deref()
+            .filter(|id| !id.trim().is_empty())
+            .ok_or_else(|| {
+                DenError::Authorization("Docket question has no client session".into())
+            })?;
+        let authorized = sqlx::query_scalar!(
+            r#"SELECT EXISTS (
+                SELECT 1 FROM client_sessions s
+                JOIN conversations c ON c.bear_id = s.bear_id
+                    AND c.external_conversation_id = COALESCE(s.resolved_conversation_id, s.conversation_id)
+                JOIN user_bear membership ON membership.bear_id = s.bear_id
+                    AND membership.user_id = s.user_id
+                WHERE s.bear_id = $1 AND s.user_id = $2 AND s.client_session_id = $3
+                  AND s.closed_at IS NULL AND s.archived_at IS NULL
+                  AND c.status = 'active' AND c.created_by_user_id = s.user_id
+                  AND NOT EXISTS (
+                      SELECT 1 FROM client_sessions collision
+                      WHERE collision.client_session_id = s.client_session_id
+                        AND (collision.bear_id <> s.bear_id OR collision.user_id <> s.user_id)
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM bear_work_runs work
+                      WHERE work.bearwire_session_id = s.client_session_id
+                        AND work.state IN ('claimed', 'provisioning', 'running', 'paused', 'reporting')
+                  )
+                FOR SHARE OF s, c, membership
+            ) AS "authorized!: bool""#,
+            create.bear_id,
+            user_id,
+            session_id,
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+        if !authorized {
+            return Err(DenError::Authorization(
+                "Docket question requires an active owned human session, not an actor role".into(),
+            ));
+        }
+    }
     let task_job_id = if let Some(task_id) = create.task_id {
         Some(
             sqlx::query_scalar!(
