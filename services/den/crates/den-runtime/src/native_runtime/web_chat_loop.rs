@@ -49,7 +49,7 @@ pub struct NativeWebChatLoopRuntime {
     pub session_key: String,
     pub bear_id: Uuid,
     pub bear_slug: String,
-    pub chat_binding_id: String,
+    pub turn_binding_id: String,
     pub user_id: i32,
     pub username: Option<String>,
     pub membership_role: Option<String>,
@@ -572,7 +572,7 @@ async fn execute_one_web_chat_den_tool(
         let tool_context = DenToolInvocationContext {
             bear_id: runtime.bear_id,
             bear_slug: runtime.bear_slug.clone(),
-            binding_id: runtime.chat_binding_id.clone(),
+            binding_id: runtime.turn_binding_id.clone(),
             profile: Some(BearProfile::Chat),
             user_id: runtime.user_id,
             username: runtime.username.clone(),

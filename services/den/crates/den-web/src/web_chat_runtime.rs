@@ -14,7 +14,7 @@ pub type WebChatRuntimeStream =
 pub struct WebChatRuntimeRequest {
     pub bear_id: Uuid,
     pub bear_slug: String,
-    pub chat_binding_id: String,
+    pub turn_binding_id: String,
     pub user_id: i32,
     pub username: Option<String>,
     pub membership_role: Option<String>,

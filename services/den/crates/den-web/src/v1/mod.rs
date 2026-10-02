@@ -1717,25 +1717,6 @@ async fn maybe_handle_direct_capabilities_list(
     )?))
 }
 
-async fn resolve_chat_profile_binding_id(
-    pool: &sqlx::PgPool,
-    bear_id: Uuid,
-    native_runtime: bool,
-) -> Result<String, CustomError> {
-    bears_db::profile_binding_id(pool, bear_id, BearProfile::Chat)
-        .await?
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| {
-            CustomError::System(if native_runtime {
-                "This bear has no chat profile runtime binding. Ask an operator to provision missing profiles in Admin → Bears.".to_string()
-            } else {
-                "This bear is not provisioned yet (missing chat profile runtime)."
-                    .to_string()
-            })
-        })
-}
-
 fn chat_sse_response(
     stream: BearChannelSseProxyStream,
     request_id: Uuid,
@@ -1750,7 +1731,6 @@ async fn chat_send_native_inner(
     user_id: i32,
     username: &str,
     bear: den_service::bears::Bear,
-    chat_binding_id: &str,
     conv_id: String,
 ) -> Result<Response, CustomError> {
     let (viewer, requested_id) =
@@ -1779,6 +1759,9 @@ async fn chat_send_native_inner(
         canonical_conversation.id,
     )
     .await?;
+    let turn_binding_id =
+        hats::turn_binding::NativeTurnSource::Conversation(canonical_conversation.id)
+            .binding_id(BearId::new(bear.id));
     if let Some(response) = maybe_handle_direct_set_conversation_title(
         &state,
         ConversationTitleRequest {
@@ -1842,7 +1825,7 @@ async fn chat_send_native_inner(
             WebChatRuntimeRequest {
                 bear_id: bear.id,
                 bear_slug: bear.slug.clone(),
-                chat_binding_id: chat_binding_id.to_string(),
+                turn_binding_id,
                 user_id,
                 username: Some(username.to_string()),
                 membership_role: membership_role.clone(),
@@ -1945,7 +1928,6 @@ async fn chat_send_inner(
 
     let conv_id = normalize_client_conversation_id(body.conversation_id.as_deref())?;
     checked_chat_id(state.sqlx_pool(), bear.id, user_id, &conv_id).await?;
-    let chat_binding_id = resolve_chat_profile_binding_id(state.sqlx_pool(), bear.id, true).await?;
 
     chat_send_native_inner(
         state,
@@ -1954,7 +1936,6 @@ async fn chat_send_inner(
         user_id,
         username.as_str(),
         bear,
-        &chat_binding_id,
         conv_id,
     )
     .await

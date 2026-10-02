@@ -71,7 +71,7 @@ impl web::web_chat_runtime::WebChatRuntime for NativeWebChatRuntime {
                         deps: &deps,
                         bear_id: request.bear_id,
                         bear_slug: &request.bear_slug,
-                        chat_binding_id: &request.chat_binding_id,
+                        turn_binding_id: &request.turn_binding_id,
                         user_id: request.user_id,
                         username: request.username.as_deref(),
                         membership_role: request.membership_role.as_deref(),

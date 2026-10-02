@@ -67,9 +67,12 @@ impl WebChatRuntime for ResolvedRuntime {
 #[sqlx::test(migrations = "../../migrations")]
 async fn first_new_send_resolves_durable_conversation_and_reloads(pool: PgPool) {
     let (bear, [owner, other, _admin]) = seed(&pool).await;
-    den_service::bears::db::ensure_bear_profile_binding_rows(&pool, bear)
-        .await
-        .unwrap();
+    assert!(
+        den_service::bears::db::profile_binding_id(&pool, bear, BearProfile::Chat)
+            .await
+            .unwrap()
+            .is_none()
+    );
     let runtime = Arc::new(NoResolutionRuntime::default());
     let app = app_with_runtime(&pool, runtime.clone()).await;
     let owner_cookie = login(&app, owner).await;
@@ -128,6 +131,10 @@ async fn first_new_send_resolves_durable_conversation_and_reloads(pool: PgPool) 
         .may_access_id(&pool, saved.id)
         .await
         .unwrap());
+    assert_eq!(
+        runtime.requests.lock().unwrap()[0].turn_binding_id,
+        hats::turn_binding::NativeTurnSource::Conversation(saved.id).binding_id(BearId::new(bear))
+    );
     assert!(
         conversation_persistence::get_conversation_for_external_id(&pool, bear, placeholder)
             .await
