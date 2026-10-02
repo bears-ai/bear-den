@@ -69,12 +69,12 @@ fn context(profile: BearProfile) -> DenToolInvocationContext {
 }
 
 #[test]
-fn native_core_authorizer_uses_origin_for_tools_and_registration_only_as_a_check() {
+fn native_ordinary_authorizer_uses_origin_without_profile_registration() {
     let pair = TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected);
     let work = TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Absent);
     let directory = FakeDirectory {
         member: true,
-        registered: Some(BearProfile::Pair),
+        registered: None,
     };
     assert_eq!(
         immediate(authorize_context_for_origin(
@@ -84,6 +84,15 @@ fn native_core_authorizer_uses_origin_for_tools_and_registration_only_as_a_check
         ))
         .unwrap(),
         BearProfile::Pair
+    );
+    assert_eq!(
+        immediate(authorize_context_for_origin(
+            &directory,
+            &context(BearProfile::Work),
+            work,
+        ))
+        .unwrap(),
+        BearProfile::Work,
     );
     assert!(authorize_tool_for_origin(DEN_WEB_FETCH, pair).is_ok());
     assert!(matches!(
@@ -118,7 +127,7 @@ fn native_core_authorizer_uses_origin_for_tools_and_registration_only_as_a_check
     ));
     let departed = FakeDirectory {
         member: false,
-        registered: Some(BearProfile::Pair),
+        registered: None,
     };
     assert!(matches!(
         immediate(authorize_context_for_origin(
@@ -128,6 +137,32 @@ fn native_core_authorizer_uses_origin_for_tools_and_registration_only_as_a_check
         )),
         Err(DenError::Authorization(_))
     ));
+    for (profile, origin) in [
+        (BearProfile::Curate, TurnExecutionOrigin::InternalCuration),
+        (BearProfile::Watch, TurnExecutionOrigin::InboundObservation),
+    ] {
+        assert!(matches!(
+            immediate(authorize_context_for_origin(
+                &directory,
+                &context(profile),
+                origin
+            )),
+            Err(DenError::Authorization(_)),
+        ));
+        let registered = FakeDirectory {
+            member: true,
+            registered: Some(profile),
+        };
+        assert_eq!(
+            immediate(authorize_context_for_origin(
+                &registered,
+                &context(profile),
+                origin
+            ))
+            .unwrap(),
+            profile,
+        );
+    }
 }
 
 #[test]

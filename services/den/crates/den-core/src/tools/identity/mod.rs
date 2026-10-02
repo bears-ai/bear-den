@@ -312,18 +312,37 @@ pub async fn authorize_context(
     context_role(dir, context).await
 }
 
-/// The runtime owns the origin; registration and the context profile can only
-/// confirm it, never select the descriptor audience for a native invocation.
+/// The native runtime's verified origin selects the descriptor audience.
+/// Ordinary turns additionally recheck canonical conversation/Work ownership
+/// in the in-process invoker; the registry is not another authority source for
+/// those turns. Internal Curate/Watch still require their explicit system
+/// registration until their own origin-specific source checks replace it.
 pub async fn authorize_context_for_origin(
     dir: &impl BearDirectory,
     context: &DenToolInvocationContext,
     origin: TurnExecutionOrigin,
 ) -> Result<BearProfile, DenError> {
-    let registered = authorize_context(dir, context).await?;
     let projected = ToolAudience::from_origin(origin).compatibility_profile();
-    if registered != projected || context.profile != Some(projected) {
+    if context.profile != Some(projected) || context.binding_id.trim().is_empty() {
         return Err(DenError::Authorization(
-            "Den tool binding does not match the verified execution origin".into(),
+            "Den tool context does not match the verified execution origin".into(),
+        ));
+    }
+    if !dir
+        .user_may_use_bear(context.user_id, context.bear_id)
+        .await?
+    {
+        return Err(DenError::Authorization(
+            "user is not a member of this bear".into(),
+        ));
+    }
+    if matches!(
+        origin,
+        TurnExecutionOrigin::InternalCuration | TurnExecutionOrigin::InboundObservation
+    ) && context_role(dir, context).await? != projected
+    {
+        return Err(DenError::Authorization(
+            "internal Den tool origin does not match registered system authority".into(),
         ));
     }
     Ok(projected)

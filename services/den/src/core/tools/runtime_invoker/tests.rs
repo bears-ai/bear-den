@@ -289,10 +289,7 @@ async fn native_core_dispatcher_uses_origin_audience_at_effect_time(
     pool: PgPool,
 ) -> Result<(), DenError> {
     use den_core::tools::{constants::DEN_BEAR_GET_SELF, dispatch};
-    use den_service::bears::db::{
-        create_bear, ensure_bear_profile_binding_rows, grant_membership, profile_binding_id,
-        BearParams,
-    };
+    use den_service::bears::db::{create_bear, grant_membership, profile_binding_id, BearParams};
 
     let bear_id = create_bear(
         &pool,
@@ -316,13 +313,13 @@ async fn native_core_dispatcher_uses_origin_audience_at_effect_time(
     )
     .await?;
     grant_membership(&pool, user_id, bear_id, Some("member")).await?;
-    ensure_bear_profile_binding_rows(&pool, bear_id).await?;
+    assert!(profile_binding_id(&pool, bear_id, BearProfile::Pair)
+        .await?
+        .is_none());
     let mut call = context(BearProfile::Pair);
     call.bear_id = bear_id;
     call.user_id = user_id;
-    call.binding_id = profile_binding_id(&pool, bear_id, BearProfile::Pair)
-        .await?
-        .expect("Pair registration");
+    call.binding_id = format!("den-native:{bear_id}:pair");
     let config = crate::config::Config::test_stub();
     let stores = den_memory::MemoryStoreManager::new(&config);
     let ctx = DenToolContext::new(&pool, &config, &stores);
@@ -336,6 +333,10 @@ async fn native_core_dispatcher_uses_origin_audience_at_effect_time(
     )
     .await?;
     assert_eq!(self_view["bear"]["bear_id"], bear_id.to_string());
+    assert!(matches!(
+        dispatch::authorize_den_tool(&ctx, DEN_BEAR_GET_SELF, &call).await,
+        Err(DenError::Authorization(_)),
+    ));
     assert!(matches!(
         dispatch::authorize_den_tool_for_origin(&ctx, DEN_RUN_WRITE_RESULT, &call, origin).await,
         Err(DenError::Authorization(_))
