@@ -24,11 +24,13 @@ use crate::{
     },
     recall::{reconcile_bear, QdrantRecall},
     reflection::archive_harvest::harvest_compaction_artifacts_once,
+    reflection::briefing_source::CurateBriefingSource,
     reflection::conversations::{
         bind_memory_curate_run_conversation, ensure_memory_curate_conversation,
         touch_memory_curate_conversation,
     },
     reflection::curate_retry,
+    reflection::ReflectionRunId,
 };
 use std::str::FromStr;
 
@@ -773,16 +775,7 @@ async fn maybe_run_native_curate_briefing_turn(
     if !native_curate_llm_briefing_enabled() || output.briefing.is_empty() {
         return;
     }
-    let Some(conversation_id) = run.conversation_id.as_deref() else {
-        tracing::warn!(
-            reflection_run_id = %run.id,
-            bear_id = %bear_id,
-            "skipping native curate briefing turn: memory_curate conversation not bound"
-        );
-        return;
-    };
     let prompt = compose_curate_briefing_prompt(&output.briefing);
-    let session_id = format!("memory-curate-{}", run.id);
     let deps = NativeRuntimeDeps {
         pool,
         config,
@@ -791,15 +784,14 @@ async fn maybe_run_native_curate_briefing_turn(
     match run_native_curate_briefing_collect_assistant_text(
         &deps,
         bear_id,
-        conversation_id,
-        &session_id,
+        ReflectionRunId::new(run.id),
         &prompt,
     )
     .await
     {
-        Ok(text) if text.trim().is_empty() => {}
-        Ok(text) => {
-            project_curate_briefing_to_conversation(pool, bear_id, run, &text);
+        Ok(briefing) if briefing.text.trim().is_empty() => {}
+        Ok(briefing) => {
+            project_curate_briefing_to_conversation(pool, &briefing.source, &briefing.text);
         }
         Err(error) => {
             tracing::warn!(
@@ -814,13 +806,11 @@ async fn maybe_run_native_curate_briefing_turn(
 
 fn project_curate_briefing_to_conversation(
     pool: &PgPool,
-    bear_id: Uuid,
-    run: &ReflectionRunRow,
+    source: &CurateBriefingSource,
     text: &str,
 ) {
-    let Some(conversation_id) = run.conversation_id.as_deref() else {
-        return;
-    };
+    let bear_id = source.bear_id().as_uuid();
+    let conversation_id = source.conversation_id().as_str();
     let context = canonical_persistence_context(
         pool.clone(),
         bear_id,
@@ -828,13 +818,13 @@ fn project_curate_briefing_to_conversation(
         conversation_id.to_string(),
         None,
         None,
-        format!("bear:{}:lane:{}", bear_id, run.lane),
+        format!("bear:{bear_id}:lane:memory_curate"),
         false,
     );
     spawn_persist_assistant_summary_message(
         context,
         text.to_string(),
-        Some(format!("curate-briefing-{}", run.id)),
+        Some(format!("curate-briefing-{}", source.run_id().as_uuid())),
     );
 }
 

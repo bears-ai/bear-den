@@ -61,6 +61,8 @@ An enabled hat alone neither starts a run nor supplies a tool, network route, wo
 
 **Exit:** tool and network permission decisions are keyed to a canonical hat and remain the intersection of that grant with trusted actor, resource, execution, and safety bounds; one-time decisions cannot leak into later calls; both ACP choices have truthful future-audience copy; no runtime tool/egress handler still authorizes from `bear_profile_bindings.profile`, bare Bear-wide approval, or armature-local approval cache. Only then remove authoritative stance registrations and rewrite the current-behavior claim in the [Bear memory and hats topic](../topics/bear-memory-hats.md).
 
+**Internal-source progress:** The curator briefing now accepts a typed canonical Reflection-run ID, resolves only a running `memory_curate` run bound to an active Bear-owned reflection conversation, and rechecks that source before inference and before returning text. Its request is tool-free, unexpected tool calls are rejected, and projection uses the checked destination. This narrow summary is not a generic curator session. Generic internal tool/continuation registration gates still need a verified source-specific replacement; no active native observer producer was identified in the production caller audit. Do not remove those gates based solely on an origin enum.
+
 ## Gate 1 — Set the product contract and build a prototype
 
 Test a low-fidelity setup card for a named **Security review** hat:

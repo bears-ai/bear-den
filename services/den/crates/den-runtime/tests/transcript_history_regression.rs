@@ -1,4 +1,4 @@
-use den_runtime::agent_loop::{load_transcript_messages, prune_messages_for_native_chat};
+use den_runtime::agent_loop::load_transcript_messages;
 use den_service::conversation::persistence::{append_message, ensure_conversation_for_external_id};
 use den_service::conversation_message_types::{
     ConversationMessageRole, ConversationMessageType, ConversationMessageVisibility,
@@ -44,7 +44,7 @@ async fn create_user_and_bear(pool: &sqlx::PgPool) -> (i32, Uuid) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn transcript_loader_keeps_recent_history_not_oldest_prefix(pool: sqlx::PgPool) {
+async fn transcript_loader_preserves_complete_history_for_turn_budgeting(pool: sqlx::PgPool) {
     let (user_id, bear_id) = create_user_and_bear(&pool).await;
     let conversation_id = format!("den-conv-{}", Uuid::new_v4().simple());
     let session_id = format!("session-{}", Uuid::new_v4().simple());
@@ -88,9 +88,7 @@ async fn transcript_loader_keeps_recent_history_not_oldest_prefix(pool: sqlx::Pg
         .expect("append message");
     }
 
-    // The loader itself has no hard row limit (see
-    // transcript_history_query_has_no_hard_row_limit); the recent-tail cap is
-    // applied by the prune step before the LLM call.
+    // Transcript loading preserves history; turn assembly owns context budgeting.
     let transcript = load_transcript_messages(&pool, bear_id, &conversation_id)
         .await
         .expect("load transcript");
@@ -101,17 +99,6 @@ async fn transcript_loader_keeps_recent_history_not_oldest_prefix(pool: sqlx::Pg
     assert_eq!(texts.len(), 240);
     assert_eq!(texts.first(), Some(&"message-0"));
     assert_eq!(texts.last(), Some(&"message-239"));
-
-    // Pruning keeps the recent tail, never the oldest prefix.
-    let pruned = prune_messages_for_native_chat(transcript);
-    let texts = pruned
-        .iter()
-        .filter_map(|message| message.content.as_deref())
-        .collect::<Vec<_>>();
-    assert!(texts.len() <= 64, "tail cap exceeded: {}", texts.len());
-    assert_eq!(texts.last(), Some(&"message-239"));
-    assert!(texts.contains(&"message-238"));
-    assert!(!texts.contains(&"message-0"));
 }
 
 #[sqlx::test(migrations = "../../migrations")]

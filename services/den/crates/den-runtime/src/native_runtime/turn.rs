@@ -73,6 +73,10 @@ use crate::{
             omit_unbounded_cargo_helper,
         },
     },
+    reflection::briefing_source::{
+        collect_curate_briefing_text, resolve_curate_briefing_source, CurateBriefingText,
+        ReflectionRunId,
+    },
     turn_runner::{
         materialize_runtime_conversation_if_needed, RunRecoveryDisposition, TurnContinueRequest,
         TurnStartRequest,
@@ -1310,12 +1314,15 @@ mod session_task_run_tests {
 pub async fn run_native_curate_briefing_collect_assistant_text(
     deps: &NativeRuntimeDeps<'_>,
     bear_id: Uuid,
-    conversation_id: &str,
-    session_id: &str,
+    reflection_run_id: ReflectionRunId,
     prompt: &str,
-) -> Result<String, DenError> {
+) -> Result<CurateBriefingText, DenError> {
+    let source =
+        resolve_curate_briefing_source(deps.pool, BearId::new(bear_id), reflection_run_id).await?;
+    let conversation_id = source.conversation_id().as_str();
+    let session_id = source.session_id().as_str();
     let role = BearProfile::Curate;
-    let session = build_session(
+    let mut session = build_session(
         deps,
         BuildSessionInput {
             origin: den_core::TurnExecutionOrigin::InternalCuration,
@@ -1343,19 +1350,15 @@ pub async fn run_native_curate_briefing_collect_assistant_text(
         },
     )
     .await?;
+    // This summary is not a reusable internal tool/continuation session.
+    SESSION_STORE.remove(&session.session_key);
+    session.tools.clear();
+    session.pending_checkpoint_request = None;
+    source.require_live(deps.pool).await?;
     let llm = LlmClient::new(deps.config);
     let overflow = overflow_context(deps.pool.clone(), Arc::new(deps.config.clone()), role);
-    let mut stream = run_agent_step_stream(&llm, &session, Some(overflow)).await?;
-    let mut text = String::new();
-    while let Some(item) = stream.next().await {
-        if let RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta {
-            text: delta,
-        }) = item?
-        {
-            text.push_str(&delta);
-        }
-    }
-    Ok(text)
+    let stream = run_agent_step_stream(&llm, &session, Some(overflow)).await?;
+    collect_curate_briefing_text(deps.pool, source, stream).await
 }
 
 pub struct NativeWebChatTurnParams<'a> {

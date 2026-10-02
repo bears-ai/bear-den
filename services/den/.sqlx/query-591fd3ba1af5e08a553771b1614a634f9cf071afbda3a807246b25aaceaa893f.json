@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT c.id AS canonical_conversation_id,\n               c.external_conversation_id AS \"conversation_id!\"\n        FROM bear_reflection_runs r\n        JOIN reflection_conversations rc\n          ON rc.bear_id = r.bear_id\n         AND rc.lane = 'memory_curate'\n         AND rc.conversation_id = r.conversation_id\n        JOIN conversations c\n          ON c.bear_id = rc.bear_id\n         AND c.external_conversation_id = rc.conversation_id\n        WHERE r.id = $1\n          AND r.bear_id = $2\n          AND r.lane = 'memory_curate'\n          AND r.status = 'running'\n          AND r.completed_at IS NULL\n          AND btrim(r.conversation_id) <> ''\n          AND c.status = 'active'\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "canonical_conversation_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "conversation_id!",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "591fd3ba1af5e08a553771b1614a634f9cf071afbda3a807246b25aaceaa893f"
+}
