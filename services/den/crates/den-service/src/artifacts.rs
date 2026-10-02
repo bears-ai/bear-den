@@ -236,7 +236,6 @@ pub struct ArtifactContentLocation {
 pub struct ArtifactAccessContext {
     pub bear_id: Uuid,
     pub user_id: Option<i32>,
-    pub profile: BearProfile,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -804,7 +803,7 @@ pub async fn authorize_artifact_access(
         )));
     }
 
-    if role_can_read_artifact(&artifact, &context) {
+    if actor_can_read_artifact(&artifact, &context) {
         Ok(artifact)
     } else {
         Err(DenError::Authorization(format!(
@@ -1101,23 +1100,15 @@ pub fn garage_artifact_storage_key(artifact_ref: &str) -> Result<String, DenErro
 #[path = "artifacts/access_tests.rs"]
 mod access_tests;
 
-fn role_can_read_artifact(artifact: &ArtifactMetadata, context: &ArtifactAccessContext) -> bool {
-    let own_human_artifact =
-        context.user_id.is_some() && context.user_id == artifact.created_by_user_id;
-    let ownerless_internal_artifact = context.user_id.is_none()
-        && artifact.created_by_user_id.is_none()
-        && context.profile == artifact.owner_profile;
+fn actor_can_read_artifact(artifact: &ArtifactMetadata, context: &ArtifactAccessContext) -> bool {
+    let Some(user_id) = context.user_id else {
+        return false;
+    };
     match artifact.visibility {
-        ArtifactVisibility::PrivateToProfile => {
-            (own_human_artifact || ownerless_internal_artifact)
-                && context.profile == artifact.owner_profile
-        }
-        ArtifactVisibility::SameUser => own_human_artifact,
+        ArtifactVisibility::PrivateToProfile
+        | ArtifactVisibility::SameUser
+        | ArtifactVisibility::HandoffRequested => artifact.created_by_user_id == Some(user_id),
         ArtifactVisibility::BearVisible => true,
-        ArtifactVisibility::HandoffRequested => {
-            own_human_artifact
-                || (context.user_id.is_none() && context.profile == BearProfile::Curate)
-        }
     }
 }
 
@@ -1125,7 +1116,7 @@ fn citation_from_artifact(
     artifact: &ArtifactMetadata,
     context: &ArtifactAccessContext,
 ) -> ArtifactCitation {
-    let metadata_readable = role_can_read_artifact(artifact, context);
+    let metadata_readable = actor_can_read_artifact(artifact, context);
     ArtifactCitation {
         artifact_ref: artifact.artifact_ref.clone(),
         kind: if metadata_readable {
@@ -1371,7 +1362,6 @@ mod tests {
             ArtifactAccessContext {
                 bear_id,
                 user_id: Some(user_id),
-                profile: BearProfile::Pair,
             },
             ArtifactAccessLevel::Content,
         )
@@ -1423,7 +1413,6 @@ mod tests {
             ArtifactAccessContext {
                 bear_id,
                 user_id: Some(other_user_id),
-                profile: BearProfile::Chat,
             },
             ArtifactAccessLevel::Metadata,
         )
@@ -1462,7 +1451,6 @@ mod tests {
             ArtifactAccessContext {
                 bear_id,
                 user_id: Some(user_id),
-                profile: BearProfile::Pair,
             },
             ArtifactAccessLevel::Content,
         )
@@ -1563,7 +1551,6 @@ mod tests {
             ArtifactAccessContext {
                 bear_id,
                 user_id: Some(user_id),
-                profile: BearProfile::Pair,
             },
         )
         .await
@@ -1631,7 +1618,6 @@ mod tests {
             ArtifactAccessContext {
                 bear_id,
                 user_id: Some(user_id),
-                profile: BearProfile::Pair,
             },
         )
         .await
@@ -1718,7 +1704,6 @@ mod tests {
             ArtifactAccessContext {
                 bear_id,
                 user_id: Some(user_id),
-                profile: BearProfile::Pair,
             },
         )
         .await

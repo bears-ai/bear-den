@@ -187,7 +187,6 @@ pub async fn docket_job_diagnostics_result(
     let context = ArtifactAccessContext {
         bear_id: bear.id,
         user_id: Some(user_id),
-        profile: BearProfile::Pair,
     };
     let mut task_citations = Vec::with_capacity(tasks.len());
     for task in &tasks {

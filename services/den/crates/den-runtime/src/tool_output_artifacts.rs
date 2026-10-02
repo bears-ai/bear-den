@@ -314,15 +314,21 @@ mod tests {
             artifacts::ArtifactAccessContext {
                 bear_id,
                 user_id: None,
-                profile: BearProfile::Pair,
             },
         )
         .await
         .unwrap();
-        assert!(citations
+        let citation = citations
             .iter()
-            .any(|citation| citation.artifact_ref == durable_ref));
-        let rendered = serde_json::to_value(&citations[0]).unwrap();
+            .find(|citation| citation.artifact_ref == durable_ref)
+            .expect("anonymous durable citation is retained but redacted");
+        assert!(!citation.readable);
+        assert_eq!(citation.kind, "unavailable");
+        assert!(citation.title.is_none());
+        assert!(citation.summary.is_none());
+        assert!(citation.content_type.is_none());
+        assert!(citation.content_bytes.is_none());
+        let rendered = serde_json::to_value(citation).unwrap();
         assert!(rendered.get("storage_key").is_none());
         assert!(rendered.get("content_sha256").is_none());
         assert!(rendered.get("provenance").is_none());

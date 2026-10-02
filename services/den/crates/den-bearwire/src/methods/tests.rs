@@ -2823,7 +2823,6 @@ async fn session_open_preserves_sandbox_work_session_binding(pool: sqlx::PgPool)
         ArtifactAccessContext {
             bear_id,
             user_id: Some(user_id),
-            profile: BearProfile::Work,
         },
     )
     .await
@@ -5834,7 +5833,6 @@ async fn focused_pair_git_commit_creates_candidate_task_artifact(pool: sqlx::PgP
         ArtifactAccessContext {
             bear_id,
             user_id: Some(user_id),
-            profile: BearProfile::Pair,
         },
     )
     .await

@@ -784,7 +784,6 @@ async fn conversation_history_like_result(
                 ArtifactAccessContext {
                     bear_id: bear.id,
                     user_id: Some(user_id),
-                    profile: den_core::BearProfile::Pair,
                 },
             )
             .await?
@@ -815,7 +814,6 @@ async fn conversation_history_like_result(
                         ArtifactAccessContext {
                             bear_id: bear.id,
                             user_id: Some(user_id),
-                            profile: den_core::BearProfile::Pair,
                         },
                     )
                     .await?

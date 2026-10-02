@@ -1173,7 +1173,6 @@ async fn chat_artifacts(
         ArtifactAccessContext {
             bear_id: q.bear_id,
             user_id: Some(user_id),
-            profile: BearProfile::Pair,
         },
     )
     .await?;
