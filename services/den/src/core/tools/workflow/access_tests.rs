@@ -122,11 +122,17 @@ async fn fixture(
         }],
     };
     let private = service
-        .create_job(create(TaskListVisibility::SameUser, "private"))
+        .create_job(
+            create(TaskListVisibility::SameUser, "private"),
+            den_docket::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .unwrap();
     let visible = service
-        .create_job(create(TaskListVisibility::BearVisible, "visible"))
+        .create_job(
+            create(TaskListVisibility::BearVisible, "visible"),
+            den_docket::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .unwrap();
     (

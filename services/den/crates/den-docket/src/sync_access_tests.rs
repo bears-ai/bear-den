@@ -28,11 +28,14 @@ async fn human_sync_rejects_forged_same_user_job_before_loading_or_mutating_it()
     };
     let (owner, bear_id) = seed_user_and_bear(&pool, "sync-access-owner").await;
     let (member, other_bear) = seed_user_and_bear(&pool, "sync-access-member").await;
-    grant_membership(&pool, owner, bear_id, "member").await;
+
     grant_membership(&pool, member, bear_id, "member").await;
     let service = PgDocketService::from_pool(&pool);
     let private = service
-        .create_job(two_task_job(owner, bear_id))
+        .create_job(
+            two_task_job(owner, bear_id),
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("create private job with current run");
     assert!(private.job.current_run_id.is_some());
@@ -130,22 +133,31 @@ async fn human_sync_allows_owner_admin_and_bear_visible_member() {
     let (owner, bear_id) = seed_user_and_bear(&pool, "sync-allow-owner").await;
     let member = seed_user_and_bear(&pool, "sync-allow-member").await.0;
     let admin = seed_user_and_bear(&pool, "sync-allow-admin").await.0;
-    for (user_id, role) in [(owner, "member"), (member, "member"), (admin, "admin")] {
+    for (user_id, role) in [(member, "member"), (admin, "admin")] {
         grant_membership(&pool, user_id, bear_id, role).await;
     }
     let service = PgDocketService::from_pool(&pool);
     let owner_job = service
-        .create_job(two_task_job(owner, bear_id))
+        .create_job(
+            two_task_job(owner, bear_id),
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("create owner's SameUser job");
     let admin_job = service
-        .create_job(two_task_job(owner, bear_id))
+        .create_job(
+            two_task_job(owner, bear_id),
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("create admin-readable SameUser job");
     let mut public_create = two_task_job(owner, bear_id);
     public_create.visibility = TaskListVisibility::BearVisible;
     let public_job = service
-        .create_job(public_create)
+        .create_job(
+            public_create,
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("create BearVisible job");
     for (viewer, job) in [

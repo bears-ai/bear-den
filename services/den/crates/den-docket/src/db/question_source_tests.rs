@@ -7,20 +7,21 @@ async fn docket_question_requires_a_current_owned_human_session_not_a_role_label
     let (user, bear_id) = crate::integration_tests::seed_user_and_bear(&pool, "question").await;
     let (other_user, other_bear) =
         crate::integration_tests::seed_user_and_bear(&pool, "question-other").await;
-    for (actor, bear) in [(user, bear_id), (other_user, bear_id)] {
-        sqlx::query!(
-            "INSERT INTO user_bear (user_id, bear_id, role) VALUES ($1, $2, $3)",
-            actor,
-            bear,
-            "member",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-    }
+    sqlx::query!(
+        "INSERT INTO user_bear (user_id, bear_id, role) VALUES ($1, $2, $3)",
+        other_user,
+        bear_id,
+        "member",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
     let service = PgDocketService::from_pool(&pool);
     let job = service
-        .create_job(crate::integration_tests::two_task_job(user, bear_id))
+        .create_job(
+            crate::integration_tests::two_task_job(user, bear_id),
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .unwrap();
     let external = format!("den-conv-question-{}", Uuid::new_v4().simple());

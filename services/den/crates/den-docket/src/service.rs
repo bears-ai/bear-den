@@ -26,6 +26,7 @@ use super::model::{
     TaskListHandoffOutcome, TaskListHandoffRequest, TaskListProjection, TaskListSyncOutcome,
     TaskListSyncRequest,
 };
+use crate::DocketJobCreationAuthority;
 
 /// Orchestration API for task and job state. The only public entry point to the
 /// subsystem's persistence; never execute task bodies here (ADR-0034 execution
@@ -35,7 +36,11 @@ use super::model::{
 // bounds flow through monomorphization and async-trait boxing is unnecessary.
 #[allow(async_fn_in_trait)]
 pub trait DocketService: Send + Sync {
-    async fn create_job(&self, create: DocketJobCreate) -> Result<DocketJobProjection, DenError>;
+    async fn create_job(
+        &self,
+        create: DocketJobCreate,
+        authority: DocketJobCreationAuthority,
+    ) -> Result<DocketJobProjection, DenError>;
 
     async fn list_jobs(
         &self,
@@ -250,8 +255,9 @@ impl PgDocketService {
         &self,
         create: DocketJobCreate,
         hat_id: HatId,
+        authority: DocketJobCreationAuthority,
     ) -> Result<DocketJobProjection, DenError> {
-        db::create_job_with_hat(&self.pool, create, Some(hat_id)).await
+        db::create_job_with_hat(&self.pool, create, Some(hat_id), authority).await
     }
 
     /// Recheck current Bear membership and access to an exact Docket job ID without
@@ -327,8 +333,12 @@ impl PgDocketService {
 }
 
 impl DocketService for PgDocketService {
-    async fn create_job(&self, create: DocketJobCreate) -> Result<DocketJobProjection, DenError> {
-        db::create_job(&self.pool, create).await
+    async fn create_job(
+        &self,
+        create: DocketJobCreate,
+        authority: DocketJobCreationAuthority,
+    ) -> Result<DocketJobProjection, DenError> {
+        db::create_job(&self.pool, create, authority).await
     }
 
     async fn list_jobs(

@@ -127,6 +127,16 @@ pub(super) async fn seed_user_and_bear(pool: &PgPool, label: &str) -> (i32, Uuid
     .await
     .expect("seed bear");
 
+    sqlx::query!(
+        "INSERT INTO user_bear (user_id, bear_id, role) VALUES ($1, $2, $3)",
+        user_id,
+        bear_id,
+        "member",
+    )
+    .execute(pool)
+    .await
+    .expect("grant creator membership");
+
     let surface_id = test_work_surface_id(bear_id);
     let surface_name = format!("surface-{}", &surface_id.simple().to_string()[..12]);
     sqlx::query!(
@@ -367,10 +377,13 @@ async fn lists_session_anchored_task_with_latest_run_state() {
     .await
     .expect("seed client session");
     let job = service
-        .create_job(DocketJobCreate {
-            tasks: vec![],
-            ..two_task_job(user_id, bear_id)
-        })
+        .create_job(
+            DocketJobCreate {
+                tasks: vec![],
+                ..two_task_job(user_id, bear_id)
+            },
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("create run source job");
     let run_id = job.job.current_run_id.expect("current run");
@@ -449,20 +462,14 @@ async fn session_task_attachment_reassignment_fences_stale_owner_and_releases_on
         return;
     };
     let (user_id, bear_id) = seed_user_and_bear(&pool, "pair-attachment").await;
-    sqlx::query!(
-        "INSERT INTO user_bear (user_id, bear_id, role) VALUES ($1, $2, $3)",
-        user_id,
-        bear_id,
-        "member",
-    )
-    .execute(&pool)
-    .await
-    .expect("grant checkout membership");
     let first_session = seed_client_session(&pool, user_id, bear_id).await;
     let second_session = seed_client_session(&pool, user_id, bear_id).await;
     let service = PgDocketService::from_pool(&pool);
     let created = service
-        .create_job(two_task_job(user_id, bear_id))
+        .create_job(
+            two_task_job(user_id, bear_id),
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("create durable job");
     let task_id = created.tasks[0].id;
@@ -547,7 +554,10 @@ async fn bear_can_cancel_orphaned_docket_run_and_release_its_pair_claim() {
     let (user_id, bear_id) = seed_user_and_bear(&pool, "cancel-orphaned-run").await;
     let service = PgDocketService::from_pool(&pool);
     let created = service
-        .create_job(two_task_job(user_id, bear_id))
+        .create_job(
+            two_task_job(user_id, bear_id),
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("create durable job");
 
@@ -643,7 +653,10 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
     let service = PgDocketService::from_pool(&pool);
 
     let created = service
-        .create_job(two_task_job(user_id, bear_id))
+        .create_job(
+            two_task_job(user_id, bear_id),
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("create job");
     let run_id = created.job.current_run_id.expect("current run");
@@ -1133,7 +1146,10 @@ async fn pair_task_settlement_does_not_wait_for_per_job_commit_delivery() {
     let service = PgDocketService::from_pool(&pool);
     let mut create = two_task_job(user_id, bear_id);
     create.commit_policy = Some(DocketCommitPolicy::PerJob);
-    let created = service.create_job(create).await.expect("create Pair job");
+    let created = service
+        .create_job(create, crate::DocketJobCreationAuthority::HumanRequest)
+        .await
+        .expect("create Pair job");
     let run_id = created.job.current_run_id.expect("current run");
     let task_id = created.tasks[0].id;
 
@@ -1211,7 +1227,10 @@ async fn docket_execution_focus_prefers_conversation_over_client_session() {
     let (user_id, bear_id) = seed_user_and_bear(&pool, "conversation-focus").await;
     let service = PgDocketService::from_pool(&pool);
     let created = service
-        .create_job(two_task_job(user_id, bear_id))
+        .create_job(
+            two_task_job(user_id, bear_id),
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("create job");
     let first_task_id = created.tasks[0].id;
@@ -1298,7 +1317,10 @@ async fn released_pair_attempt_can_settle_its_checked_out_run() {
     let (user_id, bear_id) = seed_user_and_bear(&pool, "released-attempt-settlement").await;
     let service = PgDocketService::from_pool(&pool);
     let created = service
-        .create_job(two_task_job(user_id, bear_id))
+        .create_job(
+            two_task_job(user_id, bear_id),
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("create job");
     let task_id = created.tasks[0].id;
@@ -1359,7 +1381,10 @@ async fn execute_job_reconciles_its_own_terminal_session_claim() {
     let (user_id, bear_id) = seed_user_and_bear(&pool, "terminal-session-claim").await;
     let service = PgDocketService::from_pool(&pool);
     let created = service
-        .create_job(two_task_job(user_id, bear_id))
+        .create_job(
+            two_task_job(user_id, bear_id),
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("create job");
     let first_task_id = created.tasks[0].id;
@@ -1470,7 +1495,10 @@ async fn docket_task_list_sync_rejects_completed_item_without_evidence() {
     let (user_id, bear_id) = seed_user_and_bear(&pool, "sync").await;
     let service = PgDocketService::from_pool(&pool);
     let created = service
-        .create_job(two_task_job(user_id, bear_id))
+        .create_job(
+            two_task_job(user_id, bear_id),
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("create job");
     let mut task_list = task_list_projection_from_docket_job(&created, None);
@@ -1500,11 +1528,17 @@ async fn mark_task_started_allows_each_job_first_pending_leaf() {
     let (user_id, bear_id) = seed_user_and_bear(&pool, "dispatcher-multiple-jobs").await;
     let service = PgDocketService::from_pool(&pool);
     let first = service
-        .create_job(two_task_job(user_id, bear_id))
+        .create_job(
+            two_task_job(user_id, bear_id),
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("create first job");
     let second = service
-        .create_job(two_task_job(user_id, bear_id))
+        .create_job(
+            two_task_job(user_id, bear_id),
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("create second job");
     let second_task_id = second.tasks[0].id;
@@ -1537,7 +1571,10 @@ async fn docket_dispatcher_finds_starts_and_records_work_task_outcomes() {
     let mut create = two_task_job(user_id, bear_id);
     create.tasks[1].parent_client_key = Some("first".to_string());
 
-    let created = service.create_job(create).await.expect("create job");
+    let created = service
+        .create_job(create, crate::DocketJobCreationAuthority::HumanRequest)
+        .await
+        .expect("create job");
     let run_id = created.job.current_run_id.expect("current run");
     let parent_task_id = created.tasks[0].id;
     let child_task_id = created.tasks[1].id;
@@ -1610,7 +1647,10 @@ async fn docket_execute_rejects_stale_later_active_task() {
     let (user_id, bear_id) = seed_user_and_bear(&pool, "stale-active-task").await;
     let service = PgDocketService::from_pool(&pool);
     let created = service
-        .create_job(two_task_job(user_id, bear_id))
+        .create_job(
+            two_task_job(user_id, bear_id),
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("create job");
     let run_id = created.job.current_run_id.expect("current run");
@@ -1673,7 +1713,10 @@ async fn docket_dispatcher_follows_depth_first_sibling_order() {
     create.tasks[1].title = "Phase two".to_string();
     create.tasks[1].parent_client_key = None;
 
-    let created = service.create_job(create).await.expect("create job");
+    let created = service
+        .create_job(create, crate::DocketJobCreationAuthority::HumanRequest)
+        .await
+        .expect("create job");
     let run_id = created.job.current_run_id.expect("current run");
     let phase_one_id = created.tasks[0].id;
     let phase_two_id = created.tasks[1].id;
@@ -1814,7 +1857,10 @@ async fn docket_completes_parent_after_children_are_terminal() {
     let mut create = two_task_job(user_id, bear_id);
     create.criteria.clear();
     create.tasks[1].parent_client_key = Some("first".to_string());
-    let created = service.create_job(create).await.expect("create job");
+    let created = service
+        .create_job(create, crate::DocketJobCreationAuthority::HumanRequest)
+        .await
+        .expect("create job");
     let run_id = created.job.current_run_id.expect("current run");
     let parent_id = created.tasks[0].id;
     let child_id = created.tasks[1].id;
@@ -1888,15 +1934,18 @@ async fn docket_completing_job_settles_current_run() {
     let (user_id, bear_id) = seed_user_and_bear(&pool, "terminal-run").await;
     let service = PgDocketService::from_pool(&pool);
     let created = service
-        .create_job(DocketJobCreate {
-            criteria: vec![DocketJobCriterionInput {
-                description: "Both tasks complete".to_string(),
-                kind: DocketCriterionKind::Narrative,
-                sibling_order: 0,
-                spec: None,
-            }],
-            ..two_task_job(user_id, bear_id)
-        })
+        .create_job(
+            DocketJobCreate {
+                criteria: vec![DocketJobCriterionInput {
+                    description: "Both tasks complete".to_string(),
+                    kind: DocketCriterionKind::Narrative,
+                    sibling_order: 0,
+                    spec: None,
+                }],
+                ..two_task_job(user_id, bear_id)
+            },
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("create job");
     let run_id = created.job.current_run_id.expect("current run");
@@ -1980,12 +2029,18 @@ async fn create_job_requires_explicit_resolution_for_exact_active_overlap() {
     };
 
     let first = service
-        .create_job(create(DocketJobOverlapResolution::Reject, None))
+        .create_job(
+            create(DocketJobOverlapResolution::Reject, None),
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("create initial job");
 
     let duplicate = service
-        .create_job(create(DocketJobOverlapResolution::Reject, None))
+        .create_job(
+            create(DocketJobOverlapResolution::Reject, None),
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect_err("exact active overlap is rejected by default");
     assert!(matches!(
@@ -1994,16 +2049,22 @@ async fn create_job_requires_explicit_resolution_for_exact_active_overlap() {
     ));
 
     let independent = service
-        .create_job(create(DocketJobOverlapResolution::Independent, None))
+        .create_job(
+            create(DocketJobOverlapResolution::Independent, None),
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("explicit independent job");
     assert_eq!(independent.job.supersedes_job_id, None);
 
     let replacement = service
-        .create_job(create(
-            DocketJobOverlapResolution::Supersede,
-            Some(independent.job.id),
-        ))
+        .create_job(
+            create(
+                DocketJobOverlapResolution::Supersede,
+                Some(independent.job.id),
+            ),
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("explicitly supersede the matching job");
     assert_eq!(replacement.job.supersedes_job_id, Some(independent.job.id));

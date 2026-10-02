@@ -115,6 +115,8 @@ The tool-free curator briefing has a source-specific system boundary: a live, ru
 
 Core tool dispatch carries verified governance as well as origin. Capability search/describe admit forwarded local instances only when that actual policy permits armature tools; grace, autonomous continuation, observational, and frozen turns cannot borrow interactive discovery through a claimed client-session ID. Work-surface scaffold writes require `ManageWorkSurfaces` from the same origin/governance-compiled policy, with the derived profile used only for paths and provenance. Origin-based builtin catalogs and scaffold persistence still need the full live hat-grant/resource cutover.
 
+Job creation requires an explicit, non-deserializable `DocketJobCreationAuthority`: an authenticated human UI request or a native turn carrying verified origin and governance. Native requests require `CreateJob` from that policy; Work, curation, observation, and noninteractive turns cannot create Jobs by claiming a human audit label. The creation transaction locks and rechecks the creator's current Bear membership before writes, including hat-bound creation. `created_by_role` is nonempty audit provenance, not permission; the SQL schema accepts provenance independently of execution origin. Hat eligibility, surface bounds, source ownership at native invocation, and Job/run checks remain separate requirements.
+
 ## Ownership summary
 
 | Axis | Primary owner | Scope/lifetime | Notes |

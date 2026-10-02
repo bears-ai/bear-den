@@ -76,18 +76,24 @@ async fn exact_task_access_and_session_listing_exclude_historical_foreign_attach
     let (viewer, foreign_bear) = seed_user_and_bear(&pool, "task-access-viewer").await;
     let admin = seed_user_and_bear(&pool, "task-access-admin").await.0;
     let outsider = seed_user_and_bear(&pool, "task-access-outsider").await.0;
-    for (user_id, role) in [(owner, "member"), (viewer, "member"), (admin, "admin")] {
+    for (user_id, role) in [(viewer, "member"), (admin, "admin")] {
         grant_membership(&pool, user_id, bear_id, role).await;
     }
     let service = PgDocketService::from_pool(&pool);
     let private = service
-        .create_job(two_task_job(owner, bear_id))
+        .create_job(
+            two_task_job(owner, bear_id),
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("create SameUser job");
     let mut visible_create = two_task_job(owner, bear_id);
     visible_create.visibility = TaskListVisibility::BearVisible;
     let visible = service
-        .create_job(visible_create)
+        .create_job(
+            visible_create,
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("create BearVisible job");
     let viewer_session = seed_client_session(&pool, viewer, bear_id).await;
@@ -230,7 +236,7 @@ async fn settled_standalone_task_remains_readable_only_with_creator_and_own_sess
     let (owner, bear_id) = seed_user_and_bear(&pool, "settled-task-owner").await;
     let other = seed_user_and_bear(&pool, "settled-task-other").await.0;
     let admin = seed_user_and_bear(&pool, "settled-task-admin").await.0;
-    for (user_id, role) in [(owner, "member"), (other, "member"), (admin, "admin")] {
+    for (user_id, role) in [(other, "member"), (admin, "admin")] {
         grant_membership(&pool, user_id, bear_id, role).await;
     }
     let service = PgDocketService::from_pool(&pool);
@@ -335,17 +341,23 @@ async fn session_visibility_is_filtered_before_limit() {
     };
     let (owner, bear_id) = seed_user_and_bear(&pool, "task-limit-owner").await;
     let viewer = seed_user_and_bear(&pool, "task-limit-viewer").await.0;
-    grant_membership(&pool, owner, bear_id, "member").await;
+
     grant_membership(&pool, viewer, bear_id, "member").await;
     let service = PgDocketService::from_pool(&pool);
     let private = service
-        .create_job(two_task_job(owner, bear_id))
+        .create_job(
+            two_task_job(owner, bear_id),
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("create SameUser job");
     let mut visible_create = two_task_job(owner, bear_id);
     visible_create.visibility = TaskListVisibility::BearVisible;
     let visible = service
-        .create_job(visible_create)
+        .create_job(
+            visible_create,
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("create BearVisible job");
     let session_id = seed_client_session(&pool, viewer, bear_id).await;

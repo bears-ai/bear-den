@@ -62,15 +62,18 @@ use super::model::{
 pub(super) async fn create_job(
     pool: &PgPool,
     create: DocketJobCreate,
+    authority: crate::DocketJobCreationAuthority,
 ) -> Result<DocketJobProjection, DenError> {
-    create_job_with_hat(pool, create, None).await
+    create_job_with_hat(pool, create, None, authority).await
 }
 
 pub(super) async fn create_job_with_hat(
     pool: &PgPool,
     create: DocketJobCreate,
     selected_hat: Option<HatId>,
+    authority: crate::DocketJobCreationAuthority,
 ) -> Result<DocketJobProjection, DenError> {
+    authority.require_create_job()?;
     validate_docket_job_create(&create)?;
     let surface_assignments = docket_job_surface_assignments(&create);
     if matches!(
@@ -82,6 +85,18 @@ pub(super) async fn create_job_with_hat(
     }
 
     let mut tx = pool.begin().await?;
+    let member = sqlx::query_scalar!(
+        "SELECT user_id FROM user_bear WHERE bear_id = $1 AND user_id = $2 FOR SHARE",
+        create.bear_id,
+        create.created_by_user_id,
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    if member.is_none() {
+        return Err(DenError::Authorization(
+            "Job creation requires current creator membership in this Bear".into(),
+        ));
+    }
     if let Some(hat_id) = selected_hat {
         if surface_assignments.is_empty() {
             return Err(DenError::Authorization(

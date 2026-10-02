@@ -956,8 +956,20 @@ async fn create_job(
         tasks,
     };
     let job = match selected_hat {
-        Some(hat) => service.create_job_with_hat(create, hat).await?,
-        None => service.create_job(create).await?,
+        Some(hat) => {
+            service
+                .create_job_with_hat(
+                    create,
+                    hat,
+                    den_docket::DocketJobCreationAuthority::HumanRequest,
+                )
+                .await?
+        }
+        None => {
+            service
+                .create_job(create, den_docket::DocketJobCreationAuthority::HumanRequest)
+                .await?
+        }
     };
     Ok(Redirect::to(&format!(
         "/bear/{}/jobs/{}",
@@ -1174,23 +1186,26 @@ async fn duplicate_job(
     let visibility = parse_docket_enum::<TaskListVisibility>("visibility", &source.job.visibility)?;
 
     let duplicate = PgDocketService::from_pool(state.sqlx_pool())
-        .create_job(DocketJobCreate {
-            bear_id,
-            created_by_user_id: user_id,
-            created_by_role: "ui".to_string(),
-            goal: format!("{} (copy)", source.job.goal),
-            work_surface_id: source.job.work_surface_id,
-            work_surface_assignments: Vec::new(),
-            commit_policy,
-            work_branch: None,
-            visibility,
-            source_conversation_id: None,
-            objective_kind: source.job.objective_kind,
-            supersedes_job_id: None,
-            overlap_resolution: den_docket::DocketJobOverlapResolution::Independent,
-            criteria,
-            tasks,
-        })
+        .create_job(
+            DocketJobCreate {
+                bear_id,
+                created_by_user_id: user_id,
+                created_by_role: "ui".to_string(),
+                goal: format!("{} (copy)", source.job.goal),
+                work_surface_id: source.job.work_surface_id,
+                work_surface_assignments: Vec::new(),
+                commit_policy,
+                work_branch: None,
+                visibility,
+                source_conversation_id: None,
+                objective_kind: source.job.objective_kind,
+                supersedes_job_id: None,
+                overlap_resolution: den_docket::DocketJobOverlapResolution::Independent,
+                criteria,
+                tasks,
+            },
+            den_docket::DocketJobCreationAuthority::HumanRequest,
+        )
         .await?;
     Ok(Redirect::to(&format!(
         "/bear/{}/jobs/{}",

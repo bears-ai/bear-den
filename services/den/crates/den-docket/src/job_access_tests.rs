@@ -50,18 +50,24 @@ async fn checkout_rechecks_exact_job_and_membership_before_projection_or_attachm
     let member = seed_user_and_bear(&pool, "checkout-member").await.0;
     let admin = seed_user_and_bear(&pool, "checkout-admin").await.0;
     let nonmember = seed_user_and_bear(&pool, "checkout-nonmember").await.0;
-    for (user_id, role) in [(owner, "member"), (member, "member"), (admin, "admin")] {
+    for (user_id, role) in [(member, "member"), (admin, "admin")] {
         grant_membership(&pool, user_id, bear_id, role).await;
     }
     let service = PgDocketService::from_pool(&pool);
     let private = service
-        .create_job(two_task_job(owner, bear_id))
+        .create_job(
+            two_task_job(owner, bear_id),
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("create SameUser job");
     let mut visible_create = two_task_job(owner, bear_id);
     visible_create.visibility = TaskListVisibility::BearVisible;
     let visible = service
-        .create_job(visible_create)
+        .create_job(
+            visible_create,
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("create BearVisible job");
     let session_id = seed_client_session(&pool, member, bear_id).await;
@@ -185,11 +191,14 @@ async fn revoked_membership_denies_owner_and_admin_but_local_projection_is_uncha
     };
     let (owner, bear_id) = seed_user_and_bear(&pool, "checkout-revoked").await;
     let admin = seed_user_and_bear(&pool, "checkout-revoked-admin").await.0;
-    grant_membership(&pool, owner, bear_id, "member").await;
+
     grant_membership(&pool, admin, bear_id, "admin").await;
     let service = PgDocketService::from_pool(&pool);
     let job = service
-        .create_job(two_task_job(owner, bear_id))
+        .create_job(
+            two_task_job(owner, bear_id),
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("create job");
     let session_id = seed_client_session(&pool, owner, bear_id).await;

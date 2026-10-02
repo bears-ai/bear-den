@@ -25,7 +25,11 @@ async fn selected_work_hat_is_checked_and_bound_in_the_job_creation_transaction(
     .unwrap();
     assert!(
         service
-            .create_job_with_hat(two_task_job(user, bear), hat)
+            .create_job_with_hat(
+                two_task_job(user, bear),
+                hat,
+                crate::DocketJobCreationAuthority::HumanRequest
+            )
             .await
             .is_err(),
         "a disabled hat cannot produce an unbound fallback Job"
@@ -39,7 +43,11 @@ async fn selected_work_hat_is_checked_and_bound_in_the_job_creation_transaction(
     .unwrap();
     assert!(
         service
-            .create_job_with_hat(two_task_job(user, bear), hat)
+            .create_job_with_hat(
+                two_task_job(user, bear),
+                hat,
+                crate::DocketJobCreationAuthority::HumanRequest
+            )
             .await
             .is_err(),
         "the hat still lacks a grant for the Bear's work surface"
@@ -51,7 +59,11 @@ async fn selected_work_hat_is_checked_and_bound_in_the_job_creation_transaction(
         foreign_hat.as_uuid(), foreign_bear, user,
     ).execute(&pool).await.unwrap();
     assert!(service
-        .create_job_with_hat(two_task_job(user, bear), foreign_hat)
+        .create_job_with_hat(
+            two_task_job(user, bear),
+            foreign_hat,
+            crate::DocketJobCreationAuthority::HumanRequest
+        )
         .await
         .is_err());
     assert_eq!(
@@ -75,7 +87,11 @@ async fn selected_work_hat_is_checked_and_bound_in_the_job_creation_transaction(
     .await
     .unwrap();
     let created = service
-        .create_job_with_hat(two_task_job(user, bear), hat)
+        .create_job_with_hat(
+            two_task_job(user, bear),
+            hat,
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .unwrap();
     assert!(

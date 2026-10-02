@@ -86,6 +86,15 @@ async fn seed_user_and_bear(pool: &PgPool, label: &str) -> (i32, Uuid) {
     .fetch_one(pool)
     .await
     .expect("seed bear");
+    sqlx::query!(
+        "INSERT INTO user_bear (user_id, bear_id, role) VALUES ($1, $2, $3)",
+        user_id,
+        bear_id,
+        "member",
+    )
+    .execute(pool)
+    .await
+    .expect("grant creator membership");
     (user_id, bear_id)
 }
 
@@ -150,32 +159,35 @@ async fn seed_work_job_with_policy(
     .await
     .expect("assign work surface");
     let created = service
-        .create_job(DocketJobCreate {
-            bear_id,
-            created_by_user_id: user_id,
-            created_by_role: "chat".to_string(),
-            goal: format!("Ship the work-run slice {}", Uuid::new_v4().simple()),
-            work_surface_id: Some(surface_id),
-            work_surface_assignments: vec![],
-            commit_policy: Some(commit_policy),
-            work_branch: None,
-            visibility: TaskListVisibility::SameUser,
-            source_conversation_id: None,
-            objective_kind: None,
-            supersedes_job_id: None,
-            overlap_resolution: DocketJobOverlapResolution::Reject,
-            criteria: vec![DocketJobCriterionInput {
-                kind: DocketCriterionKind::Narrative,
-                description: "Everything is done".to_string(),
-                spec: None,
-                sibling_order: 0,
-            }],
-            tasks: vec![
-                work_task("Alpha work task", 0, BearProfile::Work),
-                work_task("Beta work task", 1, BearProfile::Work),
-                work_task("Gamma pair task", 2, BearProfile::Pair),
-            ],
-        })
+        .create_job(
+            DocketJobCreate {
+                bear_id,
+                created_by_user_id: user_id,
+                created_by_role: "chat".to_string(),
+                goal: format!("Ship the work-run slice {}", Uuid::new_v4().simple()),
+                work_surface_id: Some(surface_id),
+                work_surface_assignments: vec![],
+                commit_policy: Some(commit_policy),
+                work_branch: None,
+                visibility: TaskListVisibility::SameUser,
+                source_conversation_id: None,
+                objective_kind: None,
+                supersedes_job_id: None,
+                overlap_resolution: DocketJobOverlapResolution::Reject,
+                criteria: vec![DocketJobCriterionInput {
+                    kind: DocketCriterionKind::Narrative,
+                    description: "Everything is done".to_string(),
+                    spec: None,
+                    sibling_order: 0,
+                }],
+                tasks: vec![
+                    work_task("Alpha work task", 0, BearProfile::Work),
+                    work_task("Beta work task", 1, BearProfile::Work),
+                    work_task("Gamma pair task", 2, BearProfile::Pair),
+                ],
+            },
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("create work job");
     let task_ids = created.tasks.iter().map(|task| task.id).collect();

@@ -2184,7 +2184,7 @@ pub enum DocketValidationError {
     AmbiguousWorkSurfaceAssignments,
     DuplicateWorkSurfaceAssignment { work_surface_id: Uuid },
     MismatchedWorkSurfaceBinding,
-    InvalidJobCreatorRole { role: String },
+    EmptyCreatorProvenance,
     EmptyCriterionDescription,
     EmptyTaskTitle,
     EmptyTaskBody,
@@ -2215,12 +2215,7 @@ impl fmt::Display for DocketValidationError {
             Self::MismatchedWorkSurfaceBinding => f.write_str(
                 "Docket work job surface name and managed surface ID must be set together",
             ),
-            Self::InvalidJobCreatorRole { role } => {
-                write!(
-                    f,
-                    "Docket jobs must be human-created via chat, pair, or ui, not `{role}`"
-                )
-            }
+            Self::EmptyCreatorProvenance => f.write_str("Job creator audit provenance must not be empty"),
             Self::EmptyCriterionDescription => {
                 f.write_str("Docket job criterion description must not be empty")
             }
@@ -2772,10 +2767,8 @@ pub fn validate_docket_job_create(create: &DocketJobCreate) -> Result<(), Docket
             });
         }
     }
-    if !matches!(create.created_by_role.trim(), "chat" | "pair" | "ui") {
-        return Err(DocketValidationError::InvalidJobCreatorRole {
-            role: create.created_by_role.clone(),
-        });
+    if create.created_by_role.trim().is_empty() {
+        return Err(DocketValidationError::EmptyCreatorProvenance);
     }
     for criterion in &create.criteria {
         if criterion.description.trim().is_empty() {
@@ -2936,41 +2929,6 @@ pub fn validate_task_list_items(
         return Err(TaskListValidationError::MultipleInProgressItems);
     }
     Ok(())
-}
-
-fn profile_capabilities(role: BearProfile) -> den_core::CapabilitySet {
-    den_core::EffectivePolicy::compile(
-        role,
-        den_core::Governance::Interactive,
-        den_core::ArmatureAvailability::Absent,
-    )
-    .capabilities
-}
-
-pub fn role_can_update_task_list(role: BearProfile) -> bool {
-    let capabilities = profile_capabilities(role);
-    capabilities.contains(den_core::BearCapability::Converse)
-        || capabilities.contains(den_core::BearCapability::ExecuteFocusedTask)
-}
-
-pub fn role_can_request_task_list_handoff(role: BearProfile) -> bool {
-    profile_capabilities(role).contains(den_core::BearCapability::Converse)
-}
-
-pub fn role_can_read_task_list(
-    viewer_role: BearProfile,
-    owner_profile: BearProfile,
-    visibility: TaskListVisibility,
-    same_user: bool,
-) -> bool {
-    match visibility {
-        TaskListVisibility::PrivateToProfile => viewer_role == owner_profile,
-        TaskListVisibility::SameUser => same_user || viewer_role == owner_profile,
-        TaskListVisibility::BearVisible => true,
-        TaskListVisibility::HandoffRequested => {
-            matches!(viewer_role, BearProfile::Curate) || viewer_role == owner_profile
-        }
-    }
 }
 
 pub fn render_task_list_prompt_context(task_lists: &[TaskListLocalProjection]) -> String {
@@ -3186,48 +3144,6 @@ mod tests {
                 item_id: "one".to_string()
             })
         );
-    }
-
-    #[test]
-    fn visibility_preserves_role_boundaries() {
-        assert!(role_can_read_task_list(
-            BearProfile::Pair,
-            BearProfile::Pair,
-            TaskListVisibility::PrivateToProfile,
-            false
-        ));
-        assert!(!role_can_read_task_list(
-            BearProfile::Chat,
-            BearProfile::Pair,
-            TaskListVisibility::PrivateToProfile,
-            false
-        ));
-        assert!(role_can_read_task_list(
-            BearProfile::Chat,
-            BearProfile::Pair,
-            TaskListVisibility::BearVisible,
-            false
-        ));
-        assert!(role_can_read_task_list(
-            BearProfile::Curate,
-            BearProfile::Pair,
-            TaskListVisibility::HandoffRequested,
-            false
-        ));
-        assert!(!role_can_read_task_list(
-            BearProfile::Work,
-            BearProfile::Pair,
-            TaskListVisibility::HandoffRequested,
-            false
-        ));
-    }
-
-    #[test]
-    fn only_channel_roles_request_task_list_handoff() {
-        assert!(role_can_request_task_list_handoff(BearProfile::Chat));
-        assert!(role_can_request_task_list_handoff(BearProfile::Pair));
-        assert!(!role_can_request_task_list_handoff(BearProfile::Work));
-        assert!(!role_can_request_task_list_handoff(BearProfile::Curate));
     }
 
     fn projection_fixture(items: Vec<TaskListUpdateItem>) -> TaskListLocalProjection {
@@ -3620,7 +3536,7 @@ mod tests {
     }
 
     #[test]
-    fn validates_docket_job_created_by_human_surface() {
+    fn validates_docket_job_shape_independently_of_creator_audit_label() {
         let create = DocketJobCreate {
             bear_id: Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap(),
             created_by_user_id: 42,
@@ -3639,11 +3555,14 @@ mod tests {
             tasks: Vec::new(),
         };
 
+        assert_eq!(validate_docket_job_create(&create), Ok(()));
+        let blank = DocketJobCreate {
+            created_by_role: "  ".into(),
+            ..create
+        };
         assert_eq!(
-            validate_docket_job_create(&create),
-            Err(DocketValidationError::InvalidJobCreatorRole {
-                role: "work".to_string()
-            })
+            validate_docket_job_create(&blank),
+            Err(DocketValidationError::EmptyCreatorProvenance)
         );
     }
 

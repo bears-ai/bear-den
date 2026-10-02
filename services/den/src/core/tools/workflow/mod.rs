@@ -24,9 +24,8 @@ use den_docket::{
     DocketService, DocketSessionTaskSettlement, DocketTaskCreate, DocketTaskDefinitionPatch,
     DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskListFilter,
     DocketTaskPlacement, DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskStatus,
-    DocketTaskUpdate, DocketValidationError, MutationPolicy, PgDocketService,
-    TaskListCheckoutRequest, TaskListCheckoutSource, TaskListProjection, TaskListSyncRequest,
-    TaskListVisibility,
+    DocketTaskUpdate, MutationPolicy, PgDocketService, TaskListCheckoutRequest,
+    TaskListCheckoutSource, TaskListProjection, TaskListSyncRequest, TaskListVisibility,
 };
 
 use crate::{
@@ -1438,12 +1437,7 @@ pub(crate) async fn create_job(
 ) -> Result<Value, CustomError> {
     effective_tool_policy(authority)
         .capabilities
-        .require(den_core::BearCapability::CreateJob)
-        .map_err(|_| {
-            DenError::from(DocketValidationError::InvalidJobCreatorRole {
-                role: role.as_str().to_string(),
-            })
-        })?;
+        .require(den_core::BearCapability::CreateJob)?;
     let args: DocketJobCreateArguments = serde_json::from_value(arguments)?;
     if let Some(supersedes_job_id) = args.supersedes_job_id {
         authorize_job(pool, context, supersedes_job_id).await?;
@@ -1470,34 +1464,40 @@ pub(crate) async fn create_job(
         .into());
     }
     let job = PgDocketService::from_pool(pool)
-        .create_job(DocketJobCreate {
-            bear_id: context.bear_id,
-            created_by_user_id: context.user_id,
-            created_by_role: role.as_str().to_string(),
-            goal: args.goal,
-            work_surface_id,
-            work_surface_assignments: args
-                .work_surface_assignments
-                .into_iter()
-                .map(|assignment| DocketJobSurfaceAssignmentInput {
-                    work_surface_id: assignment.work_surface_id,
-                    mutation_policy: assignment.mutation_policy,
-                })
-                .collect(),
-            commit_policy: args.commit_policy,
-            work_branch: args.work_branch,
-            visibility: args.visibility,
-            source_conversation_id: clean_optional(&context.conversation_id),
-            objective_kind: None,
-            supersedes_job_id: args.supersedes_job_id,
-            overlap_resolution: match args.overlap_resolution {
-                JobOverlapResolution::Reject => DocketJobOverlapResolution::Reject,
-                JobOverlapResolution::Independent => DocketJobOverlapResolution::Independent,
-                JobOverlapResolution::Supersede => DocketJobOverlapResolution::Supersede,
+        .create_job(
+            DocketJobCreate {
+                bear_id: context.bear_id,
+                created_by_user_id: context.user_id,
+                created_by_role: role.as_str().to_string(),
+                goal: args.goal,
+                work_surface_id,
+                work_surface_assignments: args
+                    .work_surface_assignments
+                    .into_iter()
+                    .map(|assignment| DocketJobSurfaceAssignmentInput {
+                        work_surface_id: assignment.work_surface_id,
+                        mutation_policy: assignment.mutation_policy,
+                    })
+                    .collect(),
+                commit_policy: args.commit_policy,
+                work_branch: args.work_branch,
+                visibility: args.visibility,
+                source_conversation_id: clean_optional(&context.conversation_id),
+                objective_kind: None,
+                supersedes_job_id: args.supersedes_job_id,
+                overlap_resolution: match args.overlap_resolution {
+                    JobOverlapResolution::Reject => DocketJobOverlapResolution::Reject,
+                    JobOverlapResolution::Independent => DocketJobOverlapResolution::Independent,
+                    JobOverlapResolution::Supersede => DocketJobOverlapResolution::Supersede,
+                },
+                criteria: args.criteria,
+                tasks: args.tasks,
             },
-            criteria: args.criteria,
-            tasks: args.tasks,
-        })
+            den_docket::DocketJobCreationAuthority::NativeTurn {
+                origin: authority.origin,
+                governance: authority.governance,
+            },
+        )
         .await?;
     let task_list = docket::task_list_projection_from_docket_job(&job, None);
     let web_base = docket_web_base(pool, config, context.bear_id).await?;

@@ -40,7 +40,10 @@ async fn focused_acquisition_reuses_binding_and_reattaches_host() {
     let (user_id, bear_id) = seed_user_and_bear(&pool, "focused-acquisition").await;
     let service = PgDocketService::from_pool(&pool);
     let job = service
-        .create_job(two_task_job(user_id, bear_id))
+        .create_job(
+            two_task_job(user_id, bear_id),
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("create job");
     let session_id = format!("pair-{}", Uuid::new_v4());
@@ -147,7 +150,10 @@ async fn execution_attempt_authorization_and_start_are_idempotent_and_fenced() {
     let (user_id, bear_id) = seed_user_and_bear(&pool, "execution-attempt").await;
     let service = PgDocketService::from_pool(&pool);
     let job = service
-        .create_job(two_task_job(user_id, bear_id))
+        .create_job(
+            two_task_job(user_id, bear_id),
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("create job");
     let task_id = job.tasks[0].id;
@@ -218,7 +224,10 @@ async fn focused_slice_outcomes_are_fenced_and_choose_canonical_yields() {
     let (user_id, bear_id) = seed_user_and_bear(&pool, "pair-bounded-outcome").await;
     let service = PgDocketService::from_pool(&pool);
     let job = service
-        .create_job(two_task_job(user_id, bear_id))
+        .create_job(
+            two_task_job(user_id, bear_id),
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("create job");
     let authorized = service
@@ -332,7 +341,10 @@ async fn released_running_attempt_is_fenced_idempotent_and_not_startable() {
     let (user_id, bear_id) = seed_user_and_bear(&pool, "execution-attempt-release").await;
     let service = PgDocketService::from_pool(&pool);
     let job = service
-        .create_job(two_task_job(user_id, bear_id))
+        .create_job(
+            two_task_job(user_id, bear_id),
+            crate::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .expect("create job");
     let authorized = service

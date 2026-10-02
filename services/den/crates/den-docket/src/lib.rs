@@ -9,6 +9,9 @@
 //! `docs/roadmap/DOCKET_IMPLEMENTATION_PLAN.md`; the crate split itself in
 //! `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md`.
 
+mod creation_authority;
+pub use creation_authority::DocketJobCreationAuthority;
+
 pub mod cursors;
 mod db;
 pub mod diagnostics;
@@ -55,8 +58,7 @@ pub use execution_profiles::{
 };
 pub use model::{
     docket_job_status_report, docket_task_status_from_task_list_item_status,
-    normalize_task_list_item_ids, render_task_list_prompt_context, role_can_read_task_list,
-    role_can_request_task_list_handoff, role_can_update_task_list,
+    normalize_task_list_item_ids, render_task_list_prompt_context,
     select_dispatch_notebook_context, task_list_item_from_update_item,
     task_list_projection_from_docket_job, task_list_projection_from_local,
     task_list_projection_from_session_tasks,

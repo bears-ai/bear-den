@@ -356,43 +356,46 @@ async fn work_history_requires_authorized_job_and_scoped_events(pool: PgPool) {
         .await
         .unwrap();
     let job = PgDocketService::from_pool(&pool)
-        .create_job(DocketJobCreate {
-            bear_id: bear,
-            created_by_user_id: victim,
-            created_by_role: "ui".to_string(),
-            goal: "Work on victim's private job".to_string(),
-            work_surface_id: Some(surface.id),
-            work_surface_assignments: vec![],
-            commit_policy: Some(DocketCommitPolicy::PerTask),
-            work_branch: None,
-            visibility: TaskListVisibility::SameUser,
-            source_conversation_id: None,
-            objective_kind: None,
-            supersedes_job_id: None,
-            overlap_resolution: DocketJobOverlapResolution::Reject,
-            criteria: vec![DocketJobCriterionInput {
-                kind: DocketCriterionKind::Narrative,
-                description: "Work complete".to_string(),
-                spec: None,
-                sibling_order: 0,
-            }],
-            tasks: vec![DocketTaskInput {
-                client_key: None,
-                parent_client_key: None,
-                parent_task_id: None,
-                sibling_order: Some(0),
-                kind: DocketTaskKind::Execution,
-                scope: DocketTaskScope::Template,
-                title: "Do private work".to_string(),
-                body: "Work on this job".to_string(),
-                completion_criteria: vec!["Done".to_string()],
-                difficulty: None,
-                effort_hint: None,
-                routing_strategy: RoutingStrategy::Auto,
-                expected_context_size: None,
-                result_rollup_policy: None,
-            }],
-        })
+        .create_job(
+            DocketJobCreate {
+                bear_id: bear,
+                created_by_user_id: victim,
+                created_by_role: "ui".to_string(),
+                goal: "Work on victim's private job".to_string(),
+                work_surface_id: Some(surface.id),
+                work_surface_assignments: vec![],
+                commit_policy: Some(DocketCommitPolicy::PerTask),
+                work_branch: None,
+                visibility: TaskListVisibility::SameUser,
+                source_conversation_id: None,
+                objective_kind: None,
+                supersedes_job_id: None,
+                overlap_resolution: DocketJobOverlapResolution::Reject,
+                criteria: vec![DocketJobCriterionInput {
+                    kind: DocketCriterionKind::Narrative,
+                    description: "Work complete".to_string(),
+                    spec: None,
+                    sibling_order: 0,
+                }],
+                tasks: vec![DocketTaskInput {
+                    client_key: None,
+                    parent_client_key: None,
+                    parent_task_id: None,
+                    sibling_order: Some(0),
+                    kind: DocketTaskKind::Execution,
+                    scope: DocketTaskScope::Template,
+                    title: "Do private work".to_string(),
+                    body: "Work on this job".to_string(),
+                    completion_criteria: vec!["Done".to_string()],
+                    difficulty: None,
+                    effort_hint: None,
+                    routing_strategy: RoutingStrategy::Auto,
+                    expected_context_size: None,
+                    result_rollup_policy: None,
+                }],
+            },
+            den_docket::DocketJobCreationAuthority::HumanRequest,
+        )
         .await
         .unwrap();
     assert!(PgDocketService::from_pool(&pool)
