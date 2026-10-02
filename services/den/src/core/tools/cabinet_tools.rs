@@ -1,10 +1,9 @@
 //! Model-facing Cabinet tools: search/read/create/update over the Phase 1
 //! facade in `den_service::cabinet`.
 //!
-//! These run on the root-crate dispatch path (like workflow tools), so
-//! `authorize_den_tool` does not run here: each executor enforces its own
-//! role policy, and the facade enforces the Bear-level `cabinet_enabled`
-//! gate and contract rules server-side.
+//! Native execution carries a verified origin and checks descriptor audiences
+//! again at the effect. The facade enforces the Bear-level `cabinet_enabled`
+//! gate and Cabinet contract rules server-side.
 
 use den_cabinet::{
     ActorScope, CabinetItemRef, CabinetSourceRef, CabinetVersionRef, CreateItemRequest,
@@ -16,12 +15,18 @@ use den_core::tools::constants::{
     DEN_CABINET_CREATE, DEN_CABINET_HISTORY, DEN_CABINET_LIFECYCLE, DEN_CABINET_READ,
     DEN_CABINET_SEARCH, DEN_CABINET_SOURCE_LINK, DEN_CABINET_UPDATE,
 };
-use den_core::tools::context::DenToolInvocationContext;
-use den_core::BearProfile;
+use den_core::tools::{
+    context::DenToolInvocationContext, descriptor::builtin_den_tool_descriptor_for_provider_name,
+};
+use den_core::{BearProfile, Governance, TurnExecutionOrigin};
 use den_http::errors::CustomError;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::PgPool;
+
+#[cfg(test)]
+#[path = "cabinet_tools/authority_tests.rs"]
+mod authority_tests;
 
 pub(crate) fn is_cabinet_tool(tool_name: &str) -> bool {
     matches!(
@@ -58,16 +63,47 @@ fn actor_scope(context: &DenToolInvocationContext, role: BearProfile) -> ActorSc
     scope
 }
 
-fn require_write_role(role: BearProfile) -> Result<(), CustomError> {
-    if matches!(
-        role,
-        BearProfile::Chat | BearProfile::Pair | BearProfile::Curate
-    ) {
-        Ok(())
-    } else {
-        Err(CustomError::Authorization(format!(
-            "cabinet writes are not available to the {role} stance"
-        )))
+#[derive(Clone, Copy)]
+pub(crate) enum CabinetToolAuthority {
+    Verified {
+        origin: TurnExecutionOrigin,
+        governance: Governance,
+    },
+    Legacy(BearProfile),
+}
+
+fn require_write_authority(
+    tool_name: &str,
+    authority: CabinetToolAuthority,
+) -> Result<(), CustomError> {
+    match authority {
+        CabinetToolAuthority::Verified { origin, governance } => {
+            let descriptor =
+                builtin_den_tool_descriptor_for_provider_name(tool_name).ok_or_else(|| {
+                    CustomError::NotFound(format!("unknown Cabinet tool: {tool_name}"))
+                })?;
+            if descriptor.allows_origin(origin)
+                && !matches!(governance, Governance::Observational | Governance::Frozen)
+            {
+                Ok(())
+            } else {
+                Err(CustomError::Authorization(
+                    "Cabinet write is not available to this execution origin and governance".into(),
+                ))
+            }
+        }
+        CabinetToolAuthority::Legacy(role) => {
+            if matches!(
+                role,
+                BearProfile::Chat | BearProfile::Pair | BearProfile::Curate
+            ) {
+                Ok(())
+            } else {
+                Err(CustomError::Authorization(format!(
+                    "cabinet writes are not available to the {role} stance"
+                )))
+            }
+        }
     }
 }
 
@@ -76,16 +112,33 @@ pub(crate) async fn invoke_cabinet_tool(
     tool_name: &str,
     arguments: Value,
     context: &DenToolInvocationContext,
+    authority: CabinetToolAuthority,
 ) -> Result<Value, CustomError> {
-    let role = context.profile.unwrap_or(BearProfile::Pair);
+    let role = match authority {
+        CabinetToolAuthority::Verified { origin, governance } => {
+            let descriptor =
+                builtin_den_tool_descriptor_for_provider_name(tool_name).ok_or_else(|| {
+                    CustomError::NotFound(format!("unknown Cabinet tool: {tool_name}"))
+                })?;
+            if !descriptor.allows_origin(origin) {
+                return Err(CustomError::Authorization(
+                    "Cabinet tool is not available to this execution origin".into(),
+                ));
+            }
+            den_core::EffectivePolicy::compile_for_origin(origin, governance).trust_profile
+        }
+        CabinetToolAuthority::Legacy(role) => role,
+    };
     match tool_name {
         DEN_CABINET_SEARCH => cabinet_search(pool, context, role, arguments).await,
         DEN_CABINET_READ => cabinet_read(pool, context, role, arguments).await,
-        DEN_CABINET_CREATE => cabinet_create(pool, context, role, arguments).await,
-        DEN_CABINET_UPDATE => cabinet_update(pool, context, role, arguments).await,
+        DEN_CABINET_CREATE => cabinet_create(pool, context, role, authority, arguments).await,
+        DEN_CABINET_UPDATE => cabinet_update(pool, context, role, authority, arguments).await,
         DEN_CABINET_HISTORY => cabinet_history(pool, context, role, arguments).await,
-        DEN_CABINET_SOURCE_LINK => cabinet_source_link(pool, context, role, arguments).await,
-        DEN_CABINET_LIFECYCLE => cabinet_lifecycle(pool, context, role, arguments).await,
+        DEN_CABINET_SOURCE_LINK => {
+            cabinet_source_link(pool, context, role, authority, arguments).await
+        }
+        DEN_CABINET_LIFECYCLE => cabinet_lifecycle(pool, context, role, authority, arguments).await,
         other => Err(CustomError::NotFound(format!(
             "unknown cabinet tool: {other}"
         ))),
@@ -168,9 +221,10 @@ async fn cabinet_create(
     pool: &PgPool,
     context: &DenToolInvocationContext,
     role: BearProfile,
+    authority: CabinetToolAuthority,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    require_write_role(role)?;
+    require_write_authority(DEN_CABINET_CREATE, authority)?;
     let args: CabinetCreateArguments = parse_arguments(arguments)?;
     let view = den_service::cabinet::create_item(
         pool,
@@ -204,9 +258,10 @@ async fn cabinet_update(
     pool: &PgPool,
     context: &DenToolInvocationContext,
     role: BearProfile,
+    authority: CabinetToolAuthority,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    require_write_role(role)?;
+    require_write_authority(DEN_CABINET_UPDATE, authority)?;
     let args: CabinetUpdateArguments = parse_arguments(arguments)?;
     let view = den_service::cabinet::update_item(
         pool,
@@ -277,9 +332,10 @@ async fn cabinet_source_link(
     pool: &PgPool,
     context: &DenToolInvocationContext,
     role: BearProfile,
+    authority: CabinetToolAuthority,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    require_write_role(role)?;
+    require_write_authority(DEN_CABINET_SOURCE_LINK, authority)?;
     let args: CabinetSourceLinkArguments = parse_arguments(arguments)?;
     let cabinet_ref = parse_item_ref(&args.cabinet_ref)?;
     let scope = actor_scope(context, role);
@@ -342,9 +398,10 @@ async fn cabinet_lifecycle(
     pool: &PgPool,
     context: &DenToolInvocationContext,
     role: BearProfile,
+    authority: CabinetToolAuthority,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    require_write_role(role)?;
+    require_write_authority(DEN_CABINET_LIFECYCLE, authority)?;
     let args: CabinetLifecycleArguments = parse_arguments(arguments)?;
     let cabinet_ref = parse_item_ref(&args.cabinet_ref)?;
     let scope = actor_scope(context, role);

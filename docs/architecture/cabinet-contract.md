@@ -10,7 +10,7 @@ This document is the provider-neutral contract for Cabinet: the typed identities
 - Cabinet is Den's **single** shared knowledge layer: one Cabinet per Den deployment. It has exactly one structural concept — a **page tree**. Items nest under items; there are no separate collection or Mission containers.
 - Humans and authorized Bears **edit directly** (true wiki). Every write produces an immutable version; revision history is the safety net. Review/approval is a policy hook reserved for Phase 2, not a Phase 1 gate.
 - Den owns the facade, authorization, and policy. Agent tools and human UI both go through the facade; nothing reads or writes the backing store directly.
-- Every operation takes an **explicit actor scope** (user or Bear + stance). No special strings, no ambient identity.
+- Every operation takes an **explicit actor scope** (user or Bear). The Phase 1 Bear provenance still records a compatibility stance; native tool admission and write eligibility use verified origin and governance rather than that label. No ambient identity.
 - Cabinet items are knowledge records. Artifact refs hold content payloads (ADR-0004). External sources stay external. Derived recall passages are rebuildable projections. These four never merge.
 
 ## Identities
@@ -148,12 +148,12 @@ A `cabinet_review_` record (reviewer actor, decision, rationale, timestamps) acc
 
 Every facade operation takes an explicit `ActorScope`:
 
-- exactly one of `user_id` (human) or `bear_id` + `stance` (Bear), and
+- exactly one of `user_id` (human) or `bear_id` plus a compatibility `stance` provenance label (Bear), and
 - optional call provenance: `conversation_id`, `run_id`, `task_id` when the write originates from a run.
 
 There are no service-identity or wildcard actors on the model-facing facade. Ingestion services (ADR-0008) act as the Bear or user they are configured to publish for.
 
-Actor provenance recorded on items, versions, and links preserves this scope verbatim: `{ actor_kind: user|bear, user_id?, bear_id?, stance?, conversation_id?, run_id? }`.
+Actor provenance recorded on items, versions, and links preserves this scope verbatim: `{ actor_kind: user|bear, user_id?, bear_id?, stance?, conversation_id?, run_id? }`. Native Den tool dispatch derives that label from verified origin; the label is not a write grant. The Phase 1 facade still checks the Bear-wide Cabinet enablement and contract rules, not live hat-specific Cabinet action grants.
 
 ## Operations
 
@@ -197,7 +197,7 @@ The decision is `allow` or `deny` with a structured, logged reason. Rules:
 
 - **Default for pages with no policy anywhere above them**: readable and writable by every Den member — the open-wiki default. Deployments wanting a stricter default set a policy on their root pages rather than relying on a special case.
 - **Pages under membership**: read and write require membership (user or Bear) on the governing page. This is the plan's Phase 2 exit condition — a Mission governs its own material without broadening access to unrelated Cabinet pages.
-- **Bears are members, not superusers**: a Bear's access derives from the same ancestor chain a person's does. Stance may narrow (e.g. policy may deny `work`-stance writes) but never widens.
+- **Bears are members, not superusers**: a Bear's access derives from the same ancestor chain a person's does. Verified execution origin, governance, and future page policy may narrow an action; a stored stance label never widens it.
 - **Search and read denial is silent**: filtered from search, `NotFound` on read. A page whose parent is unreadable is itself unreadable, and its existence is not disclosed through the tree.
 - Every mutating decision (allow or deny) is auditable: actor scope, operation, target refs, resolved policy inputs, outcome.
 

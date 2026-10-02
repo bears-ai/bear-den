@@ -253,8 +253,20 @@ async fn invoke_den_tool_with_origin(
     }
 
     if crate::core::tools::cabinet_tools::is_cabinet_tool(tool_name) {
+        let authority = origin
+            .map(
+                |origin| crate::core::tools::cabinet_tools::CabinetToolAuthority::Verified {
+                    origin,
+                    governance,
+                },
+            )
+            .unwrap_or_else(|| {
+                crate::core::tools::cabinet_tools::CabinetToolAuthority::Legacy(
+                    context.profile.unwrap_or(BearProfile::Pair),
+                )
+            });
         return crate::core::tools::cabinet_tools::invoke_cabinet_tool(
-            pool, tool_name, arguments, &context,
+            pool, tool_name, arguments, &context, authority,
         )
         .await;
     }
