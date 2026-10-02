@@ -279,7 +279,7 @@ async fn confirm_work_surface_requires_capability_before_database_access() {
     let err = super::super::confirm_work_surface(
         &pool,
         &context,
-        BearProfile::Chat,
+        super::super::WorkflowAuthority::Legacy(BearProfile::Chat),
         json!({"work_surface_id": Uuid::new_v4()}),
     )
     .await
@@ -298,7 +298,7 @@ async fn confirm_work_surface_requires_client_session_before_database_access() {
     let err = super::super::confirm_work_surface(
         &pool,
         &context,
-        BearProfile::Pair,
+        super::super::WorkflowAuthority::Legacy(BearProfile::Pair),
         json!({"work_surface_id": Uuid::new_v4()}),
     )
     .await

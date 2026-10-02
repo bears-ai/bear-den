@@ -50,7 +50,17 @@ pub async fn invoke_den_tool(
     arguments: Value,
     context: DenToolInvocationContext,
 ) -> Result<Value, CustomError> {
-    invoke_den_tool_with_origin(pool, config, stores, tool_name, arguments, context, None).await
+    invoke_den_tool_with_origin(
+        pool,
+        config,
+        stores,
+        tool_name,
+        arguments,
+        context,
+        None,
+        den_core::Governance::Interactive,
+    )
+    .await
 }
 
 pub async fn invoke_den_tool_for_origin(
@@ -61,6 +71,7 @@ pub async fn invoke_den_tool_for_origin(
     arguments: Value,
     context: DenToolInvocationContext,
     origin: TurnExecutionOrigin,
+    governance: den_core::Governance,
 ) -> Result<Value, CustomError> {
     invoke_den_tool_with_origin(
         pool,
@@ -70,6 +81,7 @@ pub async fn invoke_den_tool_for_origin(
         arguments,
         context,
         Some(origin),
+        governance,
     )
     .await
 }
@@ -82,6 +94,7 @@ async fn invoke_den_tool_with_origin(
     arguments: Value,
     context: DenToolInvocationContext,
     origin: Option<TurnExecutionOrigin>,
+    governance: den_core::Governance,
 ) -> Result<Value, CustomError> {
     if let Some(origin) = origin {
         let ctx = DenToolContext::new(pool, config, stores);
@@ -233,7 +246,10 @@ async fn invoke_den_tool_with_origin(
     }
 
     if workflow::is_workflow_tool(tool_name) {
-        return invoke_workflow_tool(pool, config, stores, tool_name, arguments, &context).await;
+        return invoke_workflow_tool(
+            pool, config, stores, tool_name, arguments, &context, origin, governance,
+        )
+        .await;
     }
 
     if crate::core::tools::cabinet_tools::is_cabinet_tool(tool_name) {
@@ -378,11 +394,20 @@ async fn invoke_workflow_tool(
     tool_name: &str,
     arguments: Value,
     context: &DenToolInvocationContext,
+    origin: Option<TurnExecutionOrigin>,
+    governance: den_core::Governance,
 ) -> Result<Value, CustomError> {
     reject_closed_freeform_task_definition(tool_name, context)?;
     reject_immutable_focused_task_definition(tool_name, context)?;
 
-    let role = context.profile.unwrap_or(BearProfile::Pair);
+    let role = origin
+        .map(|origin| {
+            den_core::EffectivePolicy::compile_for_origin(origin, governance).trust_profile
+        })
+        .unwrap_or_else(|| context.profile.unwrap_or(BearProfile::Pair));
+    let authority = origin
+        .map(|origin| workflow::WorkflowAuthority::Verified { origin, governance })
+        .unwrap_or(workflow::WorkflowAuthority::Legacy(role));
     let value = match tool_name {
         DEN_TASK_LISTS_LIST => {
             workflow::list_task_lists(
@@ -411,14 +436,14 @@ async fn invoke_workflow_tool(
             workflow::update_task_list(
                 pool,
                 context,
-                role,
+                authority,
                 arguments,
                 crate::core::tools::activity_payloads::activity_payload,
             )
             .await?
         }
         DEN_JOB_CREATE => {
-            workflow::create_job(pool, config, stores, context, role, arguments).await?
+            workflow::create_job(pool, config, stores, context, role, authority, arguments).await?
         }
         DEN_JOB_LIST => workflow::list_jobs(pool, config, context, arguments).await?,
         DEN_JOB_GET => workflow::get_job(pool, context, arguments).await?,
@@ -434,7 +459,7 @@ async fn invoke_workflow_tool(
             )
             .await?
         }
-        DEN_JOB_CANCEL_RUN => workflow::cancel_job_run(pool, context, role, arguments).await?,
+        DEN_JOB_CANCEL_RUN => workflow::cancel_job_run(pool, context, authority, arguments).await?,
         DEN_JOB_ARCHIVE => {
             workflow::set_job_lifecycle(
                 pool,
@@ -445,9 +470,9 @@ async fn invoke_workflow_tool(
             )
             .await?
         }
-        DEN_JOB_EXECUTE => workflow::execute_job(pool, context, role, arguments).await?,
+        DEN_JOB_EXECUTE => workflow::execute_job(pool, context, role, authority, arguments).await?,
         DEN_JOB_RECONCILE => {
-            workflow::reconcile_job_execution(pool, context, role, arguments).await?
+            workflow::reconcile_job_execution(pool, context, role, authority, arguments).await?
         }
         DEN_JOB_SETTLE_TASK => {
             workflow::settle_execution_task(pool, context, role, arguments).await?
@@ -455,11 +480,13 @@ async fn invoke_workflow_tool(
         DEN_JOB_EVALUATE_CRITERION => {
             workflow::evaluate_criterion(pool, context, role, arguments).await?
         }
-        DEN_TASK_CREATE => workflow::create_task(pool, context, role, arguments).await?,
-        DEN_TASK_LIST => workflow::list_tasks(pool, config, context, role, arguments).await?,
+        DEN_TASK_CREATE => workflow::create_task(pool, context, role, authority, arguments).await?,
+        DEN_TASK_LIST => workflow::list_tasks(pool, config, context, authority, arguments).await?,
         DEN_TASK_FIND => workflow::find_task(pool, context, arguments).await?,
         DEN_TASK_UPDATE => workflow::update_task(pool, context, role, arguments).await?,
-        DEN_TASK_SELECT => workflow::select_current_task(pool, context, role, arguments).await?,
+        DEN_TASK_SELECT => {
+            workflow::select_current_task(pool, context, authority, arguments).await?
+        }
         DEN_TASK_UPDATE_CURRENT_STATUS => {
             workflow::update_current_task_status(pool, context, role, arguments).await?
         }
@@ -475,21 +502,23 @@ async fn invoke_workflow_tool(
         DEN_DOCKET_ENTRY_LIST => workflow::list_docket_entries(pool, context, arguments).await?,
         DEN_TASK_LIST_SYNC => workflow::sync_task_list(pool, context, arguments).await?,
         DEN_TASK_LIST_CHECKOUT => {
-            workflow::checkout_task_list(pool, context, role, arguments).await?
+            workflow::checkout_task_list(pool, context, role, authority, arguments).await?
         }
         DEN_WORK_DISPATCH => {
-            workflow::dispatch_work(pool, config, context, role, arguments).await?
+            workflow::dispatch_work(pool, config, context, authority, arguments).await?
         }
         DEN_WORK_RUN_LIST => workflow::list_work_runs(pool, config, context, arguments).await?,
         DEN_WORK_RUN_GET => workflow::get_work_run(pool, context, arguments).await?,
         DEN_WORK_RUN_FIND => workflow::find_work_run(pool, config, context, arguments).await?,
-        DEN_WORK_RUN_CANCEL => workflow::cancel_work_run(pool, context, role, arguments).await?,
+        DEN_WORK_RUN_CANCEL => {
+            workflow::cancel_work_run(pool, context, role, authority, arguments).await?
+        }
         DEN_WORK_RUN_RESOLVE_STALLED => {
-            workflow::resolve_stalled_work_run(pool, context, role, arguments).await?
+            workflow::resolve_stalled_work_run(pool, context, role, authority, arguments).await?
         }
         DEN_WORK_CATALOG => workflow::get_work_catalog(pool, config, context, arguments).await?,
         DEN_WORK_SURFACE_CONFIRM => {
-            workflow::confirm_work_surface(pool, context, role, arguments).await?
+            workflow::confirm_work_surface(pool, context, authority, arguments).await?
         }
         _ => {
             return Err(CustomError::NotFound(format!(

@@ -197,7 +197,7 @@ async fn pair_job_tools_hide_private_jobs_before_reads_or_mutations(pool: PgPool
         cancel_job_run(
             &pool,
             &member,
-            BearProfile::Pair,
+            WorkflowAuthority::Legacy(BearProfile::Pair),
             json!({"job_id": private}),
         )
         .await,
@@ -207,6 +207,7 @@ async fn pair_job_tools_hide_private_jobs_before_reads_or_mutations(pool: PgPool
             &pool,
             &member,
             BearProfile::Pair,
+            WorkflowAuthority::Legacy(BearProfile::Pair),
             json!({"job_id": private}),
         )
         .await,
@@ -216,6 +217,7 @@ async fn pair_job_tools_hide_private_jobs_before_reads_or_mutations(pool: PgPool
             &pool,
             &member,
             BearProfile::Pair,
+            WorkflowAuthority::Legacy(BearProfile::Pair),
             json!({"job_id": private}),
         )
         .await,
@@ -228,7 +230,7 @@ async fn pair_job_tools_hide_private_jobs_before_reads_or_mutations(pool: PgPool
             &pool,
             &config,
             &member,
-            BearProfile::Pair,
+            WorkflowAuthority::Legacy(BearProfile::Pair),
             json!({"job_id": private}),
         )
         .await,
@@ -247,7 +249,7 @@ async fn pair_job_tools_hide_private_jobs_before_reads_or_mutations(pool: PgPool
             &pool,
             &config,
             &member,
-            BearProfile::Pair,
+            WorkflowAuthority::Legacy(BearProfile::Pair),
             json!({"job_id": private}),
         )
         .await,
@@ -276,7 +278,7 @@ async fn pair_job_tools_hide_private_jobs_before_reads_or_mutations(pool: PgPool
         .await,
     );
     denied(
-        create_task(&pool, &member, BearProfile::Pair, json!({
+        create_task(&pool, &member, BearProfile::Pair, WorkflowAuthority::Legacy(BearProfile::Pair), json!({
             "job_id": private, "title": "stolen", "body": "stolen", "completion_criteria": ["done"]
         }))
         .await,
@@ -298,6 +300,7 @@ async fn pair_job_tools_hide_private_jobs_before_reads_or_mutations(pool: PgPool
             &pool,
             &member,
             BearProfile::Pair,
+            WorkflowAuthority::Legacy(BearProfile::Pair),
             json!({"job_id": private}),
         )
         .await,
@@ -512,7 +515,7 @@ async fn historical_private_attachment_is_not_a_pair_task_grant(pool: PgPool) {
         update_task_list(
             &pool,
             &member,
-            BearProfile::Pair,
+            WorkflowAuthority::Legacy(BearProfile::Pair),
             json!({"task_id": task_id}),
             |_| json!({}),
         )
@@ -522,7 +525,7 @@ async fn historical_private_attachment_is_not_a_pair_task_grant(pool: PgPool) {
         select_current_task(
             &pool,
             &member,
-            BearProfile::Pair,
+            WorkflowAuthority::Legacy(BearProfile::Pair),
             json!({"task_id": task_id}),
         )
         .await,
@@ -532,6 +535,7 @@ async fn historical_private_attachment_is_not_a_pair_task_grant(pool: PgPool) {
             &pool,
             &member,
             BearProfile::Pair,
+            WorkflowAuthority::Legacy(BearProfile::Pair),
             json!({"job_id": private}),
         )
         .await,

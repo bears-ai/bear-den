@@ -186,6 +186,7 @@ impl RuntimeToolInvoker for DenRuntimeToolInvoker {
             arguments,
             context,
             origin,
+            effective_policy.governance,
         )
         .await
         .map_err(CustomError::into_den)
