@@ -113,6 +113,8 @@ Den Postgres owns positive tool-action and exact HTTPS-host grants keyed by cano
 
 The tool-free curator briefing has a source-specific system boundary: a live, running `memory_curate` Reflection run and its active Bear-owned reflection conversation. Its canonical typed run ID selects the destination and ephemeral session; no human or default hat is invented. Tools/checkpoints are absent, model tool requests are rejected, and a completed or rebound source cannot return summary text. Generic internal tool and continuation authority remains separately registration-gated.
 
+Core tool dispatch carries verified governance as well as origin. Capability search/describe admit forwarded local instances only when that actual policy permits armature tools; grace, autonomous continuation, observational, and frozen turns cannot borrow interactive discovery through a claimed client-session ID. Work-surface scaffold writes require `ManageWorkSurfaces` from the same origin/governance-compiled policy, with the derived profile used only for paths and provenance. Origin-based builtin catalogs and scaffold persistence still need the full live hat-grant/resource cutover.
+
 ## Ownership summary
 
 | Axis | Primary owner | Scope/lifetime | Notes |

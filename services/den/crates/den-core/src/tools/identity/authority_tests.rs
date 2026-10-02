@@ -190,22 +190,84 @@ fn native_capability_catalog_filters_by_origin_and_armature_availability() {
     let disconnected = TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Absent);
     let tool_ref = "capability-instance:session:mcp__filesystem__read";
     for origin in [channel, browser, disconnected] {
-        let entries = capability_entries_for_origin(origin, &context);
+        let entries = capability_entries_for_origin(origin, Governance::Interactive, &context);
         assert!(
             !entries.iter().any(|entry| entry.r#ref == tool_ref),
             "{origin:?}"
         );
         assert!(matches!(
-            capability_describe_for_origin(serde_json::json!({"ref": tool_ref}), origin, &context),
+            capability_describe_for_origin(
+                serde_json::json!({"ref": tool_ref}),
+                origin,
+                Governance::Interactive,
+                &context
+            ),
             Err(DenError::NotFound(_))
         ));
     }
-    let pair = capability_entries_for_origin(connected, &context);
+    let pair = capability_entries_for_origin(connected, Governance::Interactive, &context);
     assert!(pair.iter().any(|entry| entry.r#ref == tool_ref));
     assert!(pair
         .iter()
         .any(|entry| entry.r#ref == format!("tool:{DEN_WEB_FETCH}")));
-    let channel_entries = capability_entries_for_origin(channel, &context);
+    context.client_session_id = Some("claimed-client".into());
+    for origin in [
+        connected,
+        TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Connected),
+    ] {
+        for governance in [
+            Governance::Interactive,
+            Governance::Grace,
+            Governance::AutonomousContinuation,
+            Governance::Observational,
+            Governance::Frozen,
+        ] {
+            let allowed = governance == Governance::Interactive;
+            let entries = capability_entries_for_origin(origin, governance, &context);
+            assert_eq!(
+                entries.iter().any(|entry| entry.r#ref == tool_ref),
+                allowed,
+                "{origin:?} {governance:?}"
+            );
+            let search = capability_search_for_origin(
+                serde_json::json!({"query": tool_ref}),
+                origin,
+                governance,
+                &context,
+            )
+            .unwrap();
+            assert_eq!(
+                search["results"].as_array().unwrap().len(),
+                usize::from(allowed)
+            );
+            let described = capability_describe_for_origin(
+                serde_json::json!({"ref": tool_ref}),
+                origin,
+                governance,
+                &context,
+            );
+            if allowed {
+                assert!(described.is_ok());
+            } else {
+                assert!(matches!(described, Err(DenError::NotFound(_))));
+            }
+            // Builtin discovery remains origin-based, not full grant filtering.
+            let builtin_refs: Vec<_> = entries
+                .iter()
+                .filter(|entry| entry.instance_id.is_none())
+                .map(|entry| &entry.r#ref)
+                .collect();
+            let interactive_entries =
+                capability_entries_for_origin(origin, Governance::Interactive, &context);
+            let interactive_builtin_refs: Vec<_> = interactive_entries
+                .iter()
+                .filter(|entry| entry.instance_id.is_none())
+                .map(|entry| &entry.r#ref)
+                .collect();
+            assert_eq!(builtin_refs, interactive_builtin_refs);
+        }
+    }
+    let channel_entries = capability_entries_for_origin(channel, Governance::Interactive, &context);
     assert!(!channel_entries
         .iter()
         .any(|entry| entry.r#ref == format!("tool:{DEN_WEB_FETCH}")));

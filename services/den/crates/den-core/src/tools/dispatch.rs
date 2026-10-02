@@ -10,7 +10,7 @@
 
 use serde_json::Value;
 
-use crate::{DenError, TurnExecutionOrigin};
+use crate::{DenError, EffectivePolicy, Governance, TurnExecutionOrigin};
 
 use crate::tools::{
     constants::{
@@ -192,6 +192,7 @@ pub async fn invoke_den_tool_for_origin(
     arguments: Value,
     context: DenToolInvocationContext,
     origin: TurnExecutionOrigin,
+    governance: Governance,
 ) -> Result<Value, DenError> {
     // Provider-facing names are advertised to models, while dispatch arms use
     // canonical names. Normalize once here so newly advertised aliases cannot
@@ -205,13 +206,14 @@ pub async fn invoke_den_tool_for_origin(
         }
     }
     let role = authorize_den_tool_for_origin(ctx, tool_name, &context, origin).await?;
+    let policy = EffectivePolicy::compile_for_origin(origin, governance);
     match tool_name {
         DEN_BEAR_GET_SELF => identity::get_bear_self(ctx, &context).await,
         DEN_USER_GET_CURRENT => identity::get_current_user(ctx, &context).await,
         DEN_BEAR_LIST_MEMBERS => identity::list_bear_members(ctx, &context).await,
         DEN_CAPABILITIES_LIST_SELF => Ok(identity::list_capabilities_for_origin(&context, origin)),
-        DEN_CAPABILITY_SEARCH => identity::capability_search_for_origin(arguments, origin, &context),
-        DEN_CAPABILITY_DESCRIBE => identity::capability_describe_for_origin(arguments, origin, &context),
+        DEN_CAPABILITY_SEARCH => identity::capability_search_for_origin(arguments, origin, governance, &context),
+        DEN_CAPABILITY_DESCRIBE => identity::capability_describe_for_origin(arguments, origin, governance, &context),
         DEN_CHANNEL_GET_CONTEXT => Ok(identity::channel_context(&context)),
         DEN_POLICY_GET_SELF => identity::policy_self(ctx, &context).await,
         DEN_SITUATION_GET | DEN_SITUATION_GET_PROVIDER => {
@@ -266,7 +268,7 @@ pub async fn invoke_den_tool_for_origin(
             work_surface::orient_work_surface(ctx, &context, role).await
         }
         DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD => {
-            work_surface::create_work_surface_scaffold(ctx, &context, role, arguments).await
+            work_surface::create_work_surface_scaffold(ctx, &context, &policy, arguments).await
         }
         DEN_PROMPT_MEMORY_UPSERT => {
             prompt_memory::prompt_memory_upsert(ctx, &context, role, arguments).await

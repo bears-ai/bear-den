@@ -1,7 +1,17 @@
-use super::{infer_work_surface_hint, WorkSurfaceSessionAnchor};
+use super::{
+    create_work_surface_scaffold, infer_work_surface_hint, ScaffoldRequest, WorkSurfaceOps,
+    WorkSurfaceScaffoldOutcome, WorkSurfaceSessionAnchor,
+};
 use crate::tools::context::DenToolInvocationContext;
-use crate::BearProfile;
+use crate::{
+    ArmatureAvailability, BearProfile, DenError, EffectivePolicy, Governance, TurnExecutionOrigin,
+};
 use serde_json::json;
+use std::{
+    future::Future,
+    sync::Mutex,
+    task::{Context, Poll, Waker},
+};
 
 fn pair_context() -> DenToolInvocationContext {
     DenToolInvocationContext {
@@ -29,6 +39,136 @@ fn pair_context() -> DenToolInvocationContext {
         request_id: None,
         channel: Default::default(),
     }
+}
+
+fn immediate<T>(future: impl Future<Output = T>) -> T {
+    let mut future = std::pin::pin!(future);
+    match future
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+    {
+        Poll::Ready(value) => value,
+        Poll::Pending => panic!("fake storage unexpectedly yielded a pending future"),
+    }
+}
+
+#[derive(Default)]
+struct RecordingOps {
+    writes: Mutex<Vec<(BearProfile, Vec<ScaffoldRequest>)>>,
+}
+
+impl WorkSurfaceOps for RecordingOps {
+    async fn write_scaffold(
+        &self,
+        _: uuid::Uuid,
+        role: BearProfile,
+        _: &str,
+        _: &str,
+        requests: Vec<ScaffoldRequest>,
+    ) -> Result<WorkSurfaceScaffoldOutcome, DenError> {
+        self.writes.lock().unwrap().push((role, requests));
+        Ok(WorkSurfaceScaffoldOutcome {
+            storage: None,
+            updates: Vec::new(),
+        })
+    }
+
+    async fn orient(
+        &self,
+        _: &DenToolInvocationContext,
+        _: BearProfile,
+    ) -> Result<serde_json::Value, DenError> {
+        unreachable!()
+    }
+}
+
+fn scaffold_arguments() -> serde_json::Value {
+    json!({
+        "work_surface_slug": "example",
+        "work_surface_name": "Example",
+        "overview": "Example work surface",
+        "current_understanding": "Current understanding",
+    })
+}
+
+#[test]
+fn work_origin_cannot_scaffold_with_claimed_pair_profile_and_client_id() {
+    let context = pair_context();
+    for availability in [
+        ArmatureAvailability::Connected,
+        ArmatureAvailability::Absent,
+    ] {
+        let policy = EffectivePolicy::compile_for_origin(
+            TurnExecutionOrigin::AuthorizedWorkRun(availability),
+            Governance::Interactive,
+        );
+        let ops = RecordingOps::default();
+        let result = immediate(create_work_surface_scaffold(
+            &ops,
+            &context,
+            &policy,
+            scaffold_arguments(),
+        ));
+        assert!(matches!(result, Err(DenError::Authorization(_))));
+        assert!(ops.writes.lock().unwrap().is_empty());
+    }
+}
+
+#[test]
+fn noninteractive_editor_governance_cannot_scaffold_before_storage() {
+    let context = pair_context();
+    for governance in [
+        Governance::Grace,
+        Governance::AutonomousContinuation,
+        Governance::Observational,
+        Governance::Frozen,
+    ] {
+        let policy = EffectivePolicy::compile_for_origin(
+            TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+            governance,
+        );
+        let ops = RecordingOps::default();
+        let result = immediate(create_work_surface_scaffold(
+            &ops,
+            &context,
+            &policy,
+            scaffold_arguments(),
+        ));
+        assert!(
+            matches!(result, Err(DenError::Authorization(_))),
+            "{governance:?}"
+        );
+        assert!(ops.writes.lock().unwrap().is_empty());
+    }
+}
+
+#[test]
+fn interactive_scaffold_uses_policy_role_for_paths_and_provenance() {
+    let mut context = pair_context();
+    context.profile = Some(BearProfile::Work);
+    context.client_session_id = None;
+    let policy = EffectivePolicy::compile_for_origin(
+        TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+        Governance::Interactive,
+    );
+    let ops = RecordingOps::default();
+    let result = immediate(create_work_surface_scaffold(
+        &ops,
+        &context,
+        &policy,
+        scaffold_arguments(),
+    ))
+    .unwrap();
+    assert_eq!(
+        result["work_surface"]["paths"]["current_understanding"],
+        "pair/work_surfaces/example/current-understanding.md"
+    );
+    let writes = ops.writes.lock().unwrap();
+    assert_eq!(writes.len(), 1);
+    assert_eq!(writes[0].0, BearProfile::Pair);
+    assert!(writes[0].1.iter().any(
+        |request| request.target_path == "pair/work_surfaces/example/current-understanding.md"
+    ));
 }
 
 #[test]

@@ -9,7 +9,7 @@ pub mod store;
 
 pub use store::{ScaffoldRequest, WorkSurfaceOps, WorkSurfaceScaffoldOutcome};
 
-use crate::{BearProfile, DenError};
+use crate::{BearProfile, DenError, EffectivePolicy};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -461,20 +461,13 @@ pub async fn orient_work_surface(
 pub async fn create_work_surface_scaffold(
     ops: &impl WorkSurfaceOps,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    policy: &EffectivePolicy,
     arguments: Value,
 ) -> Result<Value, DenError> {
-    crate::EffectivePolicy::compile(
-        role,
-        crate::Governance::Interactive,
-        if context.client_session_id.is_some() {
-            crate::ArmatureAvailability::Connected
-        } else {
-            crate::ArmatureAvailability::Absent
-        },
-    )
-    .capabilities
-    .require(crate::BearCapability::ManageWorkSurfaces)?;
+    policy
+        .capabilities
+        .require(crate::BearCapability::ManageWorkSurfaces)?;
+    let role = policy.trust_profile;
     let args: MemoryCreateWorkSurfaceScaffoldArguments = serde_json::from_value(arguments)?;
     let work_surface_slug = normalize_work_surface_slug(&args.work_surface_slug)?;
     let work_surface_name =

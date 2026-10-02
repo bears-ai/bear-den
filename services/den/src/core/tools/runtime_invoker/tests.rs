@@ -330,6 +330,7 @@ async fn native_core_dispatcher_uses_origin_audience_at_effect_time(
         serde_json::json!({}),
         call.clone(),
         origin,
+        den_core::Governance::Interactive,
     )
     .await?;
     assert_eq!(self_view["bear"]["bear_id"], bear_id.to_string());

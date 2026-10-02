@@ -220,7 +220,7 @@ pub async fn invoke_den_tool_for_origin(
     }
 
     den_core::tools::dispatch::invoke_den_tool_for_origin(
-        &ctx, tool_name, arguments, context, origin,
+        &ctx, tool_name, arguments, context, origin, governance,
     )
     .await
     .map_err(CustomError::from)

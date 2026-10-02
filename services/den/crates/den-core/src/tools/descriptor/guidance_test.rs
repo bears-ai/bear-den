@@ -178,7 +178,7 @@ fn select_current_task_descriptor_requires_confirmation_for_redirection() {
         .contains("If none matches, ask whether to create a new session task or continue with no selected task"));
     assert!(descriptor
         .description
-        .contains("Never silently select, clear, replace, complete, or create a Pair task"));
+        .contains("Never silently select, clear, replace, complete, or create a session task"));
 }
 
 #[test]

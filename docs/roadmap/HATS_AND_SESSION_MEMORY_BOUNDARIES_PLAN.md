@@ -63,6 +63,8 @@ An enabled hat alone neither starts a run nor supplies a tool, network route, wo
 
 **Internal-source progress:** The curator briefing now accepts a typed canonical Reflection-run ID, resolves only a running `memory_curate` run bound to an active Bear-owned reflection conversation, and rechecks that source before inference and before returning text. Its request is tool-free, unexpected tool calls are rejected, and projection uses the checked destination. This narrow summary is not a generic curator session. Generic internal tool/continuation registration gates still need a verified source-specific replacement; no active native observer producer was identified in the production caller audit. Do not remove those gates based solely on an origin enum.
 
+Core tool dispatch carries verified governance as well as origin. Capability search/describe admit forwarded local instances only when that actual policy permits armature tools; grace, autonomous continuation, observational, and frozen turns cannot borrow interactive discovery through a claimed client-session ID. Work-surface scaffold writes require `ManageWorkSurfaces` from the same origin/governance-compiled policy, with the derived profile used only for paths and provenance. Origin-based builtin catalogs and scaffold persistence still need the full live hat-grant/resource cutover.
+
 ## Gate 1 — Set the product contract and build a prototype
 
 Test a low-fidelity setup card for a named **Security review** hat:

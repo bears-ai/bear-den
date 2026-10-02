@@ -59,6 +59,7 @@ pub fn list_capabilities_for_origin(
 
 pub fn capability_entries_for_origin(
     origin: TurnExecutionOrigin,
+    governance: Governance,
     context: &DenToolInvocationContext,
 ) -> Vec<crate::tools::capability_catalog::CapabilityEntry> {
     let mut entries: Vec<_> = builtin_den_tool_descriptors_for_origin(origin)
@@ -72,7 +73,7 @@ pub fn capability_entries_for_origin(
         origin,
         TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected)
             | TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Connected)
-    ) && EffectivePolicy::compile_for_origin(origin, Governance::Interactive)
+    ) && EffectivePolicy::compile_for_origin(origin, governance)
         .capabilities
         .contains(BearCapability::UseArmatureTools)
     {
@@ -84,13 +85,14 @@ pub fn capability_entries_for_origin(
 pub fn capability_search_for_origin(
     arguments: Value,
     origin: TurnExecutionOrigin,
+    governance: Governance,
     context: &DenToolInvocationContext,
 ) -> Result<Value, DenError> {
     let args: CapabilitySearchArguments = serde_json::from_value(arguments).map_err(|err| {
         DenError::ValidationError(format!("invalid capability_search arguments: {err}"))
     })?;
     Ok(search_capabilities(
-        &capability_entries_for_origin(origin, context),
+        &capability_entries_for_origin(origin, governance, context),
         args,
     ))
 }
@@ -98,13 +100,17 @@ pub fn capability_search_for_origin(
 pub fn capability_describe_for_origin(
     arguments: Value,
     origin: TurnExecutionOrigin,
+    governance: Governance,
     context: &DenToolInvocationContext,
 ) -> Result<Value, DenError> {
     let args: CapabilityDescribeArguments = serde_json::from_value(arguments).map_err(|err| {
         DenError::ValidationError(format!("invalid capability_describe arguments: {err}"))
     })?;
-    describe_capability(&capability_entries_for_origin(origin, context), &args.r#ref)
-        .ok_or_else(|| DenError::NotFound(format!("unknown capability: {}", args.r#ref)))
+    describe_capability(
+        &capability_entries_for_origin(origin, governance, context),
+        &args.r#ref,
+    )
+    .ok_or_else(|| DenError::NotFound(format!("unknown capability: {}", args.r#ref)))
 }
 
 pub async fn get_bear_self(
@@ -359,6 +365,7 @@ mod tests {
         let result = capability_describe_for_origin(
             json!({ "ref": "capability-instance:client-1:mcp__filesystem__read" }),
             TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+            Governance::Interactive,
             &context,
         )
         .unwrap();
@@ -369,6 +376,7 @@ mod tests {
         assert!(capability_describe_for_origin(
             json!({ "ref": "capability-instance:client-1:mcp__stale" }),
             TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+            Governance::Interactive,
             &context,
         )
         .is_err());
@@ -385,8 +393,11 @@ mod tests {
     #[test]
     fn channel_catalog_excludes_forwarded_client_instances() {
         let context = context(vec![live_session_tool()]);
-        let chat_entries =
-            capability_entries_for_origin(TurnExecutionOrigin::ChannelConversation, &context);
+        let chat_entries = capability_entries_for_origin(
+            TurnExecutionOrigin::ChannelConversation,
+            Governance::Interactive,
+            &context,
+        );
         assert!(!chat_entries
             .iter()
             .any(|entry| { entry.r#ref == "capability-instance:client-1:mcp__filesystem__read" }));
