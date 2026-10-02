@@ -1,7 +1,7 @@
 //! The Den tool dispatcher (composition root).
 //!
-//! [`invoke_den_tool`] runs preflight argument validation, authorizes the caller
-//! (membership + role + per-tool profile gating), and routes the tool to its
+//! [`invoke_den_tool_for_origin`] runs preflight argument validation, authorizes
+//! membership and descriptor-owned execution audiences, and routes the tool to its
 //! executor. Every capability the executors need is bundled into the
 //! [`ToolContext`] supertrait so the dispatcher can take a single `&impl
 //! ToolContext`; individual executors stay generic over the minimal sub-trait set
@@ -175,16 +175,6 @@ pub fn has_native_session_executor(tool_name: &str) -> bool {
     )
 }
 
-pub async fn authorize_den_tool(
-    ctx: &impl ToolContext,
-    tool_name: &str,
-    context: &DenToolInvocationContext,
-) -> Result<crate::BearProfile, DenError> {
-    let role = identity::authorize_context(ctx, context).await?;
-    identity::authorize_tool_for_profile(tool_name, role)?;
-    Ok(role)
-}
-
 pub async fn authorize_den_tool_for_origin(
     ctx: &impl ToolContext,
     tool_name: &str,
@@ -196,31 +186,12 @@ pub async fn authorize_den_tool_for_origin(
     Ok(projected)
 }
 
-pub async fn invoke_den_tool(
-    ctx: &impl ToolContext,
-    tool_name: &str,
-    arguments: Value,
-    context: DenToolInvocationContext,
-) -> Result<Value, DenError> {
-    invoke_den_tool_with_origin(ctx, tool_name, arguments, context, None).await
-}
-
 pub async fn invoke_den_tool_for_origin(
     ctx: &impl ToolContext,
     tool_name: &str,
     arguments: Value,
     context: DenToolInvocationContext,
     origin: TurnExecutionOrigin,
-) -> Result<Value, DenError> {
-    invoke_den_tool_with_origin(ctx, tool_name, arguments, context, Some(origin)).await
-}
-
-async fn invoke_den_tool_with_origin(
-    ctx: &impl ToolContext,
-    tool_name: &str,
-    arguments: Value,
-    context: DenToolInvocationContext,
-    origin: Option<TurnExecutionOrigin>,
 ) -> Result<Value, DenError> {
     // Provider-facing names are advertised to models, while dispatch arms use
     // canonical names. Normalize once here so newly advertised aliases cannot
@@ -233,26 +204,14 @@ async fn invoke_den_tool_with_origin(
             return Ok(tool_warning_payload(tool_name, warning));
         }
     }
-    let role = match origin {
-        Some(origin) => authorize_den_tool_for_origin(ctx, tool_name, &context, origin).await?,
-        None => authorize_den_tool(ctx, tool_name, &context).await?,
-    };
+    let role = authorize_den_tool_for_origin(ctx, tool_name, &context, origin).await?;
     match tool_name {
         DEN_BEAR_GET_SELF => identity::get_bear_self(ctx, &context).await,
         DEN_USER_GET_CURRENT => identity::get_current_user(ctx, &context).await,
         DEN_BEAR_LIST_MEMBERS => identity::list_bear_members(ctx, &context).await,
-        DEN_CAPABILITIES_LIST_SELF => Ok(match origin {
-            Some(origin) => identity::list_capabilities_for_origin(&context, origin),
-            None => identity::list_capabilities_self(&context, role),
-        }),
-        DEN_CAPABILITY_SEARCH => match origin {
-            Some(origin) => identity::capability_search_for_origin(arguments, origin, &context),
-            None => identity::capability_search(arguments, role, &context),
-        },
-        DEN_CAPABILITY_DESCRIBE => match origin {
-            Some(origin) => identity::capability_describe_for_origin(arguments, origin, &context),
-            None => identity::capability_describe(arguments, role, &context),
-        },
+        DEN_CAPABILITIES_LIST_SELF => Ok(identity::list_capabilities_for_origin(&context, origin)),
+        DEN_CAPABILITY_SEARCH => identity::capability_search_for_origin(arguments, origin, &context),
+        DEN_CAPABILITY_DESCRIBE => identity::capability_describe_for_origin(arguments, origin, &context),
         DEN_CHANNEL_GET_CONTEXT => Ok(identity::channel_context(&context)),
         DEN_POLICY_GET_SELF => identity::policy_self(ctx, &context).await,
         DEN_SITUATION_GET | DEN_SITUATION_GET_PROVIDER => {

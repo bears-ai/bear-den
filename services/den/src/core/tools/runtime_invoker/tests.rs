@@ -334,7 +334,7 @@ async fn native_core_dispatcher_uses_origin_audience_at_effect_time(
     .await?;
     assert_eq!(self_view["bear"]["bear_id"], bear_id.to_string());
     assert!(matches!(
-        dispatch::authorize_den_tool(&ctx, DEN_BEAR_GET_SELF, &call).await,
+        den_core::tools::identity::context_role(&ctx, &call).await,
         Err(DenError::Authorization(_)),
     ));
     assert!(matches!(

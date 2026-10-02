@@ -6,10 +6,11 @@ use crate::core::{
     tools::{
         arguments::DenToolChannelContext,
         constants::DEN_MEMORY_REQUEST_REVIEW,
-        session::{invoke_den_tool, DenToolInvocationContext},
+        session::{invoke_den_tool_for_origin, DenToolInvocationContext},
     },
     user::db::create_user,
 };
+use den_core::{ArmatureAvailability, Governance, TurnExecutionOrigin};
 use den_service::bears::{db, db::grant_membership, db::BearParams, BearProfile};
 
 async fn seed_pair_agent(
@@ -104,7 +105,7 @@ async fn memory_request_review_projects_typed_conversation_records(
     let config = crate::config::Config::test_stub();
     let stores = den_memory::MemoryStoreManager::new(&config);
     for action in ["promote_to_core", "summarize_into_core"] {
-        let retired = invoke_den_tool(
+        let retired = invoke_den_tool_for_origin(
             &pool,
             &config,
             &stores,
@@ -116,11 +117,13 @@ async fn memory_request_review_projects_typed_conversation_records(
                 "suggested_action": action,
             }),
             context.clone(),
+            TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+            Governance::Interactive,
         )
         .await;
         assert!(matches!(retired, Err(crate::errors::CustomError::ValidationError(_))), "retired action {action}: {retired:?}");
     }
-    let payload = invoke_den_tool(
+    let payload = invoke_den_tool_for_origin(
         &pool,
         &config,
         &stores,
@@ -132,6 +135,8 @@ async fn memory_request_review_projects_typed_conversation_records(
             "suggested_action": "unspecified"
         }),
         context,
+        TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+        Governance::Interactive,
     )
     .await?;
     let proposal_id = payload["proposal"]["id"]

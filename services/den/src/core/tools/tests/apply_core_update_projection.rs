@@ -6,11 +6,12 @@ use crate::core::{
     tools::{
         arguments::DenToolChannelContext,
         constants::{DEN_MEMORY_APPLY_CORE_UPDATE, DEN_MEMORY_APPLY_CORE_UPDATE_PROVIDER},
-        session::{invoke_den_tool, DenToolInvocationContext},
+        session::{invoke_den_tool_for_origin, DenToolInvocationContext},
     },
     user::db::create_user,
 };
 use den_core::tools::{descriptor::builtin_den_tool_descriptor_for_provider_name, dispatch::has_native_session_executor};
+use den_core::{Governance, TurnExecutionOrigin};
 use den_service::bears::{db, db::grant_membership, db::BearParams, BearProfile};
 
 #[sqlx::test]
@@ -93,7 +94,7 @@ async fn retired_core_update_tool_is_not_advertised_or_executable_without_hats(
             .await?;
         }
         for tool_name in [DEN_MEMORY_APPLY_CORE_UPDATE, DEN_MEMORY_APPLY_CORE_UPDATE_PROVIDER] {
-            let blocked = invoke_den_tool(
+            let blocked = invoke_den_tool_for_origin(
                 &pool,
                 &config,
                 &stores,
@@ -105,6 +106,8 @@ async fn retired_core_update_tool_is_not_advertised_or_executable_without_hats(
                     "body": "This proposal must not become Bear-wide memory",
                 }),
                 context.clone(),
+                TurnExecutionOrigin::InternalCuration,
+                Governance::AutonomousContinuation,
             )
             .await;
             assert!(matches!(blocked, Err(crate::errors::CustomError::NotFound(_))), "retired tool {tool_name} unexpectedly accepted: {blocked:?}");

@@ -18,7 +18,6 @@ fn supplied_context() -> DenToolInvocationContext {
 
 #[test]
 fn native_workflow_capabilities_follow_verified_origin_and_governance() {
-    let mut context = supplied_context();
     let origins = [
         TurnExecutionOrigin::ChannelConversation,
         TurnExecutionOrigin::BrowserTaskSession,
@@ -37,34 +36,18 @@ fn native_workflow_capabilities_follow_verified_origin_and_governance() {
             Governance::Observational,
             Governance::Frozen,
         ] {
-            let actual =
-                effective_tool_policy(WorkflowAuthority::Verified { origin, governance }, &context);
+            let actual = effective_tool_policy(WorkflowAuthority { origin, governance });
             assert_eq!(
                 actual,
                 den_core::EffectivePolicy::compile_for_origin(origin, governance),
                 "{origin:?}, {governance:?}"
             );
-            context.client_session_id = None;
-            assert_eq!(
-                effective_tool_policy(WorkflowAuthority::Verified { origin, governance }, &context),
-                actual,
-                "a client-session ID must not select native workflow authority"
-            );
-            context.client_session_id = Some("claimed-client-session".into());
         }
     }
-    assert!(
-        effective_tool_policy(WorkflowAuthority::Legacy(BearProfile::Pair), &context)
-            .capabilities
-            .contains(BearCapability::UseArmatureTools)
-    );
-    assert!(!effective_tool_policy(
-        WorkflowAuthority::Verified {
-            origin: TurnExecutionOrigin::BrowserTaskSession,
-            governance: Governance::Interactive,
-        },
-        &context,
-    )
+    assert!(!effective_tool_policy(WorkflowAuthority {
+        origin: TurnExecutionOrigin::BrowserTaskSession,
+        governance: Governance::Interactive,
+    })
     .capabilities
     .contains(BearCapability::UseArmatureTools));
 }
@@ -73,7 +56,7 @@ fn native_workflow_capabilities_follow_verified_origin_and_governance() {
 async fn native_effects_deny_work_dispatch_and_session_tasks_before_touching_storage() {
     let pool = PgPool::connect_lazy("postgres://unused:unused@localhost/unused").unwrap();
     let context = supplied_context();
-    let work = WorkflowAuthority::Verified {
+    let work = WorkflowAuthority {
         origin: TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Absent),
         governance: Governance::Interactive,
     };
@@ -108,7 +91,7 @@ async fn native_effects_deny_work_dispatch_and_session_tasks_before_touching_sto
         "{denied_session_task}"
     );
 
-    let autonomous = WorkflowAuthority::Verified {
+    let autonomous = WorkflowAuthority {
         origin: TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
         governance: Governance::AutonomousContinuation,
     };

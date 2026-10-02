@@ -5,9 +5,10 @@ use uuid::Uuid;
 use crate::core::tools::{
     arguments::DenToolChannelContext,
     constants::DEN_MEMORY_REQUEST_REVIEW,
-    session::{invoke_den_tool, DenToolInvocationContext},
+    session::{invoke_den_tool_for_origin, DenToolInvocationContext},
 };
 use den_core::ids::{BearId, UserId};
+use den_core::{ArmatureAvailability, Governance, TurnExecutionOrigin};
 use den_memory::{append_memory_record, LogicalMemoryPath, MemorySource, MemoryStoreManager};
 use den_service::{
     bears::{db, hats, BearProfile},
@@ -95,8 +96,10 @@ async fn bound_review_records_verified_source_and_hat_without_publishing(
         "refs": {"verified_hat_source": {"memory_id": shared.memory_id, "hat_id": other_hat.id}},
         "sensitivity": "normal",
     });
-    let invoke = |args, ctx| invoke_den_tool(&pool, &config, &stores,
-        DEN_MEMORY_REQUEST_REVIEW, args, ctx);
+    let invoke = |args, ctx| invoke_den_tool_for_origin(&pool, &config, &stores,
+        DEN_MEMORY_REQUEST_REVIEW, args, ctx,
+        TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+        Governance::Interactive);
     let result = invoke(request(private_id), context(admin, "conv-bound-review-a")).await?;
     let id = Uuid::parse_str(result["proposal"]["id"].as_str().unwrap())?;
     let queued = sqlx::query_scalar!(

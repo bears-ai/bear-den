@@ -19,7 +19,7 @@ fn cabinet_write_policy_uses_descriptor_audience_not_an_audit_profile() {
             TurnExecutionOrigin::InboundObservation,
         ] {
             let descriptor = builtin_den_tool_descriptor_for_provider_name(tool).unwrap();
-            let authority = CabinetToolAuthority::Verified {
+            let authority = CabinetToolAuthority {
                 origin,
                 governance: Governance::Interactive,
             };
@@ -29,19 +29,12 @@ fn cabinet_write_policy_uses_descriptor_audience_not_an_audit_profile() {
                 "{tool}: {origin:?}",
             );
             for governance in [Governance::Observational, Governance::Frozen] {
-                assert!(require_write_authority(
-                    tool,
-                    CabinetToolAuthority::Verified { origin, governance },
-                )
-                .is_err());
+                assert!(
+                    require_write_authority(tool, CabinetToolAuthority { origin, governance },)
+                        .is_err()
+                );
             }
         }
-        assert!(
-            require_write_authority(tool, CabinetToolAuthority::Legacy(BearProfile::Pair)).is_ok()
-        );
-        assert!(
-            require_write_authority(tool, CabinetToolAuthority::Legacy(BearProfile::Work)).is_err()
-        );
     }
 }
 
@@ -65,7 +58,7 @@ async fn work_origin_cannot_write_cabinet_with_a_claimed_pair_profile() {
         DEN_CABINET_CREATE,
         json!({"title": "Untrusted", "content": "Untrusted"}),
         &context,
-        CabinetToolAuthority::Verified {
+        CabinetToolAuthority {
             origin: TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Absent),
             governance: Governance::Interactive,
         },

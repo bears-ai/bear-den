@@ -2,7 +2,7 @@
 //!
 //! These executors own the JSON shaping for the `bear/*`, `user/*`, `policy/*`,
 //! `capabilities/*`, and `channel/*` read tools, plus the dispatcher's
-//! authorization (`authorize_context`/`context_role`/`authorize_tool_for_profile`).
+//! origin authorization and internal binding verification.
 //! All DB access flows through the [`BearDirectory`] seam.
 
 mod store;
@@ -25,8 +25,7 @@ use crate::tools::{
     },
     context::DenToolInvocationContext,
     descriptor::{
-        builtin_den_tool_descriptors, builtin_den_tool_descriptors_for_origin,
-        builtin_den_tool_descriptors_for_profile, ToolAudience,
+        builtin_den_tool_descriptors, builtin_den_tool_descriptors_for_origin, ToolAudience,
     },
 };
 
@@ -41,16 +40,6 @@ pub fn channel_context(context: &DenToolInvocationContext) -> Value {
         "session_id": context.session_id,
         "request_id": context.request_id,
         "channel": context.channel,
-    })
-}
-
-/// Pure: the callable-tool descriptors for the caller's resolved role.
-pub fn list_capabilities_self(context: &DenToolInvocationContext, role: BearProfile) -> Value {
-    let descriptors = builtin_den_tool_descriptors_for_profile(role);
-    json!({
-        "bear_id": context.bear_id,
-        "channel": context.channel,
-        "capabilities": descriptors,
     })
 }
 
@@ -115,54 +104,6 @@ pub fn capability_describe_for_origin(
         DenError::ValidationError(format!("invalid capability_describe arguments: {err}"))
     })?;
     describe_capability(&capability_entries_for_origin(origin, context), &args.r#ref)
-        .ok_or_else(|| DenError::NotFound(format!("unknown capability: {}", args.r#ref)))
-}
-
-/// Pure: searchable capability catalog entries for the caller's resolved role.
-pub fn capability_entries_for_role(
-    role: BearProfile,
-) -> Vec<crate::tools::capability_catalog::CapabilityEntry> {
-    let mut entries: Vec<_> = builtin_den_tool_descriptors_for_profile(role)
-        .into_iter()
-        .map(tool_descriptor_to_capability)
-        .collect();
-    entries.push(code_mode_capability(role));
-    entries
-}
-
-pub fn capability_entries_for_context(
-    role: BearProfile,
-    context: &DenToolInvocationContext,
-) -> Vec<crate::tools::capability_catalog::CapabilityEntry> {
-    let mut entries = capability_entries_for_role(role);
-    entries.extend(session_capability_entries(&context.session_capabilities));
-    entries
-}
-
-/// Pure: search the caller-visible Capability Catalog.
-pub fn capability_search(
-    arguments: Value,
-    role: BearProfile,
-    context: &DenToolInvocationContext,
-) -> Result<Value, DenError> {
-    let args: CapabilitySearchArguments = serde_json::from_value(arguments).map_err(|err| {
-        DenError::ValidationError(format!("invalid capability_search arguments: {err}"))
-    })?;
-    let entries = capability_entries_for_context(role, context);
-    Ok(search_capabilities(&entries, args))
-}
-
-/// Pure: describe one caller-visible Capability Catalog entry.
-pub fn capability_describe(
-    arguments: Value,
-    role: BearProfile,
-    context: &DenToolInvocationContext,
-) -> Result<Value, DenError> {
-    let args: CapabilityDescribeArguments = serde_json::from_value(arguments).map_err(|err| {
-        DenError::ValidationError(format!("invalid capability_describe arguments: {err}"))
-    })?;
-    let entries = capability_entries_for_context(role, context);
-    describe_capability(&entries, &args.r#ref)
         .ok_or_else(|| DenError::NotFound(format!("unknown capability: {}", args.r#ref)))
 }
 
@@ -296,22 +237,6 @@ pub async fn context_role(
     Ok(registered_profile)
 }
 
-/// Verify membership, then resolve the caller's role.
-pub async fn authorize_context(
-    dir: &impl BearDirectory,
-    context: &DenToolInvocationContext,
-) -> Result<BearProfile, DenError> {
-    if !dir
-        .user_may_use_bear(context.user_id, context.bear_id)
-        .await?
-    {
-        return Err(DenError::Authorization(
-            "user is not a member of this bear".to_string(),
-        ));
-    }
-    context_role(dir, context).await
-}
-
 /// The native runtime's verified origin selects the descriptor audience.
 /// Ordinary turns additionally recheck canonical conversation/Work ownership
 /// in the in-process invoker; the registry is not another authority source for
@@ -361,22 +286,6 @@ pub fn authorize_tool_for_origin(
     } else {
         Err(DenError::Authorization(format!(
             "Den tool `{tool_name}` is unavailable to this verified execution origin"
-        )))
-    }
-}
-
-/// Legacy no-hat dispatcher compatibility. Never derive a native turn's
-/// authority from this profile projection.
-pub fn authorize_tool_for_profile(tool_name: &str, role: BearProfile) -> Result<(), DenError> {
-    let descriptor = builtin_den_tool_descriptors()
-        .into_iter()
-        .find(|descriptor| descriptor.name == tool_name)
-        .ok_or_else(|| DenError::NotFound(format!("unknown Den tool: {tool_name}")))?;
-    if descriptor.allows_profile(role) {
-        Ok(())
-    } else {
-        Err(DenError::Authorization(format!(
-            "Den tool `{tool_name}` is not available to the `{role}` role"
         )))
     }
 }
@@ -447,9 +356,9 @@ mod tests {
         unavailable.availability = "unavailable".to_string();
         let context = context(vec![live_session_tool(), unavailable]);
 
-        let result = capability_describe(
+        let result = capability_describe_for_origin(
             json!({ "ref": "capability-instance:client-1:mcp__filesystem__read" }),
-            BearProfile::Pair,
+            TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
             &context,
         )
         .unwrap();
@@ -457,9 +366,9 @@ mod tests {
             result["capability"]["ref"],
             "capability-instance:client-1:mcp__filesystem__read"
         );
-        assert!(capability_describe(
+        assert!(capability_describe_for_origin(
             json!({ "ref": "capability-instance:client-1:mcp__stale" }),
-            BearProfile::Pair,
+            TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
             &context,
         )
         .is_err());
@@ -474,10 +383,11 @@ mod tests {
     }
 
     #[test]
-    fn session_instances_do_not_change_durable_role_filtering() {
+    fn channel_catalog_excludes_forwarded_client_instances() {
         let context = context(vec![live_session_tool()]);
-        let chat_entries = capability_entries_for_context(BearProfile::Chat, &context);
-        assert!(chat_entries
+        let chat_entries =
+            capability_entries_for_origin(TurnExecutionOrigin::ChannelConversation, &context);
+        assert!(!chat_entries
             .iter()
             .any(|entry| { entry.r#ref == "capability-instance:client-1:mcp__filesystem__read" }));
         assert!(!chat_entries

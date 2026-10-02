@@ -53,35 +53,15 @@ use den_service::{
 
 const FOCUSED_CONVERSATION_TITLE_MAX_CHARS: usize = 120;
 
-/// Only the in-process native invoker can supply a verified origin. Legacy
-/// callers retain their former profile projection until that route is retired.
+/// Execution authority supplied by the in-process native invoker.
 #[derive(Clone, Copy)]
-pub(crate) enum WorkflowAuthority {
-    Verified {
-        origin: den_core::TurnExecutionOrigin,
-        governance: den_core::Governance,
-    },
-    Legacy(BearProfile),
+pub(crate) struct WorkflowAuthority {
+    pub origin: den_core::TurnExecutionOrigin,
+    pub governance: den_core::Governance,
 }
 
-fn effective_tool_policy(
-    authority: WorkflowAuthority,
-    context: &DenToolInvocationContext,
-) -> den_core::EffectivePolicy {
-    match authority {
-        WorkflowAuthority::Verified { origin, governance } => {
-            den_core::EffectivePolicy::compile_for_origin(origin, governance)
-        }
-        WorkflowAuthority::Legacy(role) => den_core::EffectivePolicy::compile(
-            role,
-            den_core::Governance::Interactive,
-            if context.client_session_id.is_some() {
-                den_core::ArmatureAvailability::Connected
-            } else {
-                den_core::ArmatureAvailability::Absent
-            },
-        ),
-    }
+fn effective_tool_policy(authority: WorkflowAuthority) -> den_core::EffectivePolicy {
+    den_core::EffectivePolicy::compile_for_origin(authority.origin, authority.governance)
 }
 
 /// Chat-facing identity for a Docket resource. `id` remains the only value
@@ -783,7 +763,7 @@ pub(crate) async fn update_task_list(
     arguments: Value,
     _activity_payload: fn(Option<&docket::TaskListLocalProjection>) -> Value,
 ) -> Result<Value, CustomError> {
-    let policy = effective_tool_policy(authority, context);
+    let policy = effective_tool_policy(authority);
     policy
         .capabilities
         .require(den_core::BearCapability::SelectSessionTask)?;
@@ -1398,7 +1378,7 @@ pub(crate) async fn confirm_work_surface(
     authority: WorkflowAuthority,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    effective_tool_policy(authority, context)
+    effective_tool_policy(authority)
         .capabilities
         .require(den_core::BearCapability::UseWorkSurfaces)?;
     let args: ConfirmWorkSurfaceArguments = serde_json::from_value(arguments)?;
@@ -1456,7 +1436,7 @@ pub(crate) async fn create_job(
     authority: WorkflowAuthority,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    effective_tool_policy(authority, context)
+    effective_tool_policy(authority)
         .capabilities
         .require(den_core::BearCapability::CreateJob)
         .map_err(|_| {
@@ -1848,7 +1828,7 @@ pub(crate) async fn cancel_job_run(
     authority: WorkflowAuthority,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    effective_tool_policy(authority, context)
+    effective_tool_policy(authority)
         .capabilities
         .require(den_core::BearCapability::DispatchWork)?;
     let args: DocketJobLifecycleArguments = serde_json::from_value(arguments)?;
@@ -1872,7 +1852,7 @@ pub(crate) async fn execute_job(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketJobExecuteArguments = serde_json::from_value(arguments)?;
-    let policy = effective_tool_policy(authority, context);
+    let policy = effective_tool_policy(authority);
     policy
         .capabilities
         .require(den_core::BearCapability::ExecuteJob)?;
@@ -1936,7 +1916,7 @@ pub(crate) async fn reconcile_job_execution(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketJobExecuteArguments = serde_json::from_value(arguments)?;
-    let policy = effective_tool_policy(authority, context);
+    let policy = effective_tool_policy(authority);
     policy
         .capabilities
         .require(den_core::BearCapability::ExecuteJob)?;
@@ -2114,7 +2094,7 @@ pub(crate) async fn create_task(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketTaskCreateArguments = serde_json::from_value(arguments)?;
-    let capabilities = effective_tool_policy(authority, context).capabilities;
+    let capabilities = effective_tool_policy(authority).capabilities;
     let defaulted_to_session_task_tree =
         should_default_session_task_tree(&capabilities, args.job_id);
     let job_id = args.job_id;
@@ -2245,7 +2225,7 @@ pub(crate) async fn select_current_task(
     authority: WorkflowAuthority,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    let policy = effective_tool_policy(authority, context);
+    let policy = effective_tool_policy(authority);
     policy
         .capabilities
         .require(den_core::BearCapability::SelectSessionTask)?;
@@ -2298,7 +2278,7 @@ pub(crate) async fn list_tasks(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketTaskListArguments = serde_json::from_value(arguments)?;
-    let capabilities = effective_tool_policy(authority, context).capabilities;
+    let capabilities = effective_tool_policy(authority).capabilities;
     let defaulted_to_session_task_tree =
         should_default_session_task_tree(&capabilities, args.job_id);
     let job_id = args.job_id;
@@ -2697,7 +2677,7 @@ pub(crate) async fn append_docket_entry(
 ) -> Result<Value, CustomError> {
     let args: DocketEntryAppendArguments = serde_json::from_value(arguments)?;
     if args.kind == DocketEntryAppendKind::Question {
-        effective_tool_policy(authority, context)
+        effective_tool_policy(authority)
             .capabilities
             .require(den_core::BearCapability::OwnSessionTasks)?;
     }
@@ -2891,7 +2871,7 @@ pub(crate) async fn checkout_task_list(
             },
             Some(job_id),
         )
-    } else if effective_tool_policy(authority, context)
+    } else if effective_tool_policy(authority)
         .capabilities
         .contains(den_core::BearCapability::OwnSessionTasks)
     {
@@ -2922,7 +2902,7 @@ pub(crate) async fn checkout_task_list(
         )
         .into());
     };
-    let session_anchor_id = if effective_tool_policy(authority, context)
+    let session_anchor_id = if effective_tool_policy(authority)
         .capabilities
         .contains(den_core::BearCapability::OwnSessionTasks)
         && checkout_job_id.is_some()
@@ -3271,7 +3251,7 @@ pub(crate) async fn dispatch_work(
     authority: WorkflowAuthority,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    effective_tool_policy(authority, context)
+    effective_tool_policy(authority)
         .capabilities
         .require(den_core::BearCapability::DispatchWork)?;
     let args: WorkDispatchArguments = serde_json::from_value(arguments)?;
@@ -3520,7 +3500,7 @@ pub(crate) async fn cancel_work_run(
     authority: WorkflowAuthority,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    effective_tool_policy(authority, context)
+    effective_tool_policy(authority)
         .capabilities
         .require(den_core::BearCapability::DispatchWork)?;
     let args: WorkRunCancelArguments = serde_json::from_value(arguments)?;
@@ -3570,7 +3550,7 @@ pub(crate) async fn resolve_stalled_work_run(
     authority: WorkflowAuthority,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    effective_tool_policy(authority, context)
+    effective_tool_policy(authority)
         .capabilities
         .require(den_core::BearCapability::DispatchWork)?;
     let args: WorkRunResolveStalledArguments = serde_json::from_value(arguments)?;

@@ -6,10 +6,11 @@ use crate::core::{
     tools::{
         arguments::DenToolChannelContext,
         constants::DEN_MEMORY_RESOLVE_PROPOSAL,
-        session::{invoke_den_tool, DenToolInvocationContext},
+        session::{invoke_den_tool_for_origin, DenToolInvocationContext},
     },
     user::db::create_user,
 };
+use den_core::{Governance, TurnExecutionOrigin};
 use den_service::bears::{db, db::grant_membership, db::BearParams, BearProfile};
 use den_service::memory_proposals::CreateMemoryProposal;
 
@@ -131,7 +132,7 @@ async fn memory_resolve_proposal_projects_typed_conversation_records(
         channel: DenToolChannelContext::default(),
     };
 
-    let payload = invoke_den_tool(
+    let payload = invoke_den_tool_for_origin(
         &pool,
         &config,
         &stores,
@@ -142,6 +143,8 @@ async fn memory_resolve_proposal_projects_typed_conversation_records(
             "decision_summary": "Not suitable"
         }),
         context,
+        TurnExecutionOrigin::InternalCuration,
+        Governance::AutonomousContinuation,
     )
     .await?;
 

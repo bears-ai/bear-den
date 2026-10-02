@@ -25,7 +25,7 @@ use den_core::tools::{
 use den_core::TurnExecutionOrigin;
 use den_docket::{DocketService, PgDocketService, TaskListHandoffRequest};
 use den_memory::MemoryStoreManager;
-use den_service::bears::{hats::memory_binding::ResolvedMemoryBinding, BearProfile};
+use den_service::bears::hats::memory_binding::ResolvedMemoryBinding;
 use den_service::conversation::persistence as conversation_persistence;
 
 // The per-call context value now lives in `den-tools` (it is data, not a
@@ -42,27 +42,6 @@ struct TaskListHandoffArguments {
     requested_outcome: String,
 }
 
-pub async fn invoke_den_tool(
-    pool: &PgPool,
-    config: &Config,
-    stores: &MemoryStoreManager,
-    tool_name: &str,
-    arguments: Value,
-    context: DenToolInvocationContext,
-) -> Result<Value, CustomError> {
-    invoke_den_tool_with_origin(
-        pool,
-        config,
-        stores,
-        tool_name,
-        arguments,
-        context,
-        None,
-        den_core::Governance::Interactive,
-    )
-    .await
-}
-
 pub async fn invoke_den_tool_for_origin(
     pool: &PgPool,
     config: &Config,
@@ -73,37 +52,22 @@ pub async fn invoke_den_tool_for_origin(
     origin: TurnExecutionOrigin,
     governance: den_core::Governance,
 ) -> Result<Value, CustomError> {
-    invoke_den_tool_with_origin(
-        pool,
-        config,
-        stores,
-        tool_name,
-        arguments,
-        context,
-        Some(origin),
-        governance,
-    )
-    .await
-}
-
-async fn invoke_den_tool_with_origin(
-    pool: &PgPool,
-    config: &Config,
-    stores: &MemoryStoreManager,
-    tool_name: &str,
-    arguments: Value,
-    context: DenToolInvocationContext,
-    origin: Option<TurnExecutionOrigin>,
-    governance: den_core::Governance,
-) -> Result<Value, CustomError> {
-    if let Some(origin) = origin {
-        let ctx = DenToolContext::new(pool, config, stores);
-        let canonical =
-            den_core::tools::aliases::canonical_builtin_den_tool(tool_name).unwrap_or(tool_name);
-        den_core::tools::dispatch::authorize_den_tool_for_origin(&ctx, canonical, &context, origin)
-            .await
-            .map_err(CustomError::from)?;
+    reject_closed_freeform_task_definition(tool_name, &context)?;
+    reject_immutable_focused_task_definition(tool_name, &context)?;
+    let ctx = DenToolContext::new(pool, config, stores);
+    let tool_name =
+        den_core::tools::aliases::canonical_builtin_den_tool(tool_name).unwrap_or(tool_name);
+    match den_core::tools::preflight::prevalidate_tool_arguments(tool_name, &arguments, &context)? {
+        den_core::tools::preflight::ToolPreflight::Proceed => {}
+        den_core::tools::preflight::ToolPreflight::Warning(warning) => {
+            return Ok(den_core::tools::preflight::tool_warning_payload(
+                tool_name, warning,
+            ));
+        }
     }
+    den_core::tools::dispatch::authorize_den_tool_for_origin(&ctx, tool_name, &context, origin)
+        .await
+        .map_err(CustomError::from)?;
     if tool_name == DEN_WORK_PREPARE_RUST_DEPENDENCIES {
         let arguments: PrepareRustDependenciesArguments = serde_json::from_value(arguments)
             .map_err(|error| CustomError::ValidationError(error.to_string()))?;
@@ -193,13 +157,7 @@ async fn invoke_den_tool_with_origin(
     if tool_name == DEN_TASK_LISTS_REQUEST_HANDOFF {
         let args: TaskListHandoffArguments = serde_json::from_value(arguments)
             .map_err(|error| CustomError::ValidationError(error.to_string()))?;
-        let ctx = DenToolContext::new(pool, config, stores);
-        if origin.is_none() {
-            den_core::tools::dispatch::authorize_den_tool(&ctx, tool_name, &context)
-                .await
-                .map_err(CustomError::from)?;
-        }
-        let role = context.profile.unwrap_or(BearProfile::Pair);
+        let role = den_core::EffectivePolicy::compile_for_origin(origin, governance).trust_profile;
         let session_anchor_id = workflow::resolve_task_session_anchor_id(pool, &context, None)
             .await?
             .ok_or_else(|| {
@@ -253,35 +211,19 @@ async fn invoke_den_tool_with_origin(
     }
 
     if crate::core::tools::cabinet_tools::is_cabinet_tool(tool_name) {
-        let authority = origin
-            .map(
-                |origin| crate::core::tools::cabinet_tools::CabinetToolAuthority::Verified {
-                    origin,
-                    governance,
-                },
-            )
-            .unwrap_or_else(|| {
-                crate::core::tools::cabinet_tools::CabinetToolAuthority::Legacy(
-                    context.profile.unwrap_or(BearProfile::Pair),
-                )
-            });
+        let authority =
+            crate::core::tools::cabinet_tools::CabinetToolAuthority { origin, governance };
         return crate::core::tools::cabinet_tools::invoke_cabinet_tool(
             pool, tool_name, arguments, &context, authority,
         )
         .await;
     }
 
-    let ctx = DenToolContext::new(pool, config, stores);
-    match origin {
-        Some(origin) => den_core::tools::dispatch::invoke_den_tool_for_origin(
-            &ctx, tool_name, arguments, context, origin,
-        )
-        .await
-        .map_err(CustomError::from),
-        None => den_core::tools::dispatch::invoke_den_tool(&ctx, tool_name, arguments, context)
-            .await
-            .map_err(CustomError::from),
-    }
+    den_core::tools::dispatch::invoke_den_tool_for_origin(
+        &ctx, tool_name, arguments, context, origin,
+    )
+    .await
+    .map_err(CustomError::from)
 }
 
 fn require_bounded_dependency_preparation(
@@ -406,20 +348,14 @@ async fn invoke_workflow_tool(
     tool_name: &str,
     arguments: Value,
     context: &DenToolInvocationContext,
-    origin: Option<TurnExecutionOrigin>,
+    origin: TurnExecutionOrigin,
     governance: den_core::Governance,
 ) -> Result<Value, CustomError> {
     reject_closed_freeform_task_definition(tool_name, context)?;
     reject_immutable_focused_task_definition(tool_name, context)?;
 
-    let role = origin
-        .map(|origin| {
-            den_core::EffectivePolicy::compile_for_origin(origin, governance).trust_profile
-        })
-        .unwrap_or_else(|| context.profile.unwrap_or(BearProfile::Pair));
-    let authority = origin
-        .map(|origin| workflow::WorkflowAuthority::Verified { origin, governance })
-        .unwrap_or(workflow::WorkflowAuthority::Legacy(role));
+    let role = den_core::EffectivePolicy::compile_for_origin(origin, governance).trust_profile;
+    let authority = workflow::WorkflowAuthority { origin, governance };
     let value = match tool_name {
         DEN_TASK_LISTS_LIST => {
             workflow::list_task_lists(

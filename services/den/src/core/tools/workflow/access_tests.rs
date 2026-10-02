@@ -12,8 +12,9 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::*;
-use crate::core::tools::session::invoke_den_tool;
+use crate::core::tools::session::invoke_den_tool_for_origin;
 use den_core::tools::constants::DEN_TASK_LIST_SYNC;
+use den_core::{ArmatureAvailability, Governance, TurnExecutionOrigin};
 
 async fn fixture(
     pool: &PgPool,
@@ -197,7 +198,10 @@ async fn pair_job_tools_hide_private_jobs_before_reads_or_mutations(pool: PgPool
         cancel_job_run(
             &pool,
             &member,
-            WorkflowAuthority::Legacy(BearProfile::Pair),
+            WorkflowAuthority {
+                origin: TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+                governance: Governance::Interactive,
+            },
             json!({"job_id": private}),
         )
         .await,
@@ -207,7 +211,10 @@ async fn pair_job_tools_hide_private_jobs_before_reads_or_mutations(pool: PgPool
             &pool,
             &member,
             BearProfile::Pair,
-            WorkflowAuthority::Legacy(BearProfile::Pair),
+            WorkflowAuthority {
+                origin: TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+                governance: Governance::Interactive,
+            },
             json!({"job_id": private}),
         )
         .await,
@@ -217,7 +224,10 @@ async fn pair_job_tools_hide_private_jobs_before_reads_or_mutations(pool: PgPool
             &pool,
             &member,
             BearProfile::Pair,
-            WorkflowAuthority::Legacy(BearProfile::Pair),
+            WorkflowAuthority {
+                origin: TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+                governance: Governance::Interactive,
+            },
             json!({"job_id": private}),
         )
         .await,
@@ -230,7 +240,10 @@ async fn pair_job_tools_hide_private_jobs_before_reads_or_mutations(pool: PgPool
             &pool,
             &config,
             &member,
-            WorkflowAuthority::Legacy(BearProfile::Pair),
+            WorkflowAuthority {
+                origin: TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+                governance: Governance::Interactive,
+            },
             json!({"job_id": private}),
         )
         .await,
@@ -249,7 +262,10 @@ async fn pair_job_tools_hide_private_jobs_before_reads_or_mutations(pool: PgPool
             &pool,
             &config,
             &member,
-            WorkflowAuthority::Legacy(BearProfile::Pair),
+            WorkflowAuthority {
+                origin: TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+                governance: Governance::Interactive,
+            },
             json!({"job_id": private}),
         )
         .await,
@@ -278,7 +294,7 @@ async fn pair_job_tools_hide_private_jobs_before_reads_or_mutations(pool: PgPool
         .await,
     );
     denied(
-        create_task(&pool, &member, BearProfile::Pair, WorkflowAuthority::Legacy(BearProfile::Pair), json!({
+        create_task(&pool, &member, BearProfile::Pair, WorkflowAuthority { origin: TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected), governance: Governance::Interactive }, json!({
             "job_id": private, "title": "stolen", "body": "stolen", "completion_criteria": ["done"]
         }))
         .await,
@@ -288,7 +304,10 @@ async fn pair_job_tools_hide_private_jobs_before_reads_or_mutations(pool: PgPool
             &pool,
             &member,
             BearProfile::Pair,
-            WorkflowAuthority::Legacy(BearProfile::Pair),
+            WorkflowAuthority {
+                origin: TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+                governance: Governance::Interactive,
+            },
             json!({
                 "job_id": private, "scope": "job_notebook", "kind": "finding", "summary": "stolen"
             }),
@@ -301,7 +320,10 @@ async fn pair_job_tools_hide_private_jobs_before_reads_or_mutations(pool: PgPool
             &pool,
             &member,
             BearProfile::Pair,
-            WorkflowAuthority::Legacy(BearProfile::Pair),
+            WorkflowAuthority {
+                origin: TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+                governance: Governance::Interactive,
+            },
             json!({"job_id": private}),
         )
         .await,
@@ -414,13 +436,15 @@ async fn hosted_pair_sync_rejects_forged_private_job_without_mutation(pool: PgPo
         (&owner, wrong_bear),
         (&owner, wrong_job),
     ] {
-        let result = invoke_den_tool(
+        let result = invoke_den_tool_for_origin(
             &pool,
             &config,
             &stores,
             DEN_TASK_LIST_SYNC,
             json!({"task_list": projection}),
             context.clone(),
+            TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+            Governance::Interactive,
         )
         .await;
         denied(result);
@@ -450,13 +474,15 @@ async fn hosted_pair_sync_rejects_forged_private_job_without_mutation(pool: PgPo
     assert_eq!(unchanged.job.current_run_id, before.job.current_run_id);
     assert_eq!(unchanged.job.updated_at, before.job.updated_at);
 
-    let outcome = invoke_den_tool(
+    let outcome = invoke_den_tool_for_origin(
         &pool,
         &config,
         &stores,
         DEN_TASK_LIST_SYNC,
         json!({"task_list": task_list}),
         owner,
+        TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+        Governance::Interactive,
     )
     .await
     .unwrap();
@@ -516,7 +542,10 @@ async fn historical_private_attachment_is_not_a_pair_task_grant(pool: PgPool) {
         update_task_list(
             &pool,
             &member,
-            WorkflowAuthority::Legacy(BearProfile::Pair),
+            WorkflowAuthority {
+                origin: TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+                governance: Governance::Interactive,
+            },
             json!({"task_id": task_id}),
             |_| json!({}),
         )
@@ -526,7 +555,10 @@ async fn historical_private_attachment_is_not_a_pair_task_grant(pool: PgPool) {
         select_current_task(
             &pool,
             &member,
-            WorkflowAuthority::Legacy(BearProfile::Pair),
+            WorkflowAuthority {
+                origin: TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+                governance: Governance::Interactive,
+            },
             json!({"task_id": task_id}),
         )
         .await,
@@ -536,7 +568,10 @@ async fn historical_private_attachment_is_not_a_pair_task_grant(pool: PgPool) {
             &pool,
             &member,
             BearProfile::Pair,
-            WorkflowAuthority::Legacy(BearProfile::Pair),
+            WorkflowAuthority {
+                origin: TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+                governance: Governance::Interactive,
+            },
             json!({"job_id": private}),
         )
         .await,

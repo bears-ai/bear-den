@@ -32,10 +32,11 @@ use crate::core::tools::{
     activity_payloads::{activity_payload, no_active_workplan_payload, plan_mode_workplan_payload},
     descriptor::builtin_den_tool_descriptor_for_provider_name,
     memory_write::MemoryWriteEntryArguments,
-    session::{invoke_den_tool, DenToolInvocationContext},
+    session::{invoke_den_tool_for_origin, DenToolInvocationContext},
     support::validate_memory_write_entry_semantics,
 };
 use den_core::client_tools::{provider_tool_descriptor, ClientToolName};
+use den_core::{ArmatureAvailability, Governance, TurnExecutionOrigin};
 use den_service::bears::BearProfile;
 use den_core::tools::preflight::{tool_warning_payload, ToolSemanticWarning};
 use den_docket::{TaskListItemStatus, TaskListLocalProjection, TaskListUpdateItem};
@@ -243,7 +244,7 @@ async fn memory_write_entry_returns_warning_payload_for_ambiguous_plan_like_memo
     let pool = sqlx::PgPool::connect_lazy("postgres://unused:unused@localhost/unused").unwrap();
     let config = crate::config::Config::test_stub();
     let stores = den_memory::MemoryStoreManager::new(&config);
-    let result = invoke_den_tool(
+    let result = invoke_den_tool_for_origin(
         &pool,
         &config,
         &stores,
@@ -254,6 +255,8 @@ async fn memory_write_entry_returns_warning_payload_for_ambiguous_plan_like_memo
             "body": "High-level understanding of the architecture: how plan artifacts differ from live progress tracking and why the distinction matters for durable memory."
         }),
         pair_context(),
+        TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+        Governance::Interactive,
     )
     .await
     .unwrap();
@@ -279,7 +282,7 @@ async fn confirm_work_surface_requires_capability_before_database_access() {
     let err = super::super::confirm_work_surface(
         &pool,
         &context,
-        super::super::WorkflowAuthority::Legacy(BearProfile::Chat),
+        super::super::WorkflowAuthority { origin: TurnExecutionOrigin::ChannelConversation, governance: Governance::Interactive },
         json!({"work_surface_id": Uuid::new_v4()}),
     )
     .await
@@ -298,7 +301,7 @@ async fn confirm_work_surface_requires_client_session_before_database_access() {
     let err = super::super::confirm_work_surface(
         &pool,
         &context,
-        super::super::WorkflowAuthority::Legacy(BearProfile::Pair),
+        super::super::WorkflowAuthority { origin: TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected), governance: Governance::Interactive },
         json!({"work_surface_id": Uuid::new_v4()}),
     )
     .await
@@ -390,7 +393,7 @@ async fn memory_write_entry_rejects_non_memory_domain_without_db_access() {
     let pool = sqlx::PgPool::connect_lazy("postgres://unused:unused@localhost/unused").unwrap();
     let config = crate::config::Config::test_stub();
     let stores = den_memory::MemoryStoreManager::new(&config);
-    let result = invoke_den_tool(
+    let result = invoke_den_tool_for_origin(
         &pool,
         &config,
         &stores,
@@ -402,6 +405,8 @@ async fn memory_write_entry_rejects_non_memory_domain_without_db_access() {
             "domain": "workplan"
         }),
         context,
+        TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+        Governance::Interactive,
     )
     .await;
 
@@ -456,7 +461,7 @@ async fn memory_write_entry_rejects_activity_content_class_without_db_access() {
     let pool = sqlx::PgPool::connect_lazy("postgres://unused:unused@localhost/unused").unwrap();
     let config = crate::config::Config::test_stub();
     let stores = den_memory::MemoryStoreManager::new(&config);
-    let result = invoke_den_tool(
+    let result = invoke_den_tool_for_origin(
         &pool,
         &config,
         &stores,
@@ -468,6 +473,8 @@ async fn memory_write_entry_rejects_activity_content_class_without_db_access() {
             "content_class": "activity_status"
         }),
         context,
+        TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+        Governance::Interactive,
     )
     .await;
 

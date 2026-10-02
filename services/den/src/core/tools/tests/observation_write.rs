@@ -8,11 +8,12 @@ use crate::{
         tools::{
             arguments::DenToolChannelContext,
             constants::DEN_OBSERVATION_WRITE,
-            session::{invoke_den_tool, DenToolInvocationContext},
+            session::{invoke_den_tool_for_origin, DenToolInvocationContext},
         },
         user::db::create_user,
     },
 };
+use den_core::{Governance, TurnExecutionOrigin};
 use den_memory::MemoryStoreManager;
 use den_service::bears::{db, db::grant_membership, db::BearParams, BearProfile};
 
@@ -97,7 +98,7 @@ async fn observation_write_persists_and_enqueues_memory_curate(
     let config = Config::test_stub();
     let stores = MemoryStoreManager::new(&config);
 
-    let payload = invoke_den_tool(
+    let payload = invoke_den_tool_for_origin(
         &pool,
         &config,
         &stores,
@@ -108,6 +109,8 @@ async fn observation_write_persists_and_enqueues_memory_curate(
             "salience": "high"
         }),
         context,
+        TurnExecutionOrigin::InboundObservation,
+        Governance::AutonomousContinuation,
     )
     .await?;
 
@@ -154,7 +157,7 @@ async fn observation_write_persists_and_enqueues_memory_curate(
         request_id: Some(Uuid::new_v4().to_string()),
         channel: DenToolChannelContext::default(),
     };
-    let replay = invoke_den_tool(
+    let replay = invoke_den_tool_for_origin(
         &pool,
         &config,
         &stores,
@@ -165,6 +168,8 @@ async fn observation_write_persists_and_enqueues_memory_curate(
             "salience": "high"
         }),
         replay_context,
+        TurnExecutionOrigin::InboundObservation,
+        Governance::AutonomousContinuation,
     )
     .await?;
     assert_eq!(replay["idempotent_replay"], true);
