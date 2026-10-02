@@ -2338,7 +2338,12 @@ async fn run_start_with_recovery_source(
     // and requested mode cannot manufacture a Work assignment or armature grant.
     let live_work_run =
         den_docket::work_runs::get_live_work_run_by_session(&state.sqlx_pool, &session_id).await?;
-    let (origin, stance) = if let Some(work_run) = live_work_run {
+    let (origin, stance, turn_source) = if let Some(work_run) = live_work_run {
+        if work_run.bear_id != bear.id || work_run.cancel_requested {
+            return Err(CustomError::Authorization(
+                "Work run is not active for this Bear".into(),
+            ));
+        }
         memory_binding::for_work_run(&state.sqlx_pool, BearId::new(bear.id), work_run.id).await?;
         tracing::info!(
             work_run_id = %work_run.id,
@@ -2352,6 +2357,7 @@ async fn run_start_with_recovery_source(
                 den_core::ArmatureAvailability::Connected,
             ),
             BearProfile::Work,
+            den_service::bears::hats::turn_binding::NativeTurnSource::WorkRun(work_run.id),
         )
     } else {
         memory_binding::for_conversation(&state.sqlx_pool, BearId::new(bear.id), conversation.id)
@@ -2362,6 +2368,7 @@ async fn run_start_with_recovery_source(
                 den_core::ArmatureAvailability::Connected,
             ),
             BearProfile::Pair,
+            den_service::bears::hats::turn_binding::NativeTurnSource::Conversation(conversation.id),
         )
     };
     let requested_mode = request.requested_mode;
@@ -2383,16 +2390,8 @@ async fn run_start_with_recovery_source(
             render_turn_fragment(fragment, &json!({ "authority": authority }))
         })
         .transpose()?;
-    let binding_id = bears_db::profile_binding_id(&state.sqlx_pool, bear.id, stance)
-        .await?
-        .ok_or_else(|| {
-            CustomError::System(format!(
-                "Bear {} profile binding not configured",
-                stance.as_str()
-            ))
-        })?;
     let binding = RoleRuntimeBinding {
-        binding_id,
+        binding_id: turn_source.binding_id(BearId::new(bear.id)),
         compatibility_backend: Some("native".to_string()),
     };
     let resolved_model =

@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use sqlx::Row;
 use uuid::Uuid;
 
-use den_core::BearProfile;
+use den_core::{ids::BearId, BearProfile};
 use den_docket::{
     work_runs::{
         checkout_work_run_for_session, claim_next_work_run, enqueue_work_job,
@@ -2824,25 +2824,54 @@ async fn session_open_preserves_sandbox_work_session_binding(pool: sqlx::PgPool)
             .owner_profile,
         BearProfile::Work
     );
-    let binding = super::client::continuation_binding_id(&pool, bear_id, &session_id)
+    let session = den_service::client_sessions::find_for_user_bear_session_id(
+        &pool,
+        user_id,
+        bear_id,
+        &session_id,
+    )
+    .await
+    .unwrap()
+    .expect("Work client session");
+    let binding = super::client::continuation_binding_id(&pool, bear_id, user_id, &session)
         .await
         .expect("Work continuation binding");
-    let work_binding =
-        den_service::bears::db::profile_binding_id(&pool, bear_id, BearProfile::Work)
+    use den_service::bears::hats::turn_binding::NativeTurnSource;
+    assert_eq!(
+        binding,
+        NativeTurnSource::WorkRun(work_run_id).binding_id(BearId::new(bear_id))
+    );
+    assert!(
+        super::client::continuation_binding_id(&pool, Uuid::new_v4(), user_id, &session)
             .await
-            .unwrap()
-            .expect("Work runtime binding");
-    assert_eq!(binding, work_binding);
-    let unbound_session = format!("pair-{}", Uuid::new_v4().simple());
-    let pair_binding = super::client::continuation_binding_id(&pool, bear_id, &unbound_session)
-        .await
-        .expect("armature conversation continuation binding");
+            .is_err()
+    );
+    assert!(
+        super::client::continuation_binding_id(&pool, bear_id, user_id + 1, &session)
+            .await
+            .is_err()
+    );
+    let mut unbound_session = session.clone();
+    unbound_session.client_session_id = format!("pair-{}", Uuid::new_v4().simple());
+    let conversation_id = unbound_session
+        .resolved_conversation_id
+        .as_ref()
+        .unwrap_or(&unbound_session.conversation_id);
+    let canonical = den_service::conversation::persistence::get_conversation_for_external_id(
+        &pool,
+        bear_id,
+        conversation_id,
+    )
+    .await
+    .unwrap()
+    .expect("canonical conversation");
+    let pair_binding =
+        super::client::continuation_binding_id(&pool, bear_id, user_id, &unbound_session)
+            .await
+            .expect("armature conversation continuation binding");
     assert_eq!(
         pair_binding,
-        den_service::bears::db::profile_binding_id(&pool, bear_id, BearProfile::Pair)
-            .await
-            .unwrap()
-            .expect("Pair runtime binding")
+        NativeTurnSource::Conversation(canonical.id).binding_id(BearId::new(bear_id))
     );
 }
 
@@ -3101,6 +3130,53 @@ async fn run_start_persists_message_delta_and_completed_events_for_mock_llm(pool
     panic!(
         "BearWire run.start did not persist message.delta and run.completed events: {last_replay}"
     );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn ordinary_native_run_starts_without_a_registered_pair_profile(pool: sqlx::PgPool) {
+    let user = create_test_user(&pool).await;
+    let slug = format!("source-bound-{}", Uuid::new_v4().simple());
+    let bear = bears_db::create_bear(
+        &pool,
+        BearParams {
+            slug: &slug,
+            name: "Source-bound Bear",
+            description: "test",
+            system_prompt: "test",
+            default_model: None,
+            tools_enabled: None,
+            context_profile: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(bears_db::profile_binding_id(&pool, bear, BearProfile::Pair)
+        .await
+        .unwrap()
+        .is_none());
+    let token = create_token_for_bear(&pool, user, bear).await;
+    let mut config = den_core::config::Config::test_stub();
+    config.den_secret_encryption_key = "bearwire-test-secret-key".to_string();
+    config.llm_api_url = start_mock_openai_sse_server();
+    config.default_llm_model = "openai/bearwire-test-model".to_string();
+    seed_test_bifrost_virtual_key(&pool, bear, &config).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let result = rpc_value(
+        test_state_with_config(pool.clone(), config),
+        &token,
+        "run.start",
+        json!({
+            "bear_slug": slug,
+            "session_id": session_id,
+            "conversation_id": format!("new-acp-zed-{}", Uuid::new_v4().simple()),
+            "client": "zed",
+            "prompt": "Check this Bear's identity",
+        }),
+    )
+    .await;
+    assert_eq!(result["result"]["ok"], true, "{result}");
+    let resolved = wait_for_resolved_conversation_id(&pool, user, &slug, &session_id).await;
+    wait_for_user_message(&pool, bear, &resolved, "Check this Bear's identity").await;
 }
 
 #[sqlx::test(migrations = "../../migrations")]

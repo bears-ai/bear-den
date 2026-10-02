@@ -52,8 +52,13 @@ use den_service::{
         DocketArtifactRole, DocketArtifactTargetKind, FinalizeGitCommitArtifactInput,
         GitObjectFormat, ReserveArtifactInput,
     },
-    bears::{db as bears_db, hats::memory_binding, BearProfile},
-    client_sessions, DenState,
+    bears::{
+        hats::{memory_binding, turn_binding::NativeTurnSource},
+        BearProfile,
+    },
+    client_sessions,
+    conversation::{persistence::get_conversation_for_external_id, viewer::ConversationViewer},
+    DenState,
 };
 
 use crate::auth::authenticated_bear;
@@ -474,24 +479,59 @@ use hat_web_permission::{
 pub(super) async fn continuation_binding_id(
     pool: &sqlx::PgPool,
     bear_id: Uuid,
-    session_id: &str,
+    user_id: i32,
+    session: &client_sessions::ClientSessionRow,
 ) -> Result<String, CustomError> {
-    let profile =
-        match den_docket::work_runs::get_live_work_run_by_session(pool, session_id).await? {
+    if session.bear_id != bear_id || session.user_id != user_id {
+        return Err(CustomError::Authorization(
+            "continuation session belongs to another actor".into(),
+        ));
+    }
+    let source =
+        match den_docket::work_runs::get_live_work_run_by_session(pool, &session.client_session_id)
+            .await?
+        {
             Some(run) => {
+                if run.bear_id != bear_id || run.cancel_requested {
+                    return Err(CustomError::Authorization(
+                        "Work continuation is not bound to an active run for this Bear".into(),
+                    ));
+                }
                 memory_binding::for_work_run(pool, BearId::new(bear_id), run.id).await?;
-                BearProfile::Work
+                NativeTurnSource::WorkRun(run.id)
             }
-            None => BearProfile::Pair,
+            None => {
+                if session.closed_at.is_some() || session.archived_at.is_some() {
+                    return Err(CustomError::Authorization(
+                        "continuation editor session is closed".into(),
+                    ));
+                }
+                let external_id = continuation_conversation_id(session);
+                let conversation = get_conversation_for_external_id(pool, bear_id, &external_id)
+                    .await?
+                    .ok_or_else(|| {
+                        CustomError::Authorization("continuation conversation is missing".into())
+                    })?;
+                memory_binding::for_conversation(pool, BearId::new(bear_id), conversation.id)
+                    .await?;
+                let viewer = ConversationViewer::resolve(
+                    pool,
+                    BearId::new(bear_id),
+                    den_core::ids::UserId::new(user_id),
+                )
+                .await?
+                .ok_or_else(|| {
+                    CustomError::Authorization("continuation actor lost Bear access".into())
+                })?;
+                if !viewer.may_read_own_source(pool, conversation.id).await? {
+                    return Err(CustomError::Authorization(
+                        "continuation actor does not own this conversation".into(),
+                    ));
+                }
+                NativeTurnSource::Conversation(conversation.id)
+            }
         };
-    bears_db::profile_binding_id(pool, bear_id, profile)
-        .await?
-        .ok_or_else(|| {
-            CustomError::System(format!(
-                "Bear {} runtime binding not configured",
-                profile.as_str()
-            ))
-        })
+    Ok(source.binding_id(BearId::new(bear_id)))
 }
 
 fn continuation_unavailable_response(
@@ -1304,7 +1344,7 @@ pub(crate) async fn client_tool_result_result(
             obligation.id,
         ));
     }
-    let binding_id = continuation_binding_id(&state.sqlx_pool, bear.id, &session_id).await?;
+    let binding_id = continuation_binding_id(&state.sqlx_pool, bear.id, user_id, &session).await?;
     let attempt_token = attempt_token.ok_or_else(|| {
         CustomError::ValidationError("client.tool.result requires attempt_token".to_string())
     })?;
@@ -1573,7 +1613,7 @@ pub(crate) async fn client_permission_result_result(
             obligation.id,
         ));
     }
-    let binding_id = continuation_binding_id(&state.sqlx_pool, bear.id, &session_id).await?;
+    let binding_id = continuation_binding_id(&state.sqlx_pool, bear.id, user_id, &session).await?;
     let workspace_grant = if decision == PermissionDecisionInput::AllowHatWorkspaceRead {
         let raw_root = workspace_root.as_deref().ok_or_else(|| {
             CustomError::ValidationError("hat workspace approval requires an exact root".into())

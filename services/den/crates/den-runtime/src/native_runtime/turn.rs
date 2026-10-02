@@ -5,7 +5,10 @@ use den_core::tools::{
     descriptor::builtin_den_tool_descriptor_for_provider_name,
     result_compaction::{compact_client_tool_result, ClientToolResultInput, ToolResultStatus},
 };
-use den_core::{config::Config, ids::BearId};
+use den_core::{
+    config::Config,
+    ids::{BearId, UserId},
+};
 use std::sync::{Arc, LazyLock};
 #[cfg(feature = "test-fixtures")]
 use std::{
@@ -23,7 +26,7 @@ use den_protocol::{
 };
 use den_service::{
     bears::{
-        hats::memory_binding,
+        hats::{memory_binding, turn_binding::NativeTurnSource},
         prompt_fragments::{render_turn_fragment, repository_prompt_fragment_registry},
         BearProfile,
     },
@@ -34,6 +37,7 @@ use den_service::{
             CanonicalToolRequestRecord, CanonicalToolResultRecord, ConversationEventProvenance,
         },
         persistence as conversation_persistence,
+        viewer::{require_ordinary_tool_source, ConversationViewer},
     },
 };
 use futures::{stream, StreamExt};
@@ -2044,19 +2048,154 @@ async fn bind_web_fetch_approval_to_continuation(
 #[cfg(test)]
 #[path = "turn/approval_tests.rs"]
 mod approval_tests;
+#[cfg(test)]
+#[path = "turn/continuation_tests.rs"]
+mod continuation_tests;
+
+#[derive(Clone, Copy)]
+struct ContinuationSource<'a> {
+    bear_id: Uuid,
+    user_id: Option<i32>,
+    origin: den_core::TurnExecutionOrigin,
+    profile: BearProfile,
+    conversation_id: &'a str,
+    client_session_id: &'a str,
+    work_run_id: Option<Uuid>,
+}
+
+impl<'a> From<&'a AgentLoopSession> for ContinuationSource<'a> {
+    fn from(session: &'a AgentLoopSession) -> Self {
+        Self {
+            bear_id: session.bear_id,
+            user_id: session.user_id,
+            origin: session.origin,
+            profile: session.profile,
+            conversation_id: &session.conversation_id,
+            client_session_id: &session.client_session_id,
+            work_run_id: session.work_run_id,
+        }
+    }
+}
 
 async fn require_continuation_binding(
     pool: &PgPool,
-    bear_id: Uuid,
-    profile: BearProfile,
+    session: ContinuationSource<'_>,
     binding: &RoleRuntimeBinding,
 ) -> Result<(), DenError> {
-    let expected_binding = den_service::bears::db::profile_binding_id(pool, bear_id, profile)
-        .await?
-        .ok_or_else(|| {
-            DenError::Authorization("runtime binding for this turn is unavailable".into())
-        })?;
-    if binding.binding_id != expected_binding {
+    if den_core::EffectivePolicy::compile_for_origin(
+        session.origin,
+        den_core::Governance::Interactive,
+    )
+    .trust_profile
+        != session.profile
+    {
+        return Err(DenError::Authorization(
+            "continuation origin disagrees with its profile".into(),
+        ));
+    }
+    let bear_id = BearId::new(session.bear_id);
+    let expected = match session.origin {
+        den_core::TurnExecutionOrigin::AuthorizedWorkRun(_) => {
+            let original = session.work_run_id.ok_or_else(|| {
+                DenError::Authorization("Work continuation has no originating Job run".into())
+            })?;
+            let live = work_runs::get_live_work_run_by_session(pool, &session.client_session_id)
+                .await?
+                .filter(|run| {
+                    run.id == original && run.bear_id == session.bear_id && !run.cancel_requested
+                })
+                .ok_or_else(|| {
+                    DenError::Authorization("Work continuation lost its live Job run".into())
+                })?;
+            memory_binding::for_work_run(pool, bear_id, live.id).await?;
+            NativeTurnSource::WorkRun(live.id).binding_id(bear_id)
+        }
+        den_core::TurnExecutionOrigin::ChannelConversation
+        | den_core::TurnExecutionOrigin::BrowserTaskSession
+        | den_core::TurnExecutionOrigin::ArmatureConversation(_) => {
+            let user_id = session.user_id.ok_or_else(|| {
+                DenError::Authorization("conversation continuation has no human owner".into())
+            })?;
+            if matches!(
+                session.origin,
+                den_core::TurnExecutionOrigin::ArmatureConversation(_)
+            ) {
+                let active = den_service::client_sessions::find_for_user_bear_session_id(
+                    pool,
+                    user_id,
+                    session.bear_id,
+                    &session.client_session_id,
+                )
+                .await?
+                .ok_or_else(|| {
+                    DenError::Authorization("continuation client session is missing".into())
+                })?;
+                if active.closed_at.is_some() || active.archived_at.is_some() {
+                    return Err(DenError::Authorization(
+                        "continuation editor session is closed".into(),
+                    ));
+                }
+                if active
+                    .resolved_conversation_id
+                    .as_deref()
+                    .unwrap_or(&active.conversation_id)
+                    != session.conversation_id
+                {
+                    return Err(DenError::Authorization(
+                        "continuation client session changed conversation".into(),
+                    ));
+                }
+            }
+            if work_runs::get_live_work_run_by_session(pool, &session.client_session_id)
+                .await?
+                .is_some()
+            {
+                return Err(DenError::Authorization(
+                    "conversation continuation is bound to Work".into(),
+                ));
+            }
+            require_ordinary_tool_source(
+                pool,
+                bear_id,
+                UserId::new(user_id),
+                &session.conversation_id,
+            )
+            .await?;
+            let conversation = conversation_persistence::get_conversation_for_external_id(
+                pool,
+                session.bear_id,
+                &session.conversation_id,
+            )
+            .await?
+            .ok_or_else(|| {
+                DenError::Authorization("continuation conversation is missing".into())
+            })?;
+            memory_binding::for_conversation(pool, bear_id, conversation.id).await?;
+            let viewer = ConversationViewer::resolve(pool, bear_id, UserId::new(user_id))
+                .await?
+                .ok_or_else(|| {
+                    DenError::Authorization("continuation actor lost Bear access".into())
+                })?;
+            if !viewer.may_read_own_source(pool, conversation.id).await? {
+                return Err(DenError::Authorization(
+                    "continuation actor does not own its conversation".into(),
+                ));
+            }
+            NativeTurnSource::Conversation(conversation.id).binding_id(bear_id)
+        }
+        den_core::TurnExecutionOrigin::InternalCuration
+        | den_core::TurnExecutionOrigin::InboundObservation => {
+            // Internal lanes do not have a human conversation or Job source yet.
+            // Keep their separate registered system authority until their source
+            // and principal are modeled and verified independently.
+            den_service::bears::db::profile_binding_id(pool, session.bear_id, session.profile)
+                .await?
+                .ok_or_else(|| {
+                    DenError::Authorization("internal runtime binding is unavailable".into())
+                })?
+        }
+    };
+    if binding.binding_id != expected {
         return Err(DenError::Authorization(
             "continuation binding does not match the originating turn".into(),
         ));
@@ -2070,8 +2209,7 @@ async fn execute_approved_den_tool_for_session(
     call: &ChatToolCall,
     profile: BearProfile,
 ) -> Result<ChatMessage, DenError> {
-    require_continuation_binding(request.sqlx_pool, session.bear_id, profile, request.binding)
-        .await?;
+    require_continuation_binding(request.sqlx_pool, session.into(), request.binding).await?;
     if call_is_den_web_fetch(call) {
         let RuntimeContinuation::ApprovalDecision {
             approval_request_id,
@@ -2534,47 +2672,6 @@ mod tests {
         ));
         assert!(matches!(
             require_same_work_run(Some(Uuid::new_v4()), original),
-            Err(DenError::Authorization(_))
-        ));
-    }
-
-    #[sqlx::test(migrations = "../../migrations")]
-    async fn continuation_binding_cannot_switch_a_work_turn_to_pair(pool: PgPool) {
-        let bear_id = den_service::bears::db::create_bear(
-            &pool,
-            den_service::bears::db::BearParams {
-                slug: "continuationbindingbear",
-                name: "Continuation binding Bear",
-                description: "",
-                system_prompt: "",
-                default_model: None,
-                tools_enabled: None,
-                context_profile: None,
-            },
-        )
-        .await
-        .unwrap();
-        den_service::bears::db::ensure_bear_profile_binding_rows(&pool, bear_id)
-            .await
-            .unwrap();
-        let pair = den_service::bears::db::profile_binding_id(&pool, bear_id, BearProfile::Pair)
-            .await
-            .unwrap()
-            .unwrap();
-        let work = den_service::bears::db::profile_binding_id(&pool, bear_id, BearProfile::Work)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_ne!(pair, work);
-        let binding = |binding_id: String| RoleRuntimeBinding {
-            binding_id,
-            compatibility_backend: Some("native".into()),
-        };
-        require_continuation_binding(&pool, bear_id, BearProfile::Work, &binding(work))
-            .await
-            .unwrap();
-        assert!(matches!(
-            require_continuation_binding(&pool, bear_id, BearProfile::Work, &binding(pair)).await,
             Err(DenError::Authorization(_))
         ));
     }
