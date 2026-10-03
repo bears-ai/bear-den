@@ -56,7 +56,7 @@ pub async fn compact_session_messages_for_overflow(
         pool,
         session.bear_id,
         &session.conversation_id,
-        profile,
+        &den_core::EffectivePolicy::compile_for_origin(session.origin, session.governance),
         &session.messages,
         &state,
     )
@@ -68,7 +68,7 @@ async fn rebuild_messages_after_overflow_compaction(
     pool: &PgPool,
     bear_id: Uuid,
     conversation_id: &str,
-    profile: BearProfile,
+    policy: &den_core::EffectivePolicy,
     existing: &[ChatMessage],
     state: &TurnCompactionState,
 ) -> Result<Vec<ChatMessage>, DenError> {
@@ -110,13 +110,9 @@ async fn rebuild_messages_after_overflow_compaction(
     let messages = repair_tool_call_message_chain(messages);
     let messages = if cutoff.is_some() {
         messages
-    } else if den_core::EffectivePolicy::compile(
-        profile,
-        den_core::Governance::Interactive,
-        den_core::ArmatureAvailability::Absent,
-    )
-    .capabilities
-    .contains(den_core::BearCapability::Converse)
+    } else if policy
+        .capabilities
+        .contains(den_core::BearCapability::Converse)
     {
         crate::agent_loop::context::prune_messages_for_native_conversation(messages)
     } else {

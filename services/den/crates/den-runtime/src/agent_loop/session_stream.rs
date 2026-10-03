@@ -929,6 +929,7 @@ impl SessionTrackingStream {
         let session_key = self.session_key.clone();
         let profile = self.profile;
         let origin = self.server_tool_origin();
+        let task_origin = self.origin;
         let bear_id = self.bear_id;
         let user_id = self.user_id;
         let conversation_id = self.conversation_id.clone();
@@ -1112,11 +1113,13 @@ impl SessionTrackingStream {
                 // A settlement tool can atomically select a successor. Refresh
                 // durable selection before every continuation, not just before a
                 // checkpoint, so the successor remains the controlled objective.
+                task_origin.require_ordinary_session()?;
+                let policy = EffectivePolicy::compile_for_origin(task_origin, session.governance);
                 let task_context = resolve_runtime_task_context(
                     &pool,
                     RuntimeTaskResolveRequest {
                         bear_id,
-                        profile,
+                        policy,
                         user_id,
                         conversation_id: conversation_id.clone(),
                         client_session_id: client_session_id.clone(),
@@ -1937,6 +1940,18 @@ impl SessionTrackingStream {
         }));
     }
 
+    fn effective_focused_task_policy(&self) -> Result<EffectivePolicy, DenError> {
+        self.origin.require_ordinary_session()?;
+        let session = self
+            .store
+            .get(&self.session_key)
+            .ok_or_else(|| DenError::System("native agent loop session not found".to_string()))?;
+        Ok(EffectivePolicy::compile_for_origin(
+            self.origin,
+            session.governance,
+        ))
+    }
+
     fn evaluate_final_gate_or_complete(
         &mut self,
         cached_activity_plan_projection: Option<TaskListProjection>,
@@ -1956,8 +1971,15 @@ impl SessionTrackingStream {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+        let policy = match self.effective_focused_task_policy() {
+            Ok(policy) => policy,
+            Err(error) => {
+                self.pending_pause_persistence = Some(Box::pin(async move { Err(error) }));
+                return;
+            }
+        };
         let decision = decide_turn_completion(TurnCompletionPolicyInput {
-            profile: self.profile,
+            capabilities: &policy.capabilities,
             current_task_list: cached_activity_plan_projection.as_ref(),
             assistant_text: &self.assistant_text,
             recent_texts: &recent_texts,
@@ -2030,7 +2052,9 @@ impl SessionTrackingStream {
                 ..
             } => {
                 self.store.update(&self.session_key, |session| {
-                    session.governance = Governance::Interactive;
+                    if session.governance == Governance::AutonomousContinuation {
+                        session.governance = Governance::Interactive;
+                    }
                     session.cached_activity_plan_projection = None;
                 });
             }
@@ -2129,7 +2153,7 @@ impl SessionTrackingStream {
         // instead of trusting the session projection cache.
         let pool = self.pool.clone();
         let bear_id = self.bear_id;
-        let profile = self.profile;
+        let policy = self.effective_focused_task_policy();
         let user_id = self.user_id;
         let conversation_id = self.conversation_id.clone();
         let client_session_id = self.client_session_id.clone();
@@ -2142,7 +2166,7 @@ impl SessionTrackingStream {
                 &pool,
                 RuntimeTaskResolveRequest {
                     bear_id,
-                    profile,
+                    policy: policy?,
                     user_id,
                     conversation_id,
                     client_session_id,
@@ -2935,6 +2959,10 @@ mod hat_web_fetch_tests;
 mod tool_output_tests;
 
 #[cfg(test)]
+#[path = "session_stream/focused_execution_tests.rs"]
+mod focused_execution_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::{
@@ -3515,7 +3543,9 @@ mod tests {
         .to_string()
     }
 
-    fn test_tracking_stream_with_session(session: &AgentLoopSession) -> SessionTrackingStream {
+    pub(super) fn test_tracking_stream_with_session(
+        session: &AgentLoopSession,
+    ) -> SessionTrackingStream {
         let store = AgentLoopSessionStore::default();
         store.insert(session.clone());
         SessionTrackingStream::new(
@@ -4022,7 +4052,7 @@ mod tests {
         }
     }
 
-    fn pending_task_list_projection() -> den_docket::TaskListProjection {
+    pub(super) fn pending_task_list_projection() -> den_docket::TaskListProjection {
         let mut task_list = completed_task_list_projection();
         task_list.status = "active".to_string();
         task_list.items[0].status = den_docket::TaskListItemStatus::Pending;

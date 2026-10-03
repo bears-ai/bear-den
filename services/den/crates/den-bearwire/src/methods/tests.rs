@@ -5920,10 +5920,11 @@ async fn model_focus_promotes_the_origin_run_idempotently(pool: sqlx::PgPool) {
     seed_test_bifrost_virtual_key(&pool, bear_id, &config).await;
     let state = test_state_with_config(pool.clone(), config);
     set_next_scripted_runtime_streams(&session_id, vec![ScriptedRuntimeStream::Pending]);
-    let policy = den_core::EffectivePolicy::compile(
-        den_core::TrustProfile::Pair,
+    let policy = den_core::EffectivePolicy::compile_for_origin(
+        den_core::TurnExecutionOrigin::ArmatureConversation(
+            den_core::ArmatureAvailability::Connected,
+        ),
         den_core::Governance::Interactive,
-        den_core::ArmatureAvailability::Connected,
     );
     let selected = rpc_value(
         state.clone(),
@@ -5967,10 +5968,9 @@ async fn model_focus_promotes_the_origin_run_idempotently(pool: sqlx::PgPool) {
         .expect("load Bear")
         .expect("Bear exists");
     let tool_call_id = ToolCallId::new("call-model-focus").unwrap();
-    let chat_policy = den_core::EffectivePolicy::compile(
-        den_core::TrustProfile::Chat,
+    let chat_policy = den_core::EffectivePolicy::compile_for_origin(
+        den_core::TurnExecutionOrigin::ChannelConversation,
         den_core::Governance::Interactive,
-        den_core::ArmatureAvailability::Connected,
     );
     let denied = crate::methods::focused_execution::acquire_selected_task_for_run(
         &state,
@@ -5982,7 +5982,7 @@ async fn model_focus_promotes_the_origin_run_idempotently(pool: sqlx::PgPool) {
         &chat_policy.capabilities,
     )
     .await
-    .expect_err("trust profile without focused-execution capability must be rejected");
+    .expect_err("channel origin without focused-execution capability must be rejected");
     assert!(denied.to_string().contains("ExecuteFocusedTask"));
 
     let first = crate::methods::focused_execution::acquire_selected_task_for_run(
@@ -8932,10 +8932,11 @@ async fn focused_execution_authorizes_task_before_attachment_and_reuse(pool: sql
         .await
         .expect("load bear")
         .expect("bear exists");
-    let policy = den_core::EffectivePolicy::compile(
-        den_core::TrustProfile::Pair,
+    let policy = den_core::EffectivePolicy::compile_for_origin(
+        den_core::TurnExecutionOrigin::ArmatureConversation(
+            den_core::ArmatureAvailability::Connected,
+        ),
         den_core::Governance::Interactive,
-        den_core::ArmatureAvailability::Connected,
     );
     let start = |user, session: String, task_id| {
         let state = state.clone();

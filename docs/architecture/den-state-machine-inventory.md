@@ -117,6 +117,8 @@ Core tool dispatch carries verified governance as well as origin. Capability sea
 
 Job creation requires an explicit, non-deserializable `DocketJobCreationAuthority`: an authenticated human UI request or a native turn carrying verified origin and governance. Native requests require `CreateJob` from that policy; Work, curation, observation, and noninteractive turns cannot create Jobs by claiming a human audit label. The creation transaction locks and rechecks the creator's current Bear membership before writes, including hat-bound creation. `created_by_role` is nonempty audit provenance, not permission; the SQL schema accepts provenance independently of execution origin. Hat eligibility, surface bounds, source ownership at native invocation, and Job/run checks remain separate requirements.
 
+Turn assembly receives verified execution origin and current governance directly; it derives its prompt/budget compatibility label from origin and selects session-task capabilities from that policy. Session-task resolution requires the live `OwnSessionTasks` capability before querying storage and returns no cached projection on denial; Work retains its separate Job source. Focused completion, stop/resume, and continuation gates receive the same live capability set. Stored owner labels and cached task lists do not grant execution. Frozen/observational governance cannot force focused continuation or become interactive during completion. Stored activity projections report state with execution authority unevaluated. The capability compiler has only an origin/governance API; legacy memory, prompt, and registry consumers remain a separate cutover.
+
 ## Ownership summary
 
 | Axis | Primary owner | Scope/lifetime | Notes |
@@ -777,18 +779,18 @@ Invariants:
 
 ## High-value validity matrices
 
-### Trust profile × governance × task/execution authority
+### Verified origin × governance × task/execution authority
 
-| Trust profile | Governance | Required task/execution authority | Notes |
+| Verified origin | Governance | Required task/execution authority | Notes |
 | --- | --- | --- | --- |
-| `chat` | `interactive` | none | ordinary chat |
-| `pair` | `interactive` | optional resolved current task | normal Pair collaboration |
-| `pair` | `autonomous_continuation` | resolved current task required for task-driven continuation | no silent profile flip to `work` |
-| `work` | `autonomous_continuation` | explicit assigned Job required | normal Work execution |
-| `watch` | `observational` | none | inspect/observe only |
-| any | `frozen` | none active | no continuation/mutation |
+| Channel conversation | interactive | none | No focused-task execution capability. |
+| Browser task session or armature conversation | interactive | optional resolved current task | Local tools additionally require a connected armature. |
+| Browser task session or armature conversation | autonomous_continuation | resolved current task required for task-driven continuation | Source and ownership remain fixed. |
+| Authorized Work run | autonomous_continuation | explicit assigned Job and exact live run | Focus remains within the assigned Job. |
+| System curation/observation operation | source-specific | dedicated verified operation | No generic conversational tool session or continuation. |
+| ordinary origins | observational or frozen | none active | No focused execution/continuation capability. |
 
-Invalid or suspicious combinations should be rejected before prompt assembly or surfaced as explicit diagnostics.
+Capability ceilings are narrowed by canonical source, current actor/hat/resource grants, approvals, and persisted task/run authority.
 
 ### Continuation input × completion policy
 

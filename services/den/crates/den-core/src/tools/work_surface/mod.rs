@@ -16,14 +16,9 @@ use serde_json::{json, Value};
 use crate::tools::context::DenToolInvocationContext;
 use crate::tools::support::{clean_optional, validate_bounded_text};
 
-fn profile_uses_work_surfaces(role: BearProfile) -> bool {
-    crate::EffectivePolicy::compile(
-        role,
-        crate::Governance::Interactive,
-        crate::ArmatureAvailability::Absent,
-    )
-    .capabilities
-    .contains(crate::BearCapability::UseWorkSurfaces)
+// Namespace projection only; execution uses the separately supplied live policy.
+fn profile_has_local_surface_memory(role: BearProfile) -> bool {
+    matches!(role, BearProfile::Pair | BearProfile::Work)
 }
 
 pub fn infer_work_surface_hint(context: &DenToolInvocationContext, role: BearProfile) -> Value {
@@ -57,7 +52,7 @@ pub fn infer_work_surface_hint(context: &DenToolInvocationContext, role: BearPro
             "confidence": "medium"
         }));
     }
-    let active_work_surface_roles = profile_uses_work_surfaces(role);
+    let active_work_surface_roles = profile_has_local_surface_memory(role);
     let has_candidates = !candidates.is_empty();
     json!({
         "workplace": {
@@ -555,7 +550,7 @@ pub fn build_work_surface_orientation_payload(
         .filter(|path| !sorted_files.contains(path))
         .cloned()
         .collect::<Vec<_>>();
-    let active_work_surface_roles = profile_uses_work_surfaces(role);
+    let active_work_surface_roles = profile_has_local_surface_memory(role);
     let status = if slug.is_none() {
         "unresolved"
     } else if existing_canonical.is_empty() && existing_profile_local.is_empty() {

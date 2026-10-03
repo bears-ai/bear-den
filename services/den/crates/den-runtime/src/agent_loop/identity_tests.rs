@@ -23,7 +23,18 @@ fn context<'a>(
         config,
         stores,
         bear_id,
-        profile,
+        origin: match profile {
+            BearProfile::Chat => den_core::TurnExecutionOrigin::ChannelConversation,
+            BearProfile::Pair => den_core::TurnExecutionOrigin::ArmatureConversation(
+                den_core::ArmatureAvailability::Connected,
+            ),
+            BearProfile::Work => den_core::TurnExecutionOrigin::AuthorizedWorkRun(
+                den_core::ArmatureAvailability::Connected,
+            ),
+            BearProfile::Curate => den_core::TurnExecutionOrigin::InternalCuration,
+            BearProfile::Watch => den_core::TurnExecutionOrigin::InboundObservation,
+        },
+        governance: den_core::Governance::Interactive,
         conversation_id,
         turn_runtime_context: None,
         human_message: None,

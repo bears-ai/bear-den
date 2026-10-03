@@ -8,12 +8,12 @@
 use crate::agent_loop::{
     ObjectiveOrientation, OrientationTaskRef, OrientedChildTaskPolicy, TaskOrientation,
 };
-use den_core::DenError;
+use den_core::{BearCapability, DenError};
 use den_docket::{
     task_list_projection_from_session_tasks_with_current_task, DocketService, PgDocketService,
     TaskListProjection,
 };
-use den_service::{bears::BearProfile, client_sessions};
+use den_service::client_sessions;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -93,7 +93,8 @@ pub(crate) fn orientation_task_ref_from_item(
 #[derive(Debug, Clone)]
 pub struct RuntimeTaskResolveRequest {
     pub bear_id: Uuid,
-    pub profile: BearProfile,
+    /// Compiled by the trusted caller from verified origin and current governance.
+    pub policy: den_core::EffectivePolicy,
     pub user_id: Option<i32>,
     pub conversation_id: String,
     pub client_session_id: String,
@@ -110,12 +111,23 @@ pub async fn resolve_runtime_task_context(
 ) -> Result<RuntimeTaskContext, DenError> {
     let RuntimeTaskResolveRequest {
         bear_id,
-        profile,
+        policy,
         user_id,
         conversation_id,
         client_session_id,
         cached_activity_plan_projection: _,
     } = request;
+
+    if !policy
+        .capabilities
+        .contains(BearCapability::OwnSessionTasks)
+    {
+        return Ok(RuntimeTaskContext {
+            source: RuntimeTaskSource::None,
+            current_task_id: None,
+            cached_activity_plan_projection: None,
+        });
+    }
 
     let Some(user_id) = user_id else {
         return Ok(RuntimeTaskContext {
@@ -145,7 +157,7 @@ pub async fn resolve_runtime_task_context(
     if current_task_id.is_some() {
         let plan = task_list_projection_from_session_tasks_with_current_task(
             bear_id,
-            profile,
+            policy.trust_profile,
             &conversation_id,
             session.id,
             Some(&client_session_id),
@@ -161,7 +173,7 @@ pub async fn resolve_runtime_task_context(
 
     let plan = task_list_projection_from_session_tasks_with_current_task(
         bear_id,
-        profile,
+        policy.trust_profile,
         &conversation_id,
         session.id,
         Some(&client_session_id),
@@ -174,6 +186,9 @@ pub async fn resolve_runtime_task_context(
         cached_activity_plan_projection: plan,
     })
 }
+
+#[cfg(test)]
+mod authority_tests;
 
 #[cfg(test)]
 mod tests {

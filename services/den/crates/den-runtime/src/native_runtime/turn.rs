@@ -927,7 +927,8 @@ async fn build_session(
             config: deps.config,
             stores: deps.stores,
             bear_id,
-            profile: profile.profile,
+            origin,
+            governance: den_core::Governance::Interactive,
             conversation_id,
             turn_runtime_context: runtime_context,
             human_message,
@@ -4057,7 +4058,11 @@ mod tests {
     #[test]
     fn work_without_active_task_list_does_not_use_task_list_terminal_gate() {
         assert!(crate::runtime::turn_state::should_allow_terminal_response(
-            BearProfile::Work,
+            &den_core::EffectivePolicy::compile_for_origin(
+                TurnExecutionOrigin::AuthorizedWorkRun(den_core::ArmatureAvailability::Absent),
+                den_core::Governance::Interactive,
+            )
+            .capabilities,
             None,
             "What I changed: added one test. Remaining work: more later."
         ));

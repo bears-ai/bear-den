@@ -317,7 +317,13 @@ async fn session_state_payload(
             &state.sqlx_pool,
             RuntimeTaskResolveRequest {
                 bear_id: session.bear_id,
-                profile: BearProfile::Pair,
+                // An authorized session read is not a live armature-tool turn.
+                policy: den_core::EffectivePolicy::compile_for_origin(
+                    den_core::TurnExecutionOrigin::ArmatureConversation(
+                        den_core::ArmatureAvailability::Absent,
+                    ),
+                    den_core::Governance::Interactive,
+                ),
                 user_id: Some(session.user_id),
                 conversation_id: conversation_runtime_id.clone(),
                 client_session_id: session.client_session_id.clone(),

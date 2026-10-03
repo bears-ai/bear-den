@@ -52,13 +52,18 @@ use crate::runtime::compaction::{
 };
 use crate::runtime::task_context::orientation_task_ref_from_item;
 
+#[cfg(test)]
+#[path = "assembler_policy_tests.rs"]
+mod policy_tests;
+
 #[derive(Debug, Clone)]
 pub struct AssembleTurnContext<'a> {
     pub pool: &'a PgPool,
     pub config: &'a Config,
     pub stores: &'a MemoryStoreManager,
     pub bear_id: Uuid,
-    pub profile: BearProfile,
+    pub origin: den_core::TurnExecutionOrigin,
+    pub governance: den_core::Governance,
     pub conversation_id: &'a str,
     pub turn_runtime_context: Option<&'a str>,
     pub human_message: Option<&'a str>,
@@ -75,6 +80,14 @@ pub struct AssembleTurnContext<'a> {
 }
 
 impl AssembleTurnContext<'_> {
+    fn profile(&self) -> BearProfile {
+        den_core::tools::descriptor::ToolAudience::from_origin(self.origin).compatibility_profile()
+    }
+
+    fn policy(&self) -> den_core::EffectivePolicy {
+        den_core::EffectivePolicy::compile_for_origin(self.origin, self.governance)
+    }
+
     pub fn should_load_den_owned_runtime_context(&self) -> bool {
         self.include_prompt_memory
             && self.session_id.is_some()
@@ -152,7 +165,7 @@ async fn load_session_anchored_activity_plan(
         .await?;
     Ok(task_list_projection_from_session_tasks(
         ctx.bear_id,
-        ctx.profile,
+        ctx.profile(),
         ctx.conversation_id,
         session_anchor_id,
         Some(client_session_id),
@@ -254,7 +267,7 @@ async fn record_objective_orientation_event(
         return Ok(());
     };
     let payload =
-        objective_orientation_event_payload(ctx.profile, ctx.conversation_id, orientation)?;
+        objective_orientation_event_payload(ctx.profile(), ctx.conversation_id, orientation)?;
     let latest = crate::bearwire_events::latest_bearwire_event_of_type(
         ctx.pool,
         session_id,
@@ -273,7 +286,7 @@ async fn record_objective_orientation_event(
 
     let mut event = BearWireEvent::ephemeral("runtime.objective_orientation", payload);
     event.bear_id = Some(ctx.bear_id.to_string());
-    event.role = Some(ctx.profile.as_str().to_string());
+    event.role = Some(ctx.profile().as_str().to_string());
     event.human_id = ctx.user_id.map(|id| id.to_string());
     crate::bearwire_events::append_bearwire_event(
         ctx.pool,
@@ -354,7 +367,7 @@ async fn resolve_memory_projection_scope(
     ctx: &AssembleTurnContext<'_>,
 ) -> Result<MemoryProjectionScope, DenError> {
     let bear_id = BearId::new(ctx.bear_id);
-    if matches!(ctx.profile, BearProfile::Curate | BearProfile::Watch) {
+    if matches!(ctx.profile(), BearProfile::Curate | BearProfile::Watch) {
         return Ok(MemoryProjectionScope::Legacy);
     }
     let work_run = match ctx.session_id {
@@ -362,14 +375,14 @@ async fn resolve_memory_projection_scope(
         None => None,
     };
     let binding = if let Some(run) = work_run {
-        if run.bear_id != ctx.bear_id || ctx.profile != BearProfile::Work {
+        if run.bear_id != ctx.bear_id || ctx.profile() != BearProfile::Work {
             return Err(DenError::Authorization(
                 "a Work-bound session cannot be read as a conversation".into(),
             ));
         }
         memory_binding::for_work_run(ctx.pool, bear_id, run.id).await?
     } else {
-        if ctx.profile == BearProfile::Work {
+        if ctx.profile() == BearProfile::Work {
             return shared_only_without_configured_hats(ctx).await;
         }
         let Some(conversation) =
@@ -407,7 +420,7 @@ async fn build_recall_section(
                 &embedder,
                 &ctx.config.embedding_standard,
                 ctx.bear_id,
-                ctx.profile.as_str(),
+                ctx.profile().as_str(),
                 query_text,
                 5,
             )
@@ -539,7 +552,7 @@ pub async fn assemble_native_turn_for_bear(
     let memory_scope = match resolve_memory_projection_scope(&ctx).await {
         Ok(scope) => scope,
         Err(error) => {
-            if matches!(ctx.profile, BearProfile::Curate | BearProfile::Watch)
+            if matches!(ctx.profile(), BearProfile::Curate | BearProfile::Watch)
                 || hats::list_hats(ctx.pool, BearId::new(ctx.bear_id))
                     .await?
                     .is_empty()
@@ -556,10 +569,10 @@ pub async fn assemble_native_turn_for_bear(
             let hat_id = grant.hat_id().ok_or_else(|| {
                 DenError::Authorization("bound conversation has no hat identity".into())
             })?;
-            bound_prompt_text(ctx.pool, bear, ctx.profile, hat_id).await?
+            bound_prompt_text(ctx.pool, bear, ctx.profile(), hat_id).await?
         }
         MemoryProjectionScope::Legacy | MemoryProjectionScope::SharedOnly => {
-            profile_prompt_text(ctx.pool, bear, ctx.profile).await?
+            profile_prompt_text(ctx.pool, bear, ctx.profile()).await?
         }
     };
     let mut budget_components = AssembledTurnBudgetComponents {
@@ -569,7 +582,7 @@ pub async fn assemble_native_turn_for_bear(
     let model_for_profile = bears_db::resolve_model_for_profile(
         ctx.pool,
         bear,
-        ctx.profile,
+        ctx.profile(),
         &ctx.config.default_llm_model,
     )
     .await
@@ -579,7 +592,7 @@ pub async fn assemble_native_turn_for_bear(
             pool: ctx.pool,
             stores: ctx.stores,
             bear,
-            profile: ctx.profile,
+            profile: ctx.profile(),
             conversation_id: ctx.conversation_id,
             session_hints: ctx.session_hints(),
             work_surface_status_override: ctx.work_surface_status_override(),
@@ -597,7 +610,7 @@ pub async fn assemble_native_turn_for_bear(
         Err(err) => {
             tracing::warn!(
                 bear_id = %ctx.bear_id,
-                role = %ctx.profile.as_str(),
+                role = %ctx.profile().as_str(),
                 conversation_id = %ctx.conversation_id,
                 error = %err,
                 "key memory projection failed; continuing without projected memory"
@@ -611,7 +624,7 @@ pub async fn assemble_native_turn_for_bear(
                 }),
                 cache_key: KeyMemoryProjectionCacheKey {
                     bear_id: ctx.bear_id,
-                    profile: ctx.profile,
+                    profile: ctx.profile(),
                     conversation_id: ctx.conversation_id.to_string(),
                     primary_surface_slug: None,
                     sequence_high_water: 0,
@@ -635,22 +648,13 @@ pub async fn assemble_native_turn_for_bear(
         ctx.config,
         ctx.bear_id,
         ctx.conversation_id,
-        ctx.profile,
+        ctx.profile(),
     )
     .await?;
     let docket = PgDocketService::from_pool(ctx.pool);
     let cached_activity_plan_projection =
         load_cached_activity_plan_projection(&ctx, &docket).await?;
-    let capabilities = den_core::EffectivePolicy::compile(
-        ctx.profile,
-        den_core::Governance::Interactive,
-        if ctx.session_id.is_some() {
-            den_core::ArmatureAvailability::Connected
-        } else {
-            den_core::ArmatureAvailability::Absent
-        },
-    )
-    .capabilities;
+    let capabilities = ctx.policy().capabilities;
     let explicit_session_current_task_id =
         if capabilities.contains(den_core::BearCapability::OwnSessionTasks) {
             match (ctx.user_id, ctx.session_id) {
@@ -712,7 +716,7 @@ pub async fn assemble_native_turn_for_bear(
         let supplement = assemble_den_owned_runtime_supplement(
             ctx.pool,
             ctx.bear_id,
-            ctx.profile.as_str(),
+            ctx.profile().as_str(),
             session_id,
             &roots,
             &objective_orientation,
@@ -735,9 +739,9 @@ pub async fn assemble_native_turn_for_bear(
         system_text.push_str("\n\n");
         system_text.push_str(&capability_discovery);
     }
-    if ctx.profile == BearProfile::Chat {
+    if ctx.profile() == BearProfile::Chat {
         let tool_surface_blurb =
-            den_core::tools::descriptor::render_profile_tool_surface_blurb(ctx.profile);
+            den_core::tools::descriptor::render_profile_tool_surface_blurb(ctx.profile());
         budget_components.tool_surface_guidance_chars = tool_surface_blurb.chars().count() as u32;
         system_text.push_str("\n\n");
         system_text.push_str(&tool_surface_blurb);
@@ -814,7 +818,7 @@ pub async fn assemble_native_turn_for_bear(
             tracing::warn!(
                 bear_id = %ctx.bear_id,
                 conversation_id = %ctx.conversation_id,
-                profile = %ctx.profile.as_str(),
+                profile = %ctx.profile().as_str(),
                 pruned_message_count = pruned.diagnostics.pruned_message_count,
                 pruned_character_count = pruned.diagnostics.pruned_character_count,
                 "transcript replay used fallback pruning instead of compaction"

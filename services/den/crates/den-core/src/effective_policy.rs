@@ -176,24 +176,6 @@ impl EffectivePolicy {
             capabilities,
         }
     }
-
-    /// Compatibility projection for routes that still persist a profile label.
-    /// New authority decisions should call `compile_for_origin` with a verified
-    /// channel, armature, or Job assignment instead.
-    pub fn compile(
-        trust_profile: TrustProfile,
-        governance: Governance,
-        armature: ArmatureAvailability,
-    ) -> Self {
-        let origin = match trust_profile {
-            TrustProfile::Chat => TurnExecutionOrigin::ChannelConversation,
-            TrustProfile::Pair => TurnExecutionOrigin::ArmatureConversation(armature),
-            TrustProfile::Work => TurnExecutionOrigin::AuthorizedWorkRun(armature),
-            TrustProfile::Curate => TurnExecutionOrigin::InternalCuration,
-            TrustProfile::Watch => TurnExecutionOrigin::InboundObservation,
-        };
-        Self::compile_for_origin(origin, governance)
-    }
 }
 
 #[cfg(test)]

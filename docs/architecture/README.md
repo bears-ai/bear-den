@@ -61,7 +61,7 @@ Bear Den consists of these architectural layers:
 ### Bear model and stances
 
 - [bears and den](bears-and-den.md)
-- [bear stances](bear-stances.md)
+- [hats and execution context](bear-stances.md)
 - [pair stance](pair-stance.md)
 - [stance vocabulary](stance-vocabulary.md)
 
@@ -90,7 +90,7 @@ Bear Den consists of these architectural layers:
 ### Core concepts
 
 - [bears and den](bears-and-den.md)
-- [bear stances](bear-stances.md)
+- [hats and execution context](bear-stances.md)
 - [bear charter and cabinet missions](bear-charter-and-cabinet-missions.md)
 - [identity and membership](identity-and-membership.md)
 - [capabilities and skills](capabilities-and-skills.md)
