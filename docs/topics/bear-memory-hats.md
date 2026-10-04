@@ -2,7 +2,7 @@
 
 **Owner:** Den memory, runtime-policy, and Bear management code owners.
 **Scope:** Bear memory visibility, hats, ordinary source admission, and curation.
-**Current as of:** 2026-10-03, current working tree (WIP), not a shipped release. Evidence: `services/den/crates/den-service/src/bears/hats/memory_binding.rs`, `bears/provision.rs`, `bears/managed_blocks.rs`, `bears/db.rs`, `services/den/crates/den-runtime/src/native_runtime/turn.rs`, `agent_loop/assembler.rs`, `services/den/crates/den-core/src/tools/identity/mod.rs`, and `services/den/crates/den-web/src/bear/settings.rs`, with their focused admission, continuation, identity, model-setting, and retirement tests. The implementation session reports passing workspace all-target checks and 121 root tests; these checks were not rerun for this documentation-only update. The latest changes have **not** been rebuilt into the local Den image. Earlier image/smoke results do not validate this WIP. Live model curation and a real Work sandbox/revocation round trip remain unverified.
+**Current as of:** 2026-10-03, branch implementation at `78f1bb97`, not a public release. Evidence: the canonical source/hat resolvers, native source admission, dedicated curator briefing, managed compiler, and admin route tests. Workspace offline all-target checks, 121 root tests, 102 web tests, 126 core tests, eight source-admission tests, and 46 recall tests passed. The hat-bound ACP start/transcript regression passed without profile registration. The local Den image was rebuilt and only `bears-den` recreated; stack smoke passed four tests with the optional live-model test skipped. Real model curation and a real Work sandbox/revocation round trip remain unverified.
 **Target:** [Active hats plan](../roadmap/HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md), especially Gates 0A and 4; neither is complete.
 **Decisions:** [SQLite-first canonical memory](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md), [Trust profiles and governance](../decisions/adr-0039-trust-profiles-and-governance.md). ADR rationale remains historical; implementation notes distinguish current behavior.
 
@@ -58,7 +58,7 @@ Curate briefings use a direct, dedicated inference path: a typed Reflection-run 
 
 - Complete the common live hat action/resource resolver, broader effect coverage, and truthful persistent choices; prove advertisement, direct invocation, replay/revocation, and real sandbox egress together.
 - Audit legacy owners/collisions, generic same-creator artifact isolation, and remaining event/list projections without automatically assigning history to hats.
-- Verify the latest rebuilt image, stack smoke, real-model curation, and provider Job/revocation flow. Focused WIP tests alone are not shipment evidence.
+- Verify real-model curation and a provider Job/revocation flow. Local build/smoke results are not evidence of a public release or live-model privacy quality.
 
 ## Read deeper
 

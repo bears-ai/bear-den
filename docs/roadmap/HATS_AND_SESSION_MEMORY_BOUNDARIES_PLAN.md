@@ -1,6 +1,9 @@
 # Hats and session memory boundaries
 
 **Status:** Active — current working-tree WIP, not shipped.
+
+**Stance retirement:** Implemented and locally deployed in `78f1bb97`: no selectable stance, profile registry prerequisite, profile model/loop override, role-selected identity prompt, ordinary profile-memory branch, or label-only model-tool authority remains. `RuntimeContextLabel` preserves derived/audit encodings only. Gates 0A and broader rollout evidence remain open for the separately identified permission/resource and live-provider work.
+
 **Topic:** [Bear memory and hats](../topics/bear-memory-hats.md).
 
 Ordinary source admission, hat identity/memory, Bear-wide settings, and stance-registry retirement are implemented in the current WIP. Every ordinary conversation, Job, and run needs a real Bear-owned hat, including zero-hat Bears. Old unbound history remains owner/admin read-only; ownerless history is admin-only. No default hat, source ownership, imported grant, or promotion is fabricated. Pending IDE sessions materialize a durable `den-conv-*` only after hat admission. Inference, continuations, result recording, and direct dispatch recheck the live canonical actor/source/hat and exact eligible Work run. These boundaries do **not** complete hat-action/resource filtering. The implementation session reports passing workspace all-target checks and 121 root tests; these are WIP checks, not latest-image evidence. The latest Docker image has not been rebuilt, and earlier smoke evidence does not validate these changes.
