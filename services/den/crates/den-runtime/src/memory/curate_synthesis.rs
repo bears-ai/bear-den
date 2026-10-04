@@ -9,7 +9,7 @@ use den_core::{
 use den_llm::{ChatCompletionRequest, ChatMessage, LlmClient, LlmOperation, LlmRequestTelemetry};
 use den_service::bears::{
     db, hats, prompt_fragments::render_turn_fragment, repository_prompt_fragment_registry,
-    BearProfile,
+    RuntimeContextLabel,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -129,7 +129,7 @@ fn curate_request(input: CurateRequestInput<'_>) -> Result<ChatCompletionRequest
         thinking_effort: None,
         telemetry: Some(LlmRequestTelemetry {
             bear_id: Some(input.bear_id.to_string()),
-            stance: Some(BearProfile::Curate.as_str().to_string()),
+            stance: Some(RuntimeContextLabel::Curation.as_str().to_string()),
             operation: Some(LlmOperation::Memory),
             request_id: Some(input.proposal_id.to_string()),
             bifrost_virtual_key: Some(input.bifrost_virtual_key),
@@ -162,9 +162,7 @@ pub async fn synthesize_verified_hat_note(
     let bear = db::get_bear(pool, bear_id)
         .await?
         .ok_or_else(|| DenError::NotFound("Bear for Curate synthesis not found".into()))?;
-    let model =
-        db::resolve_model_for_profile(pool, &bear, BearProfile::Curate, llm.default_model())
-            .await?;
+    let model = db::resolve_model_for_bear(&bear, llm.default_model());
     let request = curate_request(CurateRequestInput {
         bear_id,
         proposal_id,

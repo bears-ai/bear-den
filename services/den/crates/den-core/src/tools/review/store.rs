@@ -7,7 +7,7 @@
 //! underlying `create_observation` / `create_proposal` / enqueue / mark calls.
 //! See `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md`.
 
-use crate::{BearProfile, DenError};
+use crate::{DenError, RuntimeContextLabel};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -231,7 +231,7 @@ pub struct ProposalProjection {
 #[derive(Debug, Clone)]
 pub struct ResolveProposalRequest {
     pub bear_id: Uuid,
-    pub reviewer_profile: BearProfile,
+    pub reviewer_profile: RuntimeContextLabel,
     pub binding_id: String,
     pub proposal_id: Uuid,
     pub status: MemoryProposalResolution,
@@ -244,7 +244,7 @@ pub struct ResolveProposalRequest {
 #[derive(Debug, Clone)]
 pub struct RequestReviewRequest {
     pub bear_id: Uuid,
-    pub source_profile: BearProfile,
+    pub source_profile: RuntimeContextLabel,
     pub binding_id: Option<String>,
     pub source_paths: Vec<String>,
     /// Locator supplied by a model; the Den store verifies it against the bound
@@ -268,7 +268,7 @@ pub struct RequestReviewRequest {
 #[derive(Debug, Clone)]
 pub struct MarkMemoryLifecycleRequest {
     pub bear_id: Uuid,
-    pub reviewer_profile: BearProfile,
+    pub reviewer_profile: RuntimeContextLabel,
     pub binding_id: String,
     pub memory_id: String,
     pub status: MemoryLifecycleStatus,

@@ -9,13 +9,10 @@
 
 use den::{config::Config, startup::run_sqlx_migrations};
 use den_memory::tools::sqlite_memory_search;
-use den_memory::{
-    append_memory_record, append_relation, resolve, Assertion, LogicalMemoryPath,
-    MemoryStoreManager, Resolution, Signal,
-};
+use den_memory::{append_memory_record, LogicalMemoryPath, MemoryStoreManager};
 use den_runtime::recall::{
-    hybrid_memory_search, recall_for_turn, reconcile::list_indexable_heads, render_recall_block,
-    DeterministicEmbedder, IndexRequest, PassageEmbedder, QdrantRecall, RecallIndexer,
+    recall_for_turn, reconcile::list_indexable_heads, render_recall_block, DeterministicEmbedder,
+    IndexRequest, PassageEmbedder, QdrantRecall, RecallIndexer,
 };
 use serde_json::json;
 use sqlx::postgres::PgPoolOptions;
@@ -358,179 +355,6 @@ async fn entity_scoped_recall_filters_by_payload_entity_ids() {
         .expect("remove_record cleanup");
 }
 
-/// Phase 3.5 bounded-graph leg: `hybrid_memory_search` surfaces a record never matched by the
-/// keyword/vector legs but reachable via a **shared entity** (bipartite record↔entity expansion).
-/// Infra-free: temp SQLite, no Qdrant ⇒ the vector leg is disabled, so the keyword + graph legs
-/// run against canonical SQLite alone — exactly the ADR-0038 Phase 3.5 "record never directly
-/// matched" exit case.
-#[tokio::test]
-async fn hybrid_search_graph_leg_surfaces_indirectly_linked_record() {
-    let tmp = std::env::temp_dir().join(format!("den-recall-graph-{}", Uuid::new_v4()));
-    let mut config = Config::test_stub();
-    config.bear_sqlite_data_dir = tmp.to_string_lossy().into_owned();
-
-    let stores = MemoryStoreManager::new(&config);
-    let bear_id = Uuid::new_v4();
-    let store = stores.store_for_bear(bear_id).await.expect("temp store");
-
-    let token = "graphonlytoken";
-    // Direct hit: a shared record containing the query token.
-    let direct = append_memory_record(
-        &store,
-        &LogicalMemoryPath::shared_core("summary"),
-        "summary",
-        "curate",
-        None,
-        &format!("shared note mentioning {token}"),
-        &json!({}),
-    )
-    .await
-    .expect("write direct");
-    // Neighbor: a shared record with no query term — keyword/vector can never match it directly.
-    let neighbor = append_memory_record(
-        &store,
-        &LogicalMemoryPath::shared_core("knowledge"),
-        "note",
-        "curate",
-        None,
-        "neighbor note with no query term at all",
-        &json!({}),
-    )
-    .await
-    .expect("write neighbor");
-
-    // Link both records to one shared entity so the graph leg can bridge direct → neighbor.
-    let entity_id = match resolve(
-        &store,
-        "person",
-        Some("Alice"),
-        &[Signal::new("email", "alice@acme.com")],
-        Assertion::Inferred,
-    )
-    .await
-    .unwrap()
-    {
-        Resolution::Resolved(e) | Resolution::Created(e) => e.entity_id,
-        other => panic!("expected a resolved/created entity, got {other:?}"),
-    };
-    append_relation(
-        &store,
-        &direct.memory_id,
-        &entity_id,
-        "subject",
-        &json!({}),
-        "curate",
-        None,
-        None,
-    )
-    .await
-    .expect("link direct");
-    append_relation(
-        &store,
-        &neighbor.memory_id,
-        &entity_id,
-        "participant",
-        &json!({}),
-        "curate",
-        None,
-        None,
-    )
-    .await
-    .expect("link neighbor");
-
-    let result = hybrid_memory_search(&config, &stores, bear_id, "work", token, 10)
-        .await
-        .expect("hybrid search");
-
-    // Vector disabled (no Qdrant); keyword finds the direct hit; the graph leg reaches the neighbor.
-    assert_eq!(result["strategy"], "keyword+graph", "{result}");
-    let hits = result["hits"].as_array().expect("hits array");
-    let by_id: std::collections::HashMap<&str, &serde_json::Value> = hits
-        .iter()
-        .filter_map(|h| h["memory_id"].as_str().map(|id| (id, h)))
-        .collect();
-    let direct_hit = by_id
-        .get(direct.memory_id.as_str())
-        .unwrap_or_else(|| panic!("direct keyword hit present: {hits:?}"));
-    assert_eq!(direct_hit["source"], "keyword");
-    let neighbor_hit = by_id.get(neighbor.memory_id.as_str()).unwrap_or_else(|| {
-        panic!("graph leg should surface the indirectly-linked neighbor: {hits:?}")
-    });
-    assert_eq!(neighbor_hit["source"], "graph");
-    assert_eq!(neighbor_hit["hop"], 1);
-    // Entity-overlap boost: the neighbor shares exactly the one bridging entity with the seed.
-    assert_eq!(neighbor_hit["entity_overlap"], 1, "{hits:?}");
-
-    let _ = std::fs::remove_dir_all(&tmp);
-}
-
-/// Phase 3.5 temporal leg: `hybrid_memory_search` parses a time expression off the query and
-/// filters hits by effective event time. Infra-free (temp SQLite, no Qdrant). Records written now
-/// survive a `today` window but are pruned by a `before <past-date>` window; the result carries a
-/// `temporal` diagnostic either way.
-#[tokio::test]
-async fn hybrid_search_temporal_leg_filters_by_effective_time() {
-    let tmp = std::env::temp_dir().join(format!("den-recall-temporal-{}", Uuid::new_v4()));
-    let mut config = Config::test_stub();
-    config.bear_sqlite_data_dir = tmp.to_string_lossy().into_owned();
-
-    let stores = MemoryStoreManager::new(&config);
-    let bear_id = Uuid::new_v4();
-    let store = stores.store_for_bear(bear_id).await.expect("temp store");
-
-    let token = "temporaltoken";
-    for kind in ["summary", "knowledge"] {
-        append_memory_record(
-            &store,
-            &LogicalMemoryPath::shared_core(kind),
-            kind,
-            "curate",
-            None,
-            &format!("shared note mentioning {token}"),
-            &json!({}),
-        )
-        .await
-        .expect("write record");
-    }
-
-    // A `today` window keeps just-written records and strips the temporal phrase from the query.
-    let today = hybrid_memory_search(
-        &config,
-        &stores,
-        bear_id,
-        "work",
-        &format!("{token} today"),
-        10,
-    )
-    .await
-    .expect("today search");
-    assert_eq!(today["temporal"]["matched"], "today", "{today}");
-    assert!(
-        !today["hits"].as_array().expect("hits").is_empty(),
-        "records written now fall in the today window: {today}"
-    );
-
-    // A window entirely in the past prunes every just-written record.
-    let past = hybrid_memory_search(
-        &config,
-        &stores,
-        bear_id,
-        "work",
-        &format!("{token} before 2000-01-01"),
-        10,
-    )
-    .await
-    .expect("past search");
-    assert!(past["temporal"]["to"].is_string(), "{past}");
-    assert_eq!(
-        past["hits"].as_array().expect("hits").len(),
-        0,
-        "nothing is effective before the year 2000: {past}"
-    );
-
-    let _ = std::fs::remove_dir_all(&tmp);
-}
-
 /// Head selection + policy filtering for whole-Bear reconcile (Phase 1b). Infra-free: uses a
 /// throwaway temp SQLite store, no Postgres/Qdrant, so it always runs.
 #[tokio::test]
@@ -601,8 +425,8 @@ async fn list_indexable_heads_selects_latest_and_filters_policy() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
-/// Phase 3 keyword fallback: `sqlite_memory_search` is the `memory_search` tool's non-vector
-/// path. Infra-free (temp SQLite, no Postgres/Qdrant). Asserts the role-scope boundary — a
+/// Historical profile-selector helper, not a model-facing Recall fallback.
+/// Infra-free (temp SQLite, no Postgres/Qdrant). Asserts the legacy boundary — a
 /// `work`-role search sees shared (core) memory and its own role-local notes, but **not** another
 /// role's profile-local memory (AGENTS.md: `work` must not read raw `pair/`) — plus the unified
 /// provenance shape (`memory_id`, `path`, `snippet`, `strategy: "keyword"`, null `score`).

@@ -13,7 +13,7 @@ struct ToolOutputArtifactSelectRow {
     metadata: Value,
 }
 
-use den_core::{BearProfile, DenError};
+use den_core::{DenError, RuntimeContextLabel};
 use den_service::artifacts::{
     self, ArtifactStorageKind, ArtifactVisibility, AttachConversationArtifactInput,
     FinalizeArtifactInput, ReserveArtifactInput,
@@ -131,7 +131,7 @@ async fn create_durable_tool_output_citation(
         ReserveArtifactInput {
             bear_id: input.bear_id,
             created_by_user_id: input.user_id,
-            owner_profile: BearProfile::Pair,
+            owner_profile: RuntimeContextLabel::ArmatureConversation,
             kind: "tool_output".to_string(),
             title: input.tool_name.clone(),
             summary: Some("Truncated tool output retained for continuation".to_string()),

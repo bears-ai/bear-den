@@ -510,16 +510,12 @@ async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
         hats::memory_binding::for_conversation(&pool, BearId::new(bear_id), conversation.id)
             .await
             .unwrap();
-    match scope {
-        hats::memory_binding::ResolvedMemoryBinding::Bound(grant) => {
-            assert_eq!(grant.hat_id(), Some(hat.id));
-            assert_eq!(
-                grant.source(),
-                den_memory::MemorySource::Conversation(conversation.id)
-            );
-        }
-        other => panic!("new conversation lost hat binding: {other:?}"),
-    }
+    let hats::memory_binding::ResolvedMemoryBinding::Bound(grant) = scope;
+    assert_eq!(grant.hat_id(), Some(hat.id));
+    assert_eq!(
+        grant.source(),
+        den_memory::MemorySource::Conversation(conversation.id)
+    );
     let other_hat = hats::create_hat(
         &pool,
         BearId::new(bear_id),

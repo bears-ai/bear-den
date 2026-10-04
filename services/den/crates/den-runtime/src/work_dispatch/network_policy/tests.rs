@@ -328,6 +328,16 @@ async fn run_hosts_are_bounded_by_both_the_assigned_surface_and_current_hat_gran
     assert!(host_allowed_for_live_run(&pool, &active, &permitted_host)
         .await
         .unwrap());
+    let mut missing_binding = active.clone();
+    missing_binding.id = Uuid::new_v4();
+    assert!(active_run_still_authorized(&pool, &missing_binding)
+        .await
+        .is_err());
+    assert!(
+        host_allowed_for_live_run(&pool, &missing_binding, &permitted_host)
+            .await
+            .is_err()
+    );
     assert!(super::super::allow_work_egress_connection(
         &pool,
         BearId::new(bear),
@@ -421,14 +431,17 @@ async fn run_hosts_are_bounded_by_both_the_assigned_surface_and_current_hat_gran
     assert!(!host_allowed_for_live_run(&pool, &current, &permitted_host)
         .await
         .unwrap());
-    assert!(for_run(
-        &pool,
-        BearId::new(bear),
-        ResolvedMemoryBinding::Legacy,
-        &context,
-        &surface.name
-    )
-    .await
-    .unwrap()
-    .is_none());
+    let mut missing_surface = context.clone();
+    missing_surface.work_surface_id = None;
+    assert!(matches!(
+        for_run(
+            &pool,
+            BearId::new(bear),
+            binding(first.id),
+            &missing_surface,
+            &surface.name
+        )
+        .await,
+        Err(DenError::Authorization(_))
+    ));
 }

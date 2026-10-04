@@ -5,11 +5,11 @@ use den_core::{
         constants::{DEN_RUN_WRITE_RESULT, DEN_WEB_FETCH},
         context::DenToolInvocationContext,
     },
-    ArmatureAvailability, BearProfile, Governance, TurnExecutionOrigin,
+    ArmatureAvailability, Governance, RuntimeContextLabel, TurnExecutionOrigin,
 };
 use uuid::Uuid;
 
-fn context(profile: BearProfile) -> DenToolInvocationContext {
+fn context(profile: RuntimeContextLabel) -> DenToolInvocationContext {
     DenToolInvocationContext {
         bear_id: Uuid::nil(),
         bear_slug: "test".into(),
@@ -44,8 +44,14 @@ async fn internal_dispatch_denies_before_argument_preflight_or_storage() {
     let stores = den_memory::MemoryStoreManager::new(&config);
     let ctx = DenToolContext::new(&pool, &config, &stores);
     for (origin, profile) in [
-        (TurnExecutionOrigin::InternalCuration, BearProfile::Curate),
-        (TurnExecutionOrigin::InboundObservation, BearProfile::Watch),
+        (
+            TurnExecutionOrigin::InternalCuration,
+            RuntimeContextLabel::Curation,
+        ),
+        (
+            TurnExecutionOrigin::InboundObservation,
+            RuntimeContextLabel::Observation,
+        ),
     ] {
         let arguments = serde_json::json!({
             "kind": "note", "title": "Plan concepts",
@@ -82,24 +88,24 @@ fn direct_invoker_cannot_widen_a_pair_origin_with_a_curate_or_work_profile() {
     let origin = TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected);
     let pair = EffectivePolicy::compile_for_origin(origin, Governance::Interactive);
     assert!(require_origin_policy_and_descriptor(
-        &context(BearProfile::Pair),
+        &context(RuntimeContextLabel::ArmatureConversation),
         &pair,
         origin,
         DEN_WEB_FETCH
     )
     .is_ok());
     assert!(require_origin_policy_and_descriptor(
-        &context(BearProfile::Pair),
+        &context(RuntimeContextLabel::ArmatureConversation),
         &pair,
         origin,
         DEN_RUN_WRITE_RESULT
     )
     .is_err());
     for forged in [
-        BearProfile::Curate,
-        BearProfile::Work,
-        BearProfile::Watch,
-        BearProfile::Chat,
+        RuntimeContextLabel::Curation,
+        RuntimeContextLabel::JobRun,
+        RuntimeContextLabel::Observation,
+        RuntimeContextLabel::ChannelConversation,
     ] {
         assert!(
             matches!(
@@ -116,7 +122,7 @@ fn direct_invoker_cannot_widen_a_pair_origin_with_a_curate_or_work_profile() {
     }
     let work_origin = TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Absent);
     let work = EffectivePolicy::compile_for_origin(work_origin, Governance::Interactive);
-    let mut work_context = context(BearProfile::Work);
+    let mut work_context = context(RuntimeContextLabel::JobRun);
     work_context.work_run_id = Some(Uuid::new_v4());
     assert!(require_origin_policy_and_descriptor(
         &work_context,
@@ -126,7 +132,7 @@ fn direct_invoker_cannot_widen_a_pair_origin_with_a_curate_or_work_profile() {
     )
     .is_ok());
     let mut forged_work = work_context;
-    forged_work.profile = Some(BearProfile::Pair);
+    forged_work.profile = Some(RuntimeContextLabel::ArmatureConversation);
     assert!(require_origin_policy_and_descriptor(
         &forged_work,
         &work,
@@ -136,7 +142,7 @@ fn direct_invoker_cannot_widen_a_pair_origin_with_a_curate_or_work_profile() {
     .is_err());
     assert!(
         require_origin_policy_and_descriptor(
-            &context(BearProfile::Pair),
+            &context(RuntimeContextLabel::ArmatureConversation),
             &work,
             origin,
             DEN_WEB_FETCH
@@ -147,7 +153,7 @@ fn direct_invoker_cannot_widen_a_pair_origin_with_a_curate_or_work_profile() {
     let chat_origin = TurnExecutionOrigin::ChannelConversation;
     let chat = EffectivePolicy::compile_for_origin(chat_origin, Governance::Interactive);
     assert!(require_origin_policy_and_descriptor(
-        &context(BearProfile::Chat),
+        &context(RuntimeContextLabel::ChannelConversation),
         &chat,
         chat_origin,
         DEN_WEB_FETCH
@@ -171,8 +177,14 @@ async fn internal_tool_origins_are_denied_before_database_or_descriptor_lookup()
     let invoker = DenRuntimeToolInvoker::new(state);
     let ctx = DenToolContext::new(&pool, &config, &stores);
     for (profile, origin) in [
-        (BearProfile::Curate, TurnExecutionOrigin::InternalCuration),
-        (BearProfile::Watch, TurnExecutionOrigin::InboundObservation),
+        (
+            RuntimeContextLabel::Curation,
+            TurnExecutionOrigin::InternalCuration,
+        ),
+        (
+            RuntimeContextLabel::Observation,
+            TurnExecutionOrigin::InboundObservation,
+        ),
     ] {
         for tool_name in [DEN_WEB_FETCH, "unknown_den_tool"] {
             let call = context(profile);
@@ -210,7 +222,7 @@ fn direct_invoker_requires_work_run_binding_only_for_work_origin() {
     let work = EffectivePolicy::compile_for_origin(work_origin, Governance::Interactive);
     assert!(matches!(
         require_origin_policy_and_descriptor(
-            &context(BearProfile::Work),
+            &context(RuntimeContextLabel::JobRun),
             &work,
             work_origin,
             DEN_RUN_WRITE_RESULT,
@@ -220,7 +232,7 @@ fn direct_invoker_requires_work_run_binding_only_for_work_origin() {
 
     let pair_origin = TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected);
     let pair = EffectivePolicy::compile_for_origin(pair_origin, Governance::Interactive);
-    let mut forged = context(BearProfile::Pair);
+    let mut forged = context(RuntimeContextLabel::ArmatureConversation);
     forged.work_run_id = Some(Uuid::new_v4());
     assert!(matches!(
         require_origin_policy_and_descriptor(&forged, &pair, pair_origin, DEN_WEB_FETCH),
@@ -231,18 +243,20 @@ fn direct_invoker_requires_work_run_binding_only_for_work_origin() {
 #[sqlx::test]
 async fn work_tool_rechecks_the_live_run_at_effect_time(pool: PgPool) -> Result<(), DenError> {
     let work_origin = TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Absent);
-    let mut work = context(BearProfile::Work);
+    let mut work = context(RuntimeContextLabel::JobRun);
     work.work_run_id = Some(Uuid::new_v4());
     assert!(matches!(
         require_live_work_tool_source(&pool, &work, work_origin).await,
         Err(DenError::Authorization(_))
     ));
     let pair_origin = TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected);
-    assert!(
-        require_live_work_tool_source(&pool, &context(BearProfile::Pair), pair_origin)
-            .await
-            .is_ok()
-    );
+    assert!(require_live_work_tool_source(
+        &pool,
+        &context(RuntimeContextLabel::ArmatureConversation),
+        pair_origin
+    )
+    .await
+    .is_ok());
     Ok(())
 }
 
@@ -273,7 +287,7 @@ async fn ordinary_tool_actor_loses_access_immediately_after_membership_revocatio
         "test-hash",
     )
     .await?;
-    let mut pair = context(BearProfile::Pair);
+    let mut pair = context(RuntimeContextLabel::ArmatureConversation);
     pair.bear_id = bear_id;
     pair.user_id = user_id;
     let origin = TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected);
@@ -282,6 +296,7 @@ async fn ordinary_tool_actor_loses_access_immediately_after_membership_revocatio
         Err(DenError::Authorization(_))
     ));
     grant_membership(&pool, user_id, bear_id, Some("member")).await?;
+    crate::core::tools::tests::source_fixture::admit_tool_source(&pool, &mut pair).await?;
     require_current_tool_actor(&pool, &pair, origin).await?;
     revoke_membership(&pool, user_id, bear_id).await?;
     assert!(matches!(
@@ -355,7 +370,7 @@ async fn hat_bound_tool_source_requires_current_conversation_owner(
     bind_conversation_hat(&pool, BearId::new(bear_id), conversation.id, hat.id).await?;
 
     let origin = TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected);
-    let mut call = context(BearProfile::Pair);
+    let mut call = context(RuntimeContextLabel::ArmatureConversation);
     call.bear_id = bear_id;
     call.conversation_id = "source-owner-conv".into();
     call.user_id = owner;
@@ -368,7 +383,7 @@ async fn hat_bound_tool_source_requires_current_conversation_owner(
     call.conversation_id = "invented-conversation".into();
     assert!(matches!(
         require_current_tool_actor(&pool, &call, origin).await,
-        Err(DenError::Authorization(_))
+        Err(DenError::NotFound(_))
     ));
     Ok(())
 }
@@ -402,13 +417,57 @@ async fn native_core_dispatcher_uses_origin_audience_at_effect_time(
     )
     .await?;
     grant_membership(&pool, user_id, bear_id, Some("member")).await?;
-    assert!(profile_binding_id(&pool, bear_id, BearProfile::Pair)
-        .await?
-        .is_none());
-    let mut call = context(BearProfile::Pair);
+    assert!(
+        profile_binding_id(&pool, bear_id, RuntimeContextLabel::ArmatureConversation)
+            .await?
+            .is_none()
+    );
+    let mut call = context(RuntimeContextLabel::ArmatureConversation);
     call.bear_id = bear_id;
     call.user_id = user_id;
-    call.binding_id = format!("den-native:{bear_id}:pair");
+    let hat = den_service::bears::hats::create_hat(
+        &pool,
+        bear_id.into(),
+        user_id.into(),
+        "Direct dispatch",
+        "Authorize direct tools",
+    )
+    .await?;
+    let conversation = den_service::conversation::persistence::ensure_conversation_for_external_id(
+        &pool,
+        bear_id,
+        Some(user_id),
+        &call.conversation_id,
+        Some(&call.session_id),
+        None,
+    )
+    .await?;
+    den_service::bears::hats::bindings::bind_conversation_hat(
+        &pool,
+        bear_id.into(),
+        conversation.id,
+        hat.id,
+    )
+    .await?;
+    den_service::client_sessions::upsert_session(
+        &pool,
+        den_service::client_sessions::UpsertClientSession {
+            user_id,
+            bear_id,
+            bear_slug: call.bear_slug.clone(),
+            client_session_id: call.session_id.clone(),
+            runtime_session_id: "native-direct".into(),
+            conversation_id: call.conversation_id.clone(),
+            resolved_conversation_id: None,
+            client: "bear-armature".into(),
+            cwd: None,
+            current_mode: None,
+        },
+    )
+    .await?;
+    call.binding_id =
+        den_service::bears::hats::turn_binding::NativeTurnSource::Conversation(conversation.id)
+            .binding_id(bear_id.into());
     let config = crate::config::Config::test_stub();
     let stores = den_memory::MemoryStoreManager::new(&config);
     let ctx = DenToolContext::new(&pool, &config, &stores);
@@ -423,10 +482,36 @@ async fn native_core_dispatcher_uses_origin_audience_at_effect_time(
     )
     .await?;
     assert_eq!(self_view["bear"]["bear_id"], bear_id.to_string());
+    for wrong_binding in [
+        format!("den-native:{bear_id}:pair"),
+        den_service::bears::hats::turn_binding::NativeTurnSource::Conversation(Uuid::new_v4())
+            .binding_id(bear_id.into()),
+        den_service::bears::hats::turn_binding::NativeTurnSource::WorkRun(conversation.id)
+            .binding_id(bear_id.into()),
+    ] {
+        let mut forged = call.clone();
+        forged.binding_id = wrong_binding;
+        assert!(matches!(
+            dispatch::authorize_den_tool_for_origin(&ctx, DEN_BEAR_GET_SELF, &forged, origin).await,
+            Err(DenError::Authorization(_)),
+        ));
+    }
+    let mut missing = call.clone();
+    missing.conversation_id = "missing-direct-source".into();
+    assert!(matches!(
+        dispatch::authorize_den_tool_for_origin(&ctx, DEN_BEAR_GET_SELF, &missing, origin).await,
+        Err(DenError::Authorization(_)),
+    ));
     den_service::bears::db::ensure_bear_profile_binding_rows(&pool, bear_id).await?;
     for (profile, internal_origin) in [
-        (BearProfile::Curate, TurnExecutionOrigin::InternalCuration),
-        (BearProfile::Watch, TurnExecutionOrigin::InboundObservation),
+        (
+            RuntimeContextLabel::Curation,
+            TurnExecutionOrigin::InternalCuration,
+        ),
+        (
+            RuntimeContextLabel::Observation,
+            TurnExecutionOrigin::InboundObservation,
+        ),
     ] {
         let mut internal_call = call.clone();
         internal_call.profile = Some(profile);
@@ -442,6 +527,25 @@ async fn native_core_dispatcher_uses_origin_audience_at_effect_time(
             Err(DenError::Authorization(_)),
         ));
     }
+    let mut other_source = call.clone();
+    other_source.conversation_id = "another-owned-source".into();
+    other_source.session_id = "another-owned-client".into();
+    other_source.client_session_id = Some(other_source.session_id.clone());
+    crate::core::tools::tests::source_fixture::admit_tool_source(&pool, &mut other_source).await?;
+    dispatch::authorize_den_tool_for_origin(&ctx, DEN_BEAR_GET_SELF, &other_source, origin).await?;
+    other_source.binding_id = call.binding_id.clone();
+    assert!(matches!(
+        dispatch::authorize_den_tool_for_origin(&ctx, DEN_BEAR_GET_SELF, &other_source, origin)
+            .await,
+        Err(DenError::Authorization(_)),
+    ));
+    let mut forged_client = call.clone();
+    forged_client.client_session_id = Some("another-owned-client".into());
+    assert!(matches!(
+        dispatch::authorize_den_tool_for_origin(&ctx, DEN_BEAR_GET_SELF, &forged_client, origin)
+            .await,
+        Err(DenError::Authorization(_)),
+    ));
     assert!(matches!(
         dispatch::authorize_den_tool_for_origin(&ctx, DEN_RUN_WRITE_RESULT, &call, origin).await,
         Err(DenError::Authorization(_))

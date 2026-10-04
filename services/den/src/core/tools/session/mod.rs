@@ -158,7 +158,7 @@ pub async fn invoke_den_tool_for_origin(
     if tool_name == DEN_TASK_LISTS_REQUEST_HANDOFF {
         let args: TaskListHandoffArguments = serde_json::from_value(arguments)
             .map_err(|error| CustomError::ValidationError(error.to_string()))?;
-        let role = den_core::EffectivePolicy::compile_for_origin(origin, governance).trust_profile;
+        let role = den_core::EffectivePolicy::compile_for_origin(origin, governance).context_label;
         let session_anchor_id = workflow::resolve_task_session_anchor_id(pool, &context, None)
             .await?
             .ok_or_else(|| {
@@ -228,14 +228,11 @@ pub async fn invoke_den_tool_for_origin(
 }
 
 fn require_bounded_dependency_preparation(
-    binding: ResolvedMemoryBinding,
+    _binding: ResolvedMemoryBinding,
 ) -> Result<(), den_core::DenError> {
-    if matches!(binding, ResolvedMemoryBinding::Bound(_)) {
-        return Err(den_core::DenError::Authorization(
-            "hosted Cargo preparation uses an unrestricted helper network; hat-bound Work must wait for a grant-enforced helper".into(),
-        ));
-    }
-    Ok(())
+    Err(den_core::DenError::Authorization(
+        "hosted Cargo preparation uses an unrestricted helper network; hat-bound Work must wait for a grant-enforced helper".into(),
+    ))
 }
 
 #[cfg(test)]
@@ -247,7 +244,6 @@ mod dependency_preparation_policy_tests {
 
     #[test]
     fn hat_bound_cargo_helper_cannot_escape_its_network_policy() {
-        assert!(require_bounded_dependency_preparation(ResolvedMemoryBinding::Legacy).is_ok());
         let bound = ResolvedMemoryBinding::Bound(MemoryReadGrant::new(
             MemorySource::WorkRun(Uuid::new_v4()),
             Some(HatId::new(Uuid::new_v4())),
@@ -355,7 +351,7 @@ async fn invoke_workflow_tool(
     reject_closed_freeform_task_definition(tool_name, context)?;
     reject_immutable_focused_task_definition(tool_name, context)?;
 
-    let role = den_core::EffectivePolicy::compile_for_origin(origin, governance).trust_profile;
+    let role = den_core::EffectivePolicy::compile_for_origin(origin, governance).context_label;
     let authority = workflow::WorkflowAuthority { origin, governance };
     let value = match tool_name {
         DEN_TASK_LISTS_LIST => {

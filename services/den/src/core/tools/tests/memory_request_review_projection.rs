@@ -11,7 +11,7 @@ use crate::core::{
     user::db::create_user,
 };
 use den_core::{ArmatureAvailability, Governance, TurnExecutionOrigin};
-use den_service::bears::{db, db::grant_membership, db::BearParams, BearProfile};
+use den_service::bears::{db, db::grant_membership, db::BearParams, RuntimeContextLabel};
 
 async fn seed_pair_agent(
     pool: &PgPool,
@@ -76,11 +76,11 @@ async fn memory_request_review_projects_typed_conversation_records(
     )
     .await?;
 
-    let context = DenToolInvocationContext {
+    let mut context = DenToolInvocationContext {
         bear_id,
         bear_slug: "test-memory-review-tool-bear".to_string(),
         binding_id: agent_id,
-        profile: Some(BearProfile::Pair),
+        profile: Some(RuntimeContextLabel::ArmatureConversation),
         user_id,
         username: Some("tester".to_string()),
         membership_role: Some("owner".to_string()),
@@ -102,8 +102,38 @@ async fn memory_request_review_projects_typed_conversation_records(
         channel: DenToolChannelContext::default(),
     };
 
+    crate::core::tools::tests::source_fixture::admit_tool_source(&pool, &mut context).await?;
+    let hat = den_service::bears::hats::bindings::conversation_hat(
+        &pool,
+        bear_id.into(),
+        conversation.id,
+    )
+    .await?
+    .expect("explicit fixture hat");
+    den_service::bears::hats::manage::set_auto_curate_enabled(
+        &pool,
+        bear_id.into(),
+        hat,
+        true,
+        true,
+    )
+    .await?;
     let config = crate::config::Config::test_stub();
     let stores = den_memory::MemoryStoreManager::new(&config);
+    let store = stores.store_for_bear(bear_id).await?;
+    let source = den_memory::append_memory_record(
+        &store,
+        &den_memory::LogicalMemoryPath::source_local(
+            den_memory::MemorySource::Conversation(conversation.id),
+            "note",
+        ),
+        "note",
+        "pair",
+        None,
+        "Candidate memory summary",
+        &json!({}),
+    )
+    .await?;
     for action in ["promote_to_core", "summarize_into_core"] {
         let retired = invoke_den_tool_for_origin(
             &pool,
@@ -121,7 +151,10 @@ async fn memory_request_review_projects_typed_conversation_records(
             Governance::Interactive,
         )
         .await;
-        assert!(matches!(retired, Err(crate::errors::CustomError::ValidationError(_))), "retired action {action}: {retired:?}");
+        assert!(
+            matches!(retired, Err(crate::errors::CustomError::ValidationError(_))),
+            "retired action {action}: {retired:?}"
+        );
     }
     let payload = invoke_den_tool_for_origin(
         &pool,
@@ -129,10 +162,10 @@ async fn memory_request_review_projects_typed_conversation_records(
         &stores,
         DEN_MEMORY_REQUEST_REVIEW,
         json!({
-            "source_paths": ["pair/notes/test.md"],
+            "source_memory_id": source.memory_id,
             "title": "Promote memory",
             "summary": "Candidate memory summary",
-            "suggested_action": "unspecified"
+            "suggested_action": "propose_hat"
         }),
         context,
         TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
@@ -165,9 +198,9 @@ async fn memory_request_review_projects_typed_conversation_records(
                     proposal_id,
                     source_profile: "pair".to_string(),
                     title: "Promote memory".to_string(),
-                    suggested_action: "unspecified".to_string(),
+                    suggested_action: "propose_hat".to_string(),
                     status: "pending".to_string(),
-                    source_paths: vec!["pair/notes/test.md".to_string()],
+                    source_paths: vec![],
                 },
             ),
             workflow_text: "Memory review requested: Promote memory".to_string(),
@@ -187,8 +220,12 @@ async fn memory_request_review_projects_typed_conversation_records(
         20,
     )
     .await?;
-    assert!(messages.iter().any(|m| m.content_text.contains("Memory review requested: Promote memory")));
-    assert!(messages.iter().any(|m| m.content_text.contains("Review requested for memory proposal 'Promote memory' from pair.")));
+    assert!(messages.iter().any(|m| m
+        .content_text
+        .contains("Memory review requested: Promote memory")));
+    assert!(messages.iter().any(|m| m
+        .content_text
+        .contains("Review requested for memory proposal 'Promote memory' from pair.")));
     assert!(messages.iter().any(|m| m.message_type == "workflow_event"));
     Ok(())
 }

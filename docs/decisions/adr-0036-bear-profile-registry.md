@@ -3,6 +3,8 @@
 **Status:** Accepted (2026-06-09)  
 **Related:** [ADR-0035 — Den-native in-process agent runtime](../decisions/adr-0035-den-native-in-process-agent-runtime.md), [`bear-stances.md`](../architecture/bear-stances.md), [`interactive-stances-and-role-axes.md`](../architecture/interactive-stances-and-role-axes.md)
 
+**Current implementation note (2026-10-03, WIP; latest image not rebuilt):** The registry decision below is preserved historical rationale. Admin stance detail/configuration/provisioning and per-profile model/profile-registration routes are gone; initialization never creates/refreshes profile bindings, and `/models` is Bear-wide. Historical profile model/loop rows are not live overrides. Ordinary execution uses canonical owned real-hat conversations or exact eligible Work runs, even with zero hats; old unbound history is read-only. The removed Rust aliases leave derived five-source-kind runtime-context metadata (`RuntimeContextLabel`) with legacy schema/audit encoding, not configurable stance authority. Managed compilation emits bound base/modes independently of legacy contracts; no production inference selects role prompts/contracts. Source admission precedes inference/continuations and direct tools recheck it. The [maintained topic](../topics/bear-memory-hats.md) and [active plan](../roadmap/HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md) document the still-partial hat action/resource resolver and remaining rollout evidence.
+
 ## Context
 
 Bear Den historically modeled capability-specific runtimes as **roles** backed by Letta agents (`bear_agents`, `letta_agent_id`). Native runtime (ADR-0035) already provisions stable ids as `den-native:{bear_id}:{profile}` but the schema and APIs still treated Letta agent ids as primary.

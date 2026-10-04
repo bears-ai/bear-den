@@ -2,7 +2,7 @@
 //! Same convention as `integration_tests.rs`: skip when no database is
 //! reachable.
 
-use den_core::{BearProfile, DenError};
+use den_core::{DenError, RuntimeContextLabel};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -98,7 +98,7 @@ async fn seed_user_and_bear(pool: &PgPool, label: &str) -> (i32, Uuid) {
     (user_id, bear_id)
 }
 
-fn work_task(title: &str, order: i32, _stance: BearProfile) -> DocketTaskInput {
+fn work_task(title: &str, order: i32, _stance: RuntimeContextLabel) -> DocketTaskInput {
     DocketTaskInput {
         client_key: Some(format!("k{order}")),
         parent_client_key: None,
@@ -181,9 +181,13 @@ async fn seed_work_job_with_policy(
                     sibling_order: 0,
                 }],
                 tasks: vec![
-                    work_task("Alpha work task", 0, BearProfile::Work),
-                    work_task("Beta work task", 1, BearProfile::Work),
-                    work_task("Gamma pair task", 2, BearProfile::Pair),
+                    work_task("Alpha work task", 0, RuntimeContextLabel::JobRun),
+                    work_task("Beta work task", 1, RuntimeContextLabel::JobRun),
+                    work_task(
+                        "Gamma pair task",
+                        2,
+                        RuntimeContextLabel::ArmatureConversation,
+                    ),
                 ],
             },
             crate::DocketJobCreationAuthority::HumanRequest,
@@ -844,7 +848,7 @@ async fn blocked_job_refuses_pair_dispatch_without_mutating_task_state() {
         .execute_job(DocketJobExecuteRequest {
             bear_id,
             job_id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             session_id: None,
@@ -1595,7 +1599,7 @@ async fn active_task_definition_edits_require_a_paused_work_run() {
         bear_id,
         job_id: Some(job_id),
         task_id: task_ids[0],
-        actor_role: BearProfile::Work,
+        actor_role: RuntimeContextLabel::JobRun,
         actor_user_id: Some(user_id),
         actor_agent_id: None,
         definition: DocketTaskDefinitionPatch {

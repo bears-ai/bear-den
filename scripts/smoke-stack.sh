@@ -128,37 +128,35 @@ wait_compose_service_ready() {
   return 1
 }
 
-smoke_pair_binding_ready() {
-  result="$(compose_with_env exec -T bears-postgres psql -U bears -d den -tAc "
-    SELECT EXISTS (
-      SELECT 1
-      FROM bears b
-      INNER JOIN bear_profile_bindings ba ON ba.bear_id = b.id
-      WHERE b.slug = 'test-bear'
-        AND ba.profile = 'pair'
-        AND btrim(COALESCE(ba.binding_id, '')) LIKE 'den-native:%'
-    );
+smoke_bear_initialized() {
+  local bear_id memory_dir
+  bear_id="$(compose_with_env exec -T bears-postgres psql -U bears -d den -tAc "
+    SELECT id
+    FROM bears
+    WHERE slug = 'test-bear'
+      AND runtime_plan IS NOT NULL;
   " 2>/dev/null || true)"
-  [ "${result}" = "t" ]
+  [ -n "${bear_id}" ] || return 1
+  # seed-dev.sh initializes the memory store in this workspace, using this same path.
+  memory_dir="${BEAR_SQLITE_DATA_DIR:-${ROOT}/services/den/data/bear-sqlite}"
+  [ -s "${memory_dir}/${bear_id}.sqlite" ]
 }
 
-apply_smoke_seed_until_pair_ready() {
+apply_smoke_seed_until_initialized() {
   for attempt in $(seq 1 5); do
     echo "Applying smoke seed profile (attempt ${attempt})..."
     "${ROOT}/scripts/seed-dev.sh" smoke
-    if smoke_pair_binding_ready; then
+    if smoke_bear_initialized; then
       return 0
     fi
     sleep 2
   done
 
-  printf 'smoke seed did not provision the test-bear pair role binding\n' >&2
+  printf 'smoke seed did not initialize test-bear runtime plan and memory store\n' >&2
   compose_with_env exec -T bears-postgres psql -U bears -d den -c "
-    SELECT b.slug, ba.profile, ba.binding_id, ba.provisioning_status, ba.last_provisioning_error
-    FROM bears b
-    LEFT JOIN bear_profile_bindings ba ON ba.bear_id = b.id
-    WHERE b.slug = 'test-bear'
-    ORDER BY ba.profile;
+    SELECT id, slug, runtime_plan
+    FROM bears
+    WHERE slug = 'test-bear';
   " >&2 || true
   return 1
 }
@@ -191,6 +189,6 @@ compose_with_env up -d --force-recreate bears-bifrost bears-den
 wait_compose_service_ready bears-bifrost
 wait_compose_service_ready bears-den
 
-apply_smoke_seed_until_pair_ready
+apply_smoke_seed_until_initialized
 
 "${ROOT}/scripts/smoke.sh"

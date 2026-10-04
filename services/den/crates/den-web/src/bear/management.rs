@@ -38,7 +38,7 @@ use den_memory::tools::sqlite_collect_role_logical_paths;
 use den_service::bears::{
     db as bears_db,
     db::{role_is_bear_admin, BearParams, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER},
-    provision, Bear, BearProfile,
+    provision, Bear, RuntimeContextLabel,
 };
 use den_service::client_sessions;
 
@@ -421,9 +421,14 @@ async fn bear_work_surface_rows(
     let mut rows = Vec::new();
     let store = stores.store_for_bear(bear_id).await?;
 
-    let core_paths = sqlite_collect_role_logical_paths(&store, BearProfile::Pair.as_str()).await?;
+    let core_paths = sqlite_collect_role_logical_paths(
+        &store,
+        RuntimeContextLabel::ArmatureConversation.as_str(),
+    )
+    .await?;
     let pair_paths = &core_paths;
-    let work_paths = sqlite_collect_role_logical_paths(&store, BearProfile::Work.as_str()).await?;
+    let work_paths =
+        sqlite_collect_role_logical_paths(&store, RuntimeContextLabel::JobRun.as_str()).await?;
 
     // Work surfaces are canonical core memory under `core/work_surfaces/{slug}/...`.
     let mut slugs: Vec<String> = core_paths
@@ -471,8 +476,14 @@ async fn bear_work_surface_rows(
             .iter()
             .any(|path| path == &work_understanding_path);
         let workplace_labels = [
-            (BearProfile::Pair, pair_current_understanding_present),
-            (BearProfile::Work, work_current_understanding_present),
+            (
+                RuntimeContextLabel::ArmatureConversation,
+                pair_current_understanding_present,
+            ),
+            (
+                RuntimeContextLabel::JobRun,
+                work_current_understanding_present,
+            ),
         ]
         .into_iter()
         .filter(|(_, present)| *present)
@@ -730,16 +741,6 @@ async fn bear_plan_mode_rows(
         .collect())
 }
 
-async fn chat_agent_id_for_bear(
-    pool: &sqlx::PgPool,
-    bear: &Bear,
-) -> Result<Option<String>, CustomError> {
-    bears_db::profile_binding_id(pool, bear.id, BearProfile::Chat)
-        .await
-        .map(|v| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
-        .map_err(CustomError::from)
-}
-
 fn web_href_for_conversation(slug: &str, conversation_id: &str) -> String {
     if conversation_id == "default" {
         format!("/bear/{slug}/")
@@ -913,15 +914,10 @@ async fn new_bear_post(
 
         bears_db::grant_membership(state.sqlx_pool(), user_id, id, Some(BEAR_ROLE_ADMIN)).await?;
 
-        if let Err(e) = provision::provision_bear_if_configured(
-            state.sqlx_pool(),
-            state.config.as_ref(),
-            &state.memory_stores,
-            id,
-        )
-        .await
+        if let Err(e) =
+            provision::initialize_bear_native(state.sqlx_pool(), &state.memory_stores, id).await
         {
-            tracing::warn!(%id, "Native profile provision failed: {e}");
+            tracing::warn!(%id, "Bear initialization failed: {e}");
             let page = bear_new_form_context(&state, &form).await;
             return render_template(
                 &state,
@@ -934,17 +930,6 @@ async fn new_bear_post(
                 },
             )
             .await;
-        }
-
-        if let Err(err) = provision::reconcile_bear_native(
-            state.sqlx_pool(),
-            state.config.as_ref(),
-            &state.memory_stores,
-            id,
-        )
-        .await
-        {
-            tracing::warn!(bear_id = %id, error = %err, "Native profile reconcile after member bear create failed");
         }
 
         let bear = bears_db::get_bear(state.sqlx_pool(), id)
@@ -1070,15 +1055,11 @@ async fn bear_edit_overview_post(
         )
         .await?;
 
-        if let Err(e) = provision::reconcile_bear_native(
-            state.sqlx_pool(),
-            state.config.as_ref(),
-            &state.memory_stores,
-            bear.id,
-        )
-        .await
+        if let Err(e) =
+            provision::initialize_bear_native(state.sqlx_pool(), &state.memory_stores, bear.id)
+                .await
         {
-            tracing::warn!(bear_id = %bear.id, "Native profile reconcile after overview edit failed: {e}");
+            tracing::warn!(bear_id = %bear.id, "Bear initialization after overview edit failed: {e}");
             let bear = bears_db::get_bear(state.sqlx_pool(), bear.id)
                 .await?
                 .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
@@ -1092,7 +1073,7 @@ async fn bear_edit_overview_post(
                     bear,
                     bear_nav_active => "identity",
                     provision_error => format!(
-                        "Bear was saved in Den, but profile reconcile failed: {e}"
+                        "Bear was saved in Den, but initialization failed: {e}"
                     ),
                 },
             )
@@ -1195,15 +1176,11 @@ async fn bear_edit_prompt_post(
         )
         .await?;
 
-        if let Err(e) = provision::reconcile_bear_native(
-            state.sqlx_pool(),
-            state.config.as_ref(),
-            &state.memory_stores,
-            bear.id,
-        )
-        .await
+        if let Err(e) =
+            provision::initialize_bear_native(state.sqlx_pool(), &state.memory_stores, bear.id)
+                .await
         {
-            tracing::warn!(bear_id = %bear.id, "Native profile reconcile after prompt edit failed: {e}");
+            tracing::warn!(bear_id = %bear.id, "Bear initialization after prompt edit failed: {e}");
             return render_template(
                 &state,
                 "bear/edit_prompt.html",
@@ -1214,7 +1191,7 @@ async fn bear_edit_prompt_post(
                     bear,
                     bear_nav_active => "identity",
                     provision_error => format!(
-                        "Bear was saved in Den, but profile reconcile failed: {e}"
+                        "Bear was saved in Den, but initialization failed: {e}"
                     ),
                 },
             )
@@ -1327,15 +1304,11 @@ async fn bear_edit_configuration_post(
         )
         .await?;
 
-        if let Err(e) = provision::reconcile_bear_native(
-            state.sqlx_pool(),
-            state.config.as_ref(),
-            &state.memory_stores,
-            bear.id,
-        )
-        .await
+        if let Err(e) =
+            provision::initialize_bear_native(state.sqlx_pool(), &state.memory_stores, bear.id)
+                .await
         {
-            tracing::warn!(bear_id = %bear.id, "Native profile reconcile after configuration edit failed: {e}");
+            tracing::warn!(bear_id = %bear.id, "Bear initialization after configuration edit failed: {e}");
             let bear = bears_db::get_bear(state.sqlx_pool(), bear.id)
                 .await?
                 .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
@@ -1350,7 +1323,7 @@ async fn bear_edit_configuration_post(
                     bear,
                     bear_nav_active => "identity",
                     provision_error => format!(
-                        "Bear was saved in Den, but profile reconcile failed: {e}"
+                        "Bear was saved in Den, but initialization failed: {e}"
                     ),
                     ..page
                 },

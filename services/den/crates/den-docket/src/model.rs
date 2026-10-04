@@ -12,7 +12,7 @@ use std::fmt::{self, Write as _};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use den_core::{BearProfile, DenError};
+use den_core::{DenError, RuntimeContextLabel};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1161,7 +1161,7 @@ pub struct DocketJobListFilter {
 pub struct DocketJobUpdate {
     pub bear_id: Uuid,
     pub job_id: Uuid,
-    pub actor_role: BearProfile,
+    pub actor_role: RuntimeContextLabel,
     pub actor_user_id: Option<i32>,
     pub actor_agent_id: Option<String>,
     pub goal: Option<String>,
@@ -1183,7 +1183,7 @@ pub struct DocketCriterionStateUpdate {
     pub criterion_id: Uuid,
     pub status: DocketCriterionStatus,
     pub evidence: Option<serde_json::Value>,
-    pub actor_role: BearProfile,
+    pub actor_role: RuntimeContextLabel,
     pub actor_user_id: Option<i32>,
     pub actor_agent_id: Option<String>,
 }
@@ -1192,7 +1192,7 @@ pub struct DocketCriterionStateUpdate {
 pub struct DocketJobExecuteRequest {
     pub bear_id: Uuid,
     pub job_id: Uuid,
-    pub actor_role: BearProfile,
+    pub actor_role: RuntimeContextLabel,
     pub actor_user_id: Option<i32>,
     pub actor_agent_id: Option<String>,
     pub session_id: Option<String>,
@@ -2020,7 +2020,7 @@ pub struct DocketEntryCreate {
     /// For questions, the active human session checked again by Docket. A role
     /// label or an arbitrary Job ID cannot establish session-task authority.
     pub question_client_session_id: Option<String>,
-    pub actor_role: BearProfile,
+    pub actor_role: RuntimeContextLabel,
     pub actor_user_id: Option<i32>,
     pub actor_agent_id: Option<String>,
 }
@@ -2036,7 +2036,7 @@ pub struct DocketEntryListFilter {
 pub struct DocketEntryPromotion {
     pub bear_id: Uuid,
     pub entry_id: Uuid,
-    pub actor_role: BearProfile,
+    pub actor_role: RuntimeContextLabel,
     pub actor_user_id: Option<i32>,
     pub actor_agent_id: Option<String>,
 }
@@ -2114,7 +2114,7 @@ pub struct DocketTaskUpdate {
     pub bear_id: Uuid,
     pub job_id: Option<Uuid>,
     pub task_id: Uuid,
-    pub actor_role: BearProfile,
+    pub actor_role: RuntimeContextLabel,
     pub actor_user_id: Option<i32>,
     pub actor_agent_id: Option<String>,
     pub definition: DocketTaskDefinitionPatch,
@@ -2172,7 +2172,7 @@ pub struct DocketSessionTaskSettlement {
     pub outcome_disposition: Option<DocketOutcomeDisposition>,
     pub result_refs: Option<serde_json::Value>,
     pub result_summary: Option<String>,
-    pub actor_role: BearProfile,
+    pub actor_role: RuntimeContextLabel,
     pub actor_user_id: Option<i32>,
     pub actor_agent_id: Option<String>,
 }
@@ -2482,7 +2482,7 @@ pub fn task_list_projection_from_docket_job(
 
 pub fn task_list_projection_from_session_tasks(
     bear_id: Uuid,
-    owner_profile: BearProfile,
+    owner_profile: RuntimeContextLabel,
     conversation_id: &str,
     session_anchor_id: Uuid,
     source_client_session_id: Option<&str>,
@@ -2503,7 +2503,7 @@ pub fn task_list_projection_from_session_tasks(
 /// when it remains actionable in the anchored task tree.
 pub fn task_list_projection_from_session_tasks_with_current_task(
     bear_id: Uuid,
-    owner_profile: BearProfile,
+    owner_profile: RuntimeContextLabel,
     conversation_id: &str,
     session_anchor_id: Uuid,
     source_client_session_id: Option<&str>,
@@ -3237,7 +3237,7 @@ mod tests {
         };
         let planned = task_list_projection_from_session_tasks(
             bear_id,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             "conversation-1",
             session_anchor_id,
             Some("client-session"),
@@ -3258,7 +3258,7 @@ mod tests {
 
         let active = task_list_projection_from_session_tasks(
             bear_id,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             "conversation-1",
             session_anchor_id,
             Some("client-session"),
@@ -3284,7 +3284,7 @@ mod tests {
 
         let completed = task_list_projection_from_session_tasks(
             bear_id,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             "conversation-1",
             session_anchor_id,
             Some("client-session"),
@@ -3312,7 +3312,7 @@ mod tests {
             Some(Uuid::parse_str("00000000-0000-0000-0000-000000000003").unwrap());
         let settled = task_list_projection_from_session_tasks(
             bear_id,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             "conversation-1",
             session_anchor_id,
             Some("client-session"),
@@ -3330,7 +3330,7 @@ mod tests {
 
         let blocked_after_settlement = task_list_projection_from_session_tasks(
             bear_id,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             "conversation-1",
             session_anchor_id,
             Some("client-session"),
@@ -3364,7 +3364,7 @@ mod tests {
 
         let conflict = task_list_projection_from_session_tasks(
             bear_id,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             "conversation-1",
             session_anchor_id,
             Some("client-session"),
@@ -3432,7 +3432,7 @@ mod tests {
 
         let projection = task_list_projection_from_session_tasks_with_current_task(
             bear_id,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             "conversation-1",
             session_anchor_id,
             Some("client-session"),
@@ -3486,7 +3486,7 @@ mod tests {
 
         let projection = task_list_projection_from_session_tasks_with_current_task(
             bear_id,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             "conversation-1",
             session_anchor_id,
             Some("client-session"),

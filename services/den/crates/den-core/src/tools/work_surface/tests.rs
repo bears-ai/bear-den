@@ -1,10 +1,11 @@
 use super::{
-    create_work_surface_scaffold, infer_work_surface_hint, ScaffoldRequest, WorkSurfaceOps,
-    WorkSurfaceScaffoldOutcome, WorkSurfaceSessionAnchor,
+    create_work_surface_scaffold, infer_work_surface_hint, orient_work_surface, ScaffoldRequest,
+    WorkSurfaceOps, WorkSurfaceScaffoldOutcome, WorkSurfaceSessionAnchor,
 };
 use crate::tools::context::DenToolInvocationContext;
 use crate::{
-    ArmatureAvailability, BearProfile, DenError, EffectivePolicy, Governance, TurnExecutionOrigin,
+    ArmatureAvailability, DenError, EffectivePolicy, Governance, RuntimeContextLabel,
+    TurnExecutionOrigin,
 };
 use serde_json::json;
 use std::{
@@ -18,7 +19,7 @@ fn pair_context() -> DenToolInvocationContext {
         bear_id: uuid::Uuid::nil(),
         bear_slug: "test".to_string(),
         binding_id: "agent".to_string(),
-        profile: Some(BearProfile::Pair),
+        profile: Some(RuntimeContextLabel::ArmatureConversation),
         user_id: 1,
         username: Some("tester".to_string()),
         membership_role: None,
@@ -54,14 +55,14 @@ fn immediate<T>(future: impl Future<Output = T>) -> T {
 
 #[derive(Default)]
 struct RecordingOps {
-    writes: Mutex<Vec<(BearProfile, Vec<ScaffoldRequest>)>>,
+    writes: Mutex<Vec<(RuntimeContextLabel, Vec<ScaffoldRequest>)>>,
 }
 
 impl WorkSurfaceOps for RecordingOps {
     async fn write_scaffold(
         &self,
         _: uuid::Uuid,
-        role: BearProfile,
+        role: RuntimeContextLabel,
         _: &str,
         _: &str,
         requests: Vec<ScaffoldRequest>,
@@ -76,7 +77,7 @@ impl WorkSurfaceOps for RecordingOps {
     async fn orient(
         &self,
         _: &DenToolInvocationContext,
-        _: BearProfile,
+        _: RuntimeContextLabel,
     ) -> Result<serde_json::Value, DenError> {
         unreachable!()
     }
@@ -109,7 +110,7 @@ fn work_origin_cannot_scaffold_with_claimed_pair_profile_and_client_id() {
             &policy,
             scaffold_arguments(),
         ));
-        assert!(matches!(result, Err(DenError::Authorization(_))));
+        assert!(matches!(result, Err(DenError::NotFound(_))));
         assert!(ops.writes.lock().unwrap().is_empty());
     }
 }
@@ -135,7 +136,7 @@ fn noninteractive_editor_governance_cannot_scaffold_before_storage() {
             scaffold_arguments(),
         ));
         assert!(
-            matches!(result, Err(DenError::Authorization(_))),
+            matches!(result, Err(DenError::NotFound(_))),
             "{governance:?}"
         );
         assert!(ops.writes.lock().unwrap().is_empty());
@@ -143,37 +144,41 @@ fn noninteractive_editor_governance_cannot_scaffold_before_storage() {
 }
 
 #[test]
-fn interactive_scaffold_uses_policy_role_for_paths_and_provenance() {
-    let mut context = pair_context();
-    context.profile = Some(BearProfile::Work);
-    context.client_session_id = None;
-    let policy = EffectivePolicy::compile_for_origin(
-        TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
-        Governance::Interactive,
-    );
-    let ops = RecordingOps::default();
-    let result = immediate(create_work_surface_scaffold(
-        &ops,
-        &context,
-        &policy,
-        scaffold_arguments(),
-    ))
-    .unwrap();
-    assert_eq!(
-        result["work_surface"]["paths"]["current_understanding"],
-        "pair/work_surfaces/example/current-understanding.md"
-    );
-    let writes = ops.writes.lock().unwrap();
-    assert_eq!(writes.len(), 1);
-    assert_eq!(writes[0].0, BearProfile::Pair);
-    assert!(writes[0].1.iter().any(
-        |request| request.target_path == "pair/work_surfaces/example/current-understanding.md"
-    ));
+fn retired_work_surface_invocations_deny_every_profile_before_storage() {
+    for role in [
+        RuntimeContextLabel::ChannelConversation,
+        RuntimeContextLabel::ArmatureConversation,
+        RuntimeContextLabel::JobRun,
+        RuntimeContextLabel::Curation,
+        RuntimeContextLabel::Observation,
+    ] {
+        let mut context = pair_context();
+        context.profile = Some(role);
+        let policy = EffectivePolicy::compile_for_origin(
+            TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+            Governance::Interactive,
+        );
+        let ops = RecordingOps::default();
+        for arguments in [scaffold_arguments(), json!(null)] {
+            assert!(matches!(
+                immediate(create_work_surface_scaffold(
+                    &ops, &context, &policy, arguments
+                )),
+                Err(DenError::NotFound(_))
+            ));
+        }
+        assert!(matches!(
+            immediate(orient_work_surface(&ops, &context, role)),
+            Err(DenError::NotFound(_))
+        ));
+        assert!(ops.writes.lock().unwrap().is_empty());
+    }
 }
 
 #[test]
 fn infer_work_surface_hint_surfaces_trusted_candidates() {
-    let payload = infer_work_surface_hint(&pair_context(), BearProfile::Pair);
+    let payload =
+        infer_work_surface_hint(&pair_context(), RuntimeContextLabel::ArmatureConversation);
     assert_eq!(payload["workplace"]["profile"], json!("pair"));
     assert_eq!(payload["workplace"]["memory_surface"], json!("pair/"));
     assert_eq!(payload["work_surface"]["status"], json!("candidate"));
@@ -207,7 +212,7 @@ fn infer_work_surface_hint_reports_unresolved_without_trusted_candidates() {
     context.conversation_selection = None;
     context.workspace_roots.clear();
 
-    let payload = infer_work_surface_hint(&context, BearProfile::Pair);
+    let payload = infer_work_surface_hint(&context, RuntimeContextLabel::ArmatureConversation);
     assert_eq!(payload["work_surface"]["status"], json!("unresolved"));
     assert_eq!(payload["work_surface"]["confidence"], json!("none"));
     assert_eq!(

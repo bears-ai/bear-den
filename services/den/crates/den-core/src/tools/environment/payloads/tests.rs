@@ -6,7 +6,7 @@ use crate::tools::arguments::DenToolChannelContext;
 use crate::tools::context::DenToolInvocationContext;
 use crate::tools::descriptor::builtin_den_tool_descriptors_for_profile;
 use crate::tools::prompt_memory::PromptMemoryVisibility;
-use crate::BearProfile;
+use crate::RuntimeContextLabel;
 use serde_json::json;
 
 fn pair_context() -> DenToolInvocationContext {
@@ -14,7 +14,7 @@ fn pair_context() -> DenToolInvocationContext {
         bear_id: uuid::Uuid::nil(),
         bear_slug: "test".to_string(),
         binding_id: "agent".to_string(),
-        profile: Some(BearProfile::Pair),
+        profile: Some(RuntimeContextLabel::ArmatureConversation),
         user_id: 1,
         username: Some("tester".to_string()),
         membership_role: None,
@@ -43,7 +43,7 @@ fn bound_session_info_does_not_claim_profile_memory_scopes() {
     let status = json!({ "scope": "bound", "file_count": 1 });
     let payload = session_info_payload_with_visibility(
         &context,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         None,
         2,
         &status,
@@ -65,7 +65,7 @@ fn bound_session_info_does_not_claim_profile_memory_scopes() {
     );
     let unknown = session_info_payload_with_visibility(
         &context,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         None,
         2,
         &status,
@@ -81,7 +81,7 @@ fn pair_session_info_context_fields_distinguish_role_contract_from_runtime() {
     let context = pair_context();
     let payload = session_info_payload(
         &context,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         None,
         2,
         &json!({ "available": true }),
@@ -110,7 +110,7 @@ fn pair_session_info_includes_runtime_health_and_context_budget_defaults() {
     let context = pair_context();
     let payload = session_info_payload(
         &context,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         None,
         2,
         &json!({ "available": true }),
@@ -162,7 +162,7 @@ fn pair_session_info_uses_context_runtime_health_when_available() {
     }));
     let payload = session_info_payload(
         &context,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         None,
         2,
         &json!({ "available": true }),
@@ -215,7 +215,7 @@ fn session_info_preserves_structured_runtime_budget_and_task_focus_state() {
     }));
     let payload = session_info_payload(
         &context,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         None,
         2,
         &json!({ "available": true }),
@@ -243,11 +243,12 @@ fn session_info_preserves_structured_runtime_budget_and_task_focus_state() {
 
 #[test]
 fn chat_profile_exposes_memory_read_and_write_tools() {
-    let names: Vec<_> = builtin_den_tool_descriptors_for_profile(BearProfile::Chat)
-        .into_iter()
-        .filter(|descriptor| descriptor.domain == "memory")
-        .map(|descriptor| descriptor.provider_name)
-        .collect();
+    let names: Vec<_> =
+        builtin_den_tool_descriptors_for_profile(RuntimeContextLabel::ChannelConversation)
+            .into_iter()
+            .filter(|descriptor| descriptor.domain == "memory")
+            .map(|descriptor| descriptor.provider_name)
+            .collect();
     assert!(names.contains(&"memory_search".to_string()));
     assert!(names.contains(&"memory_read".to_string()));
     assert!(names.contains(&"memory_write_entry".to_string()));
@@ -260,7 +261,7 @@ fn chat_session_info_available_tools_match_memory_roster() {
         bear_id: uuid::Uuid::nil(),
         bear_slug: "meta".to_string(),
         binding_id: "agent-123".to_string(),
-        profile: Some(BearProfile::Chat),
+        profile: Some(RuntimeContextLabel::ChannelConversation),
         user_id: 7,
         username: Some("gerwitz".to_string()),
         membership_role: Some("admin".to_string()),
@@ -283,7 +284,7 @@ fn chat_session_info_available_tools_match_memory_roster() {
     };
     let payload = session_info_payload(
         &context,
-        BearProfile::Chat,
+        RuntimeContextLabel::ChannelConversation,
         None,
         2,
         &json!({ "available": true }),
@@ -304,7 +305,7 @@ fn bear_environment_payload_exposes_baseline_sections() {
         bear_id: uuid::Uuid::nil(),
         bear_slug: "meta".to_string(),
         binding_id: "agent-123".to_string(),
-        profile: Some(BearProfile::Pair),
+        profile: Some(RuntimeContextLabel::ArmatureConversation),
         user_id: 7,
         username: Some("gerwitz".to_string()),
         membership_role: Some("admin".to_string()),
@@ -334,7 +335,7 @@ fn bear_environment_payload_exposes_baseline_sections() {
     };
     let payload = bear_environment_payload(
         &context,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         None,
         2,
         &json!({ "configured": false, "available": false }),
@@ -366,7 +367,7 @@ fn bear_environment_prefers_trusted_workspace_snapshot_when_present() {
     let context = pair_context();
     let payload = bear_environment_payload(
         &context,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         None,
         2,
         &json!({ "configured": false, "available": false }),
@@ -392,7 +393,7 @@ fn bear_environment_rejects_unknown_trusted_workspace_fields() {
     let context = pair_context();
     let payload = bear_environment_payload(
         &context,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         None,
         2,
         &json!({ "configured": false, "available": false }),
@@ -430,8 +431,14 @@ fn trusted_workspace_roots_reject_unknown_adapter_fields() {
 #[test]
 fn session_info_context_surfaces_degrade_to_explicit_unknowns() {
     let context = pair_context();
-    let payload =
-        session_info_payload(&context, BearProfile::Pair, None, 2, &json!({}), &json!({}));
+    let payload = session_info_payload(
+        &context,
+        RuntimeContextLabel::ArmatureConversation,
+        None,
+        2,
+        &json!({}),
+        &json!({}),
+    );
 
     assert_eq!(
         payload["context_surfaces"]["schema"],
@@ -511,8 +518,14 @@ fn session_info_context_surfaces_include_projection_and_recall_diagnostics_when_
         "next_surface": "memory_search"
     }));
 
-    let payload =
-        session_info_payload(&context, BearProfile::Pair, None, 2, &json!({}), &json!({}));
+    let payload = session_info_payload(
+        &context,
+        RuntimeContextLabel::ArmatureConversation,
+        None,
+        2,
+        &json!({}),
+        &json!({}),
+    );
     let layers = payload["context_surfaces"]["layers"]
         .as_array()
         .expect("context layers array");

@@ -1,4 +1,4 @@
-//! Native agent runtime support: role harness + registry, turn state, runtime
+//! Native agent runtime support: role harness, turn state, runtime
 //! conversation reads, context compaction (+ observability/store), runtime
 //! the provider client, and BearWire projection.
 
@@ -11,7 +11,6 @@ pub mod conversations;
 pub mod pair_turn;
 pub mod provider;
 pub mod role;
-pub mod role_registry;
 pub mod task_context;
 pub(crate) mod text;
 pub mod turn_state;

@@ -3,13 +3,15 @@ use std::sync::OnceLock;
 use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
 
+#[cfg(test)]
+use super::managed_blocks::managed_space_block_key;
 use super::{
-    managed_blocks::{managed_space_block_key, ResolvedManagedBlockSet},
+    managed_blocks::ResolvedManagedBlockSet,
     prompt_fragments::{
         render_compile_time_fragment, render_compile_time_text, CompileTimePromptContext,
         PromptFragmentRegistry,
     },
-    Bear, BearProfile,
+    Bear, RuntimeContextLabel,
 };
 use den_core::DenError;
 
@@ -20,6 +22,7 @@ const DEN_BASELINE_SOURCE: &str =
     include_str!("../../../../prompts/fragments/base/den_baseline.md");
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct RoleContracts {
     #[serde(alias = "talk")]
     pub chat: String,
@@ -30,13 +33,25 @@ pub struct RoleContracts {
 }
 
 impl RoleContracts {
-    pub fn get(&self, role: BearProfile) -> &str {
+    fn is_empty(&self) -> bool {
+        [
+            &self.chat,
+            &self.pair,
+            &self.curate,
+            &self.work,
+            &self.watch,
+        ]
+        .iter()
+        .all(|text| text.is_empty())
+    }
+
+    pub fn get(&self, role: RuntimeContextLabel) -> &str {
         match role {
-            BearProfile::Chat => &self.chat,
-            BearProfile::Pair => &self.pair,
-            BearProfile::Curate => &self.curate,
-            BearProfile::Work => &self.work,
-            BearProfile::Watch => &self.watch,
+            RuntimeContextLabel::ChannelConversation => &self.chat,
+            RuntimeContextLabel::ArmatureConversation => &self.pair,
+            RuntimeContextLabel::Curation => &self.curate,
+            RuntimeContextLabel::JobRun => &self.work,
+            RuntimeContextLabel::Observation => &self.watch,
         }
     }
 }
@@ -51,6 +66,7 @@ pub struct BearContextProfile {
     pub template_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role_contract_version: Option<String>,
+    #[serde(default, skip_serializing_if = "RoleContracts::is_empty")]
     pub role_contracts: RoleContracts,
     #[serde(default)]
     pub user_steering: String,
@@ -66,6 +82,7 @@ fn default_composition_version() -> u32 {
     CONTEXT_PROFILE_VERSION
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize)]
 pub struct ComposedRoleContext {
     pub role: String,
@@ -129,17 +146,19 @@ fn push_section(out: &mut String, heading: &str, body: &str) {
     out.push_str(body);
 }
 
+#[cfg(test)]
 pub fn render_managed_role_prompt(
     bear: &Bear,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     resolved: Option<&ResolvedManagedBlockSet>,
 ) -> Result<String, DenError> {
     render_managed_role_prompt_with_registry(bear, role, resolved, None)
 }
 
+#[cfg(test)]
 pub fn render_managed_role_prompt_with_registry(
     bear: &Bear,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     resolved: Option<&ResolvedManagedBlockSet>,
     registry: Option<&PromptFragmentRegistry>,
 ) -> Result<String, DenError> {
@@ -195,17 +214,28 @@ pub fn render_managed_role_prompt_with_registry(
     let mut composed = String::new();
     push_section(&mut composed, "Den baseline", &den_baseline_text);
     let instructions_heading = match role {
-        BearProfile::Chat => "Space instructions: Conversation Space".to_string(),
-        BearProfile::Pair => "Space instructions: Collaboration Space".to_string(),
-        BearProfile::Curate => "Space instructions: Curation Space".to_string(),
-        BearProfile::Work => "Space instructions: Execution Space".to_string(),
-        BearProfile::Watch => "Space instructions: Observation Space".to_string(),
+        RuntimeContextLabel::ChannelConversation => {
+            "Space instructions: Conversation Space".to_string()
+        }
+        RuntimeContextLabel::ArmatureConversation => {
+            "Space instructions: Collaboration Space".to_string()
+        }
+        RuntimeContextLabel::Curation => "Space instructions: Curation Space".to_string(),
+        RuntimeContextLabel::JobRun => "Space instructions: Execution Space".to_string(),
+        RuntimeContextLabel::Observation => "Space instructions: Observation Space".to_string(),
     };
     push_section(&mut composed, &instructions_heading, &role_contract);
     push_section(&mut composed, "User steering", &user_steering);
     push_section(&mut composed, "Bear context", &bear_context);
 
     Ok(composed)
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct BoundBaseContext {
+    user_steering: String,
+    bear_context: String,
 }
 
 /// Common identity/steering for hat-bound turns. Stance contracts are
@@ -217,9 +247,14 @@ pub fn render_bound_base_prompt_with_registry(
     resolved: Option<&ResolvedManagedBlockSet>,
     registry: &PromptFragmentRegistry,
 ) -> Result<String, DenError> {
-    let Some(profile) = context_profile_from_json(&bear.context_profile)? else {
-        return Ok(bear.system_prompt.trim().to_string());
-    };
+    // Historical contracts and metadata are not inputs to bound compilation.
+    let profile: BoundBaseContext = bear
+        .context_profile
+        .as_ref()
+        .map(|profile| serde_json::from_value(profile.0.clone()))
+        .transpose()
+        .map_err(|error| DenError::Parsing(format!("invalid bound Bear context: {error}")))?
+        .unwrap_or_default();
     let context = CompileTimePromptContext {
         bear_name: &bear.name,
         bear_slug: &bear.slug,
@@ -265,9 +300,10 @@ pub fn render_bound_base_prompt_with_registry(
     Ok(composed)
 }
 
+#[cfg(test)]
 pub fn compose_role_context(
     bear: &Bear,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     runtime_context: Option<&str>,
 ) -> Result<ComposedRoleContext, DenError> {
     let runtime_context = runtime_context.map(str::trim).filter(|s| !s.is_empty());
@@ -325,10 +361,6 @@ pub fn compose_role_context(
         composed_prompt: composed,
         is_legacy: false,
     })
-}
-
-pub fn render_role_prompt(bear: &Bear, role: BearProfile) -> Result<String, DenError> {
-    Ok(compose_role_context(bear, role, None)?.composed_prompt)
 }
 
 fn default_pair_contract_for_bear(name: &str) -> String {

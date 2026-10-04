@@ -4,7 +4,7 @@ use den_docket::{
     TaskListSourceRef, TaskListVisibility,
 };
 use den_service::{
-    bears::{db, db::BearParams, BearProfile},
+    bears::{db, db::BearParams, RuntimeContextLabel},
     work_surfaces::{self, NewWorkSurface},
 };
 use serde_json::json;
@@ -55,7 +55,7 @@ async fn fixture(
         db::grant_membership(pool, user_id, bear_id, Some(role))
             .await
             .unwrap();
-        let context: DenToolInvocationContext = serde_json::from_value(json!({
+        let mut context: DenToolInvocationContext = serde_json::from_value(json!({
             "bear_id": bear_id,
             "bear_slug": "workflow-access",
             "binding_id": "pair-test",
@@ -67,6 +67,9 @@ async fn fixture(
             "channel": {}
         }))
         .unwrap();
+        crate::core::tools::tests::source_fixture::admit_tool_source(pool, &mut context)
+            .await
+            .unwrap();
         users.push(context);
     }
     let surface = work_surfaces::create_surface(
@@ -185,7 +188,7 @@ async fn pair_job_tools_hide_private_jobs_before_reads_or_mutations(pool: PgPool
         update_job(
             &pool,
             &member,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             json!({"job_id": private, "goal": "stolen"}),
         )
         .await,
@@ -194,7 +197,7 @@ async fn pair_job_tools_hide_private_jobs_before_reads_or_mutations(pool: PgPool
         set_job_lifecycle(
             &pool,
             &member,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             json!({"job_id": private}),
             DocketJobStatus::Cancelled,
         )
@@ -216,7 +219,7 @@ async fn pair_job_tools_hide_private_jobs_before_reads_or_mutations(pool: PgPool
         execute_job(
             &pool,
             &member,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             WorkflowAuthority {
                 origin: TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
                 governance: Governance::Interactive,
@@ -229,7 +232,7 @@ async fn pair_job_tools_hide_private_jobs_before_reads_or_mutations(pool: PgPool
         reconcile_job_execution(
             &pool,
             &member,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             WorkflowAuthority {
                 origin: TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
                 governance: Governance::Interactive,
@@ -238,7 +241,7 @@ async fn pair_job_tools_hide_private_jobs_before_reads_or_mutations(pool: PgPool
         )
         .await,
     );
-    denied(evaluate_criterion(&pool, &member, BearProfile::Pair, json!({
+    denied(evaluate_criterion(&pool, &member, RuntimeContextLabel::ArmatureConversation, json!({
         "job_id": private, "run_id": Uuid::new_v4(), "criterion_id": Uuid::new_v4(), "status": "met"
     })).await);
     denied(
@@ -258,7 +261,7 @@ async fn pair_job_tools_hide_private_jobs_before_reads_or_mutations(pool: PgPool
         update_task(
             &pool,
             &member,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             json!({"task_id": task_id, "title": "stolen"}),
         )
         .await,
@@ -280,7 +283,7 @@ async fn pair_job_tools_hide_private_jobs_before_reads_or_mutations(pool: PgPool
         settle_execution_task(
             &pool,
             &member,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             json!({
                 "job_id": private, "task_id": task_id, "status": "done"
             }),
@@ -291,7 +294,7 @@ async fn pair_job_tools_hide_private_jobs_before_reads_or_mutations(pool: PgPool
         update_current_task_status(
             &pool,
             &member,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             json!({
                 "job_id": private, "task_id": task_id,
                 "run_id": before.job.current_run_id, "status": "done"
@@ -300,7 +303,7 @@ async fn pair_job_tools_hide_private_jobs_before_reads_or_mutations(pool: PgPool
         .await,
     );
     denied(
-        create_task(&pool, &member, BearProfile::Pair, WorkflowAuthority { origin: TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected), governance: Governance::Interactive }, json!({
+        create_task(&pool, &member, RuntimeContextLabel::ArmatureConversation, WorkflowAuthority { origin: TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected), governance: Governance::Interactive }, json!({
             "job_id": private, "title": "stolen", "body": "stolen", "completion_criteria": ["done"]
         }))
         .await,
@@ -309,7 +312,7 @@ async fn pair_job_tools_hide_private_jobs_before_reads_or_mutations(pool: PgPool
         append_docket_entry(
             &pool,
             &member,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             WorkflowAuthority {
                 origin: TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
                 governance: Governance::Interactive,
@@ -325,7 +328,7 @@ async fn pair_job_tools_hide_private_jobs_before_reads_or_mutations(pool: PgPool
         checkout_task_list(
             &pool,
             &member,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             WorkflowAuthority {
                 origin: TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
                 governance: Governance::Interactive,
@@ -376,7 +379,7 @@ async fn pair_job_tools_hide_private_jobs_before_reads_or_mutations(pool: PgPool
         update_job(
             &pool,
             &owner,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             json!({
                 "job_id": private, "goal": "owner update"
             })
@@ -389,7 +392,7 @@ async fn pair_job_tools_hide_private_jobs_before_reads_or_mutations(pool: PgPool
         update_job(
             &pool,
             &admin,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             json!({
                 "job_id": private, "goal": "admin update"
             })
@@ -402,7 +405,7 @@ async fn pair_job_tools_hide_private_jobs_before_reads_or_mutations(pool: PgPool
         update_job(
             &pool,
             &member,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             json!({
                 "job_id": visible, "goal": "member visible update"
             })
@@ -539,9 +542,15 @@ async fn historical_private_attachment_is_not_a_pair_task_grant(pool: PgPool) {
         .attach_task_to_session(member.bear_id, task_id, session.id)
         .await
         .unwrap();
-    let status = get_task_list_status(&pool, &member, BearProfile::Pair, json!({}), |_| json!({}))
-        .await
-        .unwrap();
+    let status = get_task_list_status(
+        &pool,
+        &member,
+        RuntimeContextLabel::ArmatureConversation,
+        json!({}),
+        |_| json!({}),
+    )
+    .await
+    .unwrap();
     assert_eq!(status["count"], 0);
     assert_eq!(status["found"], false);
     denied(
@@ -573,7 +582,7 @@ async fn historical_private_attachment_is_not_a_pair_task_grant(pool: PgPool) {
         checkout_task_list(
             &pool,
             &member,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             WorkflowAuthority {
                 origin: TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
                 governance: Governance::Interactive,

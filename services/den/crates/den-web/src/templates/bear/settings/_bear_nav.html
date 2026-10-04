@@ -36,7 +36,7 @@
   </ul>
 
   {% if can_manage_bear %}
-  <details class="bear-manage-nav-details"{% if nav_active in ["stances", "advanced"] %} open{% endif %}>
+  <details class="bear-manage-nav-details"{% if nav_active == "advanced" %} open{% endif %}>
     <summary>Internals</summary>
     <ul>
       <li><a href="/bear/{{ bear.slug | e }}/advanced"{% if nav_active == "advanced" %} aria-current="page"{% endif %}>Advanced</a></li>

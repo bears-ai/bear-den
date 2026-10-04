@@ -9,19 +9,25 @@ pub mod store;
 
 pub use store::{ScaffoldRequest, WorkSurfaceOps, WorkSurfaceScaffoldOutcome};
 
-use crate::{BearProfile, DenError, EffectivePolicy};
+use crate::{DenError, EffectivePolicy, RuntimeContextLabel};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::tools::context::DenToolInvocationContext;
-use crate::tools::support::{clean_optional, validate_bounded_text};
+use crate::tools::support::clean_optional;
 
 // Namespace projection only; execution uses the separately supplied live policy.
-fn profile_has_local_surface_memory(role: BearProfile) -> bool {
-    matches!(role, BearProfile::Pair | BearProfile::Work)
+fn profile_has_local_surface_memory(role: RuntimeContextLabel) -> bool {
+    matches!(
+        role,
+        RuntimeContextLabel::ArmatureConversation | RuntimeContextLabel::JobRun
+    )
 }
 
-pub fn infer_work_surface_hint(context: &DenToolInvocationContext, role: BearProfile) -> Value {
+pub fn infer_work_surface_hint(
+    context: &DenToolInvocationContext,
+    role: RuntimeContextLabel,
+) -> Value {
     let mut candidates = Vec::new();
     if let Some(runtime_target) = context.runtime_target.as_deref().and_then(clean_optional) {
         candidates.push(json!({
@@ -304,16 +310,18 @@ struct WorkSurfacePaths {
     registry: String,
 }
 
-fn work_surface_scaffold_paths(role: BearProfile, slug: &str) -> WorkSurfacePaths {
+fn work_surface_scaffold_paths(role: RuntimeContextLabel, slug: &str) -> WorkSurfacePaths {
     WorkSurfacePaths {
         index: format!("core/work_surfaces/{slug}/index.md"),
         overview: format!("core/work_surfaces/{slug}/overview.md"),
         glossary: format!("core/work_surfaces/{slug}/glossary.md"),
         current_understanding: match role {
-            BearProfile::Pair | BearProfile::Work => Some(format!(
-                "{}/work_surfaces/{slug}/current-understanding.md",
-                role.as_str()
-            )),
+            RuntimeContextLabel::ArmatureConversation | RuntimeContextLabel::JobRun => {
+                Some(format!(
+                    "{}/work_surfaces/{slug}/current-understanding.md",
+                    role.as_str()
+                ))
+            }
             _ => None,
         },
         registry: "core/work_surfaces/index.md".to_string(),
@@ -329,7 +337,7 @@ pub fn work_surface_entry_body(slug: &str, name: &str) -> String {
 }
 
 pub fn work_surface_scaffold_requests(
-    role: BearProfile,
+    role: RuntimeContextLabel,
     slug: &str,
     name: &str,
     overview: &str,
@@ -340,7 +348,7 @@ pub fn work_surface_scaffold_requests(
     let glossary_body =
         glossary.unwrap_or("Glossary terms for this work surface will be added here.");
     let understanding_body = current_understanding.unwrap_or(match role {
-        BearProfile::Work => {
+        RuntimeContextLabel::JobRun => {
             "Current work understanding for this work surface will be maintained here."
         }
         _ => "Current pair understanding for this work surface will be maintained here.",
@@ -402,7 +410,10 @@ pub fn work_surface_scaffold_requests(
     requests
 }
 
-pub fn work_surface_anchor_paths(role: BearProfile, slug: &str) -> (Vec<String>, Vec<String>) {
+pub fn work_surface_anchor_paths(
+    role: RuntimeContextLabel,
+    slug: &str,
+) -> (Vec<String>, Vec<String>) {
     let canonical = vec![
         format!("core/work_surfaces/{slug}/index.md"),
         format!("core/work_surfaces/{slug}/overview.md"),
@@ -412,7 +423,7 @@ pub fn work_surface_anchor_paths(role: BearProfile, slug: &str) -> (Vec<String>,
         format!("core/work_surfaces/{slug}/conventions.md"),
     ];
     let profile_local = match role {
-        BearProfile::Pair | BearProfile::Work => vec![
+        RuntimeContextLabel::ArmatureConversation | RuntimeContextLabel::JobRun => vec![
             format!(
                 "{}/work_surfaces/{slug}/current-understanding.md",
                 role.as_str()
@@ -445,83 +456,30 @@ pub fn collect_memory_tree_paths(files: &Value, out: &mut Vec<String>) {
     }
 }
 
+// Retired entry points remain fail-closed for callers using the library directly.
 pub async fn orient_work_surface(
-    ops: &impl WorkSurfaceOps,
-    context: &DenToolInvocationContext,
-    role: BearProfile,
+    _ops: &impl WorkSurfaceOps,
+    _context: &DenToolInvocationContext,
+    _role: RuntimeContextLabel,
 ) -> Result<Value, DenError> {
-    ops.orient(context, role).await
+    Err(DenError::NotFound(
+        crate::tools::constants::DEN_MEMORY_ORIENT_WORK_SURFACE.to_string(),
+    ))
 }
 
 pub async fn create_work_surface_scaffold(
-    ops: &impl WorkSurfaceOps,
-    context: &DenToolInvocationContext,
-    policy: &EffectivePolicy,
-    arguments: Value,
+    _ops: &impl WorkSurfaceOps,
+    _context: &DenToolInvocationContext,
+    _policy: &EffectivePolicy,
+    _arguments: Value,
 ) -> Result<Value, DenError> {
-    policy
-        .capabilities
-        .require(crate::BearCapability::ManageWorkSurfaces)?;
-    let role = policy.trust_profile;
-    let args: MemoryCreateWorkSurfaceScaffoldArguments = serde_json::from_value(arguments)?;
-    let work_surface_slug = normalize_work_surface_slug(&args.work_surface_slug)?;
-    let work_surface_name =
-        validate_bounded_text("work_surface_name", &args.work_surface_name, 1, 200)?;
-    let overview = validate_bounded_text("overview", &args.overview, 1, 20_000)?;
-    let glossary = args
-        .glossary
-        .as_deref()
-        .map(|value| validate_bounded_text("glossary", value, 1, 20_000))
-        .transpose()?;
-    let current_understanding = args
-        .current_understanding
-        .as_deref()
-        .map(|value| validate_bounded_text("current_understanding", value, 1, 20_000))
-        .transpose()?;
-    let requests = work_surface_scaffold_requests(
-        role,
-        &work_surface_slug,
-        &work_surface_name,
-        &overview,
-        glossary.as_deref(),
-        current_understanding.as_deref(),
-    );
-    let outcome = ops
-        .write_scaffold(
-            context.bear_id,
-            role,
-            &work_surface_slug,
-            &work_surface_name,
-            requests,
-        )
-        .await?;
-    let paths = work_surface_scaffold_paths(role, &work_surface_slug);
-    let mut payload = json!({
-        "ok": true,
-        "bear_id": context.bear_id,
-        "work_surface": {
-            "slug": work_surface_slug,
-            "name": work_surface_name,
-            "paths": {
-                "registry": paths.registry,
-                "index": paths.index,
-                "overview": paths.overview,
-                "glossary": paths.glossary,
-                "current_understanding": paths.current_understanding,
-            }
-        },
-        "updates": outcome.updates,
-    });
-    if let Some(storage) = outcome.storage {
-        if let Some(map) = payload.as_object_mut() {
-            map.insert("storage".to_string(), json!(storage));
-        }
-    }
-    Ok(payload)
+    Err(DenError::NotFound(
+        crate::tools::constants::DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD.to_string(),
+    ))
 }
 
 pub fn build_work_surface_orientation_payload(
-    role: BearProfile,
+    role: RuntimeContextLabel,
     hint_payload: &Value,
     files: &[String],
     candidate_slug: Option<String>,

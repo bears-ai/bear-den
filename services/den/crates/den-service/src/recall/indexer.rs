@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use den_core::DenError;
+use den_core::{ids::BearId, DenError};
 use den_llm::EmbeddingClient;
 
 use super::chunking::chunk_text;
@@ -74,7 +74,17 @@ impl<'a, E: PassageEmbedder> RecallIndexer<'a, E> {
     pub async fn index_record(&self, req: &IndexRequest) -> Result<IndexOutcome, DenError> {
         let std = &self.embedding_standard;
 
-        if !req.is_indexable() {
+        let owned_hat = match req.scope_hat_id {
+            Some(id) if req.is_indexable() => {
+                crate::bears::hats::list_hats(self.pool, BearId::new(req.bear_id))
+                    .await?
+                    .iter()
+                    .any(|hat| hat.id == id)
+            }
+            Some(_) => false,
+            None => true,
+        };
+        if !req.is_indexable() || !owned_hat {
             let removed = self.remove_record(req.bear_id, &req.memory_id).await?;
             return Ok(IndexOutcome {
                 skipped_not_indexable: true,
@@ -177,16 +187,24 @@ impl<'a, E: PassageEmbedder> RecallIndexer<'a, E> {
 
     /// Remove all passages for a memory record (on supersede/delete). Returns points removed.
     pub async fn remove_record(&self, bear_id: Uuid, memory_id: &str) -> Result<usize, DenError> {
-        let points = registry::delete_passages_for_memory(
-            self.pool,
-            bear_id,
-            memory_id,
-            &self.embedding_standard,
-        )
-        .await?;
+        let points: Vec<String> =
+            registry::list_passages(self.pool, bear_id, memory_id, &self.embedding_standard)
+                .await?
+                .into_iter()
+                .map(|passage| passage.point_id)
+                .collect();
         let removed = points.len();
         if !points.is_empty() {
+            // Keep the registry live until Qdrant acknowledges deletion, so a
+            // transport failure leaves reconciliation able to retry cleanup.
             self.qdrant.delete_points(&points).await?;
+            registry::delete_passages_for_memory(
+                self.pool,
+                bear_id,
+                memory_id,
+                &self.embedding_standard,
+            )
+            .await?;
         }
         Ok(removed)
     }

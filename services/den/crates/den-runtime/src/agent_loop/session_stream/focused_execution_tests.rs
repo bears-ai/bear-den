@@ -16,7 +16,10 @@ async fn final_gate_denies_restricted_governance_and_channel_even_with_forged_la
             Governance::Interactive,
         ),
     ] {
-        for profile in [BearProfile::Pair, BearProfile::Work] {
+        for profile in [
+            RuntimeContextLabel::ArmatureConversation,
+            RuntimeContextLabel::JobRun,
+        ] {
             for owner_label in ["pair", "work", "forged-owner"] {
                 let mut session = test_session("focused-denial:client-test", Uuid::new_v4());
                 session.origin = origin;
@@ -51,7 +54,11 @@ async fn final_gate_allows_verified_editor_and_work_independent_of_metadata() {
         TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Absent),
     ] {
         for governance in [Governance::Interactive, Governance::AutonomousContinuation] {
-            for profile in [BearProfile::Chat, BearProfile::Watch, BearProfile::Curate] {
+            for profile in [
+                RuntimeContextLabel::ChannelConversation,
+                RuntimeContextLabel::Observation,
+                RuntimeContextLabel::Curation,
+            ] {
                 for owner_label in ["chat", "watch", "curate", "forged-owner"] {
                     let mut session = test_session("focused-allow:client-test", Uuid::new_v4());
                     session.origin = origin;
@@ -90,7 +97,7 @@ async fn final_gate_allows_verified_editor_and_work_independent_of_metadata() {
 async fn final_gate_does_not_promote_cache_only_focus_for_authorized_work() {
     let mut session = test_session("focused-cache:client-test", Uuid::new_v4());
     session.origin = TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Absent);
-    session.profile = BearProfile::Work;
+    session.profile = RuntimeContextLabel::JobRun;
     session.cached_activity_plan_projection = Some(pending_task_list_projection());
     let mut stream = test_tracking_stream_with_session(&session);
     stream.prepare_autonomous_final_gate(RuntimeTaskContext {
@@ -112,7 +119,7 @@ async fn final_gate_does_not_promote_cache_only_focus_for_authorized_work() {
 async fn final_gate_keeps_persisted_run_requirement_for_authorized_work() {
     let mut session = test_session("focused-runless:client-test", Uuid::new_v4());
     session.origin = TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Absent);
-    session.profile = BearProfile::Work;
+    session.profile = RuntimeContextLabel::JobRun;
     session.run_id = None;
     session.cached_activity_plan_projection = Some(pending_task_list_projection());
     let mut stream = test_tracking_stream_with_session(&session);
@@ -131,7 +138,7 @@ async fn final_gate_rejects_system_origins_before_continuation() {
     ] {
         let mut session = test_session("focused-source:client-test", Uuid::new_v4());
         session.origin = origin;
-        session.profile = BearProfile::Pair;
+        session.profile = RuntimeContextLabel::ArmatureConversation;
         let mut stream = test_tracking_stream_with_session(&session);
         stream.evaluate_final_gate_or_complete(Some(pending_task_list_projection()), None);
         assert!(stream.pending_final_gate_continuation.is_none());

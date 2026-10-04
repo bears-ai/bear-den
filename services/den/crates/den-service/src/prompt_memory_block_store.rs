@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use den_core::{BearProfile, DenError};
+use den_core::{DenError, RuntimeContextLabel};
 use sqlx::{PgPool, Row};
 
 use crate::prompt_memory_blocks::{
@@ -102,7 +102,7 @@ pub async fn upsert_prompt_memory_block(
 pub async fn patch_prompt_memory_block(
     pool: &PgPool,
     bear_id: uuid::Uuid,
-    profile: BearProfile,
+    profile: RuntimeContextLabel,
     block_id: &str,
     patch: &PromptMemoryBlockPatch,
 ) -> Result<(), DenError> {

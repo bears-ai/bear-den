@@ -235,24 +235,24 @@ The preferred strategy order is:
 3. enforce recency window,
 4. truncate only as final backstop.
 
-## Profile participation
+## Source participation
 
-Compaction is **conversation-scoped**: one derived artifact chain per conversation, shared across all profiles that touch that conversation. Profile does not fork separate compaction stores for the same `conversation_id`.
+Compaction is **conversation-scoped**: one derived artifact chain per canonical conversation; derived runtime-context labels do not fork it. Current working-tree WIP selects turn policy from verified execution origin/canonical source, or an explicit context-maintenance source, not a stale profile row. Ordinary execution requires a real hat even with zero hats; see [the maintained topic](../topics/bear-memory-hats.md). The latest image has not been rebuilt.
 
-Every native profile (`chat`, `pair`, `work`, …) uses the same three lifecycle hooks:
+Ordinary runtime paths share three lifecycle hooks:
 
 1. **READ at assemble** — [`on_turn_assemble_compaction`](../../services/den/crates/den-runtime/src/runtime/compaction/lifecycle.rs) loads the latest persisted artifact (and optional sync WRITE when timing is legacy sync).
 2. **ENQUEUE post-turn** — [`enqueue_compaction_after_turn`](../../services/den/crates/den-runtime/src/runtime/compaction/lifecycle.rs) schedules a `context_compact` reflection run after a user-visible turn completes (best-effort, coalesced per conversation).
 3. **WRITE in worker/manual/emergency** — [`run_compaction_job`](../../services/den/crates/den-runtime/src/runtime/compaction/lifecycle.rs) evaluates policy, persists artifacts, and records compaction events.
 
-Profile differences are limited to **policy thresholds** via [`compaction_policy_for_profile`](../../services/den/crates/den-runtime/src/runtime/compaction/policy.rs) (protected recency floors, group-count triggers, transcript char budgets). The hook wiring is identical.
+Verified origin or explicit maintenance source selects policy thresholds in [compaction policy](../../services/den/crates/den-runtime/src/runtime/compaction/policy.rs), including protected recency, group triggers, and transcript budgets. Legacy schema labels/profile overrides cannot reconstruct a source or override policy. Maintenance compaction does not authorize an ordinary turn on old unbound history.
 
 **Timing** is controlled by `COMPACTION_TIMING` (default `async`):
 
 - **`async`** (default) — turn assembly READs the latest artifact only; WRITE runs in the `context_compact` worker after post-turn enqueue. Requires `RUN_WORKERS=true`.
 - **`sync`** (legacy) — turn assembly performs READ+WRITE inline at turn start (previous behavior).
 
-`work` uses the same path when native dispatch is active: assemble READ, post-turn ENQUEUE, worker WRITE. Harness-backed roles that still route through Letta Code are out of scope for this contract until native dispatch lands.
+Authorized Work uses the same lifecycle with its exact live eligible Job/run source. Dedicated Curate briefing inference is tool-free and does not create an ordinary session or checkpoint tool.
 
 ## Prompt assembly contract
 

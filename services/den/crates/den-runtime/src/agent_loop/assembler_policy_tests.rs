@@ -27,6 +27,16 @@ async fn assembly_task_authority_uses_origin_and_governance_not_session_hints() 
         key_memory_cache: None,
         native_runtime: true,
     };
+    for origin in [
+        TurnExecutionOrigin::InternalCuration,
+        TurnExecutionOrigin::InboundObservation,
+    ] {
+        ctx.origin = origin;
+        assert!(matches!(
+            resolve_memory_projection_scope(&ctx).await,
+            Err(DenError::Authorization(_))
+        ));
+    }
     for (origin, owns_tasks) in [
         (TurnExecutionOrigin::ChannelConversation, false),
         (TurnExecutionOrigin::BrowserTaskSession, true),

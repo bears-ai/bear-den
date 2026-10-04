@@ -7,7 +7,7 @@ use den_core::{
             PromptMemoryBlockState, PromptMemoryBlockType, PromptMemoryBlockWrite,
         },
     },
-    BearProfile, DenError,
+    DenError, RuntimeContextLabel,
 };
 use den_service::{
     bears::{
@@ -132,7 +132,7 @@ async fn bound_prompt_tools_only_read_and_mutate_own_session_blocks(pool: PgPool
     let own = prompt_memory_upsert(
         &store,
         &context,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         json!({
             "block_id": "session-a", "scope": "session", "block_type": "user_instruction",
             "session_id": "sess-a", "title": "Own session", "body": "Own note"
@@ -144,7 +144,7 @@ async fn bound_prompt_tools_only_read_and_mutate_own_session_blocks(pool: PgPool
     let listed = prompt_memory_list(
         &store,
         &context,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         json!({"include_archived": true}),
     )
     .await
@@ -168,7 +168,13 @@ async fn bound_prompt_tools_only_read_and_mutate_own_session_blocks(pool: PgPool
         json!({"block_id":"other-bear","scope":"session","block_type":"user_instruction","session_id":"sess-a","title":"No","body":"No"}),
         json!({"block_id":"supersession","scope":"session","block_type":"user_instruction","session_id":"sess-a","supersedes_block_id":"legacy-role","title":"No","body":"No"}),
     ] {
-        let result = prompt_memory_upsert(&store, &context, BearProfile::Pair, args.clone()).await;
+        let result = prompt_memory_upsert(
+            &store,
+            &context,
+            RuntimeContextLabel::ArmatureConversation,
+            args.clone(),
+        )
+        .await;
         assert!(
             matches!(result, Err(DenError::Authorization(_))),
             "{args}: {result:?}"
@@ -185,7 +191,7 @@ async fn bound_prompt_tools_only_read_and_mutate_own_session_blocks(pool: PgPool
         prompt_memory_patch(
             &store,
             &context,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             json!({
                 "block_id": "legacy-role", "title": "No", "body": "No"
             })
@@ -196,7 +202,7 @@ async fn bound_prompt_tools_only_read_and_mutate_own_session_blocks(pool: PgPool
     prompt_memory_patch(
         &store,
         &context,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         json!({
             "block_id": "session-a", "title": "Updated", "body": "Updated own session"
         }),
@@ -206,7 +212,7 @@ async fn bound_prompt_tools_only_read_and_mutate_own_session_blocks(pool: PgPool
     let listed = prompt_memory_list(
         &store,
         &context,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         json!({"scope":"session"}),
     )
     .await
@@ -216,7 +222,13 @@ async fn bound_prompt_tools_only_read_and_mutate_own_session_blocks(pool: PgPool
     let mut missing_conversation = context.clone();
     missing_conversation.conversation_id = "unknown-conversation".into();
     assert!(matches!(
-        prompt_memory_list(&store, &missing_conversation, BearProfile::Pair, json!({})).await,
+        prompt_memory_list(
+            &store,
+            &missing_conversation,
+            RuntimeContextLabel::ArmatureConversation,
+            json!({})
+        )
+        .await,
         Err(DenError::NotFound(_))
     ));
 }

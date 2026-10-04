@@ -1,6 +1,6 @@
 //! Closed execution audiences for Den-hosted tool descriptors. A verified
-//! turn origin selects one audience; a compatibility profile is only a
-//! projection for older catalogs and prompt metadata.
+//! turn origin selects one audience; a runtime context label is only a
+//! derived projection for historical catalogs and audit metadata.
 
 use serde::Serialize;
 
@@ -8,7 +8,7 @@ use serde::Serialize;
 #[path = "audience/tests.rs"]
 mod tests;
 
-use crate::{BearProfile, TurnExecutionOrigin};
+use crate::{RuntimeContextLabel, TurnExecutionOrigin};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -33,13 +33,15 @@ impl ToolAudience {
         }
     }
 
-    pub const fn compatibility_profile(self) -> BearProfile {
+    pub const fn context_label(self) -> RuntimeContextLabel {
         match self {
-            Self::ChannelConversation => BearProfile::Chat,
-            Self::BrowserTaskSession | Self::ArmatureConversation => BearProfile::Pair,
-            Self::AuthorizedWorkRun => BearProfile::Work,
-            Self::InternalCuration => BearProfile::Curate,
-            Self::InboundObservation => BearProfile::Watch,
+            Self::ChannelConversation => RuntimeContextLabel::ChannelConversation,
+            Self::BrowserTaskSession | Self::ArmatureConversation => {
+                RuntimeContextLabel::ArmatureConversation
+            }
+            Self::AuthorizedWorkRun => RuntimeContextLabel::JobRun,
+            Self::InternalCuration => RuntimeContextLabel::Curation,
+            Self::InboundObservation => RuntimeContextLabel::Observation,
         }
     }
 }

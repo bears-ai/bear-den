@@ -1,5 +1,5 @@
 use axum::http::HeaderMap;
-use den_core::BearProfile;
+use den_core::RuntimeContextLabel;
 use den_docket::{
     work_runs::{self, WorkRunListFilter},
     DocketExecutionControl, DocketExecutionNextAction, DocketExecutionTaskSettlement,
@@ -386,7 +386,7 @@ pub async fn docket_jobs_settle_task_result(
             execution: DocketJobExecuteRequest {
                 bear_id: bear.id,
                 job_id,
-                actor_role: BearProfile::Pair,
+                actor_role: RuntimeContextLabel::ArmatureConversation,
                 actor_user_id: Some(user_id),
                 actor_agent_id: None,
                 // Focused attempts are keyed by the Armature client session; both
@@ -541,7 +541,7 @@ pub async fn docket_session_tasks_settle_result(
             outcome_disposition,
             result_refs,
             result_summary: request.result_summary,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
         })
@@ -711,7 +711,7 @@ fn execution_request(
     DocketJobExecuteRequest {
         bear_id,
         job_id,
-        actor_role: BearProfile::Pair,
+        actor_role: RuntimeContextLabel::ArmatureConversation,
         actor_user_id: Some(user_id),
         actor_agent_id: None,
         // The ACP client session is the durable focused-attempt owner. A caller

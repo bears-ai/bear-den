@@ -1,21 +1,27 @@
 //! Actor scope and authorization vocabulary.
 //!
 //! Every facade operation takes an explicit [`ActorScope`]: exactly one of a
-//! human user or a Bear acting under a stance, plus optional call provenance.
+//! human user or a Bear with an audit context label, plus optional call provenance.
 //! There is no ambient, default, or service-identity actor on the model-facing
 //! facade. The same type is recorded verbatim as actor provenance on items,
 //! versions, and links.
 
+use den_core::execution_context::RuntimeContextLabel;
 use den_core::ids::{BearId, ConversationId, UserId};
-use den_core::profile::BearStance;
 use serde::{Deserialize, Serialize};
 
-/// The acting identity: a human user, or a Bear under an operational stance.
+/// The acting identity: a human user, or a Bear with a historical audit label.
+/// The persisted `stance` field is provenance, not an authority input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "actor_kind", rename_all = "snake_case")]
 pub enum Actor {
-    User { user_id: UserId },
-    Bear { bear_id: BearId, stance: BearStance },
+    User {
+        user_id: UserId,
+    },
+    Bear {
+        bear_id: BearId,
+        stance: RuntimeContextLabel,
+    },
 }
 
 /// Explicit per-operation actor scope, preserved verbatim as provenance.
@@ -46,9 +52,9 @@ impl ActorScope {
         }
     }
 
-    /// Scope for a Bear under a stance with no call provenance.
+    /// Scope for a Bear with an audit context label and no call provenance.
     #[must_use]
-    pub fn bear(bear_id: BearId, stance: BearStance) -> Self {
+    pub fn bear(bear_id: BearId, stance: RuntimeContextLabel) -> Self {
         Self {
             actor: Actor::Bear { bear_id, stance },
             conversation_id: None,
@@ -77,7 +83,7 @@ pub enum DenialReason {
     NotDenMember,
     /// The item or collection is Mission-bound and the actor is not a member.
     NotMissionMember,
-    /// Collection, kind, or stance policy disallows the operation.
+    /// Collection or kind policy disallows the operation.
     PolicyRestriction { detail: String },
 }
 

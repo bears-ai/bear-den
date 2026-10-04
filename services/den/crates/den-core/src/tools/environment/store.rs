@@ -8,7 +8,7 @@
 
 use serde_json::Value;
 
-use crate::{BearProfile, DenError};
+use crate::{DenError, RuntimeContextLabel};
 
 use crate::tools::{context::DenToolInvocationContext, prompt_memory::PromptMemoryVisibility};
 
@@ -23,19 +23,19 @@ pub trait EnvironmentOps: Send + Sync {
     async fn memory_status_value(
         &self,
         context: &DenToolInvocationContext,
-        role: BearProfile,
+        role: RuntimeContextLabel,
     ) -> Result<Value, DenError>;
 
     async fn memory_visibility(
         &self,
         context: &DenToolInvocationContext,
-        role: BearProfile,
+        role: RuntimeContextLabel,
     ) -> Result<PromptMemoryVisibility, DenError>;
 
     async fn session_entities(
         &self,
         context: &DenToolInvocationContext,
-        role: BearProfile,
+        role: RuntimeContextLabel,
     ) -> Result<Value, DenError>;
 
     /// Optional adapter-provided environment enrichment for the current session.

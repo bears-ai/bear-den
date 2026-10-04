@@ -206,7 +206,7 @@ Compiled output is a convenience; **source + recompile** is the portable default
 
 ### Host bindings and secrets
 
-On import, **drop and re-create** Den-native runtime bindings (`den-native:{id}:chat`, channel handles, sandbox ids). Do **not** copy membership, users, OAuth tokens, API keys, or webhook signing secrets — operators re-attach those on the target host.
+Historical runtime bindings/stance settings are not live authority on import. Native initialization never creates/refreshes a profile registry or fabricates a default hat. Ordinary conversation/Job/run admission requires a real Bear-owned hat even on zero-hat Bears; imported records do not acquire owners or get automatically promoted into one. Do **not** copy membership, users, OAuth tokens, API keys, or webhook signing secrets — operators re-attach those on the target host. See [current WIP and rollout limits](../topics/bear-memory-hats.md).
 
 ### SQLite import mechanics
 
@@ -214,7 +214,7 @@ On import, **drop and re-create** Den-native runtime bindings (`den-native:{id}:
 2. If using new `bear_id`, rewrite `bear_id` in all SQLite tables in one transaction.
 3. Place file at the target Den's per-Bear SQLite path (lifecycle defined by Den deployment; see ADR-0031 follow-up).
 4. Register Bear row in Den Postgres from `manifest.yaml` (identity + slug + charter).
-5. Re-provision role profiles and remap models.
+5. Initialize memory/runtime-plan/managed bound configuration and remap Bear-wide models; do not provision stance bindings or use historical profile model/loop rows as live overrides.
 6. Rebuild derived indexes (semantic retrieval, if enabled) from canonical SQLite — never treat derivatives as source of truth.
 7. Re-link entity `canonical_ref`s against destination registries via strong handles ([ADR-0042](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md) §12); demote entities that do not re-resolve to `provisional`.
 

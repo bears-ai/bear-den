@@ -14,7 +14,7 @@ use crate::{
 };
 use den_memory as memory_store;
 use den_memory::MemoryStoreManager;
-use den_service::bears::BearProfile;
+use den_service::bears::RuntimeContextLabel;
 use den_service::client_sessions;
 
 /// Concrete [`EnvironmentOps`] over the runtime pool/config.
@@ -32,7 +32,7 @@ impl EnvironmentOps for DenEnvironmentOps<'_> {
     async fn memory_status_value(
         &self,
         context: &DenToolInvocationContext,
-        role: BearProfile,
+        role: RuntimeContextLabel,
     ) -> Result<Value, DenError> {
         memory_status_value(self.config, self.stores, context, role, self.pool)
             .await
@@ -42,7 +42,7 @@ impl EnvironmentOps for DenEnvironmentOps<'_> {
     async fn memory_visibility(
         &self,
         context: &DenToolInvocationContext,
-        role: BearProfile,
+        role: RuntimeContextLabel,
     ) -> Result<PromptMemoryVisibility, DenError> {
         DenRoleMemoryStore::new(self.pool, self.config, self.stores)
             .prompt_visibility(context, role)
@@ -52,7 +52,7 @@ impl EnvironmentOps for DenEnvironmentOps<'_> {
     async fn session_entities(
         &self,
         context: &DenToolInvocationContext,
-        _role: BearProfile,
+        _role: RuntimeContextLabel,
     ) -> Result<Value, DenError> {
         let store = self.stores.store_for_bear(context.bear_id).await?;
         let mut human = Value::Null;

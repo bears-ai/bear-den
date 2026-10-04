@@ -22,35 +22,7 @@
     </p>
     {% endif %}
 
-    <h3>Health</h3>
-    <table>
-        <thead>
-            <tr>
-                <th>Stance</th>
-                <th>Status</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for row in agent_health_rows %}
-            <tr>
-                <td>
-                    <a
-                        href="/bear/{{ bear.slug | e }}/stances/{{ row.profile | e }}"
-                        >{{ row.profile | e }}</a
-                    >
-                </td>
-                <td>
-                    {% if row.health_status == "ok" %}ok{% else %}<strong
-                        >{{ row.health_status | e }}</strong
-                    >{% endif %}
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
     <p class="form-hint">
-        {{ roles_ready }} stance{% if roles_ready != 1 %}s{% endif %} ready{%
-        if roles_error > 0 %} · {{ roles_error }} with errors{% endif %} ·
         {{ member_count }} member{% if member_count != 1 %}s{% endif %} ·
         {{ conversation_count }} conversation{% if conversation_count != 1
         %}s{% endif %}

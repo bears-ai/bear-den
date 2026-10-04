@@ -5,7 +5,7 @@
 //! runtime-neutral file descriptor the builder emits; the `den` impl maps it onto
 //! the native SQLite write path.
 
-use crate::{BearProfile, DenError};
+use crate::{DenError, RuntimeContextLabel};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -37,7 +37,7 @@ pub trait WorkSurfaceOps: Send + Sync {
     async fn write_scaffold(
         &self,
         bear_id: Uuid,
-        role: BearProfile,
+        role: RuntimeContextLabel,
         slug: &str,
         name: &str,
         requests: Vec<ScaffoldRequest>,
@@ -50,6 +50,6 @@ pub trait WorkSurfaceOps: Send + Sync {
     async fn orient(
         &self,
         context: &DenToolInvocationContext,
-        role: BearProfile,
+        role: RuntimeContextLabel,
     ) -> Result<Value, DenError>;
 }

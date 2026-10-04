@@ -12,7 +12,7 @@ use den_memory::{
     get_memory_proposal, list_memory_proposals, mark_observation_review_queued,
     resolve_memory_proposal, MemoryStoreManager, SqliteMemoryProposal, VerifiedHatProposalSource,
 };
-use den_service::bears::BearProfile;
+use den_service::bears::RuntimeContextLabel;
 use den_service::memory_proposals::{
     CreateMemoryProposal, MemoryProposalRow, ProposalResolutionParams,
 };
@@ -60,14 +60,13 @@ pub async fn create_verified_proposal(
     params: CreateMemoryProposal<'_>,
     verified: VerifiedHatProposalSource,
 ) -> Result<MemoryProposalRow, DenError> {
-    if params.source_profile != BearProfile::Pair
-        || params.suggested_action != "propose_hat"
+    if params.suggested_action != "propose_hat"
         || !params.source_paths.is_empty()
         || params.target_ref.is_some()
         || params.proposed_patch.is_some()
     {
         return Err(DenError::ValidationError(
-            "verified hat intake requires a Pair source and no path or patch".into(),
+            "verified hat intake requires a source-only proposal with no path or patch".into(),
         ));
     }
     let store = stores.store_for_bear(params.bear_id).await?;
@@ -152,7 +151,7 @@ pub async fn list_proposals(
     let store = stores.store_for_bear(bear_id).await?;
     let rows = list_memory_proposals(&store, status, limit).await?;
     rows.into_iter()
-        .map(|row| sqlite_proposal_to_row(bear_id, &row, BearProfile::Curate))
+        .map(|row| sqlite_proposal_to_row(bear_id, &row, RuntimeContextLabel::Curation))
         .collect()
 }
 
@@ -166,7 +165,7 @@ pub async fn get_proposal(
     let store = stores.store_for_bear(bear_id).await?;
     get_memory_proposal(&store, &proposal_id.to_string())
         .await?
-        .map(|row| sqlite_proposal_to_row(bear_id, &row, BearProfile::Curate))
+        .map(|row| sqlite_proposal_to_row(bear_id, &row, RuntimeContextLabel::Curation))
         .transpose()
 }
 
@@ -251,7 +250,7 @@ fn empty_json_object() -> Value {
 fn sqlite_proposal_to_row(
     bear_id: Uuid,
     sqlite: &SqliteMemoryProposal,
-    source_profile: BearProfile,
+    source_profile: RuntimeContextLabel,
 ) -> Result<MemoryProposalRow, DenError> {
     let payload: SqliteProposalPayload = serde_json::from_value(sqlite.payload_json.clone())
         .map_err(|err| DenError::Parsing(format!("invalid memory proposal payload: {err}")))?;

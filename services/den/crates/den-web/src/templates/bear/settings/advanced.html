@@ -61,30 +61,5 @@
 </dl>
 {% endif %}
 
-<h3>Stance bindings</h3>
-<p class="form-hint">Runtime registrations for each stance on this Den (host-local; re-provisioned when a Bear is imported). Errors here mean a stance failed to provision or reconcile.</p>
-<table>
-  <thead><tr><th>Stance</th><th>Surface</th><th>Binding id</th><th>Status</th></tr></thead>
-  <tbody>
-  {% for agent in agent_health_rows %}
-    <tr>
-      <td><a href="/bear/{{ bear.slug | e }}/stances/{{ agent.profile | e }}">{{ agent.profile | e }}</a></td>
-      <td>{{ agent.surface_label | e }}</td>
-      <td><code>{{ agent.binding_id | e }}</code></td>
-      <td>
-        {% if agent.health_status == "ok" %}{{ agent.health_label | e }}
-        {% elif agent.health_status == "error" %}<span class="form-errors">{{ agent.health_label | e }}</span>
-        {% else %}<em>{{ agent.health_label | e }}</em>{% endif %}
-        {% if agent.health_detail %}<br><span class="form-hint">{{ agent.health_detail | e }}</span>{% endif %}
-      </td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
-{% if can_manage_bear %}
-<form method="post" action="/bear/{{ bear.slug | e }}/provision-missing-stances">
-  <button type="submit">Provision missing stance bindings</button>
-</form>
-{% endif %}
 </div>
 {% endblock %}

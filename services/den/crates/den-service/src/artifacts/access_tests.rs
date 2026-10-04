@@ -10,11 +10,11 @@ const VISIBILITIES: [ArtifactVisibility; 4] = [
     ArtifactVisibility::HandoffRequested,
     ArtifactVisibility::BearVisible,
 ];
-const OWNER_PROFILES: [BearProfile; 4] = [
-    BearProfile::Pair,
-    BearProfile::Chat,
-    BearProfile::Work,
-    BearProfile::Curate,
+const OWNER_PROFILES: [RuntimeContextLabel; 4] = [
+    RuntimeContextLabel::ArmatureConversation,
+    RuntimeContextLabel::ChannelConversation,
+    RuntimeContextLabel::JobRun,
+    RuntimeContextLabel::Curation,
 ];
 
 fn context(bear_id: Uuid, user_id: Option<i32>) -> ArtifactAccessContext {
@@ -57,7 +57,7 @@ async fn finalized(
     pool: &PgPool,
     bear_id: Uuid,
     creator: Option<i32>,
-    owner_profile: BearProfile,
+    owner_profile: RuntimeContextLabel,
     visibility: ArtifactVisibility,
 ) -> ArtifactMetadata {
     let artifact = reserve_artifact(
@@ -197,7 +197,14 @@ async fn conversation_citations_redact_unauthorized_actors(pool: PgPool) {
         .await
         .unwrap();
     for visibility in VISIBILITIES {
-        let artifact = finalized(&pool, bear_id, Some(owner), BearProfile::Pair, visibility).await;
+        let artifact = finalized(
+            &pool,
+            bear_id,
+            Some(owner),
+            RuntimeContextLabel::ArmatureConversation,
+            visibility,
+        )
+        .await;
         attach_conversation_artifact(
             &pool,
             AttachConversationArtifactInput {

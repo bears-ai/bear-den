@@ -17,17 +17,7 @@ use super::{
 mod tests;
 
 fn grant_scope_filter(bear_id: Uuid, embedding_standard: &str, grant: MemoryReadGrant) -> Value {
-    let source = grant.source();
-    let mut should = vec![
-        json!({ "key": "scope_type", "match": { "value": "shared" } }),
-        json!({
-            "must": [
-                { "key": "scope_type", "match": { "value": "source_local" } },
-                { "key": "scope_source_kind", "match": { "value": source.kind() } },
-                { "key": "scope_source_id", "match": { "value": source.id().to_string() } },
-            ]
-        }),
-    ];
+    let mut should = vec![json!({ "key": "scope_type", "match": { "value": "shared" } })];
     if let Some(hat_id) = grant.hat_id() {
         should.push(json!({
             "must": [
@@ -41,9 +31,9 @@ fn grant_scope_filter(bear_id: Uuid, embedding_standard: &str, grant: MemoryRead
     json!({ "must": must })
 }
 
-/// Turn-start semantic recall under the bound source/hat policy. Until indexing
-/// of source and hat scopes is explicitly enabled, only matching shared points
-/// can appear; this never falls back to the broader role/profile filter.
+/// Turn-start semantic candidates from shared core and the verified hat only.
+/// Source-local notes remain canonical SQLite reads, never derived recall.
+/// Callers must reconstruct candidates from current SQLite before model projection.
 pub async fn recall_for_turn_with_grant<E: PassageEmbedder + ?Sized>(
     qdrant: &QdrantRecall,
     embedder: &E,

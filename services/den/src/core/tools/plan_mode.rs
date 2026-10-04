@@ -2,7 +2,7 @@
 //!
 //! Argument parsing/validation and the static response envelopes now live in
 //! `den_core::tools::plan_mode`; this module provides the concrete [`PlanModeOps`]
-//! implementation (DB rows, mode switches, native SQLite artifact writes,
+//! implementation (DB rows, mode switches, canonical plan submission,
 //! `turn_state` rendering), wired into the dispatcher via `DenToolContext`. See
 //! `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md` (Phase B).
 
@@ -12,19 +12,15 @@ use uuid::Uuid;
 
 use den_core::tools::plan_mode::{PlanModeExitView, PlanModeOps, PlanModeStatusView, PlanModeView};
 
-use crate::{
-    core::tools::{session::DenToolInvocationContext, support::clean_optional},
-    errors::DenError,
-};
+use crate::{core::tools::session::DenToolInvocationContext, errors::DenError};
 use den_core::client_tools::{ResolvedSessionPolicy, ToolEnablementState};
-use den_memory::{tools as sqlite_memory, MemoryStoreManager};
 use den_runtime::{
     plan_mode::{
         self, EnterPlanModeParams, PlanModeRequestedBy, PlanModeSessionRow, SubmitPlanModeParams,
     },
     turn_state,
 };
-use den_service::{bears::BearProfile, client_sessions, client_sessions::ClientSessionMode};
+use den_service::{client_sessions, client_sessions::ClientSessionMode};
 
 type WorkplanPayloadFn = fn(&PlanModeSessionRow) -> Value;
 type NoActiveWorkplanFn = fn() -> Value;
@@ -44,13 +40,9 @@ fn workflow_state_json(
     )
 }
 
-/// Concrete [`PlanModeOps`] over the runtime pool/stores.
-///
-/// `stores` is only required by `exit` (artifact write); the dispatcher
-/// supplies it for that path and leaves it `None` for the others.
+/// Concrete [`PlanModeOps`] over the canonical Postgres state.
 pub(crate) struct DenPlanModeOps<'a> {
     pub(crate) pool: &'a PgPool,
-    pub(crate) stores: Option<&'a MemoryStoreManager>,
     pub(crate) workplan_payload: WorkplanPayloadFn,
     pub(crate) no_active_workplan: NoActiveWorkplanFn,
 }
@@ -176,10 +168,6 @@ impl PlanModeOps for DenPlanModeOps<'_> {
         title: &str,
         body: &str,
     ) -> Result<PlanModeExitView, DenError> {
-        let stores = self
-            .stores
-            .ok_or_else(|| DenError::System("plan mode exit requires memory stores".to_string()))?;
-        let markdown = plan_mode::render_plan_artifact_markdown(title, body);
         let current_plan = plan_mode::get_for_session(
             self.pool,
             context.user_id,
@@ -191,34 +179,12 @@ impl PlanModeOps for DenPlanModeOps<'_> {
         .ok_or_else(|| {
             DenError::NotFound("active client plan mode session not found".to_string())
         })?;
-        let artifact_path = {
-            let artifact_id = format!("plan-mode-{}", current_plan.id);
-            let logical_path = format!("pair/plans/{artifact_id}.md");
-            let written = sqlite_memory::sqlite_write_at_path(
-                stores,
-                context.bear_id,
-                &logical_path,
-                BearProfile::Pair.as_str(),
-                title,
-                &markdown,
-                json!({
-                    "kind": "plan",
-                    "tags": ["plan-mode", "implementation-plan"],
-                    "content_class": "workplan_artifact",
-                    "source": {
-                        "tool": crate::core::tools::constants::DEN_PLAN_MODE_EXIT,
-                        "client_session_id": client_session_id,
-                        "conversation_id": clean_optional(&context.conversation_id),
-                    },
-                }),
-            )
-            .await?;
-            written
-                .get("path")
-                .and_then(|v| v.as_str())
-                .unwrap_or(&logical_path)
-                .to_string()
-        };
+        // Preserve the canonical plan reference without materializing a second
+        // copy in Bear memory. Submission and its audit events live in Postgres.
+        let artifact_path = current_plan
+            .plan_artifact_path
+            .clone()
+            .unwrap_or_else(|| format!("pair/plans/plan-mode-{}.md", current_plan.id));
         let row = plan_mode::submit_plan_artifact(
             self.pool,
             SubmitPlanModeParams {
@@ -241,7 +207,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             ClientSessionMode::Plan,
         )
         .await?;
-        let storage = "sqlite";
+        let storage = "postgres";
         Ok(PlanModeExitView {
             workplan: (self.workplan_payload)(&row),
             workflow_state: workflow_state_json(

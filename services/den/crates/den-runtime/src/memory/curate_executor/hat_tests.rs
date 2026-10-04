@@ -61,7 +61,7 @@ async fn retired_core_proposals_are_rejected_without_publication_or_human_queue(
                 &stores,
                 CreateMemoryProposal {
                     bear_id,
-                    source_profile: BearProfile::Pair,
+                    source_profile: RuntimeContextLabel::ArmatureConversation,
                     source_agent_id: None,
                     source_paths: vec!["pair/private.md".into()],
                     source_refs: json!({}),

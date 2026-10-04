@@ -1,6 +1,6 @@
 //! Emergency compaction + message reassembly when the LLM rejects an oversized prompt.
 
-use den_core::{config::Config, profile::BearProfile, DenError};
+use den_core::{config::Config, DenError};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -30,7 +30,6 @@ pub async fn compact_session_messages_for_overflow(
     pool: &PgPool,
     config: &Config,
     session: &AgentLoopSession,
-    profile: BearProfile,
 ) -> Result<(Vec<ChatMessage>, bool), DenError> {
     let mode = CompactionMode::parse(&config.compaction_mode);
     let state = run_compaction_job(
@@ -38,7 +37,7 @@ pub async fn compact_session_messages_for_overflow(
         config,
         session.bear_id,
         &session.conversation_id,
-        profile,
+        crate::runtime_compaction::CompactionSource::Turn(session.origin),
         TurnCompactionTrigger::ModelSafetyMargin,
     )
     .await?;

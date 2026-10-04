@@ -10,52 +10,40 @@
 
 use serde_json::Value;
 
-use crate::{DenError, EffectivePolicy, Governance, TurnExecutionOrigin};
+use crate::{DenError, Governance, TurnExecutionOrigin};
 
 use crate::tools::{
     constants::{
         DEN_BEAR_ENVIRONMENT, DEN_BEAR_GET_SELF, DEN_BEAR_LIST_MEMBERS, DEN_CAPABILITIES_LIST_SELF,
         DEN_CAPABILITY_DESCRIBE, DEN_CAPABILITY_SEARCH, DEN_CHANNEL_GET_CONTEXT,
-        DEN_CONVERSATION_SET_TITLE, DEN_CORE_WRITE_RESULT_SUMMARY, DEN_ENTITY_BROWSE,
-        DEN_ENTITY_BROWSE_PROVIDER, DEN_ENTITY_LINK_MEMORY, DEN_ENTITY_LINK_MEMORY_PROVIDER,
-        DEN_ENTITY_MERGE, DEN_ENTITY_MERGE_PROVIDER, DEN_ENTITY_RESOLVE,
-        DEN_ENTITY_RESOLVE_PROVIDER, DEN_ENTITY_SPLIT, DEN_ENTITY_SPLIT_PROVIDER,
-        DEN_ENTITY_WRITE_ACCESS_RULE, DEN_ENTITY_WRITE_ACCESS_RULE_PROVIDER,
-        DEN_ENTITY_WRITE_ANCHOR, DEN_ENTITY_WRITE_ANCHOR_PROVIDER,
-        DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD, DEN_MEMORY_LIST_PROPOSALS,
-        DEN_MEMORY_MARK_LIFECYCLE, DEN_MEMORY_ORIENT_WORK_SURFACE, DEN_MEMORY_READ,
-        DEN_MEMORY_READ_PROPOSAL, DEN_MEMORY_REQUEST_REVIEW, DEN_MEMORY_RESOLVE_PROPOSAL,
-        DEN_MEMORY_SEARCH, DEN_MEMORY_STATUS, DEN_MEMORY_TREE, DEN_MEMORY_WRITE_ENTRY,
-        DEN_OBSERVATION_WRITE, DEN_PLAN_MODE_CANCEL, DEN_PLAN_MODE_ENTER, DEN_PLAN_MODE_EXIT,
-        DEN_PLAN_MODE_RECORD_APPROVAL, DEN_PLAN_MODE_STATUS, DEN_POLICY_GET_SELF,
-        DEN_PROMPT_MEMORY_LIST, DEN_PROMPT_MEMORY_PATCH, DEN_PROMPT_MEMORY_UPSERT,
-        DEN_RUN_WRITE_RESULT, DEN_SITUATION_GET, DEN_SITUATION_GET_PROVIDER,
-        DEN_SKILL_APPROVE_PROPOSAL, DEN_SKILL_PROPOSE, DEN_SKILL_REJECT_PROPOSAL,
-        DEN_TASK_APPROVE_INTENT, DEN_TASK_FOCUS, DEN_TASK_LISTS_REQUEST_HANDOFF,
-        DEN_TASK_REJECT_INTENT, DEN_TASK_WRITE_INTENT, DEN_TOOL_OUTPUT_READ, DEN_USER_GET_CURRENT,
-        DEN_WEB_FETCH, DEN_WEB_SEARCH,
+        DEN_CONVERSATION_SET_TITLE, DEN_ENTITY_BROWSE, DEN_ENTITY_BROWSE_PROVIDER,
+        DEN_ENTITY_LINK_MEMORY, DEN_ENTITY_LINK_MEMORY_PROVIDER, DEN_ENTITY_RESOLVE,
+        DEN_ENTITY_RESOLVE_PROVIDER, DEN_MEMORY_READ, DEN_MEMORY_REQUEST_REVIEW, DEN_MEMORY_SEARCH,
+        DEN_MEMORY_STATUS, DEN_MEMORY_TREE, DEN_MEMORY_WRITE_ENTRY, DEN_PLAN_MODE_CANCEL,
+        DEN_PLAN_MODE_ENTER, DEN_PLAN_MODE_EXIT, DEN_PLAN_MODE_RECORD_APPROVAL,
+        DEN_PLAN_MODE_STATUS, DEN_POLICY_GET_SELF, DEN_PROMPT_MEMORY_LIST, DEN_PROMPT_MEMORY_PATCH,
+        DEN_PROMPT_MEMORY_UPSERT, DEN_RUN_WRITE_RESULT, DEN_SITUATION_GET,
+        DEN_SITUATION_GET_PROVIDER, DEN_SKILL_PROPOSE, DEN_TASK_FOCUS,
+        DEN_TASK_LISTS_REQUEST_HANDOFF, DEN_TASK_WRITE_INTENT, DEN_TOOL_OUTPUT_READ,
+        DEN_USER_GET_CURRENT, DEN_WEB_FETCH, DEN_WEB_SEARCH,
     },
     context::DenToolInvocationContext,
     conversation::ConversationTitleOps,
     environment::EnvironmentOps,
-    identity::{self, BearDirectory},
+    identity::{self, BearDirectory, SourceAuthorizer},
     preflight::{prevalidate_tool_arguments, tool_warning_payload, ToolPreflight},
     web::WebFetcher,
-    work_surface::WorkSurfaceOps,
-    {
-        conversation, entity, environment, memory, plan_mode, prompt_memory, review, web,
-        work_surface,
-    },
+    {conversation, entity, environment, memory, plan_mode, prompt_memory, review, web},
 };
 
 /// Composed bundle so the dispatcher can take one `&impl ToolContext`. Each
 /// executor stays generic over only the sub-trait(s) it actually uses.
 pub trait ToolContext:
     BearDirectory
+    + SourceAuthorizer
     + ConversationTitleOps
     + EnvironmentOps
     + entity::EntityOps
-    + WorkSurfaceOps
     + WebFetcher
     + memory::RoleMemoryStore
     + prompt_memory::PromptMemoryStore
@@ -147,31 +135,16 @@ pub fn has_native_session_executor(tool_name: &str) -> bool {
             | DEN_ENTITY_RESOLVE_PROVIDER
             | DEN_ENTITY_LINK_MEMORY
             | DEN_ENTITY_LINK_MEMORY_PROVIDER
-            | DEN_ENTITY_MERGE
-            | DEN_ENTITY_MERGE_PROVIDER
-            | DEN_ENTITY_SPLIT
-            | DEN_ENTITY_SPLIT_PROVIDER
-            | DEN_ENTITY_WRITE_ACCESS_RULE
-            | DEN_ENTITY_WRITE_ACCESS_RULE_PROVIDER
-            | DEN_ENTITY_WRITE_ANCHOR
-            | DEN_ENTITY_WRITE_ANCHOR_PROVIDER
-            | DEN_MEMORY_ORIENT_WORK_SURFACE
-            | DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD
             | DEN_PROMPT_MEMORY_UPSERT
             | DEN_PROMPT_MEMORY_LIST
             | DEN_PROMPT_MEMORY_PATCH
             | DEN_MEMORY_REQUEST_REVIEW
-            | DEN_MEMORY_LIST_PROPOSALS
-            | DEN_MEMORY_READ_PROPOSAL
-            | DEN_MEMORY_RESOLVE_PROPOSAL
-            | DEN_MEMORY_MARK_LIFECYCLE
             | DEN_PLAN_MODE_ENTER
             | DEN_PLAN_MODE_STATUS
             | DEN_PLAN_MODE_RECORD_APPROVAL
             | DEN_PLAN_MODE_EXIT
             | DEN_PLAN_MODE_CANCEL
             | DEN_BEAR_ENVIRONMENT
-            | DEN_OBSERVATION_WRITE
     )
 }
 
@@ -180,7 +153,7 @@ pub async fn authorize_den_tool_for_origin(
     tool_name: &str,
     context: &DenToolInvocationContext,
     origin: TurnExecutionOrigin,
-) -> Result<crate::BearProfile, DenError> {
+) -> Result<crate::RuntimeContextLabel, DenError> {
     let projected = identity::authorize_context_for_origin(ctx, context, origin).await?;
     identity::authorize_tool_for_origin(tool_name, origin)?;
     Ok(projected)
@@ -207,7 +180,6 @@ pub async fn invoke_den_tool_for_origin(
         }
     }
     let role = authorize_den_tool_for_origin(ctx, tool_name, &context, origin).await?;
-    let policy = EffectivePolicy::compile_for_origin(origin, governance);
     match tool_name {
         DEN_BEAR_GET_SELF => identity::get_bear_self(ctx, &context).await,
         DEN_USER_GET_CURRENT => identity::get_current_user(ctx, &context).await,
@@ -253,24 +225,6 @@ pub async fn invoke_den_tool_for_origin(
         DEN_ENTITY_LINK_MEMORY | DEN_ENTITY_LINK_MEMORY_PROVIDER => {
             entity::entity_link_memory(ctx, &context, role, arguments).await
         }
-        DEN_ENTITY_MERGE | DEN_ENTITY_MERGE_PROVIDER => {
-            entity::entity_merge(ctx, &context, role, arguments).await
-        }
-        DEN_ENTITY_SPLIT | DEN_ENTITY_SPLIT_PROVIDER => {
-            entity::entity_split(ctx, &context, role, arguments).await
-        }
-        DEN_ENTITY_WRITE_ACCESS_RULE | DEN_ENTITY_WRITE_ACCESS_RULE_PROVIDER => {
-            entity::entity_write_access_rule(ctx, &context, role, arguments).await
-        }
-        DEN_ENTITY_WRITE_ANCHOR | DEN_ENTITY_WRITE_ANCHOR_PROVIDER => {
-            entity::entity_write_anchor(ctx, &context, role, arguments).await
-        }
-        DEN_MEMORY_ORIENT_WORK_SURFACE => {
-            work_surface::orient_work_surface(ctx, &context, role).await
-        }
-        DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD => {
-            work_surface::create_work_surface_scaffold(ctx, &context, &policy, arguments).await
-        }
         DEN_PROMPT_MEMORY_UPSERT => {
             prompt_memory::prompt_memory_upsert(ctx, &context, role, arguments).await
         }
@@ -281,19 +235,7 @@ pub async fn invoke_den_tool_for_origin(
         DEN_MEMORY_REQUEST_REVIEW => {
             review::request_memory_review(ctx, &context, role, arguments).await
         }
-        DEN_MEMORY_LIST_PROPOSALS => {
-            review::list_memory_proposals(ctx, &context, role, arguments).await
-        }
-        DEN_MEMORY_READ_PROPOSAL => {
-            review::read_memory_proposal(ctx, &context, role, arguments).await
-        }
-        DEN_MEMORY_RESOLVE_PROPOSAL => {
-            review::resolve_memory_proposal(ctx, &context, role, arguments).await
-        }
 
-        DEN_MEMORY_MARK_LIFECYCLE => {
-            review::mark_memory_lifecycle(ctx, &context, role, arguments).await
-        }
         DEN_PLAN_MODE_ENTER => plan_mode::enter_plan_mode(ctx, &context, arguments).await,
         DEN_PLAN_MODE_STATUS => plan_mode::plan_mode_status(ctx, &context).await,
         DEN_PLAN_MODE_RECORD_APPROVAL => {
@@ -302,15 +244,9 @@ pub async fn invoke_den_tool_for_origin(
         DEN_PLAN_MODE_EXIT => plan_mode::exit_plan_mode(ctx, &context, arguments).await,
         DEN_PLAN_MODE_CANCEL => plan_mode::cancel_plan_mode(ctx, &context, arguments).await,
         DEN_BEAR_ENVIRONMENT => environment::bear_environment(ctx, ctx, &context, role).await,
-        DEN_OBSERVATION_WRITE => review::write_observation(ctx, &context, role, arguments).await,
         DEN_SKILL_PROPOSE
-        | DEN_SKILL_APPROVE_PROPOSAL
-        | DEN_SKILL_REJECT_PROPOSAL
         | DEN_TASK_LISTS_REQUEST_HANDOFF
         | DEN_TASK_WRITE_INTENT
-        | DEN_TASK_APPROVE_INTENT
-        | DEN_TASK_REJECT_INTENT
-        | DEN_CORE_WRITE_RESULT_SUMMARY
         | DEN_RUN_WRITE_RESULT => Err(DenError::System(format!(
             "Den tool `{tool_name}` is registered and role-authorized but not implemented in this session module"
         ))),
@@ -320,6 +256,10 @@ pub async fn invoke_den_tool_for_origin(
         _ => Err(DenError::NotFound(format!("unknown Den tool: {tool_name}"))),
     }
 }
+
+#[cfg(test)]
+#[path = "retirement_tests.rs"]
+mod retirement_tests;
 
 #[cfg(test)]
 mod tests {

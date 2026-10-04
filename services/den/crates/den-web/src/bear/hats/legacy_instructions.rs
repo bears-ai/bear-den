@@ -4,7 +4,7 @@
 use den_core::DenError;
 use den_service::bears::{
     context_profile_from_json, managed_space_block_key, resolve_managed_blocks_for_bear, Bear,
-    BearBlockBindingMode, BearProfile,
+    BearBlockBindingMode, RuntimeContextLabel,
 };
 use serde::Serialize;
 use sqlx::PgPool;
@@ -25,7 +25,11 @@ pub(super) async fn for_bear(
     };
     let resolved = resolve_managed_blocks_for_bear(pool, bear).await?;
     let mut instructions = Vec::new();
-    for role in [BearProfile::Chat, BearProfile::Pair, BearProfile::Work] {
+    for role in [
+        RuntimeContextLabel::ChannelConversation,
+        RuntimeContextLabel::ArmatureConversation,
+        RuntimeContextLabel::JobRun,
+    ] {
         let key = managed_space_block_key(role);
         let block = resolved.blocks.iter().find(|block| block.key == key);
         let (content, source) = match block {

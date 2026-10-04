@@ -6,7 +6,7 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::{
-    bears::BearProfile,
+    bears::RuntimeContextLabel,
     conversation_events::{
         memory_proposal_created_projection, memory_proposal_resolved_projection,
         project_to_conversation, ProjectionProvenance, ProjectionSource,
@@ -48,7 +48,7 @@ pub struct MemoryProposalRow {
 #[derive(Debug, Clone)]
 pub struct CreateMemoryProposal<'a> {
     pub bear_id: Uuid,
-    pub source_profile: BearProfile,
+    pub source_profile: RuntimeContextLabel,
     pub source_agent_id: Option<String>,
     pub source_paths: Vec<String>,
     pub source_refs: serde_json::Value,
@@ -235,7 +235,7 @@ pub async fn list_reviewable_for_bear(
 pub struct ProposalResolutionParams<'a> {
     pub bear_id: Uuid,
     pub proposal_id: Uuid,
-    pub reviewer_profile: BearProfile,
+    pub reviewer_profile: RuntimeContextLabel,
     pub reviewer_agent_id: Option<&'a str>,
     pub status: &'a str,
     pub review_notes: Option<&'a str>,

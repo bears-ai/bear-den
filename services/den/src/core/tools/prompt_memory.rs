@@ -1,6 +1,6 @@
 //! `den`-side wiring for the prompt-memory tools.
 //!
-//! The orchestration (role gating, validation, result shaping) lives in
+//! The orchestration (descriptor authorization, validation, result shaping) lives in
 //! `den-tools`; here we provide the Postgres-backed [`PromptMemoryStore`],
 //! wired into the dispatcher via `DenToolContext`.
 
@@ -14,11 +14,11 @@ use den_core::tools::{
         PromptMemoryVisibility,
     },
 };
-use den_core::{ids::BearId, BearProfile};
+use den_core::{ids::BearId, RuntimeContextLabel};
 
 use crate::errors::DenError;
 use den_service::{
-    bears::hats::memory_binding::{self, ResolvedMemoryBinding},
+    bears::hats::memory_binding,
     prompt_memory_block_store::{
         archive_conflicting_prompt_memory_blocks, archive_prompt_memory_blocks_superseded_by,
         list_prompt_memory_blocks_for_bear_profile, patch_prompt_memory_block,
@@ -41,25 +41,15 @@ impl PromptMemoryStore for DenPromptMemoryStore<'_> {
     async fn visibility(
         &self,
         context: &DenToolInvocationContext,
-        role: BearProfile,
+        _role: RuntimeContextLabel,
     ) -> Result<PromptMemoryVisibility, DenError> {
-        if role != BearProfile::Pair {
-            return Err(DenError::Authorization(
-                "prompt memory tools require Pair".into(),
-            ));
-        }
-        Ok(
-            match memory_binding::for_external_conversation(
-                self.pool,
-                BearId::new(context.bear_id),
-                &context.conversation_id,
-            )
-            .await?
-            {
-                ResolvedMemoryBinding::Legacy => PromptMemoryVisibility::Legacy,
-                ResolvedMemoryBinding::Bound(_) => PromptMemoryVisibility::BoundSession,
-            },
+        memory_binding::for_external_conversation(
+            self.pool,
+            BearId::new(context.bear_id),
+            &context.conversation_id,
         )
+        .await?;
+        Ok(PromptMemoryVisibility::BoundSession)
     }
 
     async fn list_blocks(
@@ -77,7 +67,7 @@ impl PromptMemoryStore for DenPromptMemoryStore<'_> {
     async fn patch_block(
         &self,
         bear_id: Uuid,
-        profile: BearProfile,
+        profile: RuntimeContextLabel,
         block_id: &str,
         patch: &PromptMemoryBlockPatch,
     ) -> Result<(), DenError> {

@@ -275,32 +275,16 @@ async fn first_bear_post(
 
     bears_db::grant_membership(state.sqlx_pool(), user_id, id, Some(BEAR_ROLE_ADMIN)).await?;
 
-    if let Err(e) = provision::provision_bear_if_configured(
-        state.sqlx_pool(),
-        state.config.as_ref(),
-        &state.memory_stores,
-        id,
-    )
-    .await
+    if let Err(e) =
+        provision::initialize_bear_native(state.sqlx_pool(), &state.memory_stores, id).await
     {
-        tracing::warn!(%id, "Native profile provision failed during first-bear onboarding: {e}");
+        tracing::warn!(%id, "Bear initialization failed during first-bear onboarding: {e}");
         return render_first_bear_form(&state, auth_session, form, None, Some(e.to_string()), None)
             .await;
-    }
-
-    if let Err(err) = provision::reconcile_bear_native(
-        state.sqlx_pool(),
-        state.config.as_ref(),
-        &state.memory_stores,
-        id,
-    )
-    .await
-    {
-        tracing::warn!(bear_id = %id, error = %err, "Native profile reconcile after first-bear onboarding failed");
     }
 
     let bear = bears_db::get_bear(state.sqlx_pool(), id)
         .await?
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
-    Ok(Redirect::to(&format!("/bear/{}", bear.slug)).into_response())
+    Ok(Redirect::to(&format!("/bear/{}/hats", bear.slug)).into_response())
 }

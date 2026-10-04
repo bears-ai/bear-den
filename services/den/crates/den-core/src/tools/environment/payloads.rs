@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::BearProfile;
+use crate::RuntimeContextLabel;
 
 use crate::tools::{
     context::DenToolInvocationContext,
@@ -134,7 +134,13 @@ fn memory_context_layers(
             None => "unknown",
         }
     };
-    let memory_scope = format!("{}/", context.profile.unwrap_or(BearProfile::Pair).as_str());
+    let memory_scope = format!(
+        "{}/",
+        context
+            .profile
+            .unwrap_or(RuntimeContextLabel::ArmatureConversation)
+            .as_str()
+    );
     json!({
         "schema": "den.memory_context_layers.v1",
         "source": "den.session_info",
@@ -233,7 +239,7 @@ fn memory_context_layers(
 
 pub fn bear_environment_payload(
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     current_user: Option<&CurrentUser>,
     member_count: i64,
     memory_status: &Value,
@@ -254,7 +260,7 @@ pub fn bear_environment_payload(
 
 pub fn bear_environment_payload_with_visibility(
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     current_user: Option<&CurrentUser>,
     member_count: i64,
     memory_status: &Value,
@@ -430,7 +436,7 @@ pub fn bear_environment_payload_with_visibility(
             "binding_id": context.binding_id,
             "member_count": member_count,
             "contract_label": match role {
-                BearProfile::Pair => Value::String("Builder Bear".to_string()),
+                RuntimeContextLabel::ArmatureConversation => Value::String("Builder Bear".to_string()),
                 _ => Value::Null,
             },
             "current_user": current_user.map(|user| json!({
@@ -472,7 +478,7 @@ pub fn bear_environment_payload_with_visibility(
 
 pub fn session_info_payload(
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     current_user: Option<&CurrentUser>,
     member_count: i64,
     memory_status: &Value,
@@ -491,7 +497,7 @@ pub fn session_info_payload(
 
 pub fn session_info_payload_with_visibility(
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     current_user: Option<&CurrentUser>,
     member_count: i64,
     memory_status: &Value,
@@ -527,15 +533,15 @@ pub fn session_info_payload_with_visibility(
         "profile": role.as_str(),
         "memory_surface": format!("{}/", role.as_str()),
         "space": match role {
-            BearProfile::Pair => "Collaboration Space",
-            BearProfile::Chat => "Conversation Space",
-            BearProfile::Curate => "Curation Space",
-            BearProfile::Work => "Execution Space",
-            BearProfile::Watch => "Observation Space",
+            RuntimeContextLabel::ArmatureConversation => "Collaboration Space",
+            RuntimeContextLabel::ChannelConversation => "Conversation Space",
+            RuntimeContextLabel::Curation => "Curation Space",
+            RuntimeContextLabel::JobRun => "Execution Space",
+            RuntimeContextLabel::Observation => "Observation Space",
         },
     });
     let role_contract_label = match role {
-        BearProfile::Pair => Some("Builder Bear"),
+        RuntimeContextLabel::ArmatureConversation => Some("Builder Bear"),
         _ => None,
     };
     let context_layers = memory_context_layers(context, &context_budget, memory_status, entities);
@@ -548,7 +554,7 @@ pub fn session_info_payload_with_visibility(
         PromptMemoryVisibility::BoundSession => (
             "session/ + hat/ + core/".to_string(),
             vec!["session/", "hat/", "core/"],
-            if role == BearProfile::Pair {
+            if role == RuntimeContextLabel::ArmatureConversation {
                 vec!["session/"]
             } else {
                 vec![]

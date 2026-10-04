@@ -6,7 +6,7 @@ use crate::core::tools::{
         builtin_den_tool_descriptors_for_profile,
     },
 };
-use den_service::bears::BearProfile;
+use den_service::bears::RuntimeContextLabel;
 use std::collections::HashSet;
 
 #[test]
@@ -121,39 +121,16 @@ fn canonical_dotted_names_map_to_provider_safe_aliases() {
     assert_eq!(entity_link.provider_name, DEN_ENTITY_LINK_MEMORY_PROVIDER);
     assert_eq!(entity_link.provider_name, "entity_link_memory");
 
-    let entity_merge = descriptors
-        .iter()
-        .find(|descriptor| descriptor.name == DEN_ENTITY_MERGE)
-        .expect("entity merge descriptor exists");
-    assert_eq!(entity_merge.provider_name, DEN_ENTITY_MERGE_PROVIDER);
-    assert_eq!(entity_merge.provider_name, "entity_merge");
-
-    let entity_split = descriptors
-        .iter()
-        .find(|descriptor| descriptor.name == DEN_ENTITY_SPLIT)
-        .expect("entity split descriptor exists");
-    assert_eq!(entity_split.provider_name, DEN_ENTITY_SPLIT_PROVIDER);
-    assert_eq!(entity_split.provider_name, "entity_split");
-
-    let entity_access_rule = descriptors
-        .iter()
-        .find(|descriptor| descriptor.name == DEN_ENTITY_WRITE_ACCESS_RULE)
-        .expect("entity access-rule descriptor exists");
-    assert_eq!(
-        entity_access_rule.provider_name,
-        DEN_ENTITY_WRITE_ACCESS_RULE_PROVIDER
-    );
-    assert_eq!(entity_access_rule.provider_name, "entity_write_access_rule");
-
-    let entity_anchor = descriptors
-        .iter()
-        .find(|descriptor| descriptor.name == DEN_ENTITY_WRITE_ANCHOR)
-        .expect("entity anchor descriptor exists");
-    assert_eq!(
-        entity_anchor.provider_name,
-        DEN_ENTITY_WRITE_ANCHOR_PROVIDER
-    );
-    assert_eq!(entity_anchor.provider_name, "entity_write_anchor");
+    for retired in [
+        DEN_ENTITY_MERGE,
+        DEN_ENTITY_SPLIT,
+        DEN_ENTITY_WRITE_ACCESS_RULE,
+        DEN_ENTITY_WRITE_ANCHOR,
+    ] {
+        assert!(descriptors
+            .iter()
+            .all(|descriptor| descriptor.name != retired));
+    }
 
     let update_task_list = descriptors
         .iter()
@@ -186,10 +163,11 @@ fn canonical_dotted_names_map_to_provider_safe_aliases() {
 
 #[test]
 fn den_server_tools_advertise_semantic_aliases_not_legacy_den_prefixes() {
-    let provider_names = builtin_den_tool_descriptors_for_profile(BearProfile::Pair)
-        .into_iter()
-        .map(|descriptor| descriptor.provider_name)
-        .collect::<HashSet<_>>();
+    let provider_names =
+        builtin_den_tool_descriptors_for_profile(RuntimeContextLabel::ArmatureConversation)
+            .into_iter()
+            .map(|descriptor| descriptor.provider_name)
+            .collect::<HashSet<_>>();
     assert!(provider_names.contains("session_info"));
     assert!(provider_names.contains("bear_environment"));
     assert!(provider_names.contains("set_conversation_title"));

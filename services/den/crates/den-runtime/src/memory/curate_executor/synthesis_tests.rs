@@ -123,7 +123,7 @@ async fn verified_curate_synthesis_publishes_for_every_authorized_hat_use(pool: 
             &stores,
             CreateMemoryProposal {
                 bear_id,
-                source_profile: BearProfile::Pair,
+                source_profile: RuntimeContextLabel::ArmatureConversation,
                 source_agent_id: None,
                 source_paths: vec![],
                 source_refs: json!({}),

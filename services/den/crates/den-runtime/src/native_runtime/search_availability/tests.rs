@@ -169,7 +169,7 @@ async fn search_roster_follows_current_owned_hat_tool_host_and_bear_block(pool: 
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn no_hat_search_roster_retains_legacy_provider_visibility(pool: PgPool) {
+async fn no_hat_search_roster_rejects_missing_ordinary_source(pool: PgPool) {
     let bear = db::create_bear(
         &pool,
         db::BearParams {
@@ -194,5 +194,5 @@ async fn no_hat_search_roster_retains_legacy_provider_visibility(pool: PgPool) {
         None
     )
     .await
-    .unwrap());
+    .is_err());
 }

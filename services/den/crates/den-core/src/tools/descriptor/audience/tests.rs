@@ -11,18 +11,30 @@ use std::collections::BTreeSet;
 #[test]
 fn typed_origin_matrix_preserves_profile_compatibility_without_using_it_as_authority() {
     for (profile, origin) in [
-        (BearProfile::Chat, TurnExecutionOrigin::ChannelConversation),
         (
-            BearProfile::Pair,
+            RuntimeContextLabel::ChannelConversation,
+            TurnExecutionOrigin::ChannelConversation,
+        ),
+        (
+            RuntimeContextLabel::ArmatureConversation,
             TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
         ),
-        (BearProfile::Pair, TurnExecutionOrigin::BrowserTaskSession),
         (
-            BearProfile::Work,
+            RuntimeContextLabel::ArmatureConversation,
+            TurnExecutionOrigin::BrowserTaskSession,
+        ),
+        (
+            RuntimeContextLabel::JobRun,
             TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Absent),
         ),
-        (BearProfile::Curate, TurnExecutionOrigin::InternalCuration),
-        (BearProfile::Watch, TurnExecutionOrigin::InboundObservation),
+        (
+            RuntimeContextLabel::Curation,
+            TurnExecutionOrigin::InternalCuration,
+        ),
+        (
+            RuntimeContextLabel::Observation,
+            TurnExecutionOrigin::InboundObservation,
+        ),
     ] {
         let legacy = builtin_den_tool_descriptors_for_profile(profile)
             .into_iter()
@@ -33,10 +45,7 @@ fn typed_origin_matrix_preserves_profile_compatibility_without_using_it_as_autho
             .map(|descriptor| descriptor.name)
             .collect::<BTreeSet<_>>();
         assert_eq!(current, legacy, "{origin:?}");
-        assert_eq!(
-            ToolAudience::from_origin(origin).compatibility_profile(),
-            profile
-        );
+        assert_eq!(ToolAudience::from_origin(origin).context_label(), profile);
     }
     for origin in [
         TurnExecutionOrigin::InternalCuration,
@@ -79,5 +88,5 @@ fn deserialized_descriptor_role_and_origin_claims_never_grant_execution() {
     ] {
         assert!(!decoded.allows_origin(origin), "{origin:?}");
     }
-    assert!(!decoded.allows_profile(BearProfile::Curate));
+    assert!(!decoded.allows_profile(RuntimeContextLabel::Curation));
 }

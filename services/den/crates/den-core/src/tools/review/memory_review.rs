@@ -5,7 +5,7 @@
 //! projection-scope computation over the [`MemoryReviewStore`] seam; the `den`
 //! impl owns the capability calls and `conversation_events` projections.
 
-use crate::{BearProfile, DenError};
+use crate::{DenError, RuntimeContextLabel};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -17,9 +17,8 @@ use crate::tools::{
 };
 
 use super::store::{
-    MarkMemoryLifecycleRequest, MemoryLifecycleStatus, MemoryProposalResolution,
-    MemoryProposalStatus, MemoryReviewStore, MemorySensitivity, MemorySuggestedAction,
-    ProposalProjection, RequestReviewRequest, ResolveProposalRequest,
+    MemoryReviewStore, MemorySensitivity, MemorySuggestedAction, ProposalProjection,
+    RequestReviewRequest,
 };
 
 #[derive(Debug, Deserialize)]
@@ -113,28 +112,11 @@ fn validate_optional_review_text(
         .transpose()
 }
 
-fn normalize_proposal_status_filter(
-    value: Option<&str>,
-) -> Result<Option<MemoryProposalStatus>, DenError> {
-    let Some(value) = value.map(str::trim).filter(|s| !s.is_empty()) else {
-        return Ok(None);
-    };
-    MemoryProposalStatus::parse(value).map(Some).ok_or_else(|| {
-        DenError::ValidationError(format!(
-            "status must be pending, rejected, retained_local, deferred, superseded, or needs_human_review; got {value}"
-        ))
-    })
-}
-
-fn bounded_proposal_limit(value: Option<i64>) -> i64 {
-    value.unwrap_or(50).clamp(1, 200)
-}
-
 /// The `conversation_events` projection scope id for this invocation.
 fn projection_scope_id(
     context: &DenToolInvocationContext,
     bear_id: Uuid,
-    role: BearProfile,
+    role: RuntimeContextLabel,
 ) -> String {
     source_client_session_id(context)
         .or_else(|| clean_optional(&context.session_id))
@@ -144,7 +126,7 @@ fn projection_scope_id(
 fn projection(
     context: &DenToolInvocationContext,
     bear_id: Uuid,
-    role: BearProfile,
+    role: RuntimeContextLabel,
 ) -> ProposalProjection {
     ProposalProjection {
         user_id: context.user_id,
@@ -154,110 +136,47 @@ fn projection(
 }
 
 pub async fn mark_memory_lifecycle(
-    store: &impl MemoryReviewStore,
-    context: &DenToolInvocationContext,
-    role: BearProfile,
-    arguments: Value,
+    _store: &impl MemoryReviewStore,
+    _context: &DenToolInvocationContext,
+    _role: RuntimeContextLabel,
+    _arguments: Value,
 ) -> Result<Value, DenError> {
-    if role != BearProfile::Curate {
-        return Err(DenError::Authorization(
-            "den.memory.mark_lifecycle is available only to curate".to_string(),
-        ));
-    }
-    let args: MemoryMarkLifecycleArguments = serde_json::from_value(arguments)?;
-    let memory_id = validate_bounded_text("memory_id", &args.memory_id, 1, 200)?;
-    let status = MemoryLifecycleStatus::parse(args.status.trim()).ok_or_else(|| {
-        DenError::ValidationError(
-            "status must be active, stale, superseded, archived, or archive-candidate".to_string(),
-        )
-    })?;
-    let reason = args
-        .reason
-        .as_deref()
-        .map(|value| validate_bounded_text("reason", value, 0, 1_000))
-        .transpose()?;
-    let record = store
-        .mark_memory_lifecycle(MarkMemoryLifecycleRequest {
-            bear_id: context.bear_id,
-            reviewer_profile: role,
-            binding_id: context.binding_id.clone(),
-            memory_id,
-            status,
-            reason,
-        })
-        .await?;
-    Ok(json!({ "bear_id": context.bear_id, "record": record }))
+    Err(DenError::NotFound(
+        "mark_memory_lifecycle model helper is retired".to_string(),
+    ))
 }
 
 pub async fn list_memory_proposals(
-    store: &impl MemoryReviewStore,
-    context: &DenToolInvocationContext,
-    role: BearProfile,
-    arguments: Value,
+    _store: &impl MemoryReviewStore,
+    _context: &DenToolInvocationContext,
+    _role: RuntimeContextLabel,
+    _arguments: Value,
 ) -> Result<Value, DenError> {
-    if role != BearProfile::Curate {
-        return Err(DenError::Authorization(
-            "den.memory.list_proposals is available only to curate".to_string(),
-        ));
-    }
-    let args: MemoryListProposalsArguments = serde_json::from_value(arguments)?;
-    let status = normalize_proposal_status_filter(args.status.as_deref())?;
-    let proposals = store
-        .list_proposals(context.bear_id, status, bounded_proposal_limit(args.limit))
-        .await?;
-    Ok(json!({ "bear_id": context.bear_id, "proposals": proposals }))
+    Err(DenError::NotFound(
+        "list_memory_proposals model helper is retired".to_string(),
+    ))
 }
 
 pub async fn read_memory_proposal(
-    store: &impl MemoryReviewStore,
-    context: &DenToolInvocationContext,
-    role: BearProfile,
-    arguments: Value,
+    _store: &impl MemoryReviewStore,
+    _context: &DenToolInvocationContext,
+    _role: RuntimeContextLabel,
+    _arguments: Value,
 ) -> Result<Value, DenError> {
-    if role != BearProfile::Curate {
-        return Err(DenError::Authorization(
-            "den.memory.read_proposal is available only to curate".to_string(),
-        ));
-    }
-    let args: MemoryReadProposalArguments = serde_json::from_value(arguments)?;
-    let proposal = store
-        .get_proposal(context.bear_id, args.proposal_id)
-        .await?
-        .ok_or_else(|| DenError::NotFound("memory proposal not found".to_string()))?;
-    Ok(json!({ "bear_id": context.bear_id, "proposal": proposal }))
+    Err(DenError::NotFound(
+        "read_memory_proposal model helper is retired".to_string(),
+    ))
 }
 
 pub async fn resolve_memory_proposal(
-    store: &impl MemoryReviewStore,
-    context: &DenToolInvocationContext,
-    role: BearProfile,
-    arguments: Value,
+    _store: &impl MemoryReviewStore,
+    _context: &DenToolInvocationContext,
+    _role: RuntimeContextLabel,
+    _arguments: Value,
 ) -> Result<Value, DenError> {
-    if role != BearProfile::Curate {
-        return Err(DenError::Authorization(
-            "den.memory.resolve_proposal is available only to curate".to_string(),
-        ));
-    }
-    let args: MemoryResolveProposalArguments = serde_json::from_value(arguments)?;
-    let status = MemoryProposalResolution::parse(args.status.trim()).ok_or_else(|| {
-        DenError::ValidationError(
-            "status must be rejected, retained_local, deferred, superseded, or needs_human_review"
-                .to_string(),
-        )
-    })?;
-    let proposal = store
-        .resolve_proposal(ResolveProposalRequest {
-            bear_id: context.bear_id,
-            reviewer_profile: role,
-            binding_id: context.binding_id.clone(),
-            proposal_id: args.proposal_id,
-            status,
-            review_notes: args.review_notes,
-            decision_summary: args.decision_summary,
-            projection: projection(context, context.bear_id, role),
-        })
-        .await?;
-    Ok(json!({ "bear_id": context.bear_id, "proposal": proposal }))
+    Err(DenError::NotFound(
+        "resolve_memory_proposal model helper is retired".to_string(),
+    ))
 }
 
 // `.md` is the canonical, case-sensitive role-memory extension; keep the exact
@@ -266,14 +185,11 @@ pub async fn resolve_memory_proposal(
 pub async fn request_memory_review(
     store: &impl MemoryReviewStore,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     arguments: Value,
 ) -> Result<Value, DenError> {
-    if !matches!(role, BearProfile::Pair) {
-        return Err(DenError::Authorization(
-            "den.memory.request_review is currently available only to pair".to_string(),
-        ));
-    }
+    // Dispatch owns audience/source authorization. Canonical hat candidates are
+    // verified by the store; the projected profile cannot authorize promotion.
     let args: MemoryRequestReviewArguments = serde_json::from_value(arguments)?;
     let source_paths = args
         .source_paths
@@ -370,6 +286,7 @@ pub async fn request_memory_review(
 
 #[cfg(test)]
 mod tests {
+    use super::super::store::{MemoryLifecycleStatus, MemoryProposalResolution};
     use super::*;
 
     #[test]
@@ -449,22 +366,5 @@ mod tests {
             Some(MemoryLifecycleStatus::Archived)
         );
         assert_eq!(MemoryLifecycleStatus::parse("deleted"), None);
-    }
-
-    #[test]
-    fn list_proposals_validates_status_and_bounds_limit() {
-        assert_eq!(normalize_proposal_status_filter(None).unwrap(), None);
-        assert_eq!(
-            normalize_proposal_status_filter(Some(" pending ")).unwrap(),
-            Some(MemoryProposalStatus::Pending)
-        );
-        assert_eq!(
-            MemoryProposalStatus::NeedsHumanReview.as_str(),
-            "needs_human_review"
-        );
-        assert!(normalize_proposal_status_filter(Some("done")).is_err());
-        assert_eq!(bounded_proposal_limit(None), 50);
-        assert_eq!(bounded_proposal_limit(Some(-10)), 1);
-        assert_eq!(bounded_proposal_limit(Some(500)), 200);
     }
 }

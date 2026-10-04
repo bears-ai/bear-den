@@ -1,17 +1,17 @@
 use crate::core::tools::constants::*;
-use den_service::bears::BearProfile;
+use den_service::bears::RuntimeContextLabel;
 
 use super::core_helpers::names_for_profile;
 
 #[test]
 fn descriptor_projections_exclude_system_operations() {
-    let chat = names_for_profile(BearProfile::Chat);
+    let chat = names_for_profile(RuntimeContextLabel::ChannelConversation);
     assert!(chat.contains(DEN_TASK_WRITE_INTENT));
     assert!(chat.contains(DEN_SKILL_PROPOSE));
     assert!(!chat.contains(DEN_OBSERVATION_WRITE));
     assert!(!chat.contains(DEN_RUN_WRITE_RESULT));
 
-    let pair = names_for_profile(BearProfile::Pair);
+    let pair = names_for_profile(RuntimeContextLabel::ArmatureConversation);
     assert!(pair.contains(DEN_TASK_WRITE_INTENT));
     assert!(pair.contains(DEN_TASK_LISTS_UPDATE));
     assert!(pair.contains(DEN_TASK_LISTS_REQUEST_HANDOFF));
@@ -19,10 +19,10 @@ fn descriptor_projections_exclude_system_operations() {
     assert!(!pair.contains(DEN_OBSERVATION_WRITE));
     assert!(!pair.contains(DEN_RUN_WRITE_RESULT));
 
-    assert!(names_for_profile(BearProfile::Curate).is_empty());
-    assert!(names_for_profile(BearProfile::Watch).is_empty());
+    assert!(names_for_profile(RuntimeContextLabel::Curation).is_empty());
+    assert!(names_for_profile(RuntimeContextLabel::Observation).is_empty());
 
-    let work = names_for_profile(BearProfile::Work);
+    let work = names_for_profile(RuntimeContextLabel::JobRun);
     assert!(work.contains(DEN_MEMORY_STATUS));
     assert!(work.contains(DEN_MEMORY_SEARCH));
     assert!(work.contains(DEN_MEMORY_READ));
@@ -40,6 +40,81 @@ fn descriptor_projections_exclude_system_operations() {
     assert!(work.contains(DEN_SKILL_PROPOSE));
     assert!(!work.contains(DEN_TASK_WRITE_INTENT));
     assert!(!work.contains(DEN_OBSERVATION_WRITE));
+}
+
+#[tokio::test]
+async fn internal_workers_cannot_use_ordinary_model_memory() {
+    use den_core::{
+        tools::{
+            context::DenToolInvocationContext,
+            memory::{RoleMemoryEntryWrite, RoleMemoryStore},
+        },
+        DenError,
+    };
+    use den_memory::MemoryStoreManager;
+    use serde_json::json;
+    use uuid::Uuid;
+
+    use crate::{config::Config, core::tools::memory_read::DenRoleMemoryStore};
+
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .connect_lazy("postgres://unused:unused@localhost/unused")
+        .unwrap();
+    let config = Config::test_stub();
+    let stores = MemoryStoreManager::new(&config);
+    let adapter = DenRoleMemoryStore::new(&pool, &config, &stores);
+    let context: DenToolInvocationContext = serde_json::from_value(json!({
+        "bear_id": Uuid::new_v4(), "bear_slug": "internal-memory", "binding_id": "test",
+        "user_id": 0, "conversation_id": "not-a-source", "session_id": "test", "channel": {}
+    }))
+    .unwrap();
+    for role in [
+        RuntimeContextLabel::Curation,
+        RuntimeContextLabel::Observation,
+    ] {
+        assert!(matches!(
+            adapter.read(&context, role, "core/note").await,
+            Err(DenError::Authorization(_))
+        ));
+        assert!(matches!(
+            adapter.browse(&context, role).await,
+            Err(DenError::Authorization(_))
+        ));
+        assert!(matches!(
+            adapter.search(&context, role, "secret", 10).await,
+            Err(DenError::Authorization(_))
+        ));
+        assert!(matches!(
+            adapter.status_base(&context, role).await,
+            Err(DenError::Authorization(_))
+        ));
+        assert!(matches!(
+            adapter.prompt_visibility(&context, role).await,
+            Err(DenError::Authorization(_))
+        ));
+        let entry = RoleMemoryEntryWrite {
+            kind: "note".into(),
+            title: "Denied".into(),
+            body: "Denied".into(),
+            tags: vec![],
+            refs: None,
+            lifecycle: None,
+            source: None,
+            author: None,
+            conversation_id: None,
+            session_id: None,
+            client_session_id: None,
+            conversation_selection: None,
+            runtime_target: None,
+            binding_id: None,
+            profile: None,
+            request_id: None,
+        };
+        assert!(matches!(
+            adapter.write_entry(&context, role, entry).await,
+            Err(DenError::Authorization(_))
+        ));
+    }
 }
 
 #[sqlx::test]
@@ -125,7 +200,7 @@ async fn model_memory_read_cannot_use_another_profile_or_new_scope_path(pool: sq
     let written = den_core::tools::memory::write_memory_entry(
         &adapter,
         &context,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         json!({"kind": "note", "title": "A finding", "body": "private-source-a-token"}),
         None,
         None,
@@ -136,7 +211,7 @@ async fn model_memory_read_cannot_use_another_profile_or_new_scope_path(pool: sq
     let own = den_core::tools::memory::memory_read(
         &adapter,
         &context,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         json!({ "path": source_path }),
     )
     .await
@@ -148,7 +223,7 @@ async fn model_memory_read_cannot_use_another_profile_or_new_scope_path(pool: sq
     let legacy = den_core::tools::memory::memory_read(
         &adapter,
         &context,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         json!({ "path": pair.to_logical_path() }),
     )
     .await
@@ -159,7 +234,7 @@ async fn model_memory_read_cannot_use_another_profile_or_new_scope_path(pool: sq
     let other = den_core::tools::memory::memory_read(
         &adapter,
         &other_context,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         json!({ "path": source_path }),
     )
     .await
@@ -168,7 +243,7 @@ async fn model_memory_read_cannot_use_another_profile_or_new_scope_path(pool: sq
     let hits = den_core::tools::memory::memory_search(
         &adapter,
         &other_context,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         json!({"query": "private-source-a-token"}),
     )
     .await
@@ -176,10 +251,14 @@ async fn model_memory_read_cannot_use_another_profile_or_new_scope_path(pool: sq
     assert!(hits["hits"].as_array().unwrap().is_empty());
 
     let prompt = crate::core::tools::prompt_memory::DenPromptMemoryStore::new(&pool);
-    let status =
-        den_core::tools::memory::memory_status(&adapter, &prompt, &context, BearProfile::Pair)
-            .await
-            .expect("bound status");
+    let status = den_core::tools::memory::memory_status(
+        &adapter,
+        &prompt,
+        &context,
+        RuntimeContextLabel::ArmatureConversation,
+    )
+    .await
+    .expect("bound status");
     assert_eq!(status["scope"], "bound");
     assert_eq!(status["file_count"], 1);
     assert_eq!(status["recall"]["reason"], "scope_limited");
@@ -188,7 +267,7 @@ async fn model_memory_read_cannot_use_another_profile_or_new_scope_path(pool: sq
         &tool_context,
         &tool_context,
         &context,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
     )
     .await
     .expect("bound session_info");

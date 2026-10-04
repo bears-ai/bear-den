@@ -14,29 +14,13 @@ use crate::conversation::persistence::get_conversation_for_external_id;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResolvedMemoryBinding {
-    Legacy,
     Bound(MemoryReadGrant),
 }
 
-/// A configured Bear cannot silently fall back to profile-local memory for
-/// an unbound human conversation or Work run. Legacy compatibility is retained
-/// only while the Bear has no hats to choose from.
-pub async fn legacy_only_without_hats(
-    pool: &PgPool,
-    bear_id: BearId,
-) -> Result<ResolvedMemoryBinding, DenError> {
-    let has_hats = sqlx::query_scalar!(
-        "SELECT EXISTS (SELECT 1 FROM bear_hats WHERE bear_id = $1) AS \"has_hats!\"",
-        bear_id.as_uuid(),
+pub fn missing_binding() -> DenError {
+    DenError::Authorization(
+        "a named hat is required; start a conversation or Job explicitly bound to a hat".into(),
     )
-    .fetch_one(pool)
-    .await?;
-    if has_hats {
-        return Err(DenError::Authorization(
-            "this Bear uses hats; start a conversation or Job with a hat instead of legacy profile memory".into(),
-        ));
-    }
-    Ok(ResolvedMemoryBinding::Legacy)
 }
 
 pub async fn for_conversation(
@@ -53,11 +37,14 @@ pub async fn for_conversation(
     .await?
     .ok_or_else(|| DenError::NotFound("active conversation is not bound to this Bear".into()))?;
     match hat_id {
-        Some(id) => Ok(ResolvedMemoryBinding::Bound(MemoryReadGrant::new(
-            MemorySource::Conversation(canonical_conversation_id),
-            Some(id.into()),
-        ))),
-        None => legacy_only_without_hats(pool, bear_id).await,
+        Some(id) => {
+            let hat = super::manage::get_hat(pool, bear_id, id.into()).await?;
+            Ok(ResolvedMemoryBinding::Bound(MemoryReadGrant::new(
+                MemorySource::Conversation(canonical_conversation_id),
+                Some(hat.id),
+            )))
+        }
+        None => Err(missing_binding()),
     }
 }
 
@@ -79,10 +66,7 @@ async fn require_job_hat(
     job_id: Uuid,
     hat_id: Option<HatId>,
 ) -> Result<(), DenError> {
-    let Some(hat_id) = hat_id else {
-        legacy_only_without_hats(pool, bear_id).await?;
-        return Ok(());
-    };
+    let hat_id = hat_id.ok_or_else(missing_binding)?;
     if eligible_job_hat(pool, bear_id, job_id).await? != Some(hat_id) {
         return Err(DenError::Authorization(
             "Work run's hat or surface grant is no longer eligible".into(),
@@ -116,13 +100,10 @@ pub async fn for_work_run(
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| DenError::NotFound("Work run is not bound to this Bear".into()))?;
-    let hat_id = row.hat_id.map(HatId::new);
-    require_job_hat(pool, bear_id, row.job_id, hat_id).await?;
-    Ok(match hat_id {
-        Some(hat_id) => ResolvedMemoryBinding::Bound(MemoryReadGrant::new(
-            MemorySource::WorkRun(work_run_id),
-            Some(hat_id),
-        )),
-        None => ResolvedMemoryBinding::Legacy,
-    })
+    let hat_id = row.hat_id.map(HatId::new).ok_or_else(missing_binding)?;
+    require_job_hat(pool, bear_id, row.job_id, Some(hat_id)).await?;
+    Ok(ResolvedMemoryBinding::Bound(MemoryReadGrant::new(
+        MemorySource::WorkRun(work_run_id),
+        Some(hat_id),
+    )))
 }

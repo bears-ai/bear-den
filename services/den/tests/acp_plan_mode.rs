@@ -4,7 +4,7 @@ use den::startup::run_sqlx_migrations;
 use den_runtime::plan_mode::{
     self, EnterPlanModeParams, PlanModeRequestedBy, SubmitPlanModeParams,
 };
-use den_service::bears::{db as bears_db, db::BearParams, BearProfile};
+use den_service::bears::{db as bears_db, db::BearParams, RuntimeContextLabel};
 use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
 
@@ -53,7 +53,12 @@ async fn create_test_bear(pool: &sqlx::PgPool) -> Uuid {
     .expect("create test bear")
 }
 
-async fn insert_role_agent(pool: &sqlx::PgPool, bear_id: Uuid, role: BearProfile, agent_id: &str) {
+async fn insert_role_agent(
+    pool: &sqlx::PgPool,
+    bear_id: Uuid,
+    role: RuntimeContextLabel,
+    agent_id: &str,
+) {
     sqlx::query(
         r"
         INSERT INTO bear_profile_bindings (bear_id, profile, binding_id, provisioning_status, last_synced_at)
@@ -91,7 +96,13 @@ async fn plan_mode_lifecycle_records_artifact_and_approval() {
     let test_suffix = Uuid::new_v4().simple().to_string();
     let agent_id = format!("agent-pair-plan-mode-test-{test_suffix}");
     let client_session_id = format!("acp-plan-mode-session-{test_suffix}");
-    insert_role_agent(&pool, bear_id, BearProfile::Pair, &agent_id).await;
+    insert_role_agent(
+        &pool,
+        bear_id,
+        RuntimeContextLabel::ArmatureConversation,
+        &agent_id,
+    )
+    .await;
 
     let entered = plan_mode::enter_plan_mode(
         &pool,

@@ -369,7 +369,7 @@ async fn create(
                 .update_job(DocketJobUpdate {
                     bear_id,
                     job_id,
-                    actor_role: den_service::bears::BearProfile::Pair,
+                    actor_role: den_service::bears::RuntimeContextLabel::ArmatureConversation,
                     actor_user_id: Some(user_id),
                     actor_agent_id: None,
                     goal: None,

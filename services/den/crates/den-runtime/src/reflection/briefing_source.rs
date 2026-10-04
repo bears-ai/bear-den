@@ -4,7 +4,9 @@ use den_core::{
     ids::{BearId, ConversationId, SessionId},
     DenError,
 };
+#[cfg(test)]
 use den_protocol::{RuntimeEventStream, RuntimeSemanticEvent, RuntimeStreamEvent};
+#[cfg(test)]
 use futures::StreamExt;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -113,6 +115,7 @@ pub async fn resolve_curate_briefing_source(
     })
 }
 
+#[cfg(test)]
 pub(crate) async fn collect_curate_briefing_text(
     pool: &PgPool,
     source: CurateBriefingSource,

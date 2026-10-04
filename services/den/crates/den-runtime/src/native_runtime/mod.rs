@@ -2,11 +2,12 @@
 //!
 //! `start_native_turn_event_stream` accepts Den-verified origin for BearWire turns;
 //! browser chat and internal Curate use their own typed entry paths. Continuations
-//! recover the compatibility profile from the originating native session and
-//! recheck live Work eligibility; model request metadata still carries its label. Rule-based
+//! recover the verified origin from the originating native session and
+//! recheck live Work eligibility; model request metadata carries a derived audit label. Rule-based
 //! Curate (`memory_curate_executor`) may add an internal briefing turn via
 //! `run_native_curate_briefing_collect_assistant_text`.
 
+mod curate_briefing;
 pub mod legacy_memory_tools;
 mod openai_stream;
 #[cfg(test)]
@@ -26,7 +27,7 @@ pub use openai_stream::{
     responses_byte_stream_to_event_stream, responses_byte_stream_to_event_stream_with_telemetry,
     ObservedPromptTokensSink,
 };
-pub use profile::{is_native_api_direct_role, NativeCapabilityProfile};
+pub use profile::NativeTurnDefaults;
 pub use profile_briefing::compose_curate_briefing_prompt;
 pub use tools::{is_task_definition_or_delegation_tool_provider_name, merge_den_and_client_tools};
 pub use turn::{

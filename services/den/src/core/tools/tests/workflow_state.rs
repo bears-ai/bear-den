@@ -5,7 +5,7 @@ fn pair_context() -> DenToolInvocationContext {
         bear_id: uuid::Uuid::nil(),
         bear_slug: "test".to_string(),
         binding_id: "agent".to_string(),
-        profile: Some(den_service::bears::BearProfile::Pair),
+        profile: Some(den_service::bears::RuntimeContextLabel::ArmatureConversation),
         user_id: 1,
         username: Some("tester".to_string()),
         membership_role: None,
@@ -36,11 +36,11 @@ use crate::core::tools::{
     support::validate_memory_write_entry_semantics,
 };
 use den_core::client_tools::{provider_tool_descriptor, ClientToolName};
-use den_core::{ArmatureAvailability, Governance, TurnExecutionOrigin};
-use den_service::bears::BearProfile;
 use den_core::tools::preflight::{tool_warning_payload, ToolSemanticWarning};
+use den_core::{ArmatureAvailability, Governance, TurnExecutionOrigin};
 use den_docket::{TaskListItemStatus, TaskListLocalProjection, TaskListUpdateItem};
 use den_runtime::plan_mode::PlanModeSessionRow;
+use den_service::bears::RuntimeContextLabel;
 
 #[test]
 fn descriptor_exposes_turn_state_domain_metadata() {
@@ -277,12 +277,15 @@ async fn memory_write_entry_returns_warning_payload_for_ambiguous_plan_like_memo
 async fn confirm_work_surface_requires_capability_before_database_access() {
     let pool = sqlx::PgPool::connect_lazy("postgres://unused:unused@localhost/unused").unwrap();
     let mut context = pair_context();
-    context.profile = Some(BearProfile::Chat);
+    context.profile = Some(RuntimeContextLabel::ChannelConversation);
 
     let err = super::super::confirm_work_surface(
         &pool,
         &context,
-        super::super::WorkflowAuthority { origin: TurnExecutionOrigin::ChannelConversation, governance: Governance::Interactive },
+        super::super::WorkflowAuthority {
+            origin: TurnExecutionOrigin::ChannelConversation,
+            governance: Governance::Interactive,
+        },
         json!({"work_surface_id": Uuid::new_v4()}),
     )
     .await
@@ -301,7 +304,10 @@ async fn confirm_work_surface_requires_client_session_before_database_access() {
     let err = super::super::confirm_work_surface(
         &pool,
         &context,
-        super::super::WorkflowAuthority { origin: TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected), governance: Governance::Interactive },
+        super::super::WorkflowAuthority {
+            origin: TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+            governance: Governance::Interactive,
+        },
         json!({"work_surface_id": Uuid::new_v4()}),
     )
     .await
@@ -368,7 +374,7 @@ async fn memory_write_entry_rejects_non_memory_domain_without_db_access() {
         bear_id: uuid::Uuid::nil(),
         bear_slug: "test".to_string(),
         binding_id: "agent".to_string(),
-        profile: Some(den_service::bears::BearProfile::Pair),
+        profile: Some(den_service::bears::RuntimeContextLabel::ArmatureConversation),
         user_id: 1,
         username: Some("tester".to_string()),
         membership_role: None,
@@ -436,7 +442,7 @@ async fn memory_write_entry_rejects_activity_content_class_without_db_access() {
         bear_id: uuid::Uuid::nil(),
         bear_slug: "test".to_string(),
         binding_id: "agent".to_string(),
-        profile: Some(den_service::bears::BearProfile::Pair),
+        profile: Some(den_service::bears::RuntimeContextLabel::ArmatureConversation),
         user_id: 1,
         username: Some("tester".to_string()),
         membership_role: None,

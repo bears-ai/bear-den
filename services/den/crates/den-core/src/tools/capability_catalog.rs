@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::{tools::descriptor::DenToolDescriptor, BearProfile};
+use crate::{tools::descriptor::DenToolDescriptor, RuntimeContextLabel};
 
 #[derive(Debug, Deserialize)]
 pub struct CapabilitySearchArguments {
@@ -231,7 +231,7 @@ pub fn session_capability_to_catalog_entry(
     }
 }
 
-pub fn code_mode_capability(role: BearProfile) -> CapabilityEntry {
+pub fn code_mode_capability(role: RuntimeContextLabel) -> CapabilityEntry {
     CapabilityEntry {
         r#ref: "executor:code_mode.den".to_string(),
         kind: "executor".to_string(),
@@ -500,11 +500,14 @@ mod tests {
 
     #[test]
     fn search_finds_memory_tool_by_tag_and_query() {
-        let mut entries: Vec<_> = builtin_den_tool_descriptors_for_profile(BearProfile::Pair)
-            .into_iter()
-            .map(tool_descriptor_to_capability)
-            .collect();
-        entries.push(code_mode_capability(BearProfile::Pair));
+        let mut entries: Vec<_> =
+            builtin_den_tool_descriptors_for_profile(RuntimeContextLabel::ArmatureConversation)
+                .into_iter()
+                .map(tool_descriptor_to_capability)
+                .collect();
+        entries.push(code_mode_capability(
+            RuntimeContextLabel::ArmatureConversation,
+        ));
         let result = search_capabilities(
             &entries,
             CapabilitySearchArguments {
@@ -525,10 +528,11 @@ mod tests {
 
     #[test]
     fn describe_accepts_provider_name() {
-        let entries: Vec<_> = builtin_den_tool_descriptors_for_profile(BearProfile::Pair)
-            .into_iter()
-            .map(tool_descriptor_to_capability)
-            .collect();
+        let entries: Vec<_> =
+            builtin_den_tool_descriptors_for_profile(RuntimeContextLabel::ArmatureConversation)
+                .into_iter()
+                .map(tool_descriptor_to_capability)
+                .collect();
         let result = describe_capability(&entries, "memory_search").unwrap();
         assert_eq!(result["capability"]["ref"], "tool:den.memory.search");
         assert_eq!(
@@ -539,7 +543,7 @@ mod tests {
 
     #[test]
     fn code_mode_entry_names_locality_limits() {
-        let entry = code_mode_capability(BearProfile::Pair);
+        let entry = code_mode_capability(RuntimeContextLabel::ArmatureConversation);
         assert_eq!(entry.r#ref, "executor:code_mode.den");
         assert!(entry
             .not_good_for
@@ -595,10 +599,11 @@ mod tests {
 
     #[test]
     fn tool_projection_exposes_phase_zero_contract() {
-        let descriptor = builtin_den_tool_descriptors_for_profile(BearProfile::Pair)
-            .into_iter()
-            .find(|descriptor| descriptor.name == "den.memory.search")
-            .unwrap();
+        let descriptor =
+            builtin_den_tool_descriptors_for_profile(RuntimeContextLabel::ArmatureConversation)
+                .into_iter()
+                .find(|descriptor| descriptor.name == "den.memory.search")
+                .unwrap();
         let entry = tool_descriptor_to_capability(descriptor);
 
         assert_eq!(entry.definition_id, "tool-definition:den.memory.search");

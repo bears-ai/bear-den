@@ -1,10 +1,8 @@
-use crate::core::{
-    tools::work_surface::{
-        normalize_work_surface_slug, work_surface_entry_body, work_surface_index_file_body,
-        work_surface_scaffold_requests,
-    },
+use crate::core::tools::work_surface::{
+    normalize_work_surface_slug, work_surface_entry_body, work_surface_index_file_body,
+    work_surface_scaffold_requests,
 };
-use den_service::bears::BearProfile;
+use den_service::bears::RuntimeContextLabel;
 
 #[test]
 fn normalize_work_surface_slug_collapses_non_alphanumeric_runs() {
@@ -33,7 +31,7 @@ fn work_surface_entry_body_links_to_scaffold_index() {
 #[test]
 fn work_surface_scaffold_requests_cover_registry_and_anchor_files() {
     let requests = work_surface_scaffold_requests(
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         "meta",
         "Meta",
         "Meta overview.",
@@ -63,7 +61,7 @@ fn work_surface_scaffold_requests_cover_registry_and_anchor_files() {
 #[test]
 fn work_surface_scaffold_requests_use_work_profile_local_path_when_role_is_work() {
     let requests = work_surface_scaffold_requests(
-        BearProfile::Work,
+        RuntimeContextLabel::JobRun,
         "meta",
         "Meta",
         "Meta overview.",
@@ -80,7 +78,7 @@ fn work_surface_scaffold_requests_use_work_profile_local_path_when_role_is_work(
 #[test]
 fn work_surface_scaffold_requests_skip_profile_local_file_for_chat() {
     let requests = work_surface_scaffold_requests(
-        BearProfile::Chat,
+        RuntimeContextLabel::ChannelConversation,
         "meta",
         "Meta",
         "Meta overview.",

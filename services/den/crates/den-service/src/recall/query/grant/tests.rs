@@ -17,16 +17,11 @@ fn vector_filter_never_admits_other_sessions_hats_or_legacy_profiles() {
     assert_eq!(must[0]["match"]["value"], bear.to_string());
     assert_eq!(must[2]["match"]["value"], "bears-embed-v1");
     let should = must[3]["should"].as_array().expect("scope alternatives");
-    assert_eq!(should.len(), 3);
+    assert_eq!(should.len(), 2);
     assert_eq!(should[0]["match"]["value"], "shared");
-    assert_eq!(should[1]["must"][0]["match"]["value"], "source_local");
-    assert_eq!(should[1]["must"][1]["match"]["value"], "conversation");
-    assert_eq!(
-        should[1]["must"][2]["match"]["value"],
-        source.id().to_string()
-    );
-    assert_eq!(should[2]["must"][0]["match"]["value"], "hat");
-    assert_eq!(should[2]["must"][1]["match"]["value"], hat.to_string());
+    assert_eq!(should[1]["must"][0]["match"]["value"], "hat");
+    assert_eq!(should[1]["must"][1]["match"]["value"], hat.to_string());
+    assert!(!filter.to_string().contains("source_local"));
     assert!(!filter.to_string().contains("scope_profile"));
 }
 
@@ -39,7 +34,8 @@ fn no_hat_grant_does_not_add_a_hat_alternative() {
         MemoryReadGrant::new(run, None),
     );
     let should = filter["must"][3]["should"].as_array().unwrap();
-    assert_eq!(should.len(), 2);
-    assert_eq!(should[1]["must"][1]["match"]["value"], "work_run");
-    assert_eq!(should[1]["must"][2]["match"]["value"], run.id().to_string());
+    assert_eq!(should.len(), 1);
+    assert_eq!(should[0]["match"]["value"], "shared");
+    assert!(!filter.to_string().contains("scope_hat_id"));
+    assert!(!filter.to_string().contains("source_local"));
 }

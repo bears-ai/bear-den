@@ -23,10 +23,7 @@ use crate::{
     web::{self, AppState},
 };
 use den_core::DenError;
-use den_memory::{admin_inspect::bear_memory_admin_stats, BearMemoryAdminStats};
-use den_service::bears::{
-    db as bears_db, db::BearParams, provision, BearProfile, BearProfileBinding,
-};
+use den_service::bears::{db as bears_db, db::BearParams, provision};
 
 use crate::web::bear::create_support::{
     admin_bear_edit_page_context, admin_bear_new_form_context, canonical_default_model_handle,
@@ -151,30 +148,6 @@ pub(crate) struct BearPlanModeRow {
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct BearProfileBindingHealthRow {
-    pub(crate) profile: String,
-    pub(crate) surface_label: String,
-    pub(crate) binding_id: String,
-    pub(crate) runtime_family: String,
-    pub(crate) branch: String,
-    pub(crate) legacy_agent_id: Option<String>,
-    pub(crate) provisioning_status: String,
-    pub(crate) last_provisioned_version: i32,
-    pub(crate) last_synced_at: Option<String>,
-    pub(crate) health_status: String,
-    pub(crate) health_label: String,
-    pub(crate) health_detail: Option<String>,
-    legacy_provider_name: Option<String>,
-    legacy_provider_model: Option<String>,
-    legacy_provider_type: Option<String>,
-    legacy_provider_tool_count: Option<usize>,
-    legacy_provider_memory_block_count: Option<usize>,
-    memory_view_state: Option<String>,
-    memory_view_quarantined: bool,
-    memory_view_diagnostic: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
 pub(crate) struct BearMemberAdminRow {
     pub(crate) user_id: i32,
     pub(crate) username: String,
@@ -188,56 +161,6 @@ pub(crate) fn membership_role_label(role: Option<&str>) -> String {
         Some("admin") => "Admin — can manage bear settings and members".to_string(),
         Some("member") | None => "Member — can use the bear".to_string(),
         Some(other) => format!("Custom ({other})"),
-    }
-}
-
-fn profile_surface_label(role: BearProfile) -> String {
-    match role {
-        BearProfile::Chat => "Web chat",
-        BearProfile::Pair => "ACP/coding",
-        BearProfile::Curate => "Memory curation",
-        BearProfile::Work => "Sandboxed work",
-        BearProfile::Watch => "Observation",
-    }
-    .to_string()
-}
-
-impl BearProfileBindingHealthRow {
-    fn native(agent: &BearProfileBinding, role: BearProfile) -> Self {
-        let binding = Some(agent.binding_id.trim().to_string()).filter(|s| !s.is_empty());
-        let (health_status, health_label, health_detail) = match agent.provisioning_status.as_str()
-        {
-            "ready" => ("ok", "Ready", None),
-            "failed" => ("error", "Failed", agent.last_provisioning_error.clone()),
-            "drifted" => (
-                "error",
-                "Drifted",
-                Some("Runtime config changed; re-provision to refresh.".to_string()),
-            ),
-            other => ("unknown", other, agent.last_provisioning_error.clone()),
-        };
-        Self {
-            profile: role.as_str().to_string(),
-            surface_label: profile_surface_label(role),
-            binding_id: agent.binding_id.clone(),
-            runtime_family: role.runtime_family().to_string(),
-            branch: role.as_str().to_string(),
-            legacy_agent_id: binding,
-            provisioning_status: agent.provisioning_status.clone(),
-            last_provisioned_version: agent.last_provisioned_version,
-            last_synced_at: agent.last_synced_at.map(|t| t.to_string()),
-            health_status: health_status.to_string(),
-            health_label: health_label.to_string(),
-            health_detail,
-            legacy_provider_name: None,
-            legacy_provider_model: None,
-            legacy_provider_type: None,
-            legacy_provider_tool_count: None,
-            legacy_provider_memory_block_count: None,
-            memory_view_state: None,
-            memory_view_quarantined: false,
-            memory_view_diagnostic: None,
-        }
     }
 }
 
@@ -381,102 +304,6 @@ pub(crate) async fn bear_plan_mode_rows(
         .collect())
 }
 
-pub(crate) async fn bear_agent_health_rows(
-    state: &AppState,
-    bear_id: Uuid,
-    _runtime_configured: bool,
-) -> Result<Vec<BearProfileBindingHealthRow>, CustomError> {
-    bears_db::ensure_bear_profile_binding_rows(state.sqlx_pool(), bear_id).await?;
-    let agents = bears_db::list_bear_profile_bindings(state.sqlx_pool(), bear_id).await?;
-    Ok(agents
-        .into_iter()
-        .map(|agent| {
-            let role = agent.parsed_profile().unwrap_or(BearProfile::Chat);
-            BearProfileBindingHealthRow::native(&agent, role)
-        })
-        .collect())
-}
-
-async fn bear_detail_response(
-    state: &AppState,
-    auth_session: AuthSession,
-    id: Uuid,
-    message: Option<String>,
-) -> Result<Response, CustomError> {
-    let bear = bears_db::get_bear(state.sqlx_pool(), id)
-        .await?
-        .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
-
-    let member_count = bears_db::count_bear_members(state.sqlx_pool(), id).await?;
-    let native_runtime = true;
-    let runtime_configured = true;
-    let agent_health_rows = bear_agent_health_rows(state, id, runtime_configured).await?;
-    let roles_ready = agent_health_rows
-        .iter()
-        .filter(|row| row.health_status == "ok")
-        .count();
-    let roles_error = agent_health_rows
-        .iter()
-        .filter(|row| row.health_status == "error")
-        .count();
-
-    let memory_stats: Option<BearMemoryAdminStats> = {
-        let manager = state.memory_stores.clone();
-        match bear_memory_admin_stats(&manager, state.config.as_ref(), id).await {
-            Ok(stats) => Some(stats),
-            Err(err) => {
-                tracing::warn!(%id, "admin hub memory stats unavailable: {err}");
-                None
-            }
-        }
-    };
-
-    let conversation_count: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*)::bigint FROM conversations WHERE bear_id = $1",
-        id
-    )
-    .fetch_one(state.sqlx_pool())
-    .await
-    .map_err(|err| CustomError::Database(format!("count bear conversations: {err}")))?
-    .unwrap_or_default();
-
-    web::render_template(
-        state,
-        "admin/bears/hub.html",
-        auth_session,
-        context! {
-            bear,
-            message,
-            member_count,
-            native_runtime,
-            context_profile_enabled => bear.context_profile.is_some(),
-            runtime_configured,
-            agent_health_rows,
-            roles_ready,
-            roles_error,
-            memory_stats,
-            conversation_count,
-            bear_nav_active => "hub",
-        },
-    )
-    .await
-}
-
-#[derive(Debug, Deserialize)]
-struct BearDetailQuery {
-    #[serde(default)]
-    message: Option<String>,
-}
-
-async fn detail_view(
-    Path(id): Path<Uuid>,
-    Query(query): Query<BearDetailQuery>,
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-) -> Result<Response, CustomError> {
-    bear_detail_response(&state, auth_session, id, query.message).await
-}
-
 async fn list_view(
     State(state): State<AppState>,
     auth_session: AuthSession,
@@ -593,13 +420,8 @@ pub async fn new_action(
             .await;
         }
 
-        if let Err(e) = provision::provision_bear_if_configured(
-            state.sqlx_pool(),
-            state.config.as_ref(),
-            &state.memory_stores,
-            id,
-        )
-        .await
+        if let Err(e) =
+            provision::initialize_bear_native(state.sqlx_pool(), &state.memory_stores, id).await
         {
             tracing::warn!(%id, "Bear provision failed: {e}");
             let users = user_db::get_users(state.sqlx_pool()).await?;
@@ -736,13 +558,8 @@ async fn edit_action(
         )
         .await?;
 
-        if let Err(e) = provision::provision_bear_if_configured(
-            state.sqlx_pool(),
-            state.config.as_ref(),
-            &state.memory_stores,
-            id,
-        )
-        .await
+        if let Err(e) =
+            provision::initialize_bear_native(state.sqlx_pool(), &state.memory_stores, id).await
         {
             tracing::warn!(%id, "Native profile refresh after bear edit failed: {e}");
             let bear = bears_db::get_bear(state.sqlx_pool(), id)
@@ -867,13 +684,7 @@ async fn edit_prompt_action(
         )
         .await?;
 
-        provision::provision_bear_if_configured(
-            state.sqlx_pool(),
-            state.config.as_ref(),
-            &state.memory_stores,
-            id,
-        )
-        .await?;
+        provision::initialize_bear_native(state.sqlx_pool(), &state.memory_stores, id).await?;
 
         Ok(Redirect::to(&format!("/admin/bears/{id}")).into_response())
     } else {
@@ -1072,31 +883,6 @@ async fn revoke_web_approval_action(
     Ok(Redirect::to(&format!(
         "/admin/bears/{id}/policy?message={}",
         urlencoding::encode("Web approval revoked.")
-    ))
-    .into_response())
-}
-
-async fn provision_missing_profiles_action(
-    Path(id): Path<Uuid>,
-    State(state): State<AppState>,
-    _auth_session: AuthSession,
-) -> Result<Response, CustomError> {
-    let message = match provision::provision_missing_bear_profiles(
-        state.sqlx_pool(),
-        state.config.as_ref(),
-        &state.memory_stores,
-        id,
-    )
-    .await
-    {
-        Ok(0) => "No missing native profile bindings to provision.".to_string(),
-        Ok(n) => format!("Provisioned {n} missing native profile binding(s)."),
-        Err(err) => format!("Provisioning native profile bindings failed: {err}"),
-    };
-
-    Ok(Redirect::to(&format!(
-        "/admin/bears/{id}/profiles?message={}",
-        urlencoding::encode(&message)
     ))
     .into_response())
 }

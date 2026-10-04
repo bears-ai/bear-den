@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use den_service::bears::BearProfile;
+use den_service::bears::RuntimeContextLabel;
 
 use crate::{
     agent_loop::load_transcript_grouping_rows,
@@ -213,7 +213,7 @@ pub async fn harvest_compaction_artifacts_once(
             pool,
             config,
             stores,
-            BearProfile::Curate,
+            RuntimeContextLabel::Curation,
             Some("archive_harvest".to_string()),
             &bundle,
             &extraction_output,

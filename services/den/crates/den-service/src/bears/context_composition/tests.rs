@@ -57,7 +57,8 @@ fn resolved_block(key: &str, content: &str) -> ResolvedManagedBlock {
 #[test]
 fn legacy_bear_uses_system_prompt() {
     let bear = test_bear(None);
-    let composed = compose_role_context(&bear, BearProfile::Chat, None).unwrap();
+    let composed =
+        compose_role_context(&bear, RuntimeContextLabel::ChannelConversation, None).unwrap();
     assert!(composed.is_legacy);
     assert_eq!(composed.composed_prompt, "legacy prompt");
 }
@@ -65,7 +66,12 @@ fn legacy_bear_uses_system_prompt() {
 #[test]
 fn legacy_bear_trims_blank_runtime_context_metadata() {
     let bear = test_bear(None);
-    let composed = compose_role_context(&bear, BearProfile::Chat, Some("  \n\t  ")).unwrap();
+    let composed = compose_role_context(
+        &bear,
+        RuntimeContextLabel::ChannelConversation,
+        Some("  \n\t  "),
+    )
+    .unwrap();
     assert!(composed.is_legacy);
     assert_eq!(composed.runtime_context, None);
 }
@@ -73,7 +79,12 @@ fn legacy_bear_trims_blank_runtime_context_metadata() {
 #[test]
 fn legacy_bear_includes_non_blank_runtime_context_in_prompt() {
     let bear = test_bear(None);
-    let composed = compose_role_context(&bear, BearProfile::Chat, Some(" Runtime now. ")).unwrap();
+    let composed = compose_role_context(
+        &bear,
+        RuntimeContextLabel::ChannelConversation,
+        Some(" Runtime now. "),
+    )
+    .unwrap();
     assert!(composed.is_legacy);
     assert_eq!(composed.runtime_context, Some("Runtime now.".to_string()));
     assert_eq!(
@@ -109,7 +120,12 @@ fn composed_bear_includes_layers_in_order() {
         first_task: None,
     };
     let bear = test_bear(Some(profile));
-    let composed = compose_role_context(&bear, BearProfile::Pair, Some("Runtime now.")).unwrap();
+    let composed = compose_role_context(
+        &bear,
+        RuntimeContextLabel::ArmatureConversation,
+        Some("Runtime now."),
+    )
+    .unwrap();
     assert!(!composed.is_legacy);
     let den_baseline = composed.composed_prompt.find("# Den baseline").unwrap();
     let space_instructions = composed
@@ -143,12 +159,14 @@ fn managed_prompt_renders_compile_time_template_fields() {
     };
     profile.role_contracts.chat = "Speak as {{ bear_name }}.".to_string();
     let bear = test_bear(Some(profile));
-    let prompt = render_managed_role_prompt(&bear, BearProfile::Chat, None).unwrap();
+    let prompt =
+        render_managed_role_prompt(&bear, RuntimeContextLabel::ChannelConversation, None).unwrap();
     assert!(prompt.contains("Speak as Builder Bear."));
     assert!(prompt.contains("Prefer concise plans for Builder Bear."));
     assert!(prompt.contains("Slug: builder."));
 
-    let composed = compose_role_context(&bear, BearProfile::Chat, None).unwrap();
+    let composed =
+        compose_role_context(&bear, RuntimeContextLabel::ChannelConversation, None).unwrap();
     assert_eq!(composed.role_contract, "Speak as Builder Bear.");
     assert_eq!(
         composed.user_steering,
@@ -174,7 +192,8 @@ fn managed_prompt_rejects_turn_time_template_fields() {
         first_task: None,
     };
     let bear = test_bear(Some(profile));
-    let err = render_managed_role_prompt(&bear, BearProfile::Chat, None).unwrap_err();
+    let err = render_managed_role_prompt(&bear, RuntimeContextLabel::ChannelConversation, None)
+        .unwrap_err();
     assert!(err.to_string().contains("failed to render"));
 }
 
@@ -200,13 +219,18 @@ fn managed_resolved_blocks_override_profile_and_repository_defaults() {
         blocks: vec![
             resolved_block("den_baseline", "Managed baseline for {{ bear_name }}."),
             resolved_block(
-                &managed_space_block_key(BearProfile::Chat),
+                &managed_space_block_key(RuntimeContextLabel::ChannelConversation),
                 "Managed chat for {{ bear_slug }}.",
             ),
         ],
     };
 
-    let prompt = render_managed_role_prompt(&bear, BearProfile::Chat, Some(&resolved)).unwrap();
+    let prompt = render_managed_role_prompt(
+        &bear,
+        RuntimeContextLabel::ChannelConversation,
+        Some(&resolved),
+    )
+    .unwrap();
 
     assert!(prompt.contains("# Den baseline\nManaged baseline for Builder Bear."));
     assert!(prompt.contains("# Space instructions: Conversation Space\nManaged chat for builder."));

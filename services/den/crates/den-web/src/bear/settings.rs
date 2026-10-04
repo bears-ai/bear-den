@@ -18,7 +18,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::io::{Cursor, Read, Write};
 use std::path::{Path as FsPath, PathBuf};
-use std::str::FromStr;
 use time::format_description::well_known::Rfc3339;
 use uuid::Uuid;
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
@@ -35,7 +34,7 @@ use den_protocol::ContextBudgetReport;
 use den_runtime::{
     bearwire_events,
     pair_reflection::create_pair_reflection_proposals_from_latest_summary,
-    runtime::compaction::{prepare_turn_compaction, TurnCompactionTrigger},
+    runtime::compaction::{prepare_turn_compaction, CompactionSource, TurnCompactionTrigger},
     runtime::compaction_observability::RuntimeCompactionEventStatus,
 };
 use den_service::prompt_memory_block_store::list_prompt_memory_blocks_for_bear_profile;
@@ -46,15 +45,15 @@ use den_service::{
         db::{role_is_bear_admin, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER},
         get_compiled_bear_config, hats,
         managed_blocks::BearCompiledConfigRow,
-        provision, BearProfile,
+        provision,
     },
     conversation::persistence::{self as conversation_persistence, list_messages_page},
 };
 
 use crate::web::admin::bears::{
-    bear_agent_health_rows, bear_plan_mode_rows, bear_web_approvals, bear_web_fetches,
-    bear_web_sources, membership_role_label, AddWebApprovalForm, AddWebSourceForm,
-    BearMemberAdminRow, BearPlanModeRow, BearWebApprovalRow, BearWebFetchRow, BearWebSourceRow,
+    bear_plan_mode_rows, bear_web_approvals, bear_web_fetches, bear_web_sources,
+    membership_role_label, AddWebApprovalForm, AddWebSourceForm, BearMemberAdminRow,
+    BearPlanModeRow, BearWebApprovalRow, BearWebFetchRow, BearWebSourceRow,
 };
 use crate::web::bear::create_support::{
     all_model_catalog_options_context_for_bear, bear_slug_base, canonical_default_model_handle,
@@ -62,10 +61,7 @@ use crate::web::bear::create_support::{
 };
 use den_llm::ModelOption;
 
-use super::{
-    member::{email_verify_redirect, load_bear_member, viewer_can_manage_bear},
-    profile::build_role_detail_view,
-};
+use super::member::{email_verify_redirect, load_bear_member, viewer_can_manage_bear};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -78,16 +74,6 @@ pub fn router() -> Router<AppState> {
         .route_with_tsr(
             "/bear/{slug}/models/provision-bifrost-key",
             post(provision_bifrost_virtual_key_action),
-        )
-        .route_with_tsr("/bear/{slug}/stances/{stance}", get(stance_detail_view))
-        .route_with_tsr("/bear/{slug}/profiles/{stance}", get(stance_detail_view))
-        .route_with_tsr(
-            "/bear/{slug}/stances/{stance}/model",
-            post(stance_model_post),
-        )
-        .route_with_tsr(
-            "/bear/{slug}/profiles/{stance}/model",
-            post(stance_model_post),
         )
         .route_with_tsr("/bear/{slug}/activity", get(conversations_view))
         .route_with_tsr("/bear/{slug}/conversations", get(conversations_view))
@@ -132,18 +118,6 @@ pub fn router() -> Router<AppState> {
             "/bear/{slug}/web-approvals/{approval_id}/revoke",
             post(revoke_web_approval_action),
         )
-        .route_with_tsr(
-            "/bear/{slug}/provision-missing-stances",
-            post(provision_missing_stances_action),
-        )
-        .route_with_tsr(
-            "/bear/{slug}/provision-missing-profiles",
-            post(provision_missing_stances_action),
-        )
-        .route_with_tsr(
-            "/bear/{slug}/provision-missing-roles",
-            post(provision_missing_stances_action),
-        )
 }
 
 #[derive(Debug, Deserialize)]
@@ -164,36 +138,6 @@ struct BearModelsForm {
     bear_tool_budget_multiplier: String,
     #[serde(default)]
     bear_loop_control: String,
-    #[serde(default)]
-    chat_model: String,
-    #[serde(default)]
-    chat_model_custom: String,
-    #[serde(default)]
-    chat_loop_control: String,
-    #[serde(default)]
-    pair_model: String,
-    #[serde(default)]
-    pair_model_custom: String,
-    #[serde(default)]
-    pair_loop_control: String,
-    #[serde(default)]
-    curate_model: String,
-    #[serde(default)]
-    curate_model_custom: String,
-    #[serde(default)]
-    curate_loop_control: String,
-    #[serde(default)]
-    work_model: String,
-    #[serde(default)]
-    work_model_custom: String,
-    #[serde(default)]
-    work_loop_control: String,
-    #[serde(default)]
-    watch_model: String,
-    #[serde(default)]
-    watch_model_custom: String,
-    #[serde(default)]
-    watch_loop_control: String,
     #[serde(default)]
     bifrost_virtual_key_id: String,
     #[serde(default)]
@@ -243,29 +187,6 @@ struct ManualReflectionResult {
     reflection_event_id: Option<Uuid>,
     reflection_event_sequence_no: Option<i64>,
     reflection_payload_json: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct StanceModelForm {
-    #[serde(default)]
-    model: String,
-    #[serde(default)]
-    model_custom: String,
-}
-
-#[derive(Debug, Serialize)]
-struct BearProfileModelRow {
-    profile: String,
-    label: String,
-    configured_model: String,
-    configured_model_custom: String,
-    resolved_model: String,
-    source: String,
-    availability_status: String,
-    metadata_status: String,
-    configured_loop_control: String,
-    resolved_loop_control: String,
-    loop_control_source: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -1406,25 +1327,10 @@ async fn import_bear_bundle(
     })?;
     rewrite_imported_memory_bear_id(&state, bear_id).await?;
 
-    if let Err(err) = provision::provision_bear_if_configured(
-        state.sqlx_pool(),
-        state.config.as_ref(),
-        &state.memory_stores,
-        bear_id,
-    )
-    .await
+    if let Err(err) =
+        provision::initialize_bear_native(state.sqlx_pool(), &state.memory_stores, bear_id).await
     {
-        tracing::warn!(%bear_id, error = %err, "provision after Bear import failed");
-    }
-    if let Err(err) = provision::reconcile_bear_native(
-        state.sqlx_pool(),
-        state.config.as_ref(),
-        &state.memory_stores,
-        bear_id,
-    )
-    .await
-    {
-        tracing::warn!(%bear_id, error = %err, "reconcile after Bear import failed");
+        tracing::warn!(%bear_id, error = %err, "initialization after Bear import failed");
     }
 
     Ok(Redirect::to(&format!(
@@ -1531,16 +1437,6 @@ async fn overview_view(
 
     let id = bear.id;
     let member_count = bears_db::count_bear_members(state.sqlx_pool(), id).await?;
-    let runtime_configured = true;
-    let agent_health_rows = bear_agent_health_rows(&state, id, runtime_configured).await?;
-    let roles_ready = agent_health_rows
-        .iter()
-        .filter(|row| row.health_status == "ok")
-        .count();
-    let roles_error = agent_health_rows
-        .iter()
-        .filter(|row| row.health_status == "error")
-        .count();
     let memory_stats = {
         let manager = state.memory_stores.clone();
         match bear_memory_admin_stats(&manager, state.config.as_ref(), id).await {
@@ -1620,10 +1516,6 @@ async fn overview_view(
             member_count,
             native_runtime => true,
             context_profile_enabled => bear.context_profile.is_some(),
-            runtime_configured,
-            agent_health_rows,
-            roles_ready,
-            roles_error,
             memory_stats,
             recall_health,
             legacy_import_locked => memory_stats.as_ref().map(|stats| stats.record_count > 0).unwrap_or(true),
@@ -1682,50 +1574,9 @@ async fn persona_view(Path(slug): Path<String>) -> Redirect {
     Redirect::permanent(&format!("/bear/{slug}/context"))
 }
 
-/// The standalone stance-binding table is retired: binding status lives in
-/// diagnostics (`/advanced`), stance detail is linked from identity/models.
+/// Retired stance/profile list URLs remain harmless redirects to diagnostics.
 async fn stances_list_redirect(Path(slug): Path<String>) -> Redirect {
     Redirect::permanent(&format!("/bear/{slug}/advanced"))
-}
-
-fn profile_label(profile: BearProfile) -> &'static str {
-    match profile {
-        BearProfile::Chat => "Chat",
-        BearProfile::Pair => "Pair",
-        BearProfile::Curate => "Curate",
-        BearProfile::Work => "Work",
-        BearProfile::Watch => "Watch",
-    }
-}
-
-fn form_profile_model(form: &BearModelsForm, profile: BearProfile) -> &str {
-    match profile {
-        BearProfile::Chat => &form.chat_model,
-        BearProfile::Pair => &form.pair_model,
-        BearProfile::Curate => &form.curate_model,
-        BearProfile::Work => &form.work_model,
-        BearProfile::Watch => &form.watch_model,
-    }
-}
-
-fn form_profile_model_custom(form: &BearModelsForm, profile: BearProfile) -> &str {
-    match profile {
-        BearProfile::Chat => &form.chat_model_custom,
-        BearProfile::Pair => &form.pair_model_custom,
-        BearProfile::Curate => &form.curate_model_custom,
-        BearProfile::Work => &form.work_model_custom,
-        BearProfile::Watch => &form.watch_model_custom,
-    }
-}
-
-fn form_profile_loop_control(form: &BearModelsForm, profile: BearProfile) -> &str {
-    match profile {
-        BearProfile::Chat => &form.chat_loop_control,
-        BearProfile::Pair => &form.pair_loop_control,
-        BearProfile::Curate => &form.curate_loop_control,
-        BearProfile::Work => &form.work_loop_control,
-        BearProfile::Watch => &form.watch_loop_control,
-    }
 }
 
 fn parse_loop_control_form_value(raw: &str) -> Result<Option<AgentLoopControlLevel>, CustomError> {
@@ -1815,73 +1666,6 @@ fn model_metadata_status(raw: &str) -> &'static str {
     } else {
         "unknown"
     }
-}
-
-async fn model_page_rows(
-    pool: &sqlx::PgPool,
-    bear: &den_service::bears::Bear,
-    select_options: &[ModelOption],
-    availability_options: &[ModelOption],
-) -> Result<Vec<BearProfileModelRow>, CustomError> {
-    let settings = bears_db::list_profile_model_settings(pool, bear.id).await?;
-    let bear_loop_control = bears_db::bear_agent_loop_control_setting(pool, bear.id).await?;
-    let mut rows = Vec::new();
-    for profile in BearProfile::ALL {
-        let configured = settings
-            .iter()
-            .find(|row| row.profile == profile.as_str())
-            .and_then(|row| row.model.as_deref())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or("");
-        let resolved = if configured.is_empty() {
-            bear.default_model.as_deref().unwrap_or("")
-        } else {
-            configured
-        };
-        let profile_loop_control = settings
-            .iter()
-            .find(|row| row.profile == profile.as_str())
-            .and_then(|row| row.agent_loop_control_level.as_deref())
-            .map(str::trim)
-            .filter(|s| !s.is_empty());
-        let resolved_loop_control = profile_loop_control
-            .or_else(|| bear_loop_control.map(AgentLoopControlLevel::as_str))
-            .unwrap_or("model default");
-        let loop_control_source = if profile_loop_control.is_some() {
-            "Stance override"
-        } else if bear_loop_control.is_some() {
-            "Bear default"
-        } else {
-            "Model default"
-        };
-        rows.push(BearProfileModelRow {
-            profile: profile.as_str().to_string(),
-            label: profile_label(profile).to_string(),
-            configured_model: configured.to_string(),
-            configured_model_custom: if configured.is_empty()
-                || model_available(select_options, configured)
-            {
-                String::new()
-            } else {
-                configured.to_string()
-            },
-            resolved_model: resolved.to_string(),
-            source: if configured.is_empty() {
-                "Bear default"
-            } else {
-                "Stance override"
-            }
-            .to_string(),
-            availability_status: model_availability_status(availability_options, resolved)
-                .to_string(),
-            metadata_status: model_metadata_status(resolved).to_string(),
-            configured_loop_control: profile_loop_control.unwrap_or("").to_string(),
-            resolved_loop_control: resolved_loop_control.to_string(),
-            loop_control_source: loop_control_source.to_string(),
-        });
-    }
-    Ok(rows)
 }
 
 fn display_number(value: Option<f64>) -> String {
@@ -2208,13 +1992,6 @@ async fn render_models_page(
     let (model_catalog_configured, live_model_options, models_fetch_error) =
         all_model_catalog_options_context_for_bear(&state, bear.id).await;
     let all_model_options = merge_model_options(&model_options, &live_model_options);
-    let rows = model_page_rows(
-        state.sqlx_pool(),
-        &bear,
-        &model_options,
-        &live_model_options,
-    )
-    .await?;
     let bear_default_model = bear.default_model.as_deref().unwrap_or("");
     let bear_loop_control = bears_db::bear_agent_loop_control_setting(state.sqlx_pool(), bear.id)
         .await?
@@ -2239,7 +2016,6 @@ async fn render_models_page(
             model_options,
             all_model_options,
             models_fetch_error,
-            rows,
             bear_default_custom_model => if !bear_default_model.is_empty() && !model_available(&model_options, bear_default_model) { bear_default_model } else { "" },
             bear_loop_control,
             bear_tool_budget_multiplier,
@@ -2329,30 +2105,6 @@ async fn models_post(
     let bear_tool_budget_multiplier =
         parse_tool_budget_multiplier_form_value(&form.bear_tool_budget_multiplier)?;
 
-    for profile in BearProfile::ALL {
-        parse_loop_control_form_value(form_profile_loop_control(&form, profile))?;
-    }
-
-    for profile in BearProfile::ALL {
-        let raw = selected_or_custom_model(
-            form_profile_model(&form, profile),
-            form_profile_model_custom(&form, profile),
-        )
-        .trim();
-        if !is_inherit_model_value(raw) && !model_available(&validation_options, raw) {
-            let message = format!(
-                "{} override must be a configured Den model selection option.",
-                profile_label(profile)
-            );
-            return Ok(Redirect::to(&format!(
-                "/bear/{}/models?error={}",
-                bear.slug,
-                urlencoding::encode(&message)
-            ))
-            .into_response());
-        }
-    }
-
     bears_db::update_bear(
         state.sqlx_pool(),
         bear.id,
@@ -2367,26 +2119,6 @@ async fn models_post(
         },
     )
     .await?;
-
-    for profile in BearProfile::ALL {
-        let raw = selected_or_custom_model(
-            form_profile_model(&form, profile),
-            form_profile_model_custom(&form, profile),
-        )
-        .trim();
-        let model = configured_model_from_form(raw);
-        bears_db::set_profile_model_setting(state.sqlx_pool(), bear.id, profile, model.as_deref())
-            .await?;
-        let loop_control =
-            parse_loop_control_form_value(form_profile_loop_control(&form, profile))?;
-        bears_db::set_profile_agent_loop_control_setting(
-            state.sqlx_pool(),
-            bear.id,
-            profile,
-            loop_control,
-        )
-        .await?;
-    }
 
     bears_db::set_bear_agent_loop_control_setting(state.sqlx_pool(), bear.id, bear_loop_control)
         .await?;
@@ -2463,93 +2195,6 @@ async fn provision_bifrost_virtual_key_action(
     };
     set_models_flash(&session, message).await?;
     Ok(Redirect::to(&format!("/bear/{}/models", bear.slug)).into_response())
-}
-
-async fn stance_detail_view(
-    Path((slug, stance)): Path<(String, String)>,
-    Query(query): Query<DomainQuery>,
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-) -> Result<Response, CustomError> {
-    let bear = match load_session_bear_manage(&state, &auth_session, &slug).await? {
-        Ok(v) => v,
-        Err(r) => return Ok(r.into_response()),
-    };
-    let can_manage_bear = true;
-    let role = stance
-        .parse::<BearProfile>()
-        .map_err(CustomError::NotFound)?;
-    let role_detail = build_role_detail_view(&state, &bear, role).await?;
-    web::render_template(
-        &state,
-        "bear/settings/stance.html",
-        auth_session,
-        context! {
-            role_detail,
-            message => query.message,
-            error => query.error,
-            can_manage_bear,
-            native_runtime => true,
-            ..bear_nav_context(&bear, "stances"),
-        },
-    )
-    .await
-}
-
-async fn stance_model_post(
-    Path((slug, stance)): Path<(String, String)>,
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-    Form(form): Form<StanceModelForm>,
-) -> Result<Response, CustomError> {
-    let bear = match load_session_bear_manage(&state, &auth_session, &slug).await? {
-        Ok(v) => v,
-        Err(r) => return Ok(r.into_response()),
-    };
-    let role = BearProfile::from_str(&stance)
-        .map_err(|_| CustomError::NotFound("stance not found".to_string()))?;
-    let model_options =
-        den_service::model_selection::list_selectable_model_options(state.sqlx_pool())
-            .await
-            .unwrap_or_else(|_| den_llm::model_registry::selectable_model_options());
-    let (_, live_model_options, fetch_error) =
-        all_model_catalog_options_context_for_bear(&state, bear.id).await;
-    let validation_options = merge_model_options(&model_options, &live_model_options);
-    if validation_options.is_empty() {
-        let message = fetch_error
-            .unwrap_or_else(|| "No Den model selection options are configured.".to_string());
-        return Ok(Redirect::to(&format!(
-            "/bear/{}/stances/{}?error={}",
-            bear.slug,
-            role.as_str(),
-            urlencoding::encode(&message)
-        ))
-        .into_response());
-    }
-
-    let raw = selected_or_custom_model(&form.model, &form.model_custom).trim();
-    if !is_inherit_model_value(raw) && !model_available(&validation_options, raw) {
-        let message = format!(
-            "{} model must be inherit or a configured Den model selection option.",
-            profile_label(role)
-        );
-        return Ok(Redirect::to(&format!(
-            "/bear/{}/stances/{}?error={}",
-            bear.slug,
-            role.as_str(),
-            urlencoding::encode(&message)
-        ))
-        .into_response());
-    }
-    let model = configured_model_from_form(raw);
-    bears_db::set_profile_model_setting(state.sqlx_pool(), bear.id, role, model.as_deref()).await?;
-    Ok(Redirect::to(&format!(
-        "/bear/{}/stances/{}?message={}",
-        bear.slug,
-        role.as_str(),
-        urlencoding::encode("Stance model setting saved.")
-    ))
-    .into_response())
 }
 
 async fn conversations_view(
@@ -2747,16 +2392,31 @@ async fn context_view(
     let can_manage_bear = true;
     let id = bear.id;
 
-    // Layer 1: the compiled stance prompt.
+    // Read existing snapshots only; inspection must not compile or register runtimes.
     let context_profile_enabled = bear.context_profile.is_some();
     let template_id = context_profile_from_json(&bear.context_profile)?.and_then(|p| p.template_id);
     let compiled: Option<BearCompiledConfigRow> =
         get_compiled_bear_config(state.sqlx_pool(), id).await?;
+    let mut compiled_bound_prompts: Vec<CompiledRolePromptRow> = Vec::new();
     let mut compiled_roles: Vec<CompiledRolePromptRow> = Vec::new();
     if let Some(ref row) = compiled {
         if let Ok(prompts) = serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(
             row.rendered_prompts_json.0.clone(),
         ) {
+            for (key, label) in [
+                ("bound_base", "Bear base"),
+                ("bound_chat_mode", "Chat mode"),
+                ("bound_pair_mode", "Pair mode"),
+                ("bound_work_mode", "Work mode"),
+            ] {
+                if let Some(text) = prompts.get(key).and_then(|v| v.as_str()) {
+                    compiled_bound_prompts.push(CompiledRolePromptRow {
+                        role: label.to_string(),
+                        prompt_preview: text.chars().take(600).collect(),
+                        char_count: text.chars().count(),
+                    });
+                }
+            }
             for role in ["chat", "pair", "curate", "work", "watch"] {
                 if let Some(text) = prompts.get(role).and_then(|v| v.as_str()) {
                     let preview: String = text.chars().take(600).collect();
@@ -2891,6 +2551,7 @@ async fn context_view(
             context_profile_enabled,
             template_id,
             compiled,
+            compiled_bound_prompts,
             compiled_roles,
             standing_notes,
             session_note_count,
@@ -2954,15 +2615,12 @@ async fn advanced_view(
     };
     let can_manage_bear = true;
     let stats = memory_stats_for_bear(&state, bear.id).await?;
-    let agent_health_rows = bear_agent_health_rows(&state, bear.id, true).await?;
     web::render_template(
         &state,
         "bear/settings/advanced.html",
         auth_session,
         context! {
             stats,
-            agent_health_rows,
-            runtime_configured => true,
             message => query.message,
             can_manage_bear,
             native_runtime => true,
@@ -3171,7 +2829,7 @@ async fn reflect_persisted_conversation(
         &state.config,
         bear.id,
         conversation_external_id,
-        BearProfile::Pair,
+        CompactionSource::ContextMaintenance,
         TurnCompactionTrigger::ConversationReview,
     )
     .await?;
@@ -3510,35 +3168,6 @@ async fn revoke_web_approval_action(
         "/bear/{}/resources?message={}",
         bear.slug,
         urlencoding::encode("Web approval revoked.")
-    ))
-    .into_response())
-}
-
-async fn provision_missing_stances_action(
-    Path(slug): Path<String>,
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-) -> Result<Response, CustomError> {
-    let bear = match load_session_bear_manage(&state, &auth_session, &slug).await? {
-        Ok(b) => b,
-        Err(r) => return Ok(r.into_response()),
-    };
-    let message = match provision::provision_missing_bear_profiles(
-        state.sqlx_pool(),
-        state.config.as_ref(),
-        &state.memory_stores,
-        bear.id,
-    )
-    .await
-    {
-        Ok(0) => "No missing native stance bindings to provision.".to_string(),
-        Ok(n) => format!("Provisioned {n} missing native stance binding(s)."),
-        Err(err) => format!("Provisioning failed: {err}"),
-    };
-    Ok(Redirect::to(&format!(
-        "/bear/{}/stances?message={}",
-        bear.slug,
-        urlencoding::encode(&message)
     ))
     .into_response())
 }

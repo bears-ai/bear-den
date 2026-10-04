@@ -13,6 +13,7 @@ use axum::{
     routing::get,
 };
 use axum_login::AuthnBackend;
+use den_core::RuntimeContextLabel;
 use den_runtime::{
     runtime::compaction_observability::RuntimeCompactionEvent,
     runtime::compaction_store::record_runtime_compaction_event,
@@ -78,6 +79,7 @@ async fn test_pool() -> Option<sqlx::PgPool> {
 fn test_state(pool: sqlx::PgPool) -> AppState {
     let config = Arc::new(Config::test_stub());
     let mut template_env = Environment::new();
+    minijinja_contrib::add_to_environment(&mut template_env);
     template_env
             .add_template("bear/settings/policy.html", "{{ message }} {{ web_sources | length }} {{ web_approvals | length }} {{ web_fetches | length }}{% for approval in web_approvals %} {{ approval.approved_by_user_label }}{% endfor %}")
             .expect("add test template");
@@ -128,7 +130,25 @@ fn test_state(pool: sqlx::PgPool) -> AppState {
             .add_template_owned(format!("bear/settings/{page}.html"), source)
             .expect("add activity template");
     }
-    for page in ["reflections", "context", "stance", "advanced"] {
+    for (page, source) in [
+        (
+            "advanced",
+            include_str!("../../templates/bear/settings/advanced.html"),
+        ),
+        (
+            "models",
+            include_str!("../../templates/bear/settings/models.html"),
+        ),
+        (
+            "context",
+            include_str!("../../templates/bear/settings/context.html"),
+        ),
+    ] {
+        template_env
+            .add_template_owned(format!("bear/settings/{page}.html"), source)
+            .expect("add settings template");
+    }
+    for page in ["reflections"] {
         template_env
             .add_template_owned(
                 format!("bear/settings/{page}.html"),
@@ -277,6 +297,209 @@ async fn get_as(app: &axum::Router, cookie: &str, uri: &str) -> (StatusCode, Str
 }
 
 #[tokio::test]
+async fn retired_profile_routes_are_not_registered() {
+    let pool = PgPoolOptions::new()
+        .connect_lazy("postgres://unused:unused@localhost/unused")
+        .unwrap();
+    let app = router().with_state(test_state(pool));
+    for (method, path) in [
+        ("GET", "stances/chat"),
+        ("GET", "profiles/pair"),
+        ("POST", "stances/chat/model"),
+        ("POST", "profiles/pair/model"),
+        ("POST", "provision-missing-stances"),
+        ("POST", "provision-missing-profiles"),
+        ("POST", "provision-missing-roles"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(format!("/bear/retired/{path}"))
+                    .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                    .body(Body::from("model=malicious&model_custom=malicious"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method} {path}");
+    }
+    for path in ["stances", "profiles"] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/bear/retired/{path}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::PERMANENT_REDIRECT);
+        assert_eq!(
+            response.headers()[header::LOCATION],
+            "/bear/retired/advanced"
+        );
+    }
+}
+
+#[test]
+fn context_separates_bound_components_from_older_reference_snapshots() {
+    let mut env = Environment::new();
+    env.add_template("bear/_manage.html", "{% block manage %}{% endblock %}")
+        .unwrap();
+    env.add_template(
+        "context",
+        include_str!("../../templates/bear/settings/context.html"),
+    )
+    .unwrap();
+    let body = env
+        .get_template("context")
+        .unwrap()
+        .render(context! {
+            bear => json!({"slug": "test", "name": "Test"}),
+            compiled_bound_prompts => vec![CompiledRolePromptRow {
+                role: "Bear base".into(), prompt_preview: "BOUND BASE".into(), char_count: 10,
+            }],
+            compiled_roles => vec![CompiledRolePromptRow {
+                role: "pair".into(), prompt_preview: "OLD PAIR REFERENCE".into(), char_count: 18,
+            }],
+        })
+        .unwrap();
+    assert!(body.contains("Bear base and modes"));
+    assert!(body.contains("BOUND BASE"));
+    assert!(body.contains("Older stance reference snapshots"));
+    assert!(body.contains("OLD PAIR REFERENCE"));
+    assert!(body.contains("/bear/test/hats"));
+    assert!(!body.contains("/stances/"));
+    assert!(!body.contains("/profiles/"));
+}
+
+async fn historical_profile_settings(
+    pool: &sqlx::PgPool,
+    bear_id: Uuid,
+) -> Vec<(String, Option<String>, Option<String>)> {
+    bears_db::list_profile_model_settings(pool, bear_id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| (row.profile, row.model, row.agent_loop_control_level))
+        .collect()
+}
+
+#[tokio::test]
+async fn bear_defaults_save_preserves_historical_profile_overrides_and_ignores_old_inputs() {
+    let _guard = TEST_DB_LOCK.lock().await;
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let slug = fresh_slug();
+    let bear_id = create_test_bear(&pool, &slug).await;
+    let admin_id = create_bear_admin_user(&pool, bear_id).await;
+    for profile in RuntimeContextLabel::ALL {
+        bears_db::set_profile_model_setting(&pool, bear_id, profile, Some("historical/model"))
+            .await
+            .unwrap();
+        bears_db::set_profile_agent_loop_control_setting(
+            &pool,
+            bear_id,
+            profile,
+            Some(AgentLoopControlLevel::Strict),
+        )
+        .await
+        .unwrap();
+    }
+    let before = historical_profile_settings(&pool, bear_id).await;
+    let app = test_app(pool.clone()).await;
+    let cookie = login_cookie(&app, admin_id).await;
+    for path in [
+        "stances/chat/model",
+        "profiles/pair/model",
+        "provision-missing-stances",
+        "provision-missing-profiles",
+        "provision-missing-roles",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/bear/{slug}/{path}"))
+                    .header(header::COOKIE, &cookie)
+                    .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                    .body(Body::from("model=inherit&model_custom=malicious"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "removed POST {path}"
+        );
+        assert_eq!(historical_profile_settings(&pool, bear_id).await, before);
+        assert!(bears_db::list_bear_profile_bindings(&pool, bear_id)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+    for extra in ["", "&chat_model=malicious&pair_model_custom=malicious&curate_loop_control=invalid&work_model=inherit&watch_loop_control=light"] {
+        let response = app.clone().oneshot(
+            Request::builder().method("POST").uri(format!("/bear/{slug}/models"))
+                .header(header::COOKIE, &cookie)
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .body(Body::from(format!("bear_default_model=inherit&bear_loop_control=careful&bear_tool_budget_multiplier=1.5{extra}"))).unwrap(),
+        ).await.unwrap();
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert!(response.headers()[header::LOCATION].to_str().unwrap().contains("message="));
+        assert_eq!(historical_profile_settings(&pool, bear_id).await, before);
+        let bear = bears_db::get_bear(&pool, bear_id).await.unwrap().unwrap();
+        assert_eq!(bear.default_model, None);
+        assert_eq!(bear.default_tool_budget_multiplier, Some(1.5));
+        assert_eq!(bears_db::bear_agent_loop_control_setting(&pool, bear_id).await.unwrap(), Some(AgentLoopControlLevel::Careful));
+    }
+    let (status, body) = get_as(&app, &cookie, &format!("/bear/{slug}/models")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.contains("bear_default_model"));
+    assert!(body.contains("Bifrost usage"));
+    assert!(!body.contains("Stance defaults"));
+    assert!(!body.contains("Configure stance"));
+    assert!(!body.contains("name=\"pair_model\""));
+    assert!(!body.contains("historical/model"));
+}
+
+#[tokio::test]
+async fn admin_settings_gets_do_not_create_profile_registrations() {
+    let _guard = TEST_DB_LOCK.lock().await;
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let slug = fresh_slug();
+    let bear_id = create_test_bear(&pool, &slug).await;
+    let admin_id = create_bear_admin_user(&pool, bear_id).await;
+    assert!(bears_db::list_bear_profile_bindings(&pool, bear_id)
+        .await
+        .unwrap()
+        .is_empty());
+    let app = test_app(pool.clone()).await;
+    let cookie = login_cookie(&app, admin_id).await;
+    for path in ["overview", "advanced", "context", "models"] {
+        let (status, body) = get_as(&app, &cookie, &format!("/bear/{slug}/{path}")).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {body}");
+        assert!(!body.contains("Stance bindings"));
+        assert!(!body.contains("/stances/"));
+        assert!(
+            bears_db::list_bear_profile_bindings(&pool, bear_id)
+                .await
+                .unwrap()
+                .is_empty(),
+            "GET {path} registered profiles"
+        );
+    }
+}
+
+#[tokio::test]
 async fn inspection_gets_require_bear_admin_but_overview_remains_member_viewable() {
     let _guard = TEST_DB_LOCK.lock().await;
     let Some(pool) = test_pool().await else {
@@ -355,7 +578,6 @@ async fn inspection_gets_require_bear_admin_but_overview_remains_member_viewable
     let (status, body) = get_as(&app, &admin_cookie, &format!("/bear/{slug}/overview")).await;
     assert_eq!(status, StatusCode::OK, "admin overview: {body}");
     for expected in [
-        "Health",
         "Recent activity",
         "private conversation title",
         "Activity over time",
@@ -412,8 +634,6 @@ async fn inspection_gets_require_bear_admin_but_overview_remains_member_viewable
         format!("conversations/{}", conversation.id),
         "reflections".to_string(),
         "context".to_string(),
-        "stances/chat".to_string(),
-        "profiles/chat".to_string(),
         "advanced".to_string(),
     ] {
         let uri = format!("/bear/{slug}/{path}");

@@ -157,7 +157,7 @@ pub async fn resolve_runtime_task_context(
     if current_task_id.is_some() {
         let plan = task_list_projection_from_session_tasks_with_current_task(
             bear_id,
-            policy.trust_profile,
+            policy.context_label,
             &conversation_id,
             session.id,
             Some(&client_session_id),
@@ -173,7 +173,7 @@ pub async fn resolve_runtime_task_context(
 
     let plan = task_list_projection_from_session_tasks_with_current_task(
         bear_id,
-        policy.trust_profile,
+        policy.context_label,
         &conversation_id,
         session.id,
         Some(&client_session_id),

@@ -54,7 +54,7 @@ use den_service::{
     },
     bears::{
         hats::{memory_binding, turn_binding::NativeTurnSource},
-        BearProfile,
+        RuntimeContextLabel,
     },
     client_sessions,
     conversation::{persistence::get_conversation_for_external_id, viewer::ConversationViewer},
@@ -211,9 +211,9 @@ pub(crate) async fn persist_work_git_commit_artifact(
         return;
     };
     let owner_profile = if work_run.is_some() {
-        BearProfile::Work
+        RuntimeContextLabel::JobRun
     } else {
-        BearProfile::Pair
+        RuntimeContextLabel::ArmatureConversation
     };
     let artifact = async {
         let artifact = artifacts::reserve_artifact(

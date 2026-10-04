@@ -2,6 +2,8 @@
 
 This document describes the target architecture for file-backed prompt fragments, runtime-authored prompt content, and compiled runtime prompt assembly in Den.
 
+**Current implementation note (working-tree WIP):** Managed compilation emits bound Bear-wide base and platform interaction modes only, parsed independently of legacy role contracts/metadata. Ordinary turn assembly selects the current canonical real-hat identity; no zero-hat legacy prompt fallback exists. No production inference selects a role prompt or role contract. Dedicated Curate briefing uses direct source-verified tool-free inference with repository Markdown instructions; worker briefings consume direct verified `MemorySource`. Source admission precedes all inference/continuations, and direct tools recheck it. Historical profile bundles/contracts below illustrate the original design, not configurable runtime stances or live model/loop overrides. Initialization never creates/refreshes a profile registry. See [the maintained topic](../topics/bear-memory-hats.md) for current boundaries and latest-image validation limits.
+
 **Decision source of truth:** [ADR-0046 — File-backed prompt fragments and compiled runtime prompts](../decisions/adr-0046-file-backed-prompt-fragments-and-compiled-runtime-prompts.md)
 
 ## Goals
@@ -155,13 +157,13 @@ Bundles are repository-authored and versioned with code.
 
 ## Compilation pipeline
 
-The runtime compilation pipeline becomes:
+Current managed bound compilation:
 
 ```text
 repo fragments
 + runtime-authored fragments / context_profile / managed bindings
 => compile and validate
-=> rendered per-role prompt base
+=> rendered bound Bear-wide base and platform modes (no legacy-contract dependency)
 => store in bear_compiled_configs
 => turn assembler appends dynamic layers
 ```
@@ -174,7 +176,7 @@ This architecture changes the source of prompt text, not the overall layer order
 
 Turn assembly remains:
 
-1. compiled per-role prompt base
+1. compiled bound Bear-wide base/platform mode plus current verified hat identity
 2. key memory projection
 3. derived recall
 4. prompt-memory blocks

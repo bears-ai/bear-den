@@ -86,6 +86,14 @@ async fn ensure(
 async fn owner_admin_and_bear_boundaries(pool: PgPool) {
     let (bear, other_bear, one, two, admin) = setup(&pool).await;
     let own = ensure(&pool, bear, Some(one), "viewertwo:own", "viewertwo:session").await;
+    assert!(
+        require_ordinary_tool_source(&pool, bear, one, "viewertwo:own")
+            .await
+            .is_err()
+    );
+    assert!(require_ordinary_tool_source(&pool, bear, one, "missing")
+        .await
+        .is_err());
     let others = ensure(
         &pool,
         bear,
@@ -264,6 +272,23 @@ async fn private_note_sources_require_active_hat_owner_and_current_membership(po
     assert!(administrator.may_access_id(&pool, ownerless).await.unwrap());
     assert!(!first.may_read_own_source(&pool, archived).await.unwrap());
     assert!(first.may_read_own_source(&pool, legacy).await.unwrap());
+    assert!(first.may_access_id(&pool, legacy).await.unwrap());
+    assert!(administrator.may_access_id(&pool, legacy).await.unwrap());
+    require_ordinary_tool_source(&pool, bear, one, "conv-own")
+        .await
+        .unwrap();
+    for (actor, external) in [
+        (one, "conv-legacy"),
+        (one, "missing"),
+        (one, "conv-archived"),
+        (one, "conv-other"),
+        (admin, "conv-own"),
+        (admin, "conv-ownerless"),
+    ] {
+        assert!(require_ordinary_tool_source(&pool, bear, actor, external)
+            .await
+            .is_err());
+    }
     revoke_membership(&pool, one.get(), bear.as_uuid())
         .await
         .unwrap();

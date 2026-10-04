@@ -1,7 +1,7 @@
 //! Governance — the run-scoped supervision dial from ADR-0039.
 //!
 //! Governance answers *how is this execution being supervised right now?*
-//! It is orthogonal to the trust profile ([`crate::BearProfile`], the durable
+//! It is orthogonal to the trust profile ([`crate::RuntimeContextLabel`], the durable
 //! trust/memory contract) and mutable over the life of one run. This seeds the
 //! code half of ADR-0039 in `den-core`; the concrete `WorkspaceSession` +
 //! governance-timeline schema is an explicit follow-up in that ADR.

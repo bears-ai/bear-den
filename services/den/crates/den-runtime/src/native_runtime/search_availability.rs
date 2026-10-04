@@ -13,10 +13,7 @@ use den_core::{
 };
 use den_http::web_policy::{self, WebApprovalDecision};
 use den_service::{
-    bears::hats::{
-        access,
-        memory_binding::{self, ResolvedMemoryBinding},
-    },
+    bears::hats::{access, memory_binding},
     conversation::persistence,
 };
 use sqlx::PgPool;
@@ -37,18 +34,7 @@ pub(super) async fn for_turn(
         return Ok(false);
     }
     let bear = BearId::new(bear_id);
-    let binding =
-        match memory_binding::for_external_conversation(pool, bear, external_conversation_id).await
-        {
-            Ok(binding) => binding,
-            Err(DenError::NotFound(_)) => {
-                memory_binding::legacy_only_without_hats(pool, bear).await?
-            }
-            Err(err) => return Err(err),
-        };
-    if matches!(binding, ResolvedMemoryBinding::Legacy) {
-        return Ok(true);
-    }
+    memory_binding::for_external_conversation(pool, bear, external_conversation_id).await?;
     if config.den_search_provider != "brave" {
         return Ok(false);
     }

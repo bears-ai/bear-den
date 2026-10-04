@@ -20,8 +20,8 @@ use crate::bears::{
     prompt_fragments::{
         render_compile_time_fragment, render_turn_fragment, CompileTimePromptContext,
     },
-    repository_prompt_fragment_registry, repository_prompt_source_version, Bear, BearProfile,
-    PromptFragmentRegistry,
+    repository_prompt_fragment_registry, repository_prompt_source_version, Bear,
+    PromptFragmentRegistry, RuntimeContextLabel,
 };
 
 static PROMPTS: LazyLock<Result<PromptFragmentRegistry, String>> =
@@ -33,14 +33,16 @@ fn prompts() -> Result<&'static PromptFragmentRegistry, DenError> {
         .map_err(|error| DenError::System(error.clone()))
 }
 
-fn mode_key(profile: BearProfile) -> Result<&'static str, DenError> {
+fn mode_key(profile: RuntimeContextLabel) -> Result<&'static str, DenError> {
     match profile {
-        BearProfile::Chat => Ok("bound_chat_mode"),
-        BearProfile::Pair => Ok("bound_pair_mode"),
-        BearProfile::Work => Ok("bound_work_mode"),
-        BearProfile::Curate | BearProfile::Watch => Err(DenError::Authorization(
-            "internal roles do not inherit a conversation or IDE hat".into(),
-        )),
+        RuntimeContextLabel::ChannelConversation => Ok("bound_chat_mode"),
+        RuntimeContextLabel::ArmatureConversation => Ok("bound_pair_mode"),
+        RuntimeContextLabel::JobRun => Ok("bound_work_mode"),
+        RuntimeContextLabel::Curation | RuntimeContextLabel::Observation => {
+            Err(DenError::Authorization(
+                "internal roles do not inherit a conversation or IDE hat".into(),
+            ))
+        }
     }
 }
 
@@ -101,7 +103,7 @@ pub fn render_hat_identity_component(
 pub async fn bound_prompt_text(
     pool: &PgPool,
     bear: &Bear,
-    profile: BearProfile,
+    profile: RuntimeContextLabel,
     hat_id: HatId,
 ) -> Result<String, DenError> {
     let mode_key = mode_key(profile)?;
@@ -115,8 +117,9 @@ pub async fn bound_prompt_text(
         let cached = get_compiled_bear_config(pool, bear.id).await?;
         let compiled = match cached {
             Some(ref compiled)
-                if component(&compiled.rendered_prompts_json.0, "bound_source_version")
-                    == Some(repository_prompt_source_version())
+                if compiled.compiled_version == 2
+                    && component(&compiled.rendered_prompts_json.0, "bound_source_version")
+                        == Some(repository_prompt_source_version())
                     && component(&compiled.rendered_prompts_json.0, "bound_base").is_some()
                     && component(&compiled.rendered_prompts_json.0, mode_key).is_some() =>
             {

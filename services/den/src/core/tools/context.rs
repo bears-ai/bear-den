@@ -17,7 +17,7 @@ use den_core::tools::{
     dispatch::ToolContext,
     entity::EntityOps,
     environment::EnvironmentOps,
-    identity::{BearDirectory, BearMemberRecord, BearRecord, CurrentUser},
+    identity::{BearDirectory, BearMemberRecord, BearRecord, CurrentUser, SourceAuthorizer},
     memory::{RoleMemoryEntryWrite, RoleMemoryStore},
     plan_mode::{PlanModeExitView, PlanModeOps, PlanModeStatusView, PlanModeView},
     prompt_memory::{
@@ -28,7 +28,6 @@ use den_core::tools::{
         ObservationWriteRequest, RequestReviewRequest, ResolveProposalRequest,
     },
     web::{WebApproval, WebFetchAudit, WebFetcher, WebHttpResponse, WebUrl},
-    work_surface::{ScaffoldRequest, WorkSurfaceOps, WorkSurfaceScaffoldOutcome},
 };
 
 use crate::{
@@ -44,12 +43,11 @@ use crate::{
         prompt_memory::DenPromptMemoryStore,
         session::DenConversationTitleOps,
         web::runtime::DenWebFetcher,
-        work_surface::DenWorkSurfaceOps,
     },
     errors::DenError,
 };
 use den_memory::MemoryStoreManager;
-use den_service::bears::BearProfile;
+use den_service::bears::RuntimeContextLabel;
 
 /// The composition root binding every Den tool capability to the runtime.
 pub(crate) struct DenToolContext<'a> {
@@ -90,18 +88,10 @@ impl<'a> DenToolContext<'a> {
         DenMemoryReviewStore::new(self.pool, self.config, self.stores)
     }
 
-    fn work_surface(&self) -> DenWorkSurfaceOps<'a> {
-        DenWorkSurfaceOps {
-            pool: self.pool,
-            config: self.config,
-            stores: self.stores,
-        }
-    }
-
     fn plan_mode(&self) -> DenPlanModeOps<'a> {
         DenPlanModeOps {
             pool: self.pool,
-            stores: Some(self.stores),
+
             workplan_payload: plan_mode_workplan_payload,
             no_active_workplan: no_active_workplan_payload,
         }
@@ -170,7 +160,7 @@ impl RoleMemoryStore for DenToolContext<'_> {
     async fn read(
         &self,
         context: &DenToolInvocationContext,
-        role: BearProfile,
+        role: RuntimeContextLabel,
         path: &str,
     ) -> Result<Value, DenError> {
         self.memory().read(context, role, path).await
@@ -179,7 +169,7 @@ impl RoleMemoryStore for DenToolContext<'_> {
     async fn browse(
         &self,
         context: &DenToolInvocationContext,
-        role: BearProfile,
+        role: RuntimeContextLabel,
     ) -> Result<Value, DenError> {
         self.memory().browse(context, role).await
     }
@@ -187,7 +177,7 @@ impl RoleMemoryStore for DenToolContext<'_> {
     async fn search(
         &self,
         context: &DenToolInvocationContext,
-        role: BearProfile,
+        role: RuntimeContextLabel,
         query: &str,
         limit: i64,
     ) -> Result<Value, DenError> {
@@ -197,7 +187,7 @@ impl RoleMemoryStore for DenToolContext<'_> {
     async fn status_base(
         &self,
         context: &DenToolInvocationContext,
-        role: BearProfile,
+        role: RuntimeContextLabel,
     ) -> Result<
         (
             Value,
@@ -211,7 +201,7 @@ impl RoleMemoryStore for DenToolContext<'_> {
     async fn write_entry(
         &self,
         context: &DenToolInvocationContext,
-        role: BearProfile,
+        role: RuntimeContextLabel,
         entry: RoleMemoryEntryWrite,
     ) -> Result<Value, DenError> {
         self.memory().write_entry(context, role, entry).await
@@ -222,7 +212,7 @@ impl PromptMemoryStore for DenToolContext<'_> {
     async fn visibility(
         &self,
         context: &DenToolInvocationContext,
-        role: BearProfile,
+        role: RuntimeContextLabel,
     ) -> Result<den_core::tools::prompt_memory::PromptMemoryVisibility, DenError> {
         self.prompt().visibility(context, role).await
     }
@@ -242,7 +232,7 @@ impl PromptMemoryStore for DenToolContext<'_> {
     async fn patch_block(
         &self,
         bear_id: Uuid,
-        profile: BearProfile,
+        profile: RuntimeContextLabel,
         block_id: &str,
         patch: &PromptMemoryBlockPatch,
     ) -> Result<(), DenError> {
@@ -318,34 +308,11 @@ impl MemoryReviewStore for DenToolContext<'_> {
     }
 }
 
-impl WorkSurfaceOps for DenToolContext<'_> {
-    async fn write_scaffold(
-        &self,
-        bear_id: Uuid,
-        role: BearProfile,
-        slug: &str,
-        name: &str,
-        requests: Vec<ScaffoldRequest>,
-    ) -> Result<WorkSurfaceScaffoldOutcome, DenError> {
-        self.work_surface()
-            .write_scaffold(bear_id, role, slug, name, requests)
-            .await
-    }
-
-    async fn orient(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-    ) -> Result<Value, DenError> {
-        self.work_surface().orient(context, role).await
-    }
-}
-
 impl EntityOps for DenToolContext<'_> {
     async fn browse_entities(
         &self,
         context: &DenToolInvocationContext,
-        role: BearProfile,
+        role: RuntimeContextLabel,
         arguments: Value,
     ) -> Result<Value, DenError> {
         self.entity().browse(context, role, arguments).await
@@ -354,7 +321,7 @@ impl EntityOps for DenToolContext<'_> {
     async fn resolve_entity(
         &self,
         context: &DenToolInvocationContext,
-        role: BearProfile,
+        role: RuntimeContextLabel,
         arguments: Value,
     ) -> Result<Value, DenError> {
         self.entity().resolve(context, role, arguments).await
@@ -363,48 +330,10 @@ impl EntityOps for DenToolContext<'_> {
     async fn link_memory_entity(
         &self,
         context: &DenToolInvocationContext,
-        role: BearProfile,
+        role: RuntimeContextLabel,
         arguments: Value,
     ) -> Result<Value, DenError> {
         self.entity().link_memory(context, role, arguments).await
-    }
-
-    async fn merge_entities_tool(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        self.entity().merge(context, role, arguments).await
-    }
-
-    async fn split_entity_tool(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        self.entity().split(context, role, arguments).await
-    }
-
-    async fn write_entity_access_rule(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        self.entity()
-            .write_access_rule(context, role, arguments)
-            .await
-    }
-
-    async fn write_entity_anchor(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        self.entity().write_anchor(context, role, arguments).await
     }
 }
 
@@ -465,6 +394,46 @@ impl PlanModeOps for DenToolContext<'_> {
     }
 }
 
+impl SourceAuthorizer for DenToolContext<'_> {
+    async fn authorize_source(
+        &self,
+        context: &DenToolInvocationContext,
+        origin: den_core::TurnExecutionOrigin,
+    ) -> Result<(), DenError> {
+        origin.require_ordinary_session()?;
+        if context
+            .client_session_id
+            .as_deref()
+            .is_some_and(|id| id != context.session_id)
+        {
+            return Err(DenError::Authorization(
+                "Den tool client session disagrees with its source session".into(),
+            ));
+        }
+        let source = den_runtime::agent_loop::require_ordinary_session_source(
+            self.pool,
+            den_runtime::agent_loop::OrdinarySessionSource {
+                bear_id: context.bear_id,
+                user_id: Some(context.user_id),
+                origin,
+                profile: context.profile.ok_or_else(|| {
+                    DenError::Authorization("ordinary tool source has no profile".into())
+                })?,
+                conversation_id: &context.conversation_id,
+                client_session_id: &context.session_id,
+                work_run_id: context.work_run_id,
+            },
+        )
+        .await?;
+        if source.binding_id(context.bear_id.into()) != context.binding_id {
+            return Err(DenError::Authorization(
+                "Den tool binding does not match its canonical source".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 impl BearDirectory for DenToolContext<'_> {
     async fn user_may_use_bear(&self, user_id: i32, bear_id: Uuid) -> Result<bool, DenError> {
         self.directory().user_may_use_bear(user_id, bear_id).await
@@ -495,7 +464,7 @@ impl EnvironmentOps for DenToolContext<'_> {
     async fn memory_status_value(
         &self,
         context: &DenToolInvocationContext,
-        role: BearProfile,
+        role: RuntimeContextLabel,
     ) -> Result<Value, DenError> {
         self.environment().memory_status_value(context, role).await
     }
@@ -503,7 +472,7 @@ impl EnvironmentOps for DenToolContext<'_> {
     async fn memory_visibility(
         &self,
         context: &DenToolInvocationContext,
-        role: BearProfile,
+        role: RuntimeContextLabel,
     ) -> Result<den_core::tools::prompt_memory::PromptMemoryVisibility, DenError> {
         self.environment().memory_visibility(context, role).await
     }
@@ -511,7 +480,7 @@ impl EnvironmentOps for DenToolContext<'_> {
     async fn session_entities(
         &self,
         context: &DenToolInvocationContext,
-        role: BearProfile,
+        role: RuntimeContextLabel,
     ) -> Result<Value, DenError> {
         self.environment().session_entities(context, role).await
     }

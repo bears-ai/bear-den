@@ -12,7 +12,7 @@ use den_memory::{
     append_memory_record, scoped::MemoryReadGrant, AccessContext, LogicalMemoryPath, MemorySource,
     MemoryStoreManager,
 };
-use den_service::bears::{model::BearProfile, Bear};
+use den_service::bears::{model::RuntimeContextLabel, Bear};
 
 fn legacy_test_bear(bear_id: Uuid) -> Bear {
     let now = OffsetDateTime::now_utc();
@@ -69,7 +69,7 @@ async fn projects_shared_identity_anchors_without_work_surface() {
         pool: &pool,
         stores: &stores,
         bear: &bear,
-        profile: BearProfile::Pair,
+        profile: RuntimeContextLabel::ArmatureConversation,
         conversation_id: "den-conv-test",
         session_hints: WorkSurfaceSessionHints::default(),
         work_surface_status_override: None,
@@ -158,7 +158,7 @@ async fn bound_turn_projection_excludes_other_sessions_and_legacy_profile_notes(
                 pool: &pool,
                 stores: &stores,
                 bear: &bear,
-                profile: BearProfile::Pair,
+                profile: RuntimeContextLabel::ArmatureConversation,
                 conversation_id: "bound-conversation",
                 session_hints: WorkSurfaceSessionHints::default(),
                 work_surface_status_override: None,
@@ -177,21 +177,18 @@ async fn bound_turn_projection_excludes_other_sessions_and_legacy_profile_notes(
         assert!(!result.rendered_text.contains("legacy profile secret"));
         assert!(!result.rendered_text.contains("forged core-path secret"));
     }
-    let shared_only = project_key_memory_with_scope(
-        KeyMemoryProjectionInput {
-            pool: &pool,
-            stores: &stores,
-            bear: &bear,
-            profile: BearProfile::Pair,
-            conversation_id: "unresolved-conversation",
-            session_hints: WorkSurfaceSessionHints::default(),
-            work_surface_status_override: None,
-            native_runtime: true,
-            model_for_budget: None,
-            access: AccessContext::empty(),
-        },
-        MemoryProjectionScope::SharedOnly,
-    )
+    let shared_only = project_key_memory(KeyMemoryProjectionInput {
+        pool: &pool,
+        stores: &stores,
+        bear: &bear,
+        profile: RuntimeContextLabel::ArmatureConversation,
+        conversation_id: "unresolved-conversation",
+        session_hints: WorkSurfaceSessionHints::default(),
+        work_surface_status_override: None,
+        native_runtime: true,
+        model_for_budget: None,
+        access: AccessContext::empty(),
+    })
     .await
     .expect("project shared only");
     assert!(shared_only.rendered_text.contains("shared core fact"));
@@ -217,7 +214,7 @@ async fn long_context_model_metadata_increases_projection_budget() {
         pool: &pool,
         stores: &stores,
         bear: &bear,
-        profile: BearProfile::Pair,
+        profile: RuntimeContextLabel::ArmatureConversation,
         conversation_id: "den-conv-test",
         session_hints: WorkSurfaceSessionHints::default(),
         work_surface_status_override: None,
@@ -262,7 +259,7 @@ async fn candidate_work_surface_requires_canonical_anchor_for_tier2() {
         pool: &pool,
         stores: &stores,
         bear: &bear,
-        profile: BearProfile::Pair,
+        profile: RuntimeContextLabel::ArmatureConversation,
         conversation_id: "den-conv-test",
         session_hints: hints.clone(),
         work_surface_status_override: Some("candidate"),
@@ -299,7 +296,7 @@ async fn candidate_work_surface_requires_canonical_anchor_for_tier2() {
         pool: &pool,
         stores: &stores,
         bear: &bear,
-        profile: BearProfile::Pair,
+        profile: RuntimeContextLabel::ArmatureConversation,
         conversation_id: "den-conv-test",
         session_hints: hints,
         work_surface_status_override: Some("candidate"),
@@ -340,7 +337,7 @@ async fn resolved_work_surface_includes_tier2_without_prior_anchor_proof() {
         pool: &pool,
         stores: &stores,
         bear: &bear,
-        profile: BearProfile::Pair,
+        profile: RuntimeContextLabel::ArmatureConversation,
         conversation_id: "den-conv-test",
         session_hints: WorkSurfaceSessionHints {
             workspace_roots: vec!["/workspace/my-app".to_string()],
@@ -415,7 +412,7 @@ async fn access_bearing_relation_gates_record_out_of_projection() {
         pool: &pool,
         stores: &stores,
         bear: &bear,
-        profile: BearProfile::Pair,
+        profile: RuntimeContextLabel::ArmatureConversation,
         conversation_id: "den-conv-test",
         session_hints: WorkSurfaceSessionHints::default(),
         work_surface_status_override: None,
@@ -439,7 +436,7 @@ async fn access_bearing_relation_gates_record_out_of_projection() {
         pool: &pool,
         stores: &stores,
         bear: &bear,
-        profile: BearProfile::Pair,
+        profile: RuntimeContextLabel::ArmatureConversation,
         conversation_id: "den-conv-test",
         session_hints: WorkSurfaceSessionHints::default(),
         work_surface_status_override: None,

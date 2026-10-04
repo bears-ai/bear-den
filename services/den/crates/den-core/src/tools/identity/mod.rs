@@ -8,14 +8,15 @@
 mod store;
 
 pub use store::{
-    role_is_bear_admin, BearDirectory, BearMemberRecord, BearRecord, CurrentUser, BEAR_ROLE_ADMIN,
+    role_is_bear_admin, BearDirectory, BearMemberRecord, BearRecord, CurrentUser, SourceAuthorizer,
+    BEAR_ROLE_ADMIN,
 };
 
 use serde_json::{json, Value};
 
 use crate::{
-    ArmatureAvailability, BearCapability, BearProfile, DenError, EffectivePolicy, Governance,
-    TurnExecutionOrigin,
+    ArmatureAvailability, BearCapability, DenError, EffectivePolicy, Governance,
+    RuntimeContextLabel, TurnExecutionOrigin,
 };
 
 use crate::tools::{
@@ -67,7 +68,7 @@ pub fn capability_entries_for_origin(
         .map(tool_descriptor_to_capability)
         .collect();
     entries.push(code_mode_capability(
-        ToolAudience::from_origin(origin).compatibility_profile(),
+        ToolAudience::from_origin(origin).context_label(),
     ));
     if matches!(
         origin,
@@ -217,15 +218,15 @@ pub async fn policy_self(
 }
 
 /// The native runtime's verified ordinary-session origin selects the descriptor audience.
-/// Ordinary turns additionally recheck canonical conversation/Work ownership
-/// in the in-process invoker; the registry is not another authority source.
+/// Every direct dispatch rechecks its canonical source before executing a tool;
+/// the profile registry is not another authority source.
 pub async fn authorize_context_for_origin(
-    dir: &impl BearDirectory,
+    dir: &(impl BearDirectory + SourceAuthorizer),
     context: &DenToolInvocationContext,
     origin: TurnExecutionOrigin,
-) -> Result<BearProfile, DenError> {
+) -> Result<RuntimeContextLabel, DenError> {
     origin.require_ordinary_session()?;
-    let projected = ToolAudience::from_origin(origin).compatibility_profile();
+    let projected = ToolAudience::from_origin(origin).context_label();
     if context.profile != Some(projected) || context.binding_id.trim().is_empty() {
         return Err(DenError::Authorization(
             "Den tool context does not match the verified execution origin".into(),
@@ -240,6 +241,7 @@ pub async fn authorize_context_for_origin(
         ));
     }
 
+    dir.authorize_source(context, origin).await?;
     Ok(projected)
 }
 
@@ -272,7 +274,7 @@ mod tests {
             arguments::DenToolChannelContext, capability_catalog::SessionCapabilityDescriptor,
             context::DenToolInvocationContext,
         },
-        BearProfile,
+        RuntimeContextLabel,
     };
     use uuid::Uuid;
 
@@ -281,7 +283,7 @@ mod tests {
             bear_id: Uuid::nil(),
             bear_slug: "test".to_string(),
             binding_id: "test".to_string(),
-            profile: Some(BearProfile::Pair),
+            profile: Some(RuntimeContextLabel::ArmatureConversation),
             user_id: 1,
             username: None,
             membership_role: None,

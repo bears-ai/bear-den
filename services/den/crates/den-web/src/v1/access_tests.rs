@@ -161,6 +161,23 @@ pub(super) async fn conversation(pool: &PgPool, bear: Uuid, owner: Option<i32>, 
         .id
 }
 
+pub(super) async fn bound_conversation(pool: &PgPool, bear: Uuid, owner: i32, id: &str) -> Uuid {
+    let hat = hats::create_hat(
+        pool,
+        BearId::new(bear),
+        UserId::new(owner),
+        &format!("Test {id}"),
+        "Ordinary fixture",
+    )
+    .await
+    .unwrap();
+    let canonical = conversation(pool, bear, Some(owner), id).await;
+    hats::bindings::bind_conversation_hat(pool, BearId::new(bear), canonical, hat.id)
+        .await
+        .unwrap();
+    canonical
+}
+
 #[derive(Default)]
 struct RecordingChatRuntime {
     requests: std::sync::Mutex<Vec<WebChatRuntimeRequest>>,
@@ -188,9 +205,6 @@ async fn runtime_sessions_use_browser_user_scope_without_changing_conversation_o
     pool: PgPool,
 ) {
     let (bear, [one, two, admin]) = seed(&pool).await;
-    bears_db::ensure_bear_profile_binding_rows(&pool, bear)
-        .await
-        .unwrap();
     let runtime = Arc::new(RecordingChatRuntime::default());
     let app = app_with_runtime(&pool, runtime.clone()).await;
     let bear_row = bears_db::get_bear(&pool, bear).await.unwrap().unwrap();
@@ -202,6 +216,8 @@ async fn runtime_sessions_use_browser_user_scope_without_changing_conversation_o
     let mut defaults = Vec::new();
     let mut cookies = Vec::new();
     for user in [one, two, admin] {
+        let (_, canonical_id) = checked_chat_id(&pool, bear, user, "default").await.unwrap();
+        bound_conversation(&pool, bear, user, &canonical_id).await;
         let cookie = login(&app, user).await;
         let (status, _) = request(
             &app,
@@ -235,7 +251,7 @@ async fn runtime_sessions_use_browser_user_scope_without_changing_conversation_o
     );
 
     let shared = "conv-admin-visible";
-    let owned_id = conversation(&pool, bear, Some(one), shared).await;
+    let owned_id = bound_conversation(&pool, bear, one, shared).await;
     let expected_owner_session = browser_client_session_id(one, bear, shared);
     let expected_admin_session = browser_client_session_id(admin, bear, shared);
     assert_ne!(expected_owner_session, expected_admin_session);
@@ -247,10 +263,7 @@ async fn runtime_sessions_use_browser_user_scope_without_changing_conversation_o
         browser_client_session_id(two, bear, shared),
         expected_admin_session
     );
-    for (user, cookie, expected) in [
-        (one, &cookies[0], &expected_owner_session),
-        (admin, &cookies[2], &expected_admin_session),
-    ] {
+    for (user, cookie, expected) in [(one, &cookies[0], &expected_owner_session)] {
         let (status, _) = request(
             &app,
             cookie,
@@ -270,6 +283,10 @@ async fn runtime_sessions_use_browser_user_scope_without_changing_conversation_o
         assert_eq!(&browser_session.client_session_id, expected);
     }
     let before_denial = runtime.requests.lock().unwrap().len();
+    assert_eq!(request(
+        &app, &cookies[2], "POST", "/v1/chat/send",
+        json!({"bear_id": bear, "conversation_id": shared, "message": "admin inspection is not execution"}),
+    ).await.0, StatusCode::FORBIDDEN);
     assert_eq!(
         request(
             &app,
@@ -509,7 +526,7 @@ async fn authenticated_routes_enforce_canonical_ownership(pool: PgPool) {
     assert!(ids.contains(&"conv-owned-one"));
     assert!(!ids.contains(&"conv-owned-two"));
     assert!(!ids.contains(&"conv-unowned"));
-    assert!(ids.contains(&"default"));
+    assert!(!ids.contains(&"default"));
     let (_, admin_list) = request(&app, &login(&app, admin).await, "GET", &root, Value::Null).await;
     assert!(admin_list["conversations"]
         .as_array()
@@ -1057,7 +1074,29 @@ async fn configured_hats_make_unbound_browser_threads_read_only_without_strandin
         json!({"bear_id": bear, "conversation_id": "default", "message": "before hats"}),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(runtime.requests.lock().unwrap().is_empty());
+    let (_, no_hat_list) = request(
+        &app,
+        &owner_cookie,
+        "GET",
+        &format!("/v1/chat/conversations?bear_id={bear}"),
+        Value::Null,
+    )
+    .await;
+    assert!(!no_hat_list["conversations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|row| row["id"] == "default"));
+    assert!(conversation_persistence::get_conversation_for_external_id(
+        &pool,
+        bear,
+        &format!("conv-web-default-{owner}"),
+    )
+    .await
+    .unwrap()
+    .is_none());
     let no_hat_calls = runtime.requests.lock().unwrap().len();
     let hat = hats::create_hat(
         &pool,

@@ -25,7 +25,9 @@ pub use lifecycle::{
     TurnCompactionState, TurnCompactionTrigger,
 };
 pub use overflow::{den_error_indicates_context_overflow, is_context_length_overflow_message};
-pub use policy::{compaction_policy_for_profile, CompactionMode, CompactionTiming};
+pub use policy::{
+    compaction_policy_for_source, CompactionMode, CompactionSource, CompactionTiming,
+};
 pub use render::render_compacted_context_block;
 pub use summarize::summarize_compacted_groups;
 

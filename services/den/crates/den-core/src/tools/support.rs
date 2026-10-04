@@ -15,7 +15,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use time::format_description::well_known::Rfc3339;
 
-use crate::{BearProfile, DenError};
+use crate::{DenError, RuntimeContextLabel};
 
 use crate::tools::{
     constants::DEN_MEMORY_WRITE_ENTRY,
@@ -192,19 +192,21 @@ pub fn clean_limited_strings(
         .collect()
 }
 
-pub fn memory_read_scopes(role: BearProfile) -> Vec<&'static str> {
+pub fn memory_read_scopes(role: RuntimeContextLabel) -> Vec<&'static str> {
     match role {
-        BearProfile::Pair => vec!["pair/", "core/"],
-        BearProfile::Chat => vec!["chat/", "core/"],
-        BearProfile::Curate => vec!["chat/", "pair/", "curate/", "work/", "watch/", "core/"],
-        BearProfile::Work => vec!["work/", "core/"],
-        BearProfile::Watch => vec!["watch/", "core/"],
+        RuntimeContextLabel::ArmatureConversation => vec!["pair/", "core/"],
+        RuntimeContextLabel::ChannelConversation => vec!["chat/", "core/"],
+        RuntimeContextLabel::Curation => {
+            vec!["chat/", "pair/", "curate/", "work/", "watch/", "core/"]
+        }
+        RuntimeContextLabel::JobRun => vec!["work/", "core/"],
+        RuntimeContextLabel::Observation => vec!["watch/", "core/"],
     }
 }
 
-pub fn memory_write_scopes(role: BearProfile) -> Vec<&'static str> {
+pub fn memory_write_scopes(role: RuntimeContextLabel) -> Vec<&'static str> {
     match role {
-        BearProfile::Pair => vec![
+        RuntimeContextLabel::ArmatureConversation => vec![
             "pair/notes/",
             "pair/logs/",
             "pair/decisions/",
@@ -212,7 +214,7 @@ pub fn memory_write_scopes(role: BearProfile) -> Vec<&'static str> {
             "pair/scratch/",
             "pair/summaries/",
         ],
-        BearProfile::Chat => vec![
+        RuntimeContextLabel::ChannelConversation => vec![
             "chat/notes/",
             "chat/logs/",
             "chat/decisions/",

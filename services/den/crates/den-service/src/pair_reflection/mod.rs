@@ -4,7 +4,7 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::{
-    bears::BearProfile,
+    bears::RuntimeContextLabel,
     conversation_events::{
         project_to_conversation, PairReflectionCompletedPayload, Projection, ProjectionEvent,
         ProjectionProvenance, ProjectionSource,
@@ -227,6 +227,6 @@ pub fn render_pair_summary_markdown(
     out
 }
 
-pub fn pair_reflection_role() -> BearProfile {
-    BearProfile::Pair
+pub fn pair_reflection_role() -> RuntimeContextLabel {
+    RuntimeContextLabel::ArmatureConversation
 }

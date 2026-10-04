@@ -16,12 +16,14 @@ mod recall_scope;
 mod runtime_context;
 mod session_store;
 mod session_stream;
+pub(crate) mod source_admission;
 mod step;
 mod strategy;
 mod tool_outcome;
 mod tool_policy;
 mod transcript;
 
+pub use source_admission::{require_ordinary_session_source, OrdinarySessionSource};
 pub use step::RUNTIME_CHECKPOINT_TOOL_NAME;
 
 pub use tool_outcome::{
@@ -73,7 +75,7 @@ pub use context::{
 };
 pub use control::{
     agent_loop_control_profile_fingerprint, evaluate_checkpoint_trigger,
-    objective_orientation_allowed_for_stance, pre_risk_checkpoint_trigger,
+    objective_orientation_allowed_for_origin, pre_risk_checkpoint_trigger,
     resolve_agent_loop_control, resolve_objective_orientation, validate_checkpoint_response,
     AgentLoopControlProfile, AgentLoopControlResolutionInput, AgentLoopControlSource,
     CheckpointConfidence, CheckpointEvaluation, CheckpointEvidenceRef, CheckpointField,

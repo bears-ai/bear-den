@@ -2,42 +2,13 @@ use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::{
-    config::Config,
-    core::{
-        tools::{
-            arguments::DenToolChannelContext, context::DenToolContext,
-            session::DenToolInvocationContext,
-        },
-        user::db::create_user,
-    },
-};
-use den_core::tools::review::write_observation;
+use crate::{config::Config, core::tools::memory_review::DenMemoryReviewStore};
+use den_core::tools::review::{MemoryReviewStore, ObservationWriteRequest};
 use den_memory::MemoryStoreManager;
-use den_service::bears::{db, db::grant_membership, db::BearParams, BearProfile};
-
-async fn seed_watch_agent(
-    pool: &PgPool,
-    bear_id: Uuid,
-    agent_id: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    sqlx::query(
-        r"
-        INSERT INTO bear_profile_bindings (bear_id, profile, binding_id)
-        VALUES ($1, 'watch', $2)
-        ON CONFLICT (bear_id, profile)
-        DO NOTHING
-        ",
-    )
-    .bind(bear_id)
-    .bind(agent_id)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
+use den_service::bears::{db, db::BearParams};
 
 #[sqlx::test]
-async fn observation_write_persists_and_enqueues_memory_curate(
+async fn observation_store_persists_and_enqueues_memory_curate(
     pool: PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let bear_id = db::create_bear(
@@ -53,66 +24,30 @@ async fn observation_write_persists_and_enqueues_memory_curate(
         },
     )
     .await?;
-
-    let suffix = Uuid::new_v4().simple().to_string();
-    let user_id = create_user(
-        &pool,
-        &format!("obs-{}@ex.com", &suffix[..8]),
-        &format!("obs{}", &suffix[..12]),
-        "Observation Tester",
-        "test-hash",
-    )
-    .await?;
-    grant_membership(&pool, user_id, bear_id, Some("admin")).await?;
-
-    let agent_id = format!("watch-agent-{}", Uuid::new_v4());
-    seed_watch_agent(&pool, bear_id, &agent_id).await?;
-
-    let context = DenToolInvocationContext {
-        bear_id,
-        bear_slug: "test-observation-write-bear".to_string(),
-        binding_id: agent_id.clone(),
-        profile: Some(BearProfile::Watch),
-        user_id,
-        username: Some("tester".to_string()),
-        membership_role: Some("owner".to_string()),
-        conversation_id: "conv-watch-observation-test".to_string(),
-        session_id: "watch-session".to_string(),
-        work_run_id: None,
-        client_session_id: None,
-        conversation_selection: None,
-        runtime_target: None,
-        workspace_roots: vec![],
-        session_capabilities: Vec::new(),
-        session_policy: None,
-        activity: None,
-        runtime: None,
-        context_budget: None,
-        projected_memory: None,
-        recalled_memory: None,
-        request_id: Some(Uuid::new_v4().to_string()),
-        channel: DenToolChannelContext::default(),
-    };
-
     let config = Config::test_stub();
     let stores = MemoryStoreManager::new(&config);
-
-    let tool_context = DenToolContext::new(&pool, &config, &stores);
-    let payload = write_observation(
-        &tool_context,
-        &context,
-        BearProfile::Watch,
-        json!({
-            "observation_id": "deploy-failure-001",
-            "summary": "Deployment pipeline failed on main.",
-            "salience": "high"
-        }),
-    )
-    .await?;
-
-    assert_eq!(payload["observation_id"], "deploy-failure-001");
-    assert_eq!(payload["status"], "review_queued");
-    assert!(payload["proposal_id"].is_string());
+    let review = DenMemoryReviewStore::new(&pool, &config, &stores);
+    let observation_id = "deploy-failure-001";
+    let source = json!({ "intake_event_id": Uuid::new_v4(), "origin": "test_worker" });
+    let record = review
+        .record_observation(ObservationWriteRequest {
+            bear_id,
+            binding_id: "observation-worker".to_string(),
+            observation_id: observation_id.to_string(),
+            summary: "Deployment pipeline failed on main.".to_string(),
+            salience: "normal".to_string(),
+            payload_ref: None,
+            source: source.clone(),
+            conversation_id: None,
+            session_id: None,
+            request_id: None,
+        })
+        .await?;
+    assert_eq!(record.observation_id, observation_id);
+    assert_eq!(record.status, "review_queued");
+    let proposal_id = record.proposal_id.expect("queued proposal");
+    let proposal = review.get_proposal(bear_id, proposal_id).await?.unwrap();
+    assert_eq!(proposal["requires_human"], false);
 
     let queued = sqlx::query_scalar::<_, i64>(
         r"
@@ -128,44 +63,20 @@ async fn observation_write_persists_and_enqueues_memory_curate(
     .await?;
     assert_eq!(queued, 1);
 
-    let replay_context = DenToolInvocationContext {
-        bear_id,
-        bear_slug: "test-observation-write-bear".to_string(),
-        binding_id: agent_id,
-        profile: Some(BearProfile::Watch),
-        user_id,
-        username: Some("tester".to_string()),
-        membership_role: Some("owner".to_string()),
-        conversation_id: "conv-watch-observation-test".to_string(),
-        session_id: "watch-session".to_string(),
-        work_run_id: None,
-        client_session_id: None,
-        conversation_selection: None,
-        runtime_target: None,
-        workspace_roots: vec![],
-        session_capabilities: Vec::new(),
-        session_policy: None,
-        activity: None,
-        runtime: None,
-        context_budget: None,
-        projected_memory: None,
-        recalled_memory: None,
-        request_id: Some(Uuid::new_v4().to_string()),
-        channel: DenToolChannelContext::default(),
-    };
-    let replay = write_observation(
-        &tool_context,
-        &replay_context,
-        BearProfile::Watch,
-        json!({
-            "observation_id": "deploy-failure-001",
-            "summary": "Deployment pipeline failed on main.",
-            "salience": "high"
-        }),
-    )
-    .await?;
-    assert_eq!(replay["idempotent_replay"], true);
-    assert_eq!(replay["proposal_id"], payload["proposal_id"]);
-
+    let replay = review
+        .find_observation(bear_id, observation_id)
+        .await?
+        .unwrap();
+    assert_eq!(replay.proposal_id, Some(proposal_id));
+    assert_eq!(replay.status, "review_queued");
+    let persisted =
+        den_runtime::memory::get_observation(&pool, &config, &stores, bear_id, observation_id)
+            .await?
+            .unwrap();
+    assert_eq!(persisted.source, source);
+    assert!(review
+        .find_observation(Uuid::new_v4(), observation_id)
+        .await?
+        .is_none());
     Ok(())
 }

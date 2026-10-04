@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use den_core::profile::BearProfile;
+use den_core::{DenError, TurnExecutionOrigin};
 
 use super::RuntimeCompactionPolicy;
 
@@ -111,13 +111,33 @@ const BACKGROUND_POLICY_DEFAULTS: CompactionPolicyDefaults = CompactionPolicyDef
     max_transcript_chars: 12_000,
 };
 
-/// Per-profile compaction policy defaults.
-pub fn compaction_policy_for_profile(profile: BearProfile) -> RuntimeCompactionPolicy {
-    match profile {
-        BearProfile::Pair => PAIR_POLICY_DEFAULTS,
-        BearProfile::Chat => CHAT_POLICY_DEFAULTS,
-        BearProfile::Work => WORK_POLICY_DEFAULTS,
-        BearProfile::Curate | BearProfile::Watch => BACKGROUND_POLICY_DEFAULTS,
-    }
-    .into_policy()
+/// The worker owns maintenance compaction; queued audit metadata cannot grant a turn origin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompactionSource {
+    Turn(TurnExecutionOrigin),
+    ContextMaintenance,
 }
+
+pub fn compaction_policy_for_source(
+    source: CompactionSource,
+) -> Result<RuntimeCompactionPolicy, DenError> {
+    let defaults = match source {
+        CompactionSource::Turn(origin) => {
+            origin.require_ordinary_session()?;
+            match origin {
+                TurnExecutionOrigin::ChannelConversation => CHAT_POLICY_DEFAULTS,
+                TurnExecutionOrigin::BrowserTaskSession
+                | TurnExecutionOrigin::ArmatureConversation(_) => PAIR_POLICY_DEFAULTS,
+                TurnExecutionOrigin::AuthorizedWorkRun(_) => WORK_POLICY_DEFAULTS,
+                TurnExecutionOrigin::InternalCuration | TurnExecutionOrigin::InboundObservation => {
+                    unreachable!("ordinary origin checked above")
+                }
+            }
+        }
+        CompactionSource::ContextMaintenance => BACKGROUND_POLICY_DEFAULTS,
+    };
+    Ok(defaults.into_policy())
+}
+
+#[cfg(test)]
+mod tests;

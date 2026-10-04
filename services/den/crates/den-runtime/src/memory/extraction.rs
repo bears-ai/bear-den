@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use den_core::{config::Config, DenError};
 use den_memory::MemoryStoreManager;
-use den_service::{bears::BearProfile, memory_proposals::CreateMemoryProposal};
+use den_service::{bears::RuntimeContextLabel, memory_proposals::CreateMemoryProposal};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -107,7 +107,7 @@ pub async fn create_proposals_from_extraction(
     pool: &PgPool,
     config: &Config,
     stores: &MemoryStoreManager,
-    source_profile: BearProfile,
+    source_profile: RuntimeContextLabel,
     source_agent_id: Option<String>,
     bundle: &MemoryExtractionBundle,
     output: &MemoryExtractionPipelineOutput,

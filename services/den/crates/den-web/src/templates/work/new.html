@@ -44,7 +44,7 @@
             </select>
             <small><a href="/work/surfaces">manage surfaces</a></small>
             {% else %}
-            <small>No surfaces are assigned to your bears yet — <a href="/work/surfaces/new">create one</a>, or use the legacy root below.</small>
+            <small>No surfaces are assigned to your bears yet — <a href="/work/surfaces/new">create one</a> and assign it to this Bear.</small>
             {% endif %}
         </label>
     </p>
@@ -54,22 +54,15 @@
             <select name="hat_id" required id="job-hat-choice">
                 <option value="" selected disabled>Choose a Work-enabled hat…</option>
                 {% for hat in hat_choices %}
-                <option value="{{ hat.id }}" data-surfaces="{{ hat.surface_ids | join(',') | e }}">{{ hat.name | e }} — {{ hat.purpose | e }}</option>
+                <option value="{{ hat.id }}" data-surfaces="{{ hat.surface_ids | join(',') | e }}">{{ hat.name | e }}{% if hat.short_summary %} — {{ hat.short_summary | e }}{% endif %}</option>
                 {% endfor %}
             </select>
         </label><br>
         <small>Only hats that allow the chosen surface are eligible. A hat limits the Job; it does not grant credentials or start a run.</small>
     </p>
-    {% elif has_hats %}
-    <p class="form-errors">This Bear has no Work-enabled hats with permitted surfaces. Ask a Bear admin to configure one before creating a new Job.</p>
     {% else %}
-    <p class="form-hint">This Bear has no hats yet. A Job created here uses the legacy unbound path; ask a Bear admin to configure hats for scoped Work.</p>
+    <p class="form-errors">A Work-enabled hat with permitted surfaces is required. Ask a Bear admin to <a href="/bear/{{ bear_slug | e }}/hats">configure one</a> before creating a Job.</p>
     {% endif %}
-    <p>
-        <label>Legacy provider root <small>(advanced; ignored when a surface is selected)</small><br>
-            <input type="text" name="root" placeholder="root name on the sandbox provider">
-        </label>
-    </p>
     <p>
         <label>Output policy<br>
             <select name="commit_policy" required>

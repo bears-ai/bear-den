@@ -18,7 +18,7 @@ use den_core::tools::constants::{
 use den_core::tools::{
     context::DenToolInvocationContext, descriptor::builtin_den_tool_descriptor_for_provider_name,
 };
-use den_core::{BearProfile, Governance, TurnExecutionOrigin};
+use den_core::{Governance, RuntimeContextLabel, TurnExecutionOrigin};
 use den_http::errors::CustomError;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -54,7 +54,7 @@ fn parse_item_ref(value: &str) -> Result<CabinetItemRef, CustomError> {
     CabinetItemRef::parse(value).map_err(|error| CustomError::ValidationError(error.to_string()))
 }
 
-fn actor_scope(context: &DenToolInvocationContext, role: BearProfile) -> ActorScope {
+fn actor_scope(context: &DenToolInvocationContext, role: RuntimeContextLabel) -> ActorScope {
     let mut scope = ActorScope::bear(BearId::new(context.bear_id), role);
     if !context.conversation_id.is_empty() {
         scope.conversation_id = Some(ConversationId(context.conversation_id.clone()));
@@ -105,7 +105,7 @@ pub(crate) async fn invoke_cabinet_tool(
     }
     let role =
         den_core::EffectivePolicy::compile_for_origin(authority.origin, authority.governance)
-            .trust_profile;
+            .context_label;
     match tool_name {
         DEN_CABINET_SEARCH => cabinet_search(pool, context, role, arguments).await,
         DEN_CABINET_READ => cabinet_read(pool, context, role, arguments).await,
@@ -132,7 +132,7 @@ struct CabinetSearchArguments {
 async fn cabinet_search(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: CabinetSearchArguments = parse_arguments(arguments)?;
@@ -162,7 +162,7 @@ struct CabinetReadArguments {
 async fn cabinet_read(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: CabinetReadArguments = parse_arguments(arguments)?;
@@ -197,7 +197,7 @@ struct CabinetCreateArguments {
 async fn cabinet_create(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     authority: CabinetToolAuthority,
     arguments: Value,
 ) -> Result<Value, CustomError> {
@@ -234,7 +234,7 @@ struct CabinetUpdateArguments {
 async fn cabinet_update(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     authority: CabinetToolAuthority,
     arguments: Value,
 ) -> Result<Value, CustomError> {
@@ -266,7 +266,7 @@ struct CabinetHistoryArguments {
 async fn cabinet_history(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: CabinetHistoryArguments = parse_arguments(arguments)?;
@@ -308,7 +308,7 @@ struct CabinetSourceLinkArguments {
 async fn cabinet_source_link(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     authority: CabinetToolAuthority,
     arguments: Value,
 ) -> Result<Value, CustomError> {
@@ -374,7 +374,7 @@ struct CabinetLifecycleArguments {
 async fn cabinet_lifecycle(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     authority: CabinetToolAuthority,
     arguments: Value,
 ) -> Result<Value, CustomError> {

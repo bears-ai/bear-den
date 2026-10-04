@@ -13,13 +13,7 @@ use crate::{
     startup::run_sqlx_migrations,
 };
 use den_http::armature_tokens;
-use den_service::bears::{
-    db as bears_db,
-    db::BearParams,
-    db::BEAR_ROLE_ADMIN,
-    provision::{self},
-    runtime_plan::default_runtime_plan,
-};
+use den_service::bears::{db as bears_db, db::BearParams, db::BEAR_ROLE_ADMIN, provision};
 
 pub const SMOKE_USERNAME: &str = "alice";
 pub const SMOKE_PASSWORD: &str = "Never deploy seed passwords.";
@@ -96,9 +90,6 @@ async fn seed_smoke(pool: &PgPool, profile: SeedProfile) -> Result<SeedReport> {
         .await
         .context("ensure smoke bear")?;
 
-    bears_db::ensure_default_runtime_plan(pool, bear_id, &default_runtime_plan())
-        .await
-        .context("ensure smoke bear runtime_plan")?;
     bears_db::grant_membership(pool, user_id, bear_id, Some(BEAR_ROLE_ADMIN))
         .await
         .context("ensure smoke membership")?;
@@ -108,6 +99,20 @@ async fn seed_smoke(pool: &PgPool, profile: SeedProfile) -> Result<SeedReport> {
     ensure_smoke_runtime_dependencies(pool, bear_id, &config)
         .await
         .context("ensure smoke Bear runtime dependencies")?;
+    if den_service::bears::hats::list_hats(pool, bear_id.into())
+        .await?
+        .is_empty()
+    {
+        let hat = den_service::bears::hats::create_hat(
+            pool,
+            bear_id.into(),
+            den_core::ids::UserId::new(user_id),
+            "Smoke IDE",
+            "Exercise the explicit development IDE test source",
+        )
+        .await?;
+        den_service::bears::hats::set_ide_default_hat(pool, bear_id.into(), hat.id).await?;
+    }
 
     Ok(SeedReport {
         profile,
@@ -223,9 +228,9 @@ async fn ensure_smoke_runtime_dependencies(
     // Sanctioned construction: `den seed` is a short-lived CLI process, so this
     // is its one process-local `MemoryStoreManager` (ADR-0031 write topology).
     let stores = den_memory::MemoryStoreManager::new(config);
-    provision::provision_bear_if_configured(pool, config, &stores, bear_id)
+    provision::initialize_bear_native(pool, &stores, bear_id)
         .await
-        .context("provision smoke Bear native runtimes")
+        .context("initialize smoke Bear native runtime prerequisites")
 }
 
 async fn ensure_smoke_armature_token(

@@ -17,22 +17,24 @@ Related docs:
 
 ## One-line mental model
 
-Den does not hand the model “everything.” It builds a bounded **turn context** from explicit layers: a verified Bear/hat identity plus execution-mode instructions (legacy per-stance prompts for no-hat/internal roles), selected memory, retrieval, runtime state, compaction state, current transcript, and tool descriptors.
+Den builds a bounded **turn context**: verified Bear/hat identity, platform-owned execution-mode instructions, authorized memory/recall, runtime and compaction state, projected transcript, and tool descriptors. Ordinary admission always requires a real hat.
 
 ## Layer Model
 
 | Layer | Timing | Source | Model-visible? | Notes |
 |-------|--------|--------|----------------|-------|
-| Bound Bear/hat identity and mode (legacy stance prompt for no-hat/internal roles) | Compile time + turn selection | `bear_compiled_configs`, canonical `bear_hats`, repo fragments | Yes | Bear-wide base and platform mode are compiled; the selected hat identity is rendered from a repo-owned fragment using the verified binding. Hat text does not grant tools. |
+| Bound Bear/hat identity and platform mode | Compile time + turn selection | `bear_compiled_configs`, canonical `bear_hats`, repo fragments | Yes | Bear-wide base and platform mode are compiled; the selected hat identity is rendered from a repo-owned fragment using the verified binding. Hat text does not grant tools. |
 | Key memory projection | Turn-time | Per-Bear SQLite | Yes | Bounded proactive memory anchors; not the whole memory store. |
 | Derived recall | Turn-time | Qdrant + passage metadata | Yes, when available | Rebuildable index over canonical sources. |
-| Prompt-memory blocks | Turn-time selection, DB-authored content | Den Postgres | Yes | Editable standing context, scoped by Bear/stance/session/work surface. |
+| Prompt-memory blocks | Turn-time selection, DB-authored content | Den Postgres | Yes | Ordinary reads select Bear-wide and exact-session blocks; writes are session-confined. Historical profile/work-surface blocks are not ordinary context. |
 | Runtime fragments | Turn-time | Repo fragments + typed runtime state | Yes | Examples: Docket execution active, date/budget reminders. |
 | Compaction state | Turn-time | Den Postgres compaction artifacts | Yes | Derived summary/state, not raw transcript. |
 | Transcript | Turn-time | Canonical conversation messages | Yes | Projected according to model transcript rules. |
 | Tool descriptors | Turn-time | Descriptor registry + client capabilities | Yes | Model-facing tool surface and schemas. |
 
 ## Source-of-Truth Rules
+
+These are working-tree WIP claims, not latest-image deployment evidence; see [the maintained topic](../topics/bear-memory-hats.md). Managed compilation emits bound base/modes only, independently of historical role contracts/metadata. Verified origin/governance and canonical source own defaults, loop control, and compaction; profile model/loop rows do not override them. No production inference selects a role prompt or role contract. Dedicated Curate briefings use source-verified direct tool-free inference with repository Markdown instructions; worker briefings consume direct verified `MemorySource`. Source admission precedes all production inference/continuations, and result recording/direct tools recheck it; action/resource grant filtering remains partial. Recall indexes only eligible current core/hat records, never source/profile-local records even with zero hats. Stale legacy derived-point cleanup is retried before embedding without changing canonical old SQLite; profile-string recall APIs are removed.
 
 - Long-lived prompt prose belongs in prompt fragments or runtime-configured data, not Rust literals.
 - Runtime-authored **templates** are compile-time only. Current hat identity text is a literal value rendered by a repository-owned turn fragment; Den never treats that database text as a template.
@@ -50,13 +52,13 @@ Exception, current ACP adapter direct-tool descriptors:
 
 | Scenario | Pre-turn compiled | Turn-time rendered | Dynamic data | Deterministic branch? | Main regression risk |
 |----------|-------------------|--------------------|--------------|-----------------------|----------------------|
-| Normal web chat | Bear-wide base and platform chat mode for a bound hat; legacy stance prompt without hats | Verified hat identity, optional runtime fragments | transcript, memory, recall | Usually no | hidden prompt drift or over-including memory |
-| ACP/pair with tools | Bear-wide base and platform pair mode for a bound hat; legacy stance prompt without hats | Verified hat identity, tool/runtime reminders | client tools, Den tools, prompt memory | Yes, by tool policy | hiding/revealing tools by heuristics |
+| Normal web chat | Bear-wide base and platform channel mode; real hat required | Verified hat identity, optional runtime fragments | transcript, memory, recall | Usually no | hidden prompt drift or over-including memory |
+| ACP/pair with tools | Bear-wide base and platform armature mode; real hat required | Verified hat identity, tool/runtime reminders | client tools, Den tools, prompt memory | Yes, by tool policy | hiding/revealing tools by heuristics |
 | Docket execution active | Bear-wide base and platform Work mode for a bound Job hat | Verified hat identity and Docket runtime fragment | canonical execution-attempt state | Yes, permission mode | asking model to decide Write vs Ask/Plan |
-| Prompt memory block present | Bound Bear base/mode or legacy stance prompt | verified hat identity and prompt-memory block context | selected blocks | Selection done by Den | stale or overbroad block inclusion |
-| Key memory projection | Bound Bear base/mode or legacy stance prompt | verified hat identity and projection block | SQLite latest heads | Selection done by Den | exposing raw branches or too much history |
-| Derived recall | Bound Bear base/mode or legacy stance prompt | verified hat identity and recall block | vector/keyword hits | Selection done by Den | treating recall as canonical memory |
-| Compaction active | Bound Bear base/mode or legacy stance prompt | verified hat identity and compaction block | compacted summary | Policy decides inclusion | flattening summary into raw transcript |
+| Prompt memory block present | Bound Bear base/platform mode | verified hat identity and prompt-memory block context | selected blocks | Selection done by Den | stale or overbroad block inclusion |
+| Key memory projection | Bound Bear base/platform mode | verified hat identity and projection block | SQLite latest heads | Selection done by Den | exposing raw branches or too much history |
+| Derived recall | Bound Bear base/platform mode | verified hat identity and recall block | vector/keyword hits | Selection done by Den | treating recall as canonical memory |
+| Compaction active | Bound Bear base/platform mode | verified hat identity and compaction block | compacted summary | Policy decides inclusion | flattening summary into raw transcript |
 | Overflow retry | Recompiled same base | compaction recovery block | compacted transcript state | Yes, one retry | losing tool/approval continuity |
 | Admin prompt edit | Recompile required | none from raw DB template | compiled output only | Compile-time validation | rendering DB templates per turn |
 | Repo prompt edit | Rebuild/restart or registry reload | possible turn fragments | prompt source hash | Registry versioning | stale compiled prompt hashes |
@@ -71,8 +73,8 @@ What the user experiences:
 
 What Den does:
 
-1. Loads the Bear and current stance configuration.
-2. For a configured Bear, checks the conversation's canonical hat binding and composes the compiled Bear-wide base and chat mode with that hat's current identity text. A Bear with no hats retains its compiled stance prompt or legacy `bears.system_prompt`.
+1. Loads the Bear and verifies the live canonical actor, owned conversation, and real Bear-owned hat, even on zero-hat Bears.
+2. Composes the compiled Bear-wide base and platform channel mode with that hat's current identity; no legacy stance prompt is selected.
 3. Projects a small memory slice from per-Bear SQLite.
 4. Optionally adds derived recall passages.
 5. Adds selected prompt-memory blocks.
@@ -108,7 +110,7 @@ What the user experiences:
 
 What Den does:
 
-1. Uses the verified conversation's hat identity, compiled Bear-wide base, and platform pair-mode instructions; only no-hat Bears retain the compiled `pair` stance prompt.
+1. Admits the canonical owned hat-bound conversation before materializing a pending IDE `den-conv-*`, then selects its hat identity, Bear-wide base, and platform armature mode. There is no zero-hat fallback.
 2. Reads trusted human/Bear identity from the ACP token/session, not chat text.
 3. Receives client capability context from the armature.
 4. Builds a stable tool surface from Den-hosted tools plus client-local tools.

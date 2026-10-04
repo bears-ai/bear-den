@@ -59,18 +59,40 @@
     </p>
     {% endif %}
 
-    <h3>1 · Compiled stance prompt</h3>
+    <h3>1 · Bear base and modes</h3>
     <p class="form-hint">
-        The foundation: your charter combined with each stance's protected
-        contract, compiled ahead of time. It travels with the Bear.
+        Hat-bound turns use the shared Bear base and a chat, pair, or work mode,
+        with the selected hat supplying its purpose. These are stored compiled
+        snapshots, not a live turn preview.
+        <a href="/bear/{{ bear.slug | e }}/hats">Manage hats</a>.
     </p>
+    {% if compiled_bound_prompts %}
+    <table>
+        <thead><tr><th>Component</th><th>Size</th><th>Compiled preview</th></tr></thead>
+        <tbody>
+        {% for row in compiled_bound_prompts %}
+            <tr>
+                <td>{{ row.role | e }}</td>
+                <td>{{ row.char_count }} chars</td>
+                <td><details><summary class="form-hint">show preview</summary><pre class="bear-manage-prompt-preview">{{ row.prompt_preview | e }}</pre></details></td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p><em>No compiled Bear base/mode snapshot yet. Inspection does not create one.</em></p>
+    {% endif %}
+
+    <details>
+    <summary>Older stance reference snapshots</summary>
+    <p class="form-hint">Retained for reference; these are not the Bear base/mode components used by hat-bound turns.</p>
     {% if context_profile_enabled %}
     <p>
-        Mode: <strong>stance-aware composition</strong>{% if template_id %} ·
+        Older profile: <strong>stance-aware composition</strong>{% if template_id %} ·
         template <code>{{ template_id | e }}</code>{% endif %}
     </p>
     {% else %}
-    <p>Mode: <strong>single baseline prompt</strong> for all stances</p>
+    <p>Older profile: <strong>single baseline prompt</strong></p>
     {% endif %}
     {% if compiled_roles and compiled_roles | length > 0 %}
     <table>
@@ -84,11 +106,7 @@
         <tbody>
             {% for row in compiled_roles %}
             <tr>
-                <td>
-                    <a href="/bear/{{ bear.slug | e }}/stances/{{ row.role | e }}"
-                        >{{ row.role | e }}</a
-                    >
-                </td>
+                <td>{{ row.role | e }}</td>
                 <td>{{ row.char_count }} chars</td>
                 <td>
                     <details>
@@ -101,8 +119,9 @@
         </tbody>
     </table>
     {% else %}
-    <p><em>No compiled prompt snapshot yet.</em></p>
+    <p><em>No older stance reference snapshots.</em></p>
     {% endif %}
+    </details>
     {% if can_manage_bear %}
     <p class="button-row">
         <a class="button-link" href="/bear/{{ bear.slug | e }}/edit/prompt"

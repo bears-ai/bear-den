@@ -36,7 +36,7 @@ use crate::{
     },
     errors::{CustomError, DenError},
 };
-use den_memory::{tools as sqlite_memory, MemoryStoreManager};
+use den_memory::MemoryStoreManager;
 use den_runtime::plan_mode;
 use den_runtime::runtime_exception_events::{
     self, RuntimeExceptionEventFilter, RuntimeExceptionSeverity,
@@ -47,7 +47,8 @@ use den_runtime::{
 };
 use den_service::bears::db::{get_bear, membership_role_for_user, role_is_bear_admin};
 use den_service::{
-    bears::BearProfile, client_sessions, conversation::persistence as conversation_persistence,
+    bears::RuntimeContextLabel, client_sessions,
+    conversation::persistence as conversation_persistence,
 };
 
 const FOCUSED_CONVERSATION_TITLE_MAX_CHARS: usize = 120;
@@ -207,8 +208,6 @@ pub(crate) struct TaskListListArguments {
     pub(crate) include_completed: bool,
     #[serde(default)]
     pub(crate) include_plan_mode: Option<bool>,
-    #[serde(default)]
-    pub(crate) include_artifacts: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
@@ -592,33 +591,22 @@ pub(crate) async fn list_runtime_diagnostics(
 pub(crate) async fn list_task_lists(
     pool: &PgPool,
     _config: &Config,
-    stores: &MemoryStoreManager,
+    _stores: &MemoryStoreManager,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     arguments: Value,
     _activity_payload: fn(Option<&docket::TaskListLocalProjection>) -> Value,
     plan_mode_workplan_payload: fn(&plan_mode::PlanModeSessionRow) -> Value,
 ) -> Result<Value, CustomError> {
     let args: TaskListListArguments = serde_json::from_value(arguments)?;
     let include_plan_mode = args.include_plan_mode.unwrap_or(true);
-    let include_artifacts = args.include_artifacts.unwrap_or(true);
+
     let plan_mode_gates = if include_plan_mode {
         plan_mode::list_for_bear(pool, context.bear_id, args.include_completed, 50).await?
     } else {
         Vec::new()
     };
-    let plan_artifacts = if include_artifacts {
-        match stores.store_for_bear(context.bear_id).await {
-            Ok(store) => {
-                sqlite_memory::sqlite_list_plan_artifacts(&store, BearProfile::Pair.as_str(), 50)
-                    .await
-                    .unwrap_or_else(|err| json!({ "error": err.to_string() }))
-            }
-            Err(err) => json!({ "error": err.to_string() }),
-        }
-    } else {
-        json!([])
-    };
+
     let linked_artifact_paths = plan_mode_gates
         .iter()
         .filter_map(|gate| gate.plan_artifact_path.as_deref())
@@ -651,11 +639,8 @@ pub(crate) async fn list_task_lists(
         "activity_plans": activity_plans,
         "workplans": workplans,
         "plan_mode_gates": plan_mode_gates,
-        "plan_artifacts": plan_artifacts,
         "linked_plan_artifact_paths": linked_artifact_paths,
         "notes": [
-            "list_task_lists is a Bear-level task-list/planning view. It includes checked-out Docket task-list projections, submitted/active plan-mode gates, and saved pair plan artifacts when available.",
-            "A plan artifact in pair/plans/ may exist even when there is no active task list; this is planning state, not semantic memory.",
             "Role fields are provenance and policy hints, not product ownership. Cross-role visibility is not cross-role execution authority."
         ],
     }))
@@ -664,7 +649,7 @@ pub(crate) async fn list_task_lists(
 pub(crate) async fn get_task_list_status(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     arguments: Value,
     activity_payload: fn(Option<&docket::TaskListLocalProjection>) -> Value,
 ) -> Result<Value, CustomError> {
@@ -1252,7 +1237,7 @@ fn task_list_item_counts(task_list: &TaskListProjection) -> Value {
 pub(crate) async fn session_anchored_task_list_projection(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     session_anchor_id: Uuid,
 ) -> Result<Option<TaskListProjection>, CustomError> {
     // Keep cached activity plans consistent with current-task selection.
@@ -1325,16 +1310,16 @@ async fn update_focused_conversation_title(
 
 async fn resolve_surface_id_for_create(
     pool: &PgPool,
-    stores: &MemoryStoreManager,
+    _stores: &MemoryStoreManager,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    _role: RuntimeContextLabel,
     explicit_id: Option<Uuid>,
 ) -> Result<(Option<Uuid>, bool), CustomError> {
     if let Some(surface_id) = explicit_id {
         validate_assigned_surface(pool, context, surface_id).await?;
         return Ok((Some(surface_id), false));
     }
-    persist_recognized_session_surface(pool, stores, context, role).await?;
+    persist_recognized_session_surface(pool, context).await?;
     let Some(client_session_id) = context.client_session_id.as_deref() else {
         return Ok((None, false));
     };
@@ -1431,7 +1416,7 @@ pub(crate) async fn create_job(
     config: &Config,
     stores: &MemoryStoreManager,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     authority: WorkflowAuthority,
     arguments: Value,
 ) -> Result<Value, CustomError> {
@@ -1463,8 +1448,18 @@ pub(crate) async fn create_job(
         )
         .into());
     }
+    let den_service::bears::hats::memory_binding::ResolvedMemoryBinding::Bound(grant) =
+        den_service::bears::hats::memory_binding::for_external_conversation(
+            pool,
+            context.bear_id.into(),
+            &context.conversation_id,
+        )
+        .await?;
+    let hat_id = grant
+        .hat_id()
+        .ok_or_else(|| DenError::Authorization("a Job requires the current hat".into()))?;
     let job = PgDocketService::from_pool(pool)
-        .create_job(
+        .create_job_with_hat(
             DocketJobCreate {
                 bear_id: context.bear_id,
                 created_by_user_id: context.user_id,
@@ -1493,6 +1488,7 @@ pub(crate) async fn create_job(
                 criteria: args.criteria,
                 tasks: args.tasks,
             },
+            hat_id,
             den_docket::DocketJobCreationAuthority::NativeTurn {
                 origin: authority.origin,
                 governance: authority.governance,
@@ -1751,7 +1747,7 @@ pub(crate) async fn get_job(
 pub(crate) async fn update_job(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketJobUpdateArguments = serde_json::from_value(arguments)?;
@@ -1792,7 +1788,7 @@ pub(crate) async fn update_job(
 pub(crate) async fn set_job_lifecycle(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     arguments: Value,
     status: DocketJobStatus,
 ) -> Result<Value, CustomError> {
@@ -1847,7 +1843,7 @@ pub(crate) async fn cancel_job_run(
 pub(crate) async fn execute_job(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     authority: WorkflowAuthority,
     arguments: Value,
 ) -> Result<Value, CustomError> {
@@ -1911,7 +1907,7 @@ pub(crate) async fn execute_job(
 pub(crate) async fn reconcile_job_execution(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     authority: WorkflowAuthority,
     arguments: Value,
 ) -> Result<Value, CustomError> {
@@ -2018,7 +2014,7 @@ async fn bind_selected_task_to_current_session(
 pub(crate) async fn evaluate_criterion(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketCriterionEvaluateArguments = serde_json::from_value(arguments)?;
@@ -2089,7 +2085,7 @@ pub(crate) async fn resolve_task_session_anchor_id(
 pub(crate) async fn create_task(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     authority: WorkflowAuthority,
     arguments: Value,
 ) -> Result<Value, CustomError> {
@@ -2383,7 +2379,7 @@ pub(crate) async fn find_task(
 pub(crate) async fn update_task(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketTaskUpdateArguments = serde_json::from_value(arguments)?;
@@ -2443,7 +2439,7 @@ pub(crate) async fn update_task(
 pub(crate) async fn settle_execution_task(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketCurrentTaskStatusArguments = serde_json::from_value(arguments)?;
@@ -2488,7 +2484,7 @@ pub(crate) async fn settle_execution_task(
 pub(crate) async fn update_current_task_status(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketCurrentTaskStatusArguments = serde_json::from_value(arguments)?;
@@ -2671,7 +2667,7 @@ async fn current_client_session_task_id(
 pub(crate) async fn append_docket_entry(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     authority: WorkflowAuthority,
     arguments: Value,
 ) -> Result<Value, CustomError> {
@@ -2732,7 +2728,7 @@ pub(crate) async fn append_docket_entry(
 pub(crate) async fn promote_docket_entry(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketEntryPromoteArguments = serde_json::from_value(arguments)?;
@@ -2857,7 +2853,7 @@ pub(crate) async fn sync_task_list(
 pub(crate) async fn checkout_task_list(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     authority: WorkflowAuthority,
     arguments: Value,
 ) -> Result<Value, CustomError> {
@@ -3496,7 +3492,7 @@ pub(crate) struct WorkRunCancelArguments {
 pub(crate) async fn cancel_work_run(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     authority: WorkflowAuthority,
     arguments: Value,
 ) -> Result<Value, CustomError> {
@@ -3546,7 +3542,7 @@ fn default_stalled_resolution_reason() -> String {
 pub(crate) async fn resolve_stalled_work_run(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     authority: WorkflowAuthority,
     arguments: Value,
 ) -> Result<Value, CustomError> {

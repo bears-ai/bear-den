@@ -75,10 +75,8 @@ fn default_cabinet_enabled() -> bool {
     true
 }
 
-// `BearStance` now lives in the `den-core` foundation crate (shared by runtime,
-// docket, tools, memory, web/api). `BearProfile` is re-exported as a deprecated
-// compatibility alias while call sites migrate to stance terminology.
-pub use den_core::{BearProfile, BearStance};
+// Shared origin-derived metadata; historical profile records retain their schema.
+pub use den_core::RuntimeContextLabel;
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct BearProfileBinding {
@@ -95,7 +93,7 @@ pub struct BearProfileBinding {
 }
 
 impl BearProfileBinding {
-    pub fn parsed_profile(&self) -> Result<BearProfile, DenError> {
+    pub fn parsed_profile(&self) -> Result<RuntimeContextLabel, DenError> {
         self.profile.parse().map_err(DenError::ValidationError)
     }
 }

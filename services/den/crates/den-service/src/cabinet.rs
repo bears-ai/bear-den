@@ -894,7 +894,7 @@ pub async fn unlink_source(
 mod tests {
     use super::*;
     use den_cabinet::{NewSourceLink, SearchFilters, SourceKind, SourceRole};
-    use den_core::profile::BearStance;
+    use den_core::execution_context::RuntimeContextLabel;
 
     static DB_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -938,7 +938,10 @@ mod tests {
         .fetch_one(pool)
         .await
         .expect("create bear");
-        ActorScope::bear(den_core::ids::BearId::new(bear_id), BearStance::Chat)
+        ActorScope::bear(
+            den_core::ids::BearId::new(bear_id),
+            RuntimeContextLabel::ChannelConversation,
+        )
     }
 
     fn create_request(scope: ActorScope, title: &str, content: &str) -> CreateItemRequest {

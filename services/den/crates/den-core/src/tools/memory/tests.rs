@@ -1,7 +1,7 @@
 use super::merge_memory_entry_source_with_human;
 use crate::tools::arguments::DenToolChannelContext;
 use crate::tools::context::DenToolInvocationContext;
-use crate::BearProfile;
+use crate::RuntimeContextLabel;
 use serde_json::json;
 
 fn sample_context() -> DenToolInvocationContext {
@@ -9,7 +9,7 @@ fn sample_context() -> DenToolInvocationContext {
         bear_id: uuid::Uuid::nil(),
         bear_slug: "meta".to_string(),
         binding_id: "agent-123".to_string(),
-        profile: Some(BearProfile::Pair),
+        profile: Some(RuntimeContextLabel::ArmatureConversation),
         user_id: 7,
         username: Some("context-user".to_string()),
         membership_role: Some("admin".to_string()),

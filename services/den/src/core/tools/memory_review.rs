@@ -35,7 +35,7 @@ use den_service::{
     bears::{
         hats,
         hats::memory_binding::{self, ResolvedMemoryBinding},
-        BearProfile,
+        RuntimeContextLabel,
     },
     conversation::events::{
         memory_proposal_resolved_projection, memory_review_requested_projection,
@@ -122,7 +122,7 @@ impl<'a> DenMemoryReviewStore<'a> {
             self.stores,
             CreateMemoryProposal {
                 bear_id: request.bear_id,
-                source_profile: BearProfile::Watch,
+                source_profile: RuntimeContextLabel::Observation,
                 source_agent_id: Some(request.binding_id.clone()),
                 source_paths: vec![observation.logical_path.clone()],
                 source_refs: json!({
@@ -294,14 +294,10 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
                 conversation_id,
             )
             .await?;
-            let ResolvedMemoryBinding::Bound(grant) = binding else {
-                return Err(DenError::Authorization(
-                    "a bound hat conversation is required".into(),
-                ));
-            };
+            let ResolvedMemoryBinding::Bound(grant) = binding;
             let MemorySource::Conversation(source_id) = grant.source() else {
                 return Err(DenError::Authorization(
-                    "Pair hat review requires a conversation source".into(),
+                    "hat review requires a verified conversation source".into(),
                 ));
             };
             let hat_id = grant

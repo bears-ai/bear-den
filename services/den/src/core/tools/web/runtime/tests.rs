@@ -3,7 +3,7 @@ use den_core::tools::{arguments::DenToolChannelContext, context::DenToolInvocati
 use den_runtime::agent_loop::{
     create_native_approval, decide_native_approval, NativeApprovalDecision,
 };
-use den_service::bears::{db, BearProfile};
+use den_service::bears::{db, RuntimeContextLabel};
 use serde_json::{json, Value};
 
 struct MockTransport<'a>(DenWebFetcher<'a>);
@@ -61,7 +61,7 @@ fn context(bear_id: Uuid, session_id: &str, request_id: Uuid) -> DenToolInvocati
         bear_id,
         bear_slug: "one-shot-web".into(),
         binding_id: "den-native:one-shot-web:pair".into(),
-        profile: Some(BearProfile::Pair),
+        profile: Some(RuntimeContextLabel::ArmatureConversation),
         user_id: 7,
         username: None,
         membership_role: None,
@@ -86,6 +86,9 @@ fn context(bear_id: Uuid, session_id: &str, request_id: Uuid) -> DenToolInvocati
 
 #[sqlx::test]
 async fn exact_web_fetch_approval_is_consumed_once_without_a_bear_wide_grant(pool: PgPool) {
+    use den_core::ids::{BearId, UserId};
+    use den_service::{bears::hats, conversation::persistence};
+
     let bear_id = db::create_bear(
         &pool,
         db::BearParams {
@@ -100,6 +103,50 @@ async fn exact_web_fetch_approval_is_consumed_once_without_a_bear_wide_grant(poo
     )
     .await
     .unwrap();
+    let user = sqlx::query_scalar!("INSERT INTO users (username, email) VALUES ('fetchhatadmin', 'fetchhatadmin@example.test') RETURNING id")
+        .fetch_one(&pool).await.unwrap();
+    db::grant_membership(&pool, user, bear_id, Some(db::BEAR_ROLE_ADMIN))
+        .await
+        .unwrap();
+    let conversation = persistence::ensure_conversation_for_external_id(
+        &pool,
+        bear_id,
+        Some(user),
+        "den-conv-one-shot",
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let config = Config::test_stub();
+    let fetcher = DenWebFetcher {
+        pool: &pool,
+        config: &config,
+    };
+    let mut unbound = context(bear_id, "client-session-one", Uuid::new_v4());
+    unbound.user_id = user;
+    assert!(matches!(
+        fetcher
+            .decide_fetch_approval(&unbound, "https://example.com/first")
+            .await,
+        Err(DenError::Authorization(_))
+    ));
+    assert!(matches!(
+        fetcher.authorize_search(&unbound).await,
+        Err(DenError::Authorization(_))
+    ));
+    let hat = hats::create_hat(
+        &pool,
+        BearId::new(bear_id),
+        UserId::new(user),
+        "Research",
+        "Fetch approved URLs",
+    )
+    .await
+    .unwrap();
+    hats::bindings::bind_conversation_hat(&pool, BearId::new(bear_id), conversation.id, hat.id)
+        .await
+        .unwrap();
     let url = "https://example.com/first";
     let approval_id = create_native_approval(
         &pool,
@@ -129,8 +176,9 @@ async fn exact_web_fetch_approval_is_consumed_once_without_a_bear_wide_grant(poo
         pool: &pool,
         config: &config,
     };
-    let correct = context(bear_id, "client-session-one", request_id);
-    assert_eq!(
+    let mut correct = context(bear_id, "client-session-one", request_id);
+    correct.user_id = user;
+    assert!(matches!(
         den_core::tools::web::web_search(
             &MockTransport(DenWebFetcher {
                 pool: &pool,
@@ -139,19 +187,27 @@ async fn exact_web_fetch_approval_is_consumed_once_without_a_bear_wide_grant(poo
             &correct,
             json!({"query": "test"}),
         )
-        .await
-        .unwrap()["results"][0]["snippet"],
-        "test",
-        "a no-hat Bear still reaches the configured search provider",
-    );
+        .await,
+        Err(DenError::Authorization(_))
+    ));
     for (candidate, target) in [
-        (context(bear_id, "client-session-two", request_id), url),
         (
-            context(Uuid::new_v4(), "client-session-one", request_id),
+            {
+                let mut other = correct.clone();
+                other.session_id = "client-session-two".into();
+                other
+            },
             url,
         ),
         (correct.clone(), "https://example.com/other"),
-        (context(bear_id, "client-session-one", Uuid::new_v4()), url),
+        (
+            {
+                let mut other = correct.clone();
+                other.request_id = Some(Uuid::new_v4().to_string());
+                other
+            },
+            url,
+        ),
     ] {
         assert_eq!(
             fetcher
@@ -162,6 +218,22 @@ async fn exact_web_fetch_approval_is_consumed_once_without_a_bear_wide_grant(poo
             WebApproval::RequiresApproval
         );
     }
+    let mut unknown_bear = correct.clone();
+    unknown_bear.bear_id = Uuid::new_v4();
+    assert!(fetcher
+        .decide_fetch_approval(&unknown_bear, url)
+        .await
+        .is_err());
+    let mut missing_conversation = correct.clone();
+    missing_conversation.conversation_id = "missing-conversation".into();
+    assert!(fetcher
+        .decide_fetch_approval(&missing_conversation, url)
+        .await
+        .is_err());
+    assert!(fetcher
+        .authorize_search(&missing_conversation)
+        .await
+        .is_err());
     let response = den_core::tools::web::web_fetch(
         &MockTransport(DenWebFetcher {
             pool: &pool,

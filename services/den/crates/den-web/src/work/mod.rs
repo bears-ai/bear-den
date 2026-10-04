@@ -198,7 +198,7 @@ use den_docket::{
 };
 use den_sandbox::protocol::CatalogResponse;
 use den_sandbox::SandboxClient;
-use den_service::bears::{db as bears_db, hats, BearProfile};
+use den_service::bears::{db as bears_db, hats, RuntimeContextLabel};
 
 pub mod surfaces;
 
@@ -770,14 +770,13 @@ async fn new_job_form(
     }
 
     let configured_hats = hats::list_hats(state.sqlx_pool(), BearId::new(bear.id)).await?;
-    let has_hats = !configured_hats.is_empty();
     let mut hat_choices = Vec::new();
     for hat in configured_hats.into_iter().filter(|hat| hat.work_enabled) {
         let granted =
             hats::manage::allowed_surfaces(state.sqlx_pool(), BearId::new(bear.id), hat.id).await?;
         if !granted.is_empty() {
             hat_choices.push(serde_json::json!({
-                "id": hat.id, "name": hat.name, "purpose": hat.purpose,
+                "id": hat.id, "name": hat.name, "short_summary": hat.short_summary,
                 "surface_ids": granted.into_iter().map(|id| id.to_string()).collect::<Vec<_>>(),
             }));
         }
@@ -793,7 +792,6 @@ async fn new_job_form(
             catalog => catalog,
             surfaces => surfaces,
             hat_choices,
-            has_hats,
         },
     )
     .await
@@ -925,13 +923,11 @@ async fn create_job(
         entered_branch
     };
 
-    let configured_hats = hats::list_hats(state.sqlx_pool(), BearId::new(bear.id)).await?;
-    let selected_hat = form.hat_id.map(HatId::new);
-    if !configured_hats.is_empty() && selected_hat.is_none() {
-        return Err(CustomError::ValidationError(
+    let selected_hat = form.hat_id.map(HatId::new).ok_or_else(|| {
+        CustomError::ValidationError(
             "choose a Work-enabled hat for this Bear before creating a Job".into(),
-        ));
-    }
+        )
+    })?;
     let service = PgDocketService::from_pool(state.sqlx_pool());
     let create = DocketJobCreate {
         bear_id: bear.id,
@@ -955,22 +951,13 @@ async fn create_job(
         }],
         tasks,
     };
-    let job = match selected_hat {
-        Some(hat) => {
-            service
-                .create_job_with_hat(
-                    create,
-                    hat,
-                    den_docket::DocketJobCreationAuthority::HumanRequest,
-                )
-                .await?
-        }
-        None => {
-            service
-                .create_job(create, den_docket::DocketJobCreationAuthority::HumanRequest)
-                .await?
-        }
-    };
+    let job = service
+        .create_job_with_hat(
+            create,
+            selected_hat,
+            den_docket::DocketJobCreationAuthority::HumanRequest,
+        )
+        .await?;
     Ok(Redirect::to(&format!(
         "/bear/{}/jobs/{}",
         bear.slug,
@@ -1069,7 +1056,7 @@ async fn edit_job(
         .update_job(DocketJobUpdate {
             bear_id,
             job_id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             goal: Some(goal.to_string()),
@@ -1185,8 +1172,15 @@ async fn duplicate_job(
         .transpose()?;
     let visibility = parse_docket_enum::<TaskListVisibility>("visibility", &source.job.visibility)?;
 
+    let duplicate_hat = hats::bindings::job_hat(state.sqlx_pool(), bear_id.into(), source.job.id)
+        .await?
+        .ok_or_else(|| {
+            CustomError::ValidationError(
+                "choose an eligible hat before duplicating this Job".into(),
+            )
+        })?;
     let duplicate = PgDocketService::from_pool(state.sqlx_pool())
-        .create_job(
+        .create_job_with_hat(
             DocketJobCreate {
                 bear_id,
                 created_by_user_id: user_id,
@@ -1204,6 +1198,7 @@ async fn duplicate_job(
                 criteria,
                 tasks,
             },
+            duplicate_hat,
             den_docket::DocketJobCreationAuthority::HumanRequest,
         )
         .await?;
@@ -1267,7 +1262,7 @@ async fn complete_job(
                         "source": "work_ui_human_completion",
                         "accepted_by_user_id": user_id,
                     })),
-                    actor_role: BearProfile::Pair,
+                    actor_role: RuntimeContextLabel::ArmatureConversation,
                     actor_user_id: Some(user_id),
                     actor_agent_id: None,
                 })
@@ -1307,7 +1302,7 @@ async fn archive_job(
         .update_job(DocketJobUpdate {
             bear_id,
             job_id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             goal: None,
@@ -1974,7 +1969,7 @@ async fn retry_task(
             bear_id,
             job_id: Some(job_id),
             task_id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             definition: DocketTaskDefinitionPatch::default(),

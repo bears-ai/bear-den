@@ -359,15 +359,6 @@ pub fn edge_gateway_requires_runtime(config: &Config) -> bool {
 }
 
 #[allow(async_fn_in_trait)]
-pub trait RoleProfileRegistry {
-    async fn resolve_compatibility_binding(
-        &self,
-        bear_id: uuid::Uuid,
-        profile: &str,
-    ) -> Result<Option<RoleRuntimeBinding>, DenError>;
-}
-
-#[allow(async_fn_in_trait)]
 pub trait SessionConversationRuntime {
     async fn ensure_session_conversation(
         &self,

@@ -44,7 +44,7 @@ fn require_origin_policy_and_descriptor(
             "Den tool policy does not match its verified execution origin".into(),
         ));
     }
-    if context.profile != Some(effective_policy.trust_profile) {
+    if context.profile != Some(effective_policy.context_label) {
         return Err(DenError::Authorization(
             "Den tool context profile does not match the verified execution origin".into(),
         ));

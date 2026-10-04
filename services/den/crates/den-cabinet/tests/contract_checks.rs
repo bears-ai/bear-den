@@ -12,8 +12,8 @@ use den_cabinet::{
     CabinetVersionRef, ContractViolation, CreateItemRequest, HistoryRequest, ItemVersion,
     MissionRef, ReadRequest, ReviewState, SearchRequest, SourceKind, UpdateItemRequest,
 };
+use den_core::execution_context::RuntimeContextLabel;
 use den_core::ids::{BearId, UserId};
-use den_core::profile::BearStance;
 use serde_json::json;
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -23,7 +23,10 @@ fn user_scope() -> ActorScope {
 }
 
 fn bear_scope() -> ActorScope {
-    ActorScope::bear(BearId::new(Uuid::new_v4()), BearStance::Chat)
+    ActorScope::bear(
+        BearId::new(Uuid::new_v4()),
+        RuntimeContextLabel::ChannelConversation,
+    )
 }
 
 // --- refs: mint/parse round-trips, malformed and cross-kind rejection ---

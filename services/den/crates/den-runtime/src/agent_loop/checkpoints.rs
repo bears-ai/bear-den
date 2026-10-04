@@ -1,4 +1,4 @@
-use den_core::{BearProfile, DenError};
+use den_core::{DenError, RuntimeContextLabel};
 use den_protocol::ContextBudgetReport;
 use den_service::artifacts::{
     attach_artifact, attach_artifact_in_tx, create_json_artifact, create_json_artifact_in_tx,
@@ -73,7 +73,7 @@ impl CheckpointReplayPolicy {
 pub struct CheckpointArtifactInput {
     pub bear_id: Uuid,
     pub created_by_user_id: Option<i32>,
-    pub owner_profile: BearProfile,
+    pub owner_profile: RuntimeContextLabel,
     pub run_id: String,
     pub turn_step_id: Option<Uuid>,
     pub orientation_kind: Option<String>,
@@ -87,7 +87,7 @@ pub struct CheckpointArtifactInput {
 pub struct CheckpointResponseInput {
     pub bear_id: Uuid,
     pub created_by_user_id: Option<i32>,
-    pub owner_profile: BearProfile,
+    pub owner_profile: RuntimeContextLabel,
     pub run_id: String,
     pub checkpoint_id: String,
     pub response: RuntimeCheckpointResponse,
@@ -2025,7 +2025,7 @@ mod tests {
             CheckpointArtifactInput {
                 bear_id,
                 created_by_user_id: None,
-                owner_profile: BearProfile::Work,
+                owner_profile: RuntimeContextLabel::JobRun,
                 run_id: run_id.clone(),
                 turn_step_id: None,
                 orientation_kind: Some("focused".to_string()),
@@ -2099,7 +2099,7 @@ mod tests {
             CheckpointResponseInput {
                 bear_id,
                 created_by_user_id: Some(user_id),
-                owner_profile: BearProfile::Work,
+                owner_profile: RuntimeContextLabel::JobRun,
                 run_id: run_id.clone(),
                 checkpoint_id: "ckpt-1".to_string(),
                 response: response(),

@@ -8,7 +8,7 @@ Start with the [public project introduction](../README.md). To develop or troubl
 |------|------|------|
 | [BearWire and ACP](topics/bearwire-acp.md) | Den BearWire + Armature code owners | Runs, armatures, client obligations, and approvals |
 | [Docket and task execution](topics/docket.md) | Den Docket code owners | Jobs, session tasks, and focused/background work |
-| [Bear memory and hats](topics/bear-memory-hats.md) | Den memory, runtime-policy, and Bear management code owners | Current memory boundaries and the proposed session/hat model |
+| [Bear memory and hats](topics/bear-memory-hats.md) | Den memory, runtime-policy, and Bear management code owners | Current WIP source/hat boundaries, historical inspection, and remaining effect-policy rollout |
 
 Other topics will move onto this spine incrementally. Until then, use the existing [architecture index](architecture/README.md), [developer and operator guides](guides/README.md), [decisions](decisions/README.md), [planning index](roadmap/README.md), and [public explanation](website/what.md). The older [planning hub](roadmap/PLAN.md) contains dated claims and is **not** an authoritative snapshot of deployed behavior. Service-specific runbooks may stay beside their services.
 

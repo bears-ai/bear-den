@@ -38,10 +38,7 @@ use den_runtime::{
     turn_runs, turn_steps,
 };
 use den_service::{
-    bears::{
-        db as bears_db, hats::memory_binding, render_turn_fragment,
-        repository_prompt_fragment_registry, BearProfile,
-    },
+    bears::{db as bears_db, render_turn_fragment, repository_prompt_fragment_registry},
     bifrost::BifrostCatalogEntry,
     client_sessions,
     conversation::events::{
@@ -54,11 +51,13 @@ use den_service::{
 use crate::auth::authenticated_bear;
 use crate::methods::{
     conversation::{
-        authorize_existing_conversation, authorize_or_create_conversation, conversation_viewer,
-        require_conversation_access,
+        authorize_existing_conversation, conversation_viewer, require_conversation_access,
     },
     parse_params, DEFAULT_CLIENT,
 };
+
+#[path = "run_source_preflight.rs"]
+mod source_preflight;
 
 // A focused Docket task must reach the native turn stream before `/focus` claims
 // that autonomous work has started. This is intentionally bounded so an unavailable
@@ -352,7 +351,6 @@ fn runtime_upstream_target(
 enum ResolvedRunModelSource {
     ConversationExplicit,
     ConversationAuto,
-    ProfileDefault,
     BearDefault,
     SystemDefault,
 }
@@ -363,17 +361,13 @@ impl ResolvedRunModelSource {
     }
 
     const fn is_default(self) -> bool {
-        matches!(
-            self,
-            Self::ProfileDefault | Self::BearDefault | Self::SystemDefault
-        )
+        matches!(self, Self::BearDefault | Self::SystemDefault)
     }
 
     const fn as_str(self) -> &'static str {
         match self {
             Self::ConversationExplicit => "conversation_explicit",
             Self::ConversationAuto => "conversation_auto",
-            Self::ProfileDefault => "profile_default",
             Self::BearDefault => "bear_default",
             Self::SystemDefault => "system_default",
         }
@@ -470,7 +464,6 @@ async fn resolve_pair_run_model(
     state: &DenState,
     bear: &den_service::bears::Bear,
     conversation_id: &str,
-    stance: BearProfile,
 ) -> Result<ResolvedRunModel, CustomError> {
     if let Some(conversation) =
         den_service::conversation::persistence::get_conversation_for_external_id(
@@ -522,18 +515,6 @@ async fn resolve_pair_run_model(
         }
     }
 
-    if let Some(model) = bears_db::profile_model_setting(&state.sqlx_pool, bear.id, stance).await? {
-        let handle = den_llm::normalize_llm_model_handle(&model);
-        let provider_model_id = provider_model_id_for_den_handle(&handle);
-        return Ok(ResolvedRunModel {
-            api_style: RESOLVE_PLACEHOLDER_API_STYLE,
-            supports_reasoning_effort: None,
-            provider_model_id,
-            handle,
-            source: ResolvedRunModelSource::ProfileDefault,
-        });
-    }
-
     if let Some(model) = bear
         .default_model
         .as_deref()
@@ -567,9 +548,8 @@ async fn preflight_pair_run_model(
     bear: &den_service::bears::Bear,
     session_id: &str,
     conversation_id: &str,
-    stance: BearProfile,
 ) -> Result<ResolvedRunModel, CustomError> {
-    let resolved = resolve_pair_run_model(state, bear, conversation_id, stance).await?;
+    let resolved = resolve_pair_run_model(state, bear, conversation_id).await?;
     let snapshot = match state
         .bifrost
         .bear_catalog_snapshot(
@@ -2325,52 +2305,26 @@ async fn run_start_with_recovery_source(
     let cwd = request.cwd;
     let client_context = request.client_context;
     let workspace_roots = normalized_workspace_roots(client_context.as_ref(), cwd.as_deref())?;
-    let conversation = authorize_or_create_conversation(
-        &viewer,
+    let source_preflight::AdmittedRunSource {
+        conversation,
+        origin,
+        turn_source,
+    } = source_preflight::admit(
         &state.sqlx_pool,
-        bear.id,
-        user_id,
+        &viewer,
+        BearId::new(bear.id),
+        UserId::new(user_id),
+        &session_id,
         &upstream_target,
     )
     .await?;
-    // The verified Docket binding decides both the turn's execution origin and
-    // the compatibility profile used by existing runtime bindings. Client context
-    // and requested mode cannot manufacture a Work assignment or armature grant.
-    let live_work_run =
-        den_docket::work_runs::get_live_work_run_by_session(&state.sqlx_pool, &session_id).await?;
-    let (origin, stance, turn_source) = if let Some(work_run) = live_work_run {
-        if work_run.bear_id != bear.id || work_run.cancel_requested {
-            return Err(CustomError::Authorization(
-                "Work run is not active for this Bear".into(),
-            ));
-        }
-        memory_binding::for_work_run(&state.sqlx_pool, BearId::new(bear.id), work_run.id).await?;
-        tracing::info!(
-            work_run_id = %work_run.id,
-            job_id = %work_run.job_id,
-            task_id = ?work_run.executing_task_id,
-            session_id = %session_id,
-            "run.start resolved authorized Work-run origin"
-        );
-        (
-            den_core::TurnExecutionOrigin::AuthorizedWorkRun(
-                den_core::ArmatureAvailability::Connected,
-            ),
-            BearProfile::Work,
-            den_service::bears::hats::turn_binding::NativeTurnSource::WorkRun(work_run.id),
-        )
-    } else {
-        memory_binding::for_conversation(&state.sqlx_pool, BearId::new(bear.id), conversation.id)
-            .await?;
-        tracing::debug!(session_id = %session_id, "run.start resolved armature conversation origin");
-        (
-            den_core::TurnExecutionOrigin::ArmatureConversation(
-                den_core::ArmatureAvailability::Connected,
-            ),
-            BearProfile::Pair,
-            den_service::bears::hats::turn_binding::NativeTurnSource::Conversation(conversation.id),
-        )
-    };
+    let upstream_target = conversation
+        .external_conversation_id
+        .clone()
+        .ok_or_else(|| {
+            CustomError::Authorization("admitted source has no external conversation ID".into())
+        })?;
+    let resolved_conversation_id = Some(upstream_target.clone());
     let requested_mode = request.requested_mode;
     let turn_authority = den_core::client_tools::TurnAuthority::for_origin(
         origin,
@@ -2395,7 +2349,7 @@ async fn run_start_with_recovery_source(
         compatibility_backend: Some("native".to_string()),
     };
     let resolved_model =
-        preflight_pair_run_model(state, &bear, &session_id, &upstream_target, stance).await?;
+        preflight_pair_run_model(state, &bear, &session_id, &upstream_target).await?;
     if resolved_model.source.is_default() {
         require_conversation_access(&viewer, &state.sqlx_pool, conversation.id).await?;
         let established =
@@ -3624,9 +3578,12 @@ mod tests {
     fn only_persisted_conversation_models_may_bypass_catalog_refresh() {
         assert!(ResolvedRunModelSource::ConversationExplicit.is_persisted_conversation_model());
         assert!(ResolvedRunModelSource::ConversationAuto.is_persisted_conversation_model());
-        assert!(!ResolvedRunModelSource::ProfileDefault.is_persisted_conversation_model());
         assert!(!ResolvedRunModelSource::BearDefault.is_persisted_conversation_model());
         assert!(!ResolvedRunModelSource::SystemDefault.is_persisted_conversation_model());
+        assert!(ResolvedRunModelSource::BearDefault.is_default());
+        assert!(ResolvedRunModelSource::SystemDefault.is_default());
+        assert!(!ResolvedRunModelSource::ConversationExplicit.is_default());
+        assert!(!ResolvedRunModelSource::ConversationAuto.is_default());
     }
 
     #[test]

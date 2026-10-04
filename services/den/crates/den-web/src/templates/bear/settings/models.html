@@ -10,9 +10,8 @@
     {% endif %}
 
     <p class="form-hint">
-        Model selection is resolved in layers: Bear default, then stance
-        override, then future lane-specific assignments. Lane-specific model
-        assignments are TBD.
+        Configure Bear-wide model, loop-control, and tool-budget defaults here.
+        Model selection for an individual conversation stays in that conversation.
     </p>
 
     {% if models_fetch_error %}
@@ -22,8 +21,7 @@
     <form method="post" class="box full-width" data-model-settings>
         <h3>Bear default</h3>
         <p class="form-hint">
-            Used when a stance is set to inherit. Choose <code>inherit</code> to
-            use the deployment default.
+            Choose <code>inherit</code> to use the deployment default.
         </p>
         <p class="form-hint">
             Bear default status:
@@ -32,7 +30,7 @@
         </p>
         <p class="form-hint">
             Auto mode is planned for conversation/model routing work and is not
-            available for Bear or stance defaults yet.
+            available for Bear defaults yet.
         </p>
 
         <label for="bear_loop_control">Agent loop control</label>
@@ -49,7 +47,6 @@
         </select>
         <p class="form-hint">
             Controls checkpoint intensity, loop budgets, and optional checkpoint thinking level.
-            Stances may inherit this value or override it below.
         </p>
 
         <label for="bear_tool_budget_multiplier">Tool budget multiplier</label>
@@ -327,140 +324,6 @@
         {% else %}
         <p class="form-errors">{{ bifrost_usage.error | e }}</p>
         {% endif %}
-
-        <h3>Stance defaults</h3>
-        <p class="form-hint">
-            Use <code>inherit</code> unless a stance needs a different tradeoff.
-        </p>
-        <table>
-            <thead>
-                <tr>
-                    <th>Stance</th>
-                    <th>Model</th>
-                    <th>Resolved</th>
-                    <th>Loop control</th>
-                    <th>Status</th>
-                    <th>Source</th>
-                    <th></th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for row in rows %}
-                <tr>
-                    <td>
-                        <strong>{{ row.label | e }}</strong><br /><code
-                            >{{ row.profile | e }}</code
-                        >
-                    </td>
-                    <td>
-                        <label for="{{ row.profile | e }}_model" class="sr-only"
-                            >{{ row.label | e }} model</label
-                        >
-                        <input
-                            id="{{ row.profile | e }}_model"
-                            name="{{ row.profile | e }}_model"
-                            list="all-bifrost-models"
-                            value="{% if row.configured_model %}{{ row.configured_model | e }}{% else %}inherit{% endif %}"
-                            placeholder="inherit or provider/model"
-                            required
-                            data-model-input{%
-                            if
-                            not
-                            can_manage_bear
-                            %}
-                            disabled{%
-                            endif
-                            %}
-                        />
-                        <select
-                            data-model-shortcut-target="{{ row.profile | e }}_model"
-                            {%
-                            if
-                            not
-                            can_manage_bear
-                            %}
-                            disabled{%
-                            endif
-                            %}
-                        >
-                            <option
-                                value="inherit"
-                                {%
-                                if
-                                not
-                                row.configured_model
-                                %}
-                                selected{%
-                                endif
-                                %}
-                            >
-                                Inherit Bear default
-                            </option>
-                            {% if row.configured_model_custom %}
-                            <option
-                                value="{{ row.configured_model_custom | e }}"
-                                selected
-                            >
-                                Custom model — {{ row.configured_model_custom |
-                                e }}
-                            </option>
-                            {% endif %} {% for m in model_options %}
-                            <option
-                                value="{{ m.handle | e }}"
-                                {%
-                                if
-                                row.configured_model == m.handle
-                                %}
-                                selected{%
-                                endif
-                                %}
-                            >
-                                {{ m.label | e }} — {{ m.handle | e }}
-                            </option>
-                            {% endfor %}
-                        </select>
-                    </td>
-                    <td>
-                        {% if row.resolved_model %}<code
-                            >{{ row.resolved_model | e }}</code
-                        >{% else %}<em>none</em>{% endif %}
-                    </td>
-                    <td>
-                        <label for="{{ row.profile | e }}_loop_control" class="sr-only"
-                            >{{ row.label | e }} loop control</label
-                        >
-                        <select
-                            id="{{ row.profile | e }}_loop_control"
-                            name="{{ row.profile | e }}_loop_control"
-                            {% if not can_manage_bear %}disabled{% endif %}
-                        >
-                            <option value="inherit" {% if not row.configured_loop_control %}selected{% endif %}>Inherit</option>
-                            <option value="light" {% if row.configured_loop_control == "light" %}selected{% endif %}>Light</option>
-                            <option value="standard" {% if row.configured_loop_control == "standard" %}selected{% endif %}>Standard</option>
-                            <option value="careful" {% if row.configured_loop_control == "careful" %}selected{% endif %}>Careful</option>
-                            <option value="strict" {% if row.configured_loop_control == "strict" %}selected{% endif %}>Strict</option>
-                        </select>
-                        <br />
-                        <small>
-                            Resolved: <code>{{ row.resolved_loop_control | e }}</code>
-                            · {{ row.loop_control_source | e }}
-                        </small>
-                    </td>
-                    <td>
-                        <span title="Bifrost availability"
-                            >{{ row.availability_status | e }}</span
-                        >
-                        ·
-                        <span title="Den metadata overlay"
-                            >metadata {{ row.metadata_status | e }}</span
-                        >
-                    </td>
-                    <td>{{ row.source | e }}</td>
-                    <td>{% if can_manage_bear %}<a href="/bear/{{ bear.slug | e }}/stances/{{ row.profile | e }}">Configure stance</a>{% endif %}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
 
         <datalist id="all-bifrost-models">
             <option value="inherit">Inherit from the relevant default</option>

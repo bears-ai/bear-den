@@ -66,8 +66,8 @@ use den_core::tools::{
 use den_core::{
     client_tools::{pre_risk_checkpoint_class, ClientToolName, PreRiskCheckpointClass},
     config::Config,
+    execution_context::RuntimeContextLabel,
     governance::Governance,
-    profile::BearProfile,
     ArmatureAvailability, DenError, EffectivePolicy, TurnExecutionOrigin,
 };
 use den_docket::TaskListProjection;
@@ -452,7 +452,7 @@ pub struct SessionTrackingStream {
     pending_pause_persistence: Option<PausePersistenceFuture>,
     dispatch_mode: NativeToolDispatchMode,
     config: Arc<Config>,
-    profile: BearProfile,
+    profile: RuntimeContextLabel,
     origin: TurnExecutionOrigin,
     may_define_task: bool,
 }
@@ -470,7 +470,7 @@ impl SessionTrackingStream {
         client_session_id: String,
         request_id: Option<String>,
         config: Arc<Config>,
-        profile: BearProfile,
+        profile: RuntimeContextLabel,
         dispatch_mode: NativeToolDispatchMode,
     ) -> Self {
         let may_define_task = match &session.objective_orientation {
@@ -663,7 +663,8 @@ impl SessionTrackingStream {
         DenToolInvocationContext {
             bear_id: self.bear_id,
             bear_slug: self.bear_slug.clone(),
-            binding_id: format!("den-native:{}:{}", self.bear_id, self.profile.as_str()),
+            // Resolved from canonical state before dispatch in begin_server_tool_execution.
+            binding_id: String::new(),
             profile: Some(self.profile),
             user_id: self.user_id.unwrap_or_default(),
             username: None,
@@ -719,7 +720,7 @@ impl SessionTrackingStream {
     ) -> Result<EffectivePolicy, DenError> {
         self.origin.require_ordinary_session()?;
         let policy = EffectivePolicy::compile_for_origin(self.server_tool_origin(), governance);
-        if policy.trust_profile != self.profile {
+        if policy.context_label != self.profile {
             return Err(DenError::Authorization(
                 "native runtime profile does not match the verified execution origin".into(),
             ));
@@ -921,7 +922,7 @@ impl SessionTrackingStream {
             }
         };
         let focus_promotion = canonical == DEN_TASK_FOCUS;
-        let context = self.server_tool_context();
+        let mut context = self.server_tool_context();
         let origin_run_id = self.run_id.clone();
         let pool = self.pool.clone();
         let config = self.config.clone();
@@ -935,6 +936,13 @@ impl SessionTrackingStream {
         let conversation_id = self.conversation_id.clone();
         let client_session_id = self.client_session_id.clone();
         self.pending_server_tool = Some(Box::pin(async move {
+            let session = session_snapshot
+                .as_ref()
+                .ok_or_else(|| DenError::Authorization("server tool session is missing".into()))?;
+            let source =
+                super::source_admission::require_ordinary_session_source(&pool, session.into())
+                    .await?;
+            context.binding_id = source.binding_id(bear_id.into());
             if let Some(error) = oriented_child_count_policy_error(
                 &pool,
                 bear_id,
@@ -1400,10 +1408,10 @@ impl SessionTrackingStream {
     }
 
     fn checkpoint_request_retention(
-        profile: BearProfile,
+        profile: RuntimeContextLabel,
     ) -> Option<(CheckpointVisibility, CheckpointReplayPolicy)> {
         match profile {
-            BearProfile::Work => Some((
+            RuntimeContextLabel::JobRun => Some((
                 CheckpointVisibility::AuditOnly,
                 CheckpointReplayPolicy::None,
             )),
@@ -1503,7 +1511,7 @@ impl SessionTrackingStream {
     fn checkpoint_audit_enabled(&self) -> bool {
         match self.config.checkpoint_audit_mode.as_str() {
             "all" => true,
-            "work" => self.profile == BearProfile::Work,
+            "work" => self.profile == RuntimeContextLabel::JobRun,
             _ => false,
         }
     }
@@ -2065,10 +2073,13 @@ impl SessionTrackingStream {
         let config = self.config.clone();
         let bear_id = self.bear_id;
         let conversation_id = self.conversation_id.clone();
-        let profile = self.profile;
-        tokio::spawn(async move {
-            enqueue_compaction_after_turn(&pool, &config, bear_id, &conversation_id, profile).await;
-        });
+        if let Some(session) = self.store.get(&self.session_key) {
+            let source = crate::runtime_compaction::CompactionSource::Turn(session.origin);
+            tokio::spawn(async move {
+                enqueue_compaction_after_turn(&pool, &config, bear_id, &conversation_id, source)
+                    .await;
+            });
+        }
         self.finished = true;
         self.pending_pause_after_tool = Some(RuntimeSemanticEvent::TurnCompleted { turn: None });
     }
@@ -2732,7 +2743,8 @@ impl Stream for SessionTrackingStream {
                 }
                 if approval_required
                     && self.dispatch_mode == NativeToolDispatchMode::DeferToClient
-                    && self.profile == BearProfile::Pair
+                    && builtin_den_tool_descriptor_for_provider_name(&tool_name)
+                        .is_some_and(|descriptor| descriptor.allows_origin(self.origin))
                     && provider_tool_is_den_web_fetch(&tool_name)
                     && self
                         .store
@@ -2984,7 +2996,7 @@ mod tests {
     use den_core::config::Config;
 
     use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
-    use den_service::bears::BearProfile;
+    use den_service::bears::RuntimeContextLabel;
     use futures::StreamExt;
 
     #[test]
@@ -3076,12 +3088,15 @@ mod tests {
                 model_handle: Some("openai/test"),
                 model_default: None,
                 bear_override: None,
-                stance_override: None,
                 task_escalation: None,
-                stance: Some(BearProfile::Pair),
+                origin: den_core::TurnExecutionOrigin::ArmatureConversation(
+                    den_core::ArmatureAvailability::Connected,
+                ),
+                governance: den_core::Governance::Interactive,
                 objective_orientation: None,
                 pre_risk: false,
-            }),
+            })
+            .expect("ordinary test origin"),
             governance: den_core::governance::Governance::Interactive,
             objective_orientation: crate::agent_loop::ObjectiveOrientation::Freeform {
                 policy: crate::agent_loop::FreeformPolicy::closed(),
@@ -3097,7 +3112,7 @@ mod tests {
             latest_projected_memory: None,
             latest_recalled_memory: None,
             cached_activity_plan_projection: None,
-            profile: BearProfile::Pair,
+            profile: RuntimeContextLabel::ArmatureConversation,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
         }
@@ -3755,17 +3770,17 @@ mod tests {
     #[test]
     fn checkpoint_request_retention_is_work_audit_only() {
         assert_eq!(
-            SessionTrackingStream::checkpoint_request_retention(BearProfile::Work),
+            SessionTrackingStream::checkpoint_request_retention(RuntimeContextLabel::JobRun),
             Some((
                 CheckpointVisibility::AuditOnly,
                 CheckpointReplayPolicy::None
             ))
         );
         for profile in [
-            BearProfile::Pair,
-            BearProfile::Chat,
-            BearProfile::Curate,
-            BearProfile::Watch,
+            RuntimeContextLabel::ArmatureConversation,
+            RuntimeContextLabel::ChannelConversation,
+            RuntimeContextLabel::Curation,
+            RuntimeContextLabel::Observation,
         ] {
             assert_eq!(
                 SessionTrackingStream::checkpoint_request_retention(profile),
@@ -3781,12 +3796,15 @@ mod tests {
             model_handle: Some("openai/test"),
             model_default: None,
             bear_override: Some(den_core::AgentLoopControlLevel::Careful),
-            stance_override: None,
             task_escalation: None,
-            stance: Some(BearProfile::Pair),
+            origin: den_core::TurnExecutionOrigin::ArmatureConversation(
+                den_core::ArmatureAvailability::Connected,
+            ),
+            governance: den_core::Governance::Interactive,
             objective_orientation: None,
             pre_risk: false,
-        });
+        })
+        .expect("ordinary test origin");
         let mut stream = test_tracking_stream_with_session(&session);
         stream.inner = Box::pin(futures::stream::iter(vec![Ok(
             RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
@@ -3832,12 +3850,15 @@ mod tests {
             model_handle: Some("openai/test"),
             model_default: None,
             bear_override: Some(den_core::AgentLoopControlLevel::Careful),
-            stance_override: None,
             task_escalation: None,
-            stance: Some(BearProfile::Pair),
+            origin: den_core::TurnExecutionOrigin::ArmatureConversation(
+                den_core::ArmatureAvailability::Connected,
+            ),
+            governance: den_core::Governance::Interactive,
             objective_orientation: None,
             pre_risk: false,
-        });
+        })
+        .expect("ordinary test origin");
         let mut stream = test_tracking_stream_with_session(&session);
         stream.inner = Box::pin(futures::stream::iter(vec![Ok(
             RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
@@ -3896,12 +3917,15 @@ mod tests {
             model_handle: Some("openai/test"),
             model_default: None,
             bear_override: Some(den_core::AgentLoopControlLevel::Careful),
-            stance_override: None,
             task_escalation: None,
-            stance: Some(BearProfile::Pair),
+            origin: den_core::TurnExecutionOrigin::ArmatureConversation(
+                den_core::ArmatureAvailability::Connected,
+            ),
+            governance: den_core::Governance::Interactive,
             objective_orientation: None,
             pre_risk: false,
-        });
+        })
+        .expect("ordinary test origin");
         let mut stream = test_tracking_stream_with_session(&session);
         stream.inner = Box::pin(futures::stream::iter(vec![Ok(
             RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
@@ -4370,7 +4394,7 @@ mod tests {
             "client-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             NativeToolDispatchMode::ServerSideInProcess,
         );
 
@@ -4411,7 +4435,7 @@ mod tests {
             "client-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             NativeToolDispatchMode::ServerSideInProcess,
         );
 
@@ -4425,10 +4449,16 @@ mod tests {
         assert!(!stream.finished);
     }
 
-    #[tokio::test]
-    async fn turn_completion_with_assistant_text_records_the_step_on_the_session() {
-        let bear_id = uuid::Uuid::new_v4();
-        let session = test_session("den-conv-test:client-test", bear_id);
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn turn_completion_with_assistant_text_records_the_step_on_the_session(
+        pool: sqlx::PgPool,
+    ) {
+        let (source, _, _) = super::super::source_admission::tests::fixture(&pool).await;
+        let bear_id = source.bear_id;
+        let mut session = test_session(&source.session_key, bear_id);
+        session.user_id = source.user_id;
+        session.conversation_id = source.conversation_id;
+        session.client_session_id = source.client_session_id;
         let store = AgentLoopSessionStore::default();
         store.insert(session.clone());
         let mut stream = SessionTrackingStream::new(
@@ -4444,16 +4474,15 @@ mod tests {
             ])),
             &session,
             store.clone(),
-            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop")
-                .expect("lazy test pool"),
+            pool,
             bear_id,
             "test-bear".to_string(),
-            Some(7),
-            "den-conv-test".to_string(),
-            "client-test".to_string(),
+            session.user_id,
+            session.conversation_id.clone(),
+            session.client_session_id.clone(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             NativeToolDispatchMode::DeferToClient,
         );
 
@@ -4618,7 +4647,7 @@ mod tests {
             session.client_session_id.clone(),
             session.request_id.clone(),
             Arc::new(Config::test_stub()),
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             NativeToolDispatchMode::DeferToClient,
         );
 
@@ -4654,7 +4683,7 @@ mod tests {
             session.client_session_id.clone(),
             session.request_id.clone(),
             Arc::new(Config::test_stub()),
-            BearProfile::Work,
+            RuntimeContextLabel::JobRun,
             NativeToolDispatchMode::DeferToClient,
         );
 
@@ -4680,7 +4709,7 @@ mod tests {
             session.client_session_id.clone(),
             session.request_id.clone(),
             Arc::new(Config::test_stub()),
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             NativeToolDispatchMode::DeferToClient,
         );
         assert!(matches!(
@@ -4703,7 +4732,7 @@ mod tests {
             session.client_session_id.clone(),
             session.request_id.clone(),
             Arc::new(Config::test_stub()),
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             NativeToolDispatchMode::ServerSideInProcess,
         );
         assert!(!stream
@@ -4732,7 +4761,7 @@ mod tests {
             "client-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             NativeToolDispatchMode::DeferToClient,
         );
         stream.finished = true;
@@ -4769,7 +4798,7 @@ mod tests {
             "client-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             NativeToolDispatchMode::DeferToClient,
         );
         stream.pending_server_tool = Some(Box::pin(async {
@@ -4810,7 +4839,7 @@ mod tests {
             "client-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             NativeToolDispatchMode::DeferToClient,
         );
         store.update(&session.session_key, |session| {
@@ -4883,7 +4912,7 @@ mod tests {
             "client-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             NativeToolDispatchMode::DeferToClient,
         );
         let call = ChatToolCall {
@@ -4940,7 +4969,7 @@ mod tests {
             "client-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             NativeToolDispatchMode::DeferToClient,
         );
         let call = sample_tool_call("call-focus");
@@ -5004,7 +5033,7 @@ mod tests {
             "client-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             NativeToolDispatchMode::DeferToClient,
         );
 
@@ -5056,7 +5085,7 @@ mod tests {
             "client-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             NativeToolDispatchMode::DeferToClient,
         );
 
@@ -5112,7 +5141,7 @@ mod tests {
             "client-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             NativeToolDispatchMode::DeferToClient,
         );
 
@@ -5159,7 +5188,7 @@ mod tests {
             "client-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             NativeToolDispatchMode::DeferToClient,
         );
 
@@ -5204,7 +5233,7 @@ mod tests {
             "client-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             NativeToolDispatchMode::DeferToClient,
         );
         let wake_count = Arc::new(AtomicUsize::new(0));
@@ -5243,7 +5272,7 @@ mod tests {
             "client-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             NativeToolDispatchMode::DeferToClient,
         );
         stream.pending_pause_after_tool = Some(RuntimeSemanticEvent::RunPaused {

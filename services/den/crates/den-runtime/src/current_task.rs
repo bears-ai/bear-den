@@ -5,7 +5,8 @@ use den_docket::{
 };
 use den_http::errors::CustomError;
 use den_service::{
-    bears::BearProfile, client_sessions, conversation::persistence as conversation_persistence,
+    bears::RuntimeContextLabel, client_sessions,
+    conversation::persistence as conversation_persistence,
 };
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -54,7 +55,7 @@ fn actionable_task_title(
 ) -> Result<String, CustomError> {
     let selected_tasks = task_list_projection_from_session_tasks_with_current_task(
         bear_id,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         conversation_id,
         session_anchor_id,
         Some(client_session_id),
@@ -75,7 +76,7 @@ fn actionable_task_title(
         .ok_or_else(|| {
             let actionable = task_list_projection_from_session_tasks_with_current_task(
                 bear_id,
-                BearProfile::Pair,
+                RuntimeContextLabel::ArmatureConversation,
                 conversation_id,
                 session_anchor_id,
                 Some(client_session_id),
@@ -160,7 +161,7 @@ pub async fn select_session_current_task(
     }
     let task_list = task_list_projection_from_session_tasks_with_current_task(
         bear_id,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         conversation_id,
         session.id,
         Some(client_session_id),

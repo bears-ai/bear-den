@@ -5,6 +5,7 @@
 //! (bear, memory, chunk) tuple overwrites rather than duplicates.
 
 use den_core::ids::HatId;
+use den_memory::MemoryScopeType;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -16,9 +17,6 @@ pub const SOURCE_CLASS_BEAR_MEMORY: &str = "bear_memory";
 
 /// Kinds never indexed regardless of scope (ephemeral / streaming content).
 const EXCLUDED_KINDS: &[&str] = &["scratch", "log"];
-
-/// Profile-local kinds that *are* worth indexing (ADR-0038 §4: note/decision/summary).
-const PROFILE_LOCAL_INDEXABLE_KINDS: &[&str] = &["note", "decision", "summary"];
 
 /// The fields of a canonical memory record the indexer needs.
 #[derive(Debug, Clone)]
@@ -51,7 +49,7 @@ pub struct IndexRequest {
 /// - Never index ephemeral kinds (`scratch`, `log`).
 /// - `shared` records: indexed.
 /// - `hat` records: indexed only with a canonical typed hat ID.
-/// - `profile_local` records: only `note` / `decision` / `summary` (legacy).
+/// - Raw `profile_local` and `source_local` records are never indexed, even for no-hat Bears.
 pub fn is_indexable(scope_type: &str, kind: &str, visibility: &str) -> bool {
     if visibility != "normal" {
         return false;
@@ -59,18 +57,23 @@ pub fn is_indexable(scope_type: &str, kind: &str, visibility: &str) -> bool {
     if EXCLUDED_KINDS.contains(&kind) {
         return false;
     }
-    match scope_type {
-        "shared" | "hat" => true,
-        "profile_local" => PROFILE_LOCAL_INDEXABLE_KINDS.contains(&kind),
-        _ => false,
-    }
+    matches!(
+        MemoryScopeType::parse(scope_type),
+        Some(MemoryScopeType::Shared | MemoryScopeType::Hat)
+    )
 }
 
 impl IndexRequest {
     pub fn is_indexable(&self) -> bool {
         is_indexable(&self.scope_type, &self.kind, &self.visibility)
-            && (self.scope_type == "hat") == self.scope_hat_id.is_some()
-            && !matches!(self.lifecycle_status.as_str(), "archived" | "superseded")
+            && (MemoryScopeType::parse(&self.scope_type) == Some(MemoryScopeType::Hat))
+                == self.scope_hat_id.is_some()
+            && self.scope_profile.is_none()
+            && !self.content_text.trim().is_empty()
+            && !matches!(
+                self.lifecycle_status.as_str(),
+                "archived" | "archive-candidate" | "superseded"
+            )
     }
 }
 
@@ -125,149 +128,4 @@ pub fn build_payload(req: &IndexRequest, chunk: &Chunk, embedding_standard: &str
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn shared_normal_records_are_indexable() {
-        assert!(is_indexable("shared", "overview", "normal"));
-        assert!(is_indexable("shared", "note", "normal"));
-    }
-
-    #[test]
-    fn profile_local_only_indexes_select_kinds() {
-        assert!(is_indexable("profile_local", "note", "normal"));
-        assert!(is_indexable("profile_local", "decision", "normal"));
-        assert!(is_indexable("profile_local", "summary", "normal"));
-        assert!(!is_indexable("profile_local", "overview", "normal"));
-    }
-
-    #[test]
-    fn non_normal_visibility_and_ephemeral_kinds_excluded() {
-        assert!(!is_indexable("shared", "overview", "hidden"));
-        assert!(!is_indexable("shared", "scratch", "normal"));
-        assert!(!is_indexable("shared", "log", "normal"));
-        assert!(!is_indexable("unknown_scope", "note", "normal"));
-        assert!(is_indexable("hat", "note", "normal"));
-        assert!(!is_indexable("source_local", "note", "normal"));
-    }
-
-    #[test]
-    fn hat_index_requires_canonical_hat_id_and_never_indexes_raw_sources() {
-        let hat = HatId::new(Uuid::new_v4());
-        let req = IndexRequest {
-            bear_id: Uuid::new_v4(),
-            memory_id: Uuid::new_v4().to_string(),
-            sequence_no: 1,
-            logical_path: Some(format!("hat_memory/{hat}/note.md")),
-            scope_type: "hat".into(),
-            scope_profile: None,
-            scope_hat_id: Some(hat),
-            work_surface_ref: None,
-            kind: "note".into(),
-            visibility: "normal".into(),
-            content_text: "reviewed knowledge".into(),
-            salience: "normal".into(),
-            lifecycle_status: "active".into(),
-            freshness_trend: "stable".into(),
-            entity_ids: vec![],
-        };
-        assert!(req.is_indexable());
-        let payload = build_payload(
-            &req,
-            &Chunk {
-                index: 0,
-                text: "reviewed knowledge".into(),
-                content_hash: "x".into(),
-            },
-            "test-standard",
-        );
-        assert_eq!(payload["scope_hat_id"], hat.to_string());
-        assert!(!IndexRequest {
-            scope_hat_id: None,
-            ..req.clone()
-        }
-        .is_indexable());
-        assert!(!IndexRequest {
-            scope_type: "source_local".into(),
-            ..req
-        }
-        .is_indexable());
-    }
-
-    #[test]
-    fn point_id_is_deterministic_and_varies_by_chunk() {
-        let bear = Uuid::nil();
-        let a = point_id(bear, "mem-1", 0, "bears-embed-v1");
-        let a2 = point_id(bear, "mem-1", 0, "bears-embed-v1");
-        let b = point_id(bear, "mem-1", 1, "bears-embed-v1");
-        let c = point_id(bear, "mem-2", 0, "bears-embed-v1");
-        assert_eq!(a, a2);
-        assert_ne!(a, b);
-        assert_ne!(a, c);
-        // Valid UUID format.
-        assert!(Uuid::parse_str(&a).is_ok());
-    }
-
-    #[test]
-    fn archived_lifecycle_records_are_not_indexable() {
-        let req = IndexRequest {
-            bear_id: Uuid::nil(),
-            memory_id: "mem-archived".into(),
-            sequence_no: 1,
-            logical_path: Some("core/old.md".into()),
-            scope_type: "shared".into(),
-            scope_profile: None,
-            scope_hat_id: None,
-            work_surface_ref: None,
-            kind: "note".into(),
-            visibility: "normal".into(),
-            content_text: "old body".into(),
-            salience: "normal".into(),
-            lifecycle_status: "archived".into(),
-            freshness_trend: "stale".into(),
-            entity_ids: Vec::new(),
-        };
-        assert!(!req.is_indexable());
-    }
-
-    #[test]
-    fn payload_carries_required_fields() {
-        let req = IndexRequest {
-            bear_id: Uuid::nil(),
-            memory_id: "mem-1".into(),
-            sequence_no: 1,
-            logical_path: Some("core/work_surfaces/x/overview.md".into()),
-            scope_type: "shared".into(),
-            scope_profile: None,
-            scope_hat_id: None,
-            work_surface_ref: Some("x".into()),
-            kind: "overview".into(),
-            visibility: "normal".into(),
-            content_text: "body".into(),
-            salience: "high".into(),
-            lifecycle_status: "active".into(),
-            freshness_trend: "stable".into(),
-            entity_ids: vec!["ent-1".into(), "ent-2".into()],
-        };
-        let chunk = Chunk {
-            index: 0,
-            text: "body".into(),
-            content_hash: "abc".into(),
-        };
-        let payload = build_payload(&req, &chunk, "bears-embed-v1");
-        assert_eq!(payload["source_class"], SOURCE_CLASS_BEAR_MEMORY);
-        assert_eq!(payload["embedding_standard"], "bears-embed-v1");
-        assert_eq!(payload["memory_id"], "mem-1");
-        assert_eq!(payload["chunk_index"], 0);
-        assert_eq!(payload["content_hash"], "abc");
-        assert_eq!(payload["work_surface_ref"], "x");
-        assert!(payload["scope_hat_id"].is_null());
-        assert_eq!(payload["kind"], "overview");
-        assert_eq!(payload["salience"], "high");
-        assert_eq!(payload["lifecycle_status"], "active");
-        assert_eq!(payload["freshness_trend"], "stable");
-        assert_eq!(payload["text"], "body");
-        assert_eq!(payload["entity_ids"], serde_json::json!(["ent-1", "ent-2"]));
-    }
-}
+mod tests;

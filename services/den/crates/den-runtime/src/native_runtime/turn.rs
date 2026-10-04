@@ -5,10 +5,7 @@ use den_core::tools::{
     descriptor::builtin_den_tool_descriptor_for_provider_name,
     result_compaction::{compact_client_tool_result, ClientToolResultInput, ToolResultStatus},
 };
-use den_core::{
-    config::Config,
-    ids::{BearId, UserId},
-};
+use den_core::{config::Config, ids::BearId};
 use std::sync::{Arc, LazyLock};
 #[cfg(feature = "test-fixtures")]
 use std::{
@@ -26,9 +23,9 @@ use den_protocol::{
 };
 use den_service::{
     bears::{
-        hats::{memory_binding, turn_binding::NativeTurnSource},
+        hats::memory_binding,
         prompt_fragments::{render_turn_fragment, repository_prompt_fragment_registry},
-        BearProfile,
+        RuntimeContextLabel,
     },
     conversation::{
         events::{
@@ -37,12 +34,21 @@ use den_service::{
             CanonicalToolRequestRecord, CanonicalToolResultRecord, ConversationEventProvenance,
         },
         persistence as conversation_persistence,
-        viewer::{require_ordinary_tool_source, ConversationViewer},
     },
 };
 use futures::{stream, StreamExt};
 use sqlx::PgPool;
 use uuid::Uuid;
+
+#[cfg(test)]
+use crate::agent_loop::source_admission::require_same_work_run;
+use crate::agent_loop::source_admission::{
+    require_ordinary_session_source, OrdinarySessionSource as ContinuationSource,
+};
+#[cfg(test)]
+use den_core::ids::UserId;
+#[cfg(test)]
+use den_service::bears::hats::turn_binding::NativeTurnSource;
 
 use super::web_chat_loop::{NativeWebChatLoopRuntime, NativeWebChatLoopStream};
 
@@ -51,7 +57,7 @@ use crate::{
         agent_loop_control_profile_fingerprint, agent_loop_session_key,
         assemble_native_turn_for_bear, classify_tool_budget_class, evaluate_checkpoint_trigger,
         evaluate_turn_budget, latest_grounding_probe_signal_for_tool_call,
-        objective_orientation_allowed_for_stance, projected_memory_session_diagnostic,
+        objective_orientation_allowed_for_origin, projected_memory_session_diagnostic,
         provider_tool_is_den_web_fetch, recalled_memory_session_diagnostic,
         record_approval_decision, record_checkpoint_request,
         record_grounding_probe_result_decision, resolve_agent_loop_control, run_agent_step_stream,
@@ -66,17 +72,14 @@ use crate::{
     },
     llm::{ChatMessage, ChatToolCall, LlmClient},
     native_runtime::{
-        profile::NativeCapabilityProfile,
+        profile::NativeTurnDefaults,
         search_availability,
         tools::{
             is_work_tool_provider_name, merge_den_and_client_tools_with_search,
             omit_unbounded_cargo_helper,
         },
     },
-    reflection::briefing_source::{
-        collect_curate_briefing_text, resolve_curate_briefing_source, CurateBriefingText,
-        ReflectionRunId,
-    },
+    reflection::briefing_source::{CurateBriefingText, ReflectionRunId},
     turn_runner::{
         materialize_runtime_conversation_if_needed, RunRecoveryDisposition, TurnContinueRequest,
         TurnStartRequest,
@@ -514,7 +517,7 @@ pub async fn record_native_client_tool_result(
     let session = SESSION_STORE
         .get(&session_key)
         .ok_or_else(|| DenError::System("native agent loop session not found".into()))?;
-    session.origin.require_ordinary_session()?;
+    require_ordinary_session_source(pool, (&session).into()).await?;
     if let Some(approval_request_id) = approval_request_id {
         let approve = matches!(status, RuntimeToolResultStatus::Ok);
         record_approval_decision(
@@ -646,7 +649,7 @@ pub async fn record_native_client_tool_result(
 fn overflow_context(
     pool: PgPool,
     config: Arc<Config>,
-    profile: BearProfile,
+    profile: RuntimeContextLabel,
 ) -> AgentStepOverflowContext {
     AgentStepOverflowContext {
         pool,
@@ -821,7 +824,7 @@ fn wrap_session_stream(
     stream: RuntimeEventStream,
     session: &AgentLoopSession,
     config: Arc<Config>,
-    profile: BearProfile,
+    profile: RuntimeContextLabel,
     pool: PgPool,
     bear_id: Uuid,
     user_id: Option<i32>,
@@ -912,15 +915,12 @@ async fn build_session(
         technical_budget_recovery_start_payload,
         tool_messages,
     } = input;
-    let role =
-        den_core::EffectivePolicy::compile_for_origin(origin, den_core::Governance::Interactive)
-            .trust_profile;
-    let profile = NativeCapabilityProfile::for_profile(role);
+    let defaults = NativeTurnDefaults::for_origin(origin, den_core::Governance::Interactive)?;
     let llm = LlmClient::new(deps.config);
     let bear = den_service::bears::db::get_bear(deps.pool, bear_id)
         .await?
         .ok_or_else(|| DenError::NotFound("bear not found".to_string()))?;
-    let include_prompt_memory = profile.include_prompt_memory;
+    let include_prompt_memory = defaults.include_prompt_memory;
     let assembled = assemble_native_turn_for_bear(
         AssembleTurnContext {
             pool: deps.pool,
@@ -960,18 +960,19 @@ async fn build_session(
     let messages = assembled.messages;
     let budget_components = assembled.budget_components;
     let cached_activity_plan_projection = assembled.cached_activity_plan_projection;
-    let objective_orientation = if profile.profile == BearProfile::Work {
-        work_execution_orientation(deps.pool, bear_id, work_run_id).await?
-    } else {
-        assembled.objective_orientation
-    };
-    if profile.profile == BearProfile::Work {
+    let objective_orientation =
+        if matches!(origin, den_core::TurnExecutionOrigin::AuthorizedWorkRun(_)) {
+            work_execution_orientation(deps.pool, bear_id, work_run_id).await?
+        } else {
+            assembled.objective_orientation
+        };
+    if matches!(origin, den_core::TurnExecutionOrigin::AuthorizedWorkRun(_)) {
         if !bear.work_enabled {
             return Err(DenError::ValidationError(
                 "Work stance is not enabled for this Bear".to_string(),
             ));
         }
-        if !objective_orientation_allowed_for_stance(profile.profile, &objective_orientation) {
+        if !objective_orientation_allowed_for_origin(origin, &objective_orientation) {
             return Err(DenError::ValidationError(
                 "Work stance requires a focused Docket Job before execution can continue"
                     .to_string(),
@@ -1019,11 +1020,8 @@ async fn build_session(
         .or_else(|| request_id.map(|id| id.to_string()))
         .unwrap_or_else(|| format!("unbound-{}", Uuid::new_v4().simple()));
     let session_key = agent_loop_session_key(conversation_id, client_session_id, &execution_id);
-    // Model selection belongs to the canonical persisted conversation. Native
-    // materialization gives this loop an internal `den-conv-*` ID, while
-    // `runtime_target` preserves the external conversation ID used by BearWire
-    // preflight and session.model.set.
-    let model_conversation_id = runtime_target.unwrap_or(conversation_id);
+    // Model selection uses the same canonical source as assembly and persistence.
+    let model_conversation_id = conversation_id;
     let conversation_model = match conversation_persistence::get_conversation_for_external_id(
         deps.pool,
         bear.id,
@@ -1043,13 +1041,7 @@ async fn build_session(
     let model = if let Some(model) = conversation_model {
         model
     } else {
-        den_service::bears::db::resolve_model_for_profile(
-            deps.pool,
-            &bear,
-            profile.profile,
-            llm.default_model(),
-        )
-        .await?
+        den_service::bears::db::resolve_model_for_bear(&bear, llm.default_model())
     };
     let model = llm.resolve_model(Some(&model));
     let mut tool_budget_multiplier = bear.default_tool_budget_multiplier.unwrap_or(1.0);
@@ -1077,23 +1069,18 @@ async fn build_session(
         &deps.config.den_secret_encryption_key,
     )
     .await?;
-    let (bear_loop_control_override, stance_loop_control_override) =
-        den_service::bears::db::agent_loop_control_overrides_for_profile(
-            deps.pool,
-            bear.id,
-            profile.profile,
-        )
-        .await?;
+    let bear_loop_control_override =
+        den_service::bears::db::bear_agent_loop_control_setting(deps.pool, bear.id).await?;
     let agent_loop_control = resolve_agent_loop_control(AgentLoopControlResolutionInput {
         model_handle: Some(&model),
         model_default: None,
         bear_override: bear_loop_control_override,
-        stance_override: stance_loop_control_override,
         task_escalation: None,
-        stance: Some(profile.profile),
+        origin,
+        governance: den_core::Governance::Interactive,
         objective_orientation: Some(&objective_orientation),
         pre_risk: false,
-    });
+    })?;
     let agent_loop_control =
         native_turn_control_profile(agent_loop_control, tool_budget_multiplier);
     // `work.checkout` binds the Armature session before the native loop starts.
@@ -1120,7 +1107,7 @@ async fn build_session(
     .await?;
     tracing::info!(
         bear_id = %bear_id,
-        profile = %profile.profile.as_str(),
+        context_label = %defaults.context_label.as_str(),
         conversation_id,
         client_session_id,
         model = %model,
@@ -1178,14 +1165,14 @@ async fn build_session(
         pending_checkpoint_request: None,
         pending_checkpoint_task_action: None,
         pending_checkpoint_recovery_attempts: 0,
-        strategy: profile.strategy,
+        strategy: defaults.strategy,
         stream_tokens,
         key_memory_projection_cache_key,
         latest_context_budget: None,
         latest_projected_memory,
         latest_recalled_memory,
         cached_activity_plan_projection,
-        profile: profile.profile,
+        profile: defaults.context_label,
         overflow_retry_attempted: false,
         overflow_compaction_recovered: false,
     };
@@ -1322,48 +1309,7 @@ pub async fn run_native_curate_briefing_collect_assistant_text(
     reflection_run_id: ReflectionRunId,
     prompt: &str,
 ) -> Result<CurateBriefingText, DenError> {
-    let source =
-        resolve_curate_briefing_source(deps.pool, BearId::new(bear_id), reflection_run_id).await?;
-    let conversation_id = source.conversation_id().as_str();
-    let session_id = source.session_id().as_str();
-    let role = BearProfile::Curate;
-    let mut session = build_session(
-        deps,
-        BuildSessionInput {
-            origin: den_core::TurnExecutionOrigin::InternalCuration,
-            bear_id,
-            conversation_id,
-            client_session_id: session_id,
-            human_message: Some(prompt),
-            runtime_context: None,
-            session_id: Some(session_id),
-            workspace_roots: None,
-            runtime_target: Some(conversation_id),
-            conversation_selection: None,
-            user_id: None,
-            client_context: None,
-            client_tools: None,
-            request_id: None,
-            run_id: None,
-            checkpoint_audit_context: None,
-            work_run_id: None,
-            stream_tokens: false,
-            api_style: None,
-            supports_reasoning_effort: None,
-            technical_budget_recovery_start_payload: None,
-            tool_messages: Vec::new(),
-        },
-    )
-    .await?;
-    // This summary is not a reusable internal tool/continuation session.
-    SESSION_STORE.remove(&session.session_key);
-    session.tools.clear();
-    session.pending_checkpoint_request = None;
-    source.require_live(deps.pool).await?;
-    let llm = LlmClient::new(deps.config);
-    let overflow = overflow_context(deps.pool.clone(), Arc::new(deps.config.clone()), role);
-    let stream = run_agent_step_stream(&llm, &session, Some(overflow)).await?;
-    collect_curate_briefing_text(deps.pool, source, stream).await
+    super::curate_briefing::collect_assistant_text(deps, bear_id, reflection_run_id, prompt).await
 }
 
 pub struct NativeWebChatTurnParams<'a> {
@@ -1383,7 +1329,7 @@ pub struct NativeWebChatTurnParams<'a> {
     pub tool_invoker: Arc<dyn super::RuntimeToolInvoker>,
 }
 
-/// Browser web chat turn (`BearProfile::Chat`) over the native in-process loop.
+/// Browser web chat turn (`RuntimeContextLabel::ChannelConversation`) over the native in-process loop.
 pub async fn start_native_web_chat_turn_event_stream(
     params: NativeWebChatTurnParams<'_>,
 ) -> Result<RuntimeEventStream, DenError> {
@@ -1427,7 +1373,11 @@ pub async fn start_native_web_chat_turn_event_stream(
     );
     let llm = LlmClient::new(params.deps.config);
     let config = Arc::new(params.deps.config.clone());
-    let overflow = overflow_context(params.deps.pool.clone(), config.clone(), BearProfile::Chat);
+    let overflow = overflow_context(
+        params.deps.pool.clone(),
+        config.clone(),
+        RuntimeContextLabel::ChannelConversation,
+    );
     let stream = run_agent_step_stream(&llm, &session, Some(overflow)).await?;
     let runtime = NativeWebChatLoopRuntime {
         pool: params.deps.pool.clone(),
@@ -1474,13 +1424,34 @@ pub async fn start_native_turn_event_stream(
     origin.require_ordinary_session()?;
     let role =
         den_core::EffectivePolicy::compile_for_origin(origin, den_core::Governance::Interactive)
-            .trust_profile;
+            .context_label;
     let runtime_conversations =
         NativeRuntimeConversationBackend::with_pool(request.sqlx_pool.clone());
     let materialized =
         materialize_runtime_conversation_if_needed(&runtime_conversations, &request).await?;
     let conversation_id = materialized.conversation_id;
     let client_session_id = request.session_id;
+    let work_run_id = if matches!(origin, den_core::TurnExecutionOrigin::AuthorizedWorkRun(_)) {
+        work_runs::get_live_work_run_by_session(request.sqlx_pool, client_session_id)
+            .await?
+            .map(|run| run.id)
+    } else {
+        None
+    };
+    require_continuation_binding(
+        request.sqlx_pool,
+        ContinuationSource {
+            bear_id: request.bear_id,
+            user_id: Some(request.user_id),
+            origin,
+            profile: role,
+            conversation_id: &conversation_id,
+            client_session_id,
+            work_run_id,
+        },
+        request.binding,
+    )
+    .await?;
     let workspace_roots = request
         .workspace_roots
         .map(|roots| roots.to_vec())
@@ -1510,9 +1481,7 @@ pub async fn start_native_turn_event_stream(
             request_id: Some(request.request_id),
             run_id: request.run_id,
             checkpoint_audit_context: request.checkpoint_audit_context,
-            work_run_id: request
-                .checkpoint_audit_context
-                .map(|context| context.work_run_id),
+            work_run_id,
             stream_tokens: request.stream_tokens,
             api_style: request.api_style,
             supports_reasoning_effort: request.supports_reasoning_effort,
@@ -1839,7 +1808,10 @@ fn agent_loop_control_enforce_enabled(config: &Config) -> bool {
 fn checkpoint_audit_enabled_for_session(config: &Config, session: &AgentLoopSession) -> bool {
     match config.checkpoint_audit_mode.as_str() {
         "all" => true,
-        "work" => session.profile == BearProfile::Work,
+        "work" => matches!(
+            session.origin,
+            den_core::TurnExecutionOrigin::AuthorizedWorkRun(_)
+        ),
         _ => false,
     }
 }
@@ -2063,30 +2035,18 @@ mod continuation_tests;
 #[cfg(test)]
 #[path = "turn/internal_route_tests.rs"]
 mod internal_route_tests;
+#[cfg(test)]
+#[path = "turn/source_admission_tests.rs"]
+mod source_admission_tests;
 
-#[derive(Clone, Copy)]
-struct ContinuationSource<'a> {
-    bear_id: Uuid,
-    user_id: Option<i32>,
-    origin: den_core::TurnExecutionOrigin,
-    profile: BearProfile,
-    conversation_id: &'a str,
-    client_session_id: &'a str,
-    work_run_id: Option<Uuid>,
-}
-
-impl<'a> From<&'a AgentLoopSession> for ContinuationSource<'a> {
-    fn from(session: &'a AgentLoopSession) -> Self {
-        Self {
-            bear_id: session.bear_id,
-            user_id: session.user_id,
-            origin: session.origin,
-            profile: session.profile,
-            conversation_id: &session.conversation_id,
-            client_session_id: &session.client_session_id,
-            work_run_id: session.work_run_id,
-        }
-    }
+async fn expected_continuation_binding(
+    pool: &PgPool,
+    session: ContinuationSource<'_>,
+) -> Result<String, DenError> {
+    let bear_id = BearId::new(session.bear_id);
+    Ok(require_ordinary_session_source(pool, session)
+        .await?
+        .binding_id(bear_id))
 }
 
 async fn require_continuation_binding(
@@ -2094,115 +2054,7 @@ async fn require_continuation_binding(
     session: ContinuationSource<'_>,
     binding: &RoleRuntimeBinding,
 ) -> Result<(), DenError> {
-    session.origin.require_ordinary_session()?;
-    if den_core::EffectivePolicy::compile_for_origin(
-        session.origin,
-        den_core::Governance::Interactive,
-    )
-    .trust_profile
-        != session.profile
-    {
-        return Err(DenError::Authorization(
-            "continuation origin disagrees with its profile".into(),
-        ));
-    }
-    let bear_id = BearId::new(session.bear_id);
-    let expected = match session.origin {
-        den_core::TurnExecutionOrigin::AuthorizedWorkRun(_) => {
-            let original = session.work_run_id.ok_or_else(|| {
-                DenError::Authorization("Work continuation has no originating Job run".into())
-            })?;
-            let live = work_runs::get_live_work_run_by_session(pool, &session.client_session_id)
-                .await?
-                .filter(|run| {
-                    run.id == original && run.bear_id == session.bear_id && !run.cancel_requested
-                })
-                .ok_or_else(|| {
-                    DenError::Authorization("Work continuation lost its live Job run".into())
-                })?;
-            memory_binding::for_work_run(pool, bear_id, live.id).await?;
-            NativeTurnSource::WorkRun(live.id).binding_id(bear_id)
-        }
-        den_core::TurnExecutionOrigin::ChannelConversation
-        | den_core::TurnExecutionOrigin::BrowserTaskSession
-        | den_core::TurnExecutionOrigin::ArmatureConversation(_) => {
-            let user_id = session.user_id.ok_or_else(|| {
-                DenError::Authorization("conversation continuation has no human owner".into())
-            })?;
-            if matches!(
-                session.origin,
-                den_core::TurnExecutionOrigin::ArmatureConversation(_)
-            ) {
-                let active = den_service::client_sessions::find_for_user_bear_session_id(
-                    pool,
-                    user_id,
-                    session.bear_id,
-                    &session.client_session_id,
-                )
-                .await?
-                .ok_or_else(|| {
-                    DenError::Authorization("continuation client session is missing".into())
-                })?;
-                if active.closed_at.is_some() || active.archived_at.is_some() {
-                    return Err(DenError::Authorization(
-                        "continuation editor session is closed".into(),
-                    ));
-                }
-                if active
-                    .resolved_conversation_id
-                    .as_deref()
-                    .unwrap_or(&active.conversation_id)
-                    != session.conversation_id
-                {
-                    return Err(DenError::Authorization(
-                        "continuation client session changed conversation".into(),
-                    ));
-                }
-            }
-            if work_runs::get_live_work_run_by_session(pool, &session.client_session_id)
-                .await?
-                .is_some()
-            {
-                return Err(DenError::Authorization(
-                    "conversation continuation is bound to Work".into(),
-                ));
-            }
-            require_ordinary_tool_source(
-                pool,
-                bear_id,
-                UserId::new(user_id),
-                &session.conversation_id,
-            )
-            .await?;
-            let conversation = conversation_persistence::get_conversation_for_external_id(
-                pool,
-                session.bear_id,
-                &session.conversation_id,
-            )
-            .await?
-            .ok_or_else(|| {
-                DenError::Authorization("continuation conversation is missing".into())
-            })?;
-            memory_binding::for_conversation(pool, bear_id, conversation.id).await?;
-            let viewer = ConversationViewer::resolve(pool, bear_id, UserId::new(user_id))
-                .await?
-                .ok_or_else(|| {
-                    DenError::Authorization("continuation actor lost Bear access".into())
-                })?;
-            if !viewer.may_read_own_source(pool, conversation.id).await? {
-                return Err(DenError::Authorization(
-                    "continuation actor does not own its conversation".into(),
-                ));
-            }
-            NativeTurnSource::Conversation(conversation.id).binding_id(bear_id)
-        }
-        den_core::TurnExecutionOrigin::InternalCuration
-        | den_core::TurnExecutionOrigin::InboundObservation => {
-            return Err(DenError::Authorization(
-                "system execution cannot continue through a conversational session".into(),
-            ));
-        }
-    };
+    let expected = expected_continuation_binding(pool, session).await?;
     if binding.binding_id != expected {
         return Err(DenError::Authorization(
             "continuation binding does not match the originating turn".into(),
@@ -2215,7 +2067,7 @@ async fn execute_approved_den_tool_for_session(
     request: &TurnContinueRequest<'_>,
     session: &AgentLoopSession,
     call: &ChatToolCall,
-    profile: BearProfile,
+    profile: RuntimeContextLabel,
 ) -> Result<ChatMessage, DenError> {
     require_continuation_binding(request.sqlx_pool, session.into(), request.binding).await?;
     if call_is_den_web_fetch(call) {
@@ -2331,15 +2183,6 @@ async fn execute_approved_den_tool_for_session(
     })
 }
 
-fn require_same_work_run(bound: Option<Uuid>, live: Uuid) -> Result<(), DenError> {
-    if bound != Some(live) {
-        return Err(DenError::Authorization(
-            "Work continuation's live Job run differs from its verified session binding".into(),
-        ));
-    }
-    Ok(())
-}
-
 pub async fn continue_native_client_turn_event_stream(
     request: TurnContinueRequest<'_>,
 ) -> Result<(RuntimeStreamContinuation, RuntimeEventStream), DenError> {
@@ -2353,33 +2196,19 @@ pub async fn continue_native_client_turn_event_stream(
     let prior_session = existing_session
         .clone()
         .ok_or_else(|| DenError::System("native agent loop session not found".to_string()))?;
-    prior_session.origin.require_ordinary_session()?;
     let profile = prior_session.profile;
     if den_core::EffectivePolicy::compile_for_origin(prior_session.origin, prior_session.governance)
-        .trust_profile
+        .context_label
         != profile
     {
         return Err(DenError::Authorization(
             "native continuation profile does not match its verified origin".into(),
         ));
     }
-    if matches!(
-        prior_session.origin,
-        den_core::TurnExecutionOrigin::AuthorizedWorkRun(_)
-    ) {
-        let run = work_runs::get_live_work_run_by_session(request.sqlx_pool, client_session_id)
-            .await?
-            .ok_or_else(|| {
-                DenError::Authorization("Work continuation has no live Job run".into())
-            })?;
-        require_same_work_run(prior_session.work_run_id, run.id)?;
-        memory_binding::for_work_run(
-            request.sqlx_pool,
-            BearId::new(prior_session.bear_id),
-            run.id,
-        )
+
+    require_continuation_binding(request.sqlx_pool, (&prior_session).into(), request.binding)
         .await?;
-    }
+
     tracing::debug!(
         event = "native_turn_continue",
         session_key = %session_key,
@@ -2724,12 +2553,15 @@ mod tests {
             model_handle: Some("openai/test"),
             model_default: None,
             bear_override: None,
-            stance_override: None,
             task_escalation: None,
-            stance: Some(BearProfile::Pair),
+            origin: den_core::TurnExecutionOrigin::ArmatureConversation(
+                den_core::ArmatureAvailability::Connected,
+            ),
+            governance: den_core::Governance::Interactive,
             objective_orientation: None,
             pre_risk: false,
         })
+        .expect("ordinary test origin")
     }
 
     fn freeform_orientation() -> crate::agent_loop::ObjectiveOrientation {
@@ -2747,27 +2579,53 @@ mod tests {
     }
 
     #[test]
-    fn native_turn_hard_budget_comes_from_resolved_control_profile() {
+    fn checkpoint_work_audit_gate_ignores_compatibility_profile() {
+        let mut config = Config::test_stub();
+        config.checkpoint_audit_mode = "work".into();
+        let mut session = crate::agent_loop::source_admission::tests::test_session(
+            Uuid::nil(),
+            1,
+            "audit-conversation",
+            "audit-client",
+            "audit-run",
+        );
+        session.profile = RuntimeContextLabel::JobRun;
+        assert!(!checkpoint_audit_enabled_for_session(&config, &session));
+        session.origin = den_core::TurnExecutionOrigin::AuthorizedWorkRun(
+            den_core::ArmatureAvailability::Absent,
+        );
+        session.profile = RuntimeContextLabel::ArmatureConversation;
+        assert!(checkpoint_audit_enabled_for_session(&config, &session));
+    }
+
+    #[test]
+    fn native_turn_bear_control_overrides_model_default_and_preserves_budget_multiplier() {
         let standard = resolve_agent_loop_control(AgentLoopControlResolutionInput {
             model_handle: Some("openai/test"),
             model_default: Some(den_core::AgentLoopControlLevel::Standard),
             bear_override: None,
-            stance_override: None,
             task_escalation: None,
-            stance: Some(BearProfile::Pair),
+            origin: den_core::TurnExecutionOrigin::ArmatureConversation(
+                den_core::ArmatureAvailability::Connected,
+            ),
+            governance: den_core::Governance::Interactive,
             objective_orientation: None,
             pre_risk: false,
-        });
+        })
+        .expect("ordinary test origin");
         let resolved = resolve_agent_loop_control(AgentLoopControlResolutionInput {
             model_handle: Some("openai/test"),
-            model_default: Some(den_core::AgentLoopControlLevel::Strict),
-            bear_override: None,
-            stance_override: None,
+            model_default: Some(den_core::AgentLoopControlLevel::Standard),
+            bear_override: Some(den_core::AgentLoopControlLevel::Strict),
             task_escalation: None,
-            stance: Some(BearProfile::Pair),
+            origin: den_core::TurnExecutionOrigin::ArmatureConversation(
+                den_core::ArmatureAvailability::Connected,
+            ),
+            governance: den_core::Governance::Interactive,
             objective_orientation: None,
             pre_risk: false,
-        });
+        })
+        .expect("ordinary test origin");
         let base = resolved.profile;
         assert_ne!(
             base.budget.emergency_hard_steps,
@@ -2948,7 +2806,7 @@ mod tests {
             latest_projected_memory: None,
             latest_recalled_memory: None,
             cached_activity_plan_projection: None,
-            profile: BearProfile::Pair,
+            profile: RuntimeContextLabel::ArmatureConversation,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
         };
@@ -3067,7 +2925,7 @@ mod tests {
             latest_projected_memory: None,
             latest_recalled_memory: None,
             cached_activity_plan_projection: None,
-            profile: BearProfile::Pair,
+            profile: RuntimeContextLabel::ArmatureConversation,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
         };
@@ -3164,7 +3022,7 @@ mod tests {
             latest_projected_memory: None,
             latest_recalled_memory: None,
             cached_activity_plan_projection: None,
-            profile: BearProfile::Pair,
+            profile: RuntimeContextLabel::ArmatureConversation,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
         };
@@ -3232,7 +3090,7 @@ mod tests {
             latest_projected_memory: None,
             latest_recalled_memory: None,
             cached_activity_plan_projection: None,
-            profile: BearProfile::Pair,
+            profile: RuntimeContextLabel::ArmatureConversation,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
         };
@@ -3376,21 +3234,21 @@ mod tests {
         assert!(prompt.contains("<user_message>\nPlease inspect this.\n</user_message>"));
     }
 
-    #[tokio::test]
-    async fn hard_step_continuation_returns_terminal_event_not_error() {
-        let conversation_id = format!("transient-{}", Uuid::new_v4().simple());
-        let client_session_id = format!("session-{}", Uuid::new_v4().simple());
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn hard_step_continuation_returns_terminal_event_not_error(pool: PgPool) {
+        let (source, canonical, _) =
+            crate::agent_loop::source_admission::tests::fixture(&pool).await;
+        let conversation_id = source.conversation_id.clone();
+        let client_session_id = source.client_session_id.clone();
         let session_key =
             agent_loop_session_key(&conversation_id, &client_session_id, "run-max-step");
         let config = Config::test_stub();
         let stores = MemoryStoreManager::new(&config);
-        let pool = PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/unused")
-            .expect("lazy pool");
         SESSION_STORE.insert(AgentLoopSession {
             session_key: session_key.clone(),
-            bear_id: Uuid::new_v4(),
-            bear_slug: "test-bear".to_string(),
-            user_id: Some(1),
+            bear_id: source.bear_id,
+            bear_slug: source.bear_slug.clone(),
+            user_id: source.user_id,
             conversation_id: conversation_id.clone(),
             client_session_id: client_session_id.clone(),
             work_run_id: None,
@@ -3434,7 +3292,7 @@ mod tests {
             latest_projected_memory: None,
             latest_recalled_memory: None,
             cached_activity_plan_projection: None,
-            profile: BearProfile::Pair,
+            profile: RuntimeContextLabel::ArmatureConversation,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
         });
@@ -3451,7 +3309,8 @@ mod tests {
                     id: conversation_id.clone(),
                 },
                 binding: &RoleRuntimeBinding {
-                    binding_id: format!("den-native:{}:pair", Uuid::new_v4()),
+                    binding_id: NativeTurnSource::Conversation(canonical)
+                        .binding_id(source.bear_id.into()),
                     compatibility_backend: Some("native".to_string()),
                 },
                 continuation: RuntimeContinuation::ToolResult {
@@ -3488,18 +3347,21 @@ mod tests {
         SESSION_STORE.remove(&session_key);
     }
 
-    #[tokio::test]
-    async fn recorded_client_tool_result_remains_visible_in_live_continuation_transcript() {
-        let conversation_id = format!("transient-{}", Uuid::new_v4().simple());
-        let client_session_id = format!("session-{}", Uuid::new_v4().simple());
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn recorded_client_tool_result_remains_visible_in_live_continuation_transcript(
+        pool: PgPool,
+    ) {
+        let (source, _, _) = crate::agent_loop::source_admission::tests::fixture(&pool).await;
+        let conversation_id = source.conversation_id.clone();
+        let client_session_id = source.client_session_id.clone();
         let session_key =
             agent_loop_session_key(&conversation_id, &client_session_id, "run-visible-tool");
         let tool_call_id = "call-visible-tool";
         SESSION_STORE.insert(AgentLoopSession {
             session_key: session_key.clone(),
-            bear_id: Uuid::new_v4(),
-            bear_slug: "test-bear".to_string(),
-            user_id: Some(1),
+            bear_id: source.bear_id,
+            bear_slug: source.bear_slug.clone(),
+            user_id: source.user_id,
             conversation_id: conversation_id.clone(),
             client_session_id: client_session_id.clone(),
             work_run_id: None,
@@ -3569,12 +3431,10 @@ mod tests {
             latest_projected_memory: None,
             latest_recalled_memory: None,
             cached_activity_plan_projection: None,
-            profile: BearProfile::Pair,
+            profile: RuntimeContextLabel::ArmatureConversation,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
         });
-        let pool = PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/unused")
-            .expect("lazy pool");
         assert!(native_client_run_exists(
             &conversation_id,
             &client_session_id,
@@ -3678,6 +3538,14 @@ mod tests {
             &client_session_id,
             "run-persisted-visible",
         );
+        let source = crate::agent_loop::source_admission::tests::test_session(
+            bear_id,
+            user_id,
+            &conversation_id,
+            &client_session_id,
+            "history-fixture",
+        );
+        crate::agent_loop::source_admission::tests::admit_existing_session(&pool, &source).await;
         let context = canonical_persistence_context(
             pool.clone(),
             bear_id,
@@ -3761,7 +3629,7 @@ mod tests {
             latest_projected_memory: None,
             latest_recalled_memory: None,
             cached_activity_plan_projection: None,
-            profile: BearProfile::Pair,
+            profile: RuntimeContextLabel::ArmatureConversation,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
         });
@@ -3847,6 +3715,14 @@ mod tests {
         let client_session_id = format!("session-{}", Uuid::new_v4().simple());
         let request_id = Uuid::new_v4().to_string();
         let tool_call_id = "call-load-history";
+        let source = crate::agent_loop::source_admission::tests::test_session(
+            bear_id,
+            user_id,
+            &conversation_id,
+            &client_session_id,
+            "history-fixture",
+        );
+        crate::agent_loop::source_admission::tests::admit_existing_session(&pool, &source).await;
         let context = canonical_persistence_context(
             pool.clone(),
             bear_id,
@@ -3931,7 +3807,7 @@ mod tests {
             latest_projected_memory: None,
             latest_recalled_memory: None,
             cached_activity_plan_projection: None,
-            profile: BearProfile::Pair,
+            profile: RuntimeContextLabel::ArmatureConversation,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
         });

@@ -10,7 +10,7 @@ pub mod store;
 
 pub use store::RoleMemoryStore;
 
-use crate::{BearProfile, DenError};
+use crate::{DenError, RuntimeContextLabel};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -136,16 +136,13 @@ pub fn source_client_session_id(context: &DenToolInvocationContext) -> Option<St
 pub async fn write_memory_entry(
     memory: &impl RoleMemoryStore,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     arguments: Value,
     author_username: Option<String>,
     author_display_name: Option<String>,
 ) -> Result<Value, DenError> {
-    if role != BearProfile::Pair {
-        return Err(DenError::Authorization(
-            "den.memory.write_entry is currently available only to the pair role".to_string(),
-        ));
-    }
+    // Dispatch authorizes the descriptor audience and canonical source. The
+    // store scopes the write to that source; role is compatibility metadata.
     let args: MemoryWriteEntryArguments = serde_json::from_value(arguments)?;
     let kind = validate_memory_write_entry_semantics(&args, context)?;
     let title = validate_bounded_text("title", &args.title, 1, 200)?;
@@ -238,7 +235,7 @@ pub async fn memory_status(
     memory: &impl RoleMemoryStore,
     prompt: &impl PromptMemoryStore,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
 ) -> Result<Value, DenError> {
     let (mut base, visibility) = memory.status_base(context, role).await?;
     let blocks = prompt.list_blocks(context.bear_id, role.as_str()).await?;
@@ -257,7 +254,7 @@ pub async fn memory_status(
 pub async fn memory_browse(
     memory: &impl RoleMemoryStore,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
 ) -> Result<Value, DenError> {
     memory.browse(context, role).await
 }
@@ -265,7 +262,7 @@ pub async fn memory_browse(
 pub async fn memory_read(
     memory: &impl RoleMemoryStore,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     arguments: Value,
 ) -> Result<Value, DenError> {
     let args: MemoryReadArguments = serde_json::from_value(arguments)?;
@@ -281,7 +278,7 @@ pub async fn memory_read(
 pub async fn memory_search(
     memory: &impl RoleMemoryStore,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     arguments: Value,
 ) -> Result<Value, DenError> {
     let args: MemorySearchArguments = serde_json::from_value(arguments)?;

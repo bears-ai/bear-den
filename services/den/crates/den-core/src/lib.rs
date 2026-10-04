@@ -9,13 +9,13 @@ pub mod config;
 pub mod conversation_ids;
 pub mod effective_policy;
 pub mod error;
+pub mod execution_context;
 pub mod governance;
 pub mod ids;
 pub mod metrics;
-pub mod profile;
 
 /// Model-facing tool surface: canonical/provider names, argument shapes, the
-/// descriptor table + profile gating, capability traits, and the dispatcher.
+/// descriptor-owned execution audiences, capability traits, and the dispatcher.
 /// (The concrete DB-backed executors live in the `den` binary's `core::tools`.)
 pub mod tools;
 
@@ -25,9 +25,9 @@ pub use effective_policy::{
     ArmatureAvailability, BearCapability, CapabilitySet, EffectivePolicy, TurnExecutionOrigin,
 };
 pub use error::DenError;
+pub use execution_context::RuntimeContextLabel;
 pub use governance::{Governance, RunMode};
 pub use ids::{BearId, ConversationId, SessionId, UserId};
 pub use model_request_policy::{
     resolve_agent_primary_request_profile, AgentPrimaryStep, ModelRequestProfile,
 };
-pub use profile::{BearProfile, BearStance, TrustProfile};

@@ -12,7 +12,7 @@ use crate::config::Config;
 use den_memory::MemoryStoreManager;
 use den_runtime::memory_curate_executor;
 use den_runtime::reflection_conductor::*;
-use den_service::bears::BearProfile;
+use den_service::bears::RuntimeContextLabel;
 
 async fn test_pool() -> Option<PgPool> {
     let database_url = std::env::var("TEST_DATABASE_URL")
@@ -89,7 +89,7 @@ async fn memory_curate_worker_loop_processes_queued_runs_until_cancelled() {
         &pool,
         den_service::memory_proposals::CreateMemoryProposal {
             bear_id,
-            source_profile: BearProfile::Pair,
+            source_profile: RuntimeContextLabel::ArmatureConversation,
             source_agent_id: Some("pair-agent".to_string()),
             source_paths: vec!["pair/notes/worker.md".to_string()],
             source_refs: serde_json::json!({"conversation_id": "conv-memory-curate-worker-test"}),
@@ -183,7 +183,7 @@ async fn memory_curate_runner_completes_run_and_retains_pair_reflection_proposal
         &pool,
         den_service::memory_proposals::CreateMemoryProposal {
             bear_id,
-            source_profile: BearProfile::Pair,
+            source_profile: RuntimeContextLabel::ArmatureConversation,
             source_agent_id: Some("pair-agent".to_string()),
             source_paths: vec!["pair/notes/example.md".to_string()],
             source_refs: serde_json::json!({"conversation_id": "conv-memory-curate-test"}),

@@ -25,6 +25,24 @@ fn immediate<T>(future: impl Future<Output = T>) -> T {
 
 struct FakeDirectory {
     member: Option<bool>,
+    source_allowed: Option<bool>,
+}
+
+impl SourceAuthorizer for FakeDirectory {
+    async fn authorize_source(
+        &self,
+        _: &DenToolInvocationContext,
+        _: TurnExecutionOrigin,
+    ) -> Result<(), DenError> {
+        if self
+            .source_allowed
+            .expect("authorization must not query source")
+        {
+            Ok(())
+        } else {
+            Err(DenError::Authorization("canonical source denied".into()))
+        }
+    }
 }
 
 impl BearDirectory for FakeDirectory {
@@ -51,7 +69,7 @@ impl BearDirectory for FakeDirectory {
     }
 }
 
-fn context(profile: BearProfile) -> DenToolInvocationContext {
+fn context(profile: RuntimeContextLabel) -> DenToolInvocationContext {
     serde_json::from_value(serde_json::json!({
         "bear_id": Uuid::nil(),
         "bear_slug": "test",
@@ -69,24 +87,27 @@ fn context(profile: BearProfile) -> DenToolInvocationContext {
 fn native_ordinary_authorizer_uses_origin_without_profile_registration() {
     let pair = TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected);
     let work = TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Absent);
-    let directory = FakeDirectory { member: Some(true) };
+    let directory = FakeDirectory {
+        member: Some(true),
+        source_allowed: Some(true),
+    };
     assert_eq!(
         immediate(authorize_context_for_origin(
             &directory,
-            &context(BearProfile::Pair),
+            &context(RuntimeContextLabel::ArmatureConversation),
             pair
         ))
         .unwrap(),
-        BearProfile::Pair
+        RuntimeContextLabel::ArmatureConversation
     );
     assert_eq!(
         immediate(authorize_context_for_origin(
             &directory,
-            &context(BearProfile::Work),
+            &context(RuntimeContextLabel::JobRun),
             work,
         ))
         .unwrap(),
-        BearProfile::Work,
+        RuntimeContextLabel::JobRun,
     );
     assert!(authorize_tool_for_origin(DEN_WEB_FETCH, pair).is_ok());
     assert!(matches!(
@@ -105,7 +126,7 @@ fn native_ordinary_authorizer_uses_origin_without_profile_registration() {
         assert!(matches!(
             immediate(authorize_context_for_origin(
                 &directory,
-                &context(BearProfile::Pair),
+                &context(RuntimeContextLabel::ArmatureConversation),
                 forged
             )),
             Err(DenError::Authorization(_))
@@ -114,23 +135,24 @@ fn native_ordinary_authorizer_uses_origin_without_profile_registration() {
     assert!(matches!(
         immediate(authorize_context_for_origin(
             &directory,
-            &context(BearProfile::Curate),
+            &context(RuntimeContextLabel::Curation),
             pair
         )),
         Err(DenError::Authorization(_))
     ));
     let departed = FakeDirectory {
         member: Some(false),
+        source_allowed: None,
     };
     assert!(matches!(
         immediate(authorize_context_for_origin(
             &departed,
-            &context(BearProfile::Pair),
+            &context(RuntimeContextLabel::ArmatureConversation),
             pair
         )),
         Err(DenError::Authorization(_))
     ));
-    let mut missing_binding = context(BearProfile::Pair);
+    let mut missing_binding = context(RuntimeContextLabel::ArmatureConversation);
     missing_binding.binding_id = " \t".into();
     assert!(matches!(
         immediate(authorize_context_for_origin(
@@ -143,13 +165,60 @@ fn native_ordinary_authorizer_uses_origin_without_profile_registration() {
 }
 
 #[test]
-fn internal_origins_are_denied_before_membership_or_context_checks() {
-    let directory = FakeDirectory { member: None };
+fn ordinary_authorizer_denies_unowned_missing_revoked_or_mismatched_sources() {
+    let directory = FakeDirectory {
+        member: Some(true),
+        source_allowed: Some(false),
+    };
     for (profile, origin) in [
-        (BearProfile::Curate, TurnExecutionOrigin::InternalCuration),
-        (BearProfile::Watch, TurnExecutionOrigin::InboundObservation),
+        (
+            RuntimeContextLabel::ChannelConversation,
+            TurnExecutionOrigin::ChannelConversation,
+        ),
+        (
+            RuntimeContextLabel::ArmatureConversation,
+            TurnExecutionOrigin::BrowserTaskSession,
+        ),
+        (
+            RuntimeContextLabel::ArmatureConversation,
+            TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+        ),
+        (
+            RuntimeContextLabel::JobRun,
+            TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Absent),
+        ),
     ] {
-        for mut call in [context(profile), context(BearProfile::Pair)] {
+        assert!(matches!(
+            immediate(authorize_context_for_origin(
+                &directory,
+                &context(profile),
+                origin
+            )),
+            Err(DenError::Authorization(_))
+        ));
+    }
+}
+
+#[test]
+fn internal_origins_are_denied_before_membership_or_context_checks() {
+    let directory = FakeDirectory {
+        member: None,
+        source_allowed: None,
+    };
+    for (profile, origin) in [
+        (
+            RuntimeContextLabel::Curation,
+            TurnExecutionOrigin::InternalCuration,
+        ),
+        (
+            RuntimeContextLabel::Observation,
+            TurnExecutionOrigin::InboundObservation,
+        ),
+    ] {
+        for mut call in [
+            context(profile),
+            context(RuntimeContextLabel::ArmatureConversation),
+        ] {
             for binding in ["registered-native-binding", ""] {
                 call.binding_id = binding.into();
                 assert!(matches!(
@@ -165,7 +234,7 @@ fn internal_origins_are_denied_before_membership_or_context_checks() {
 fn native_capability_catalog_filters_by_origin_and_armature_availability() {
     use crate::tools::capability_catalog::SessionCapabilityDescriptor;
 
-    let mut context = context(BearProfile::Pair);
+    let mut context = context(RuntimeContextLabel::ArmatureConversation);
     context
         .session_capabilities
         .push(SessionCapabilityDescriptor {

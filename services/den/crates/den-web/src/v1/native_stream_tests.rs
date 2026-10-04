@@ -1,4 +1,6 @@
-use super::access_tests::{app_with_runtime, conversation, login, request, seed};
+use super::access_tests::{
+    app_with_runtime, bound_conversation, conversation, login, request, seed,
+};
 use super::*;
 use crate::web_chat_runtime::{WebChatRuntime, WebChatRuntimeRequest, WebChatRuntimeStream};
 use axum::{body::Body, http::Request};
@@ -65,25 +67,39 @@ impl WebChatRuntime for ResolvedRuntime {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn first_new_send_resolves_durable_conversation_and_reloads(pool: PgPool) {
+async fn explicitly_hat_bound_first_send_reloads_without_profile_registry(pool: PgPool) {
     let (bear, [owner, other, _admin]) = seed(&pool).await;
-    assert!(
-        den_service::bears::db::profile_binding_id(&pool, bear, BearProfile::Chat)
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(den_service::bears::db::profile_binding_id(
+        &pool,
+        bear,
+        RuntimeContextLabel::ChannelConversation
+    )
+    .await
+    .unwrap()
+    .is_none());
     let runtime = Arc::new(NoResolutionRuntime::default());
     let app = app_with_runtime(&pool, runtime.clone()).await;
     let owner_cookie = login(&app, owner).await;
     let other_cookie = login(&app, other).await;
     let placeholder = "new-pending123";
-    let response = app.clone().oneshot(Request::builder()
-        .method("POST").uri("/v1/chat/send")
-        .header(header::COOKIE, &owner_cookie)
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(json!({"bear_id":bear,"conversation_id":placeholder,"message":"first question"}).to_string())).unwrap()
-    ).await.unwrap();
+    let durable = format!("conv-{}", Uuid::new_v4());
+    bound_conversation(&pool, bear, owner, &durable).await;
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/chat/send")
+                .header(header::COOKIE, &owner_cookie)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({"bear_id":bear,"conversation_id":durable,"message":"first question"})
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let body = String::from_utf8(
         response
@@ -101,8 +117,7 @@ async fn first_new_send_resolves_durable_conversation_and_reloads(pool: PgPool) 
         .map(|json| serde_json::from_str::<Value>(json).unwrap())
         .collect::<Vec<_>>();
     assert!(!events.is_empty(), "expected SSE events: {body}");
-    assert_eq!(events[0]["message_type"], "conversation_resolved");
-    let durable = events[0]["conversation_id"].as_str().unwrap();
+    let durable = durable.as_str();
     assert!(durable.starts_with("conv-"));
     assert!(Uuid::parse_str(durable.strip_prefix("conv-").unwrap()).is_ok());
     assert!(
@@ -203,11 +218,8 @@ async fn first_new_send_resolves_durable_conversation_and_reloads(pool: PgPool) 
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn first_send_does_not_replay_placeholder_history(pool: PgPool) {
+async fn unbound_placeholder_send_is_rejected_without_replaying_or_creating_history(pool: PgPool) {
     let (bear, [owner, _other, _admin]) = seed(&pool).await;
-    den_service::bears::db::ensure_bear_profile_binding_rows(&pool, bear)
-        .await
-        .unwrap();
     let placeholder = "new-oldplaceholder";
     let old = conversation(&pool, bear, Some(owner), placeholder).await;
     conversation_persistence::append_message(
@@ -239,7 +251,7 @@ async fn first_send_does_not_replay_placeholder_history(pool: PgPool) {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
     let sse = String::from_utf8(
         response
             .into_body()
@@ -250,14 +262,8 @@ async fn first_send_does_not_replay_placeholder_history(pool: PgPool) {
             .to_vec(),
     )
     .unwrap();
-    let event: Value = serde_json::from_str(
-        sse.lines()
-            .find_map(|line| line.strip_prefix("data: "))
-            .unwrap(),
-    )
-    .unwrap();
-    let durable = event["conversation_id"].as_str().unwrap();
-    assert_ne!(durable, placeholder);
+    assert!(sse.contains("named hat"), "{sse}");
+    let durable = placeholder;
     let (_, history) = request(
         &app,
         &cookie,
@@ -267,11 +273,11 @@ async fn first_send_does_not_replay_placeholder_history(pool: PgPool) {
     )
     .await;
     let messages = history["messages"].as_array().unwrap();
-    assert!(messages.iter().any(|row| row["text"] == "fresh turn"));
-    assert!(messages.iter().any(|row| row["text"] == "saved answer"));
-    assert!(!messages
+    assert!(messages
         .iter()
         .any(|row| row["text"] == "stale placeholder turn"));
+    assert!(!messages.iter().any(|row| row["text"] == "fresh turn"));
+    assert!(!messages.iter().any(|row| row["text"] == "saved answer"));
     let (_, list) = request(
         &app,
         &cookie,
@@ -288,11 +294,8 @@ async fn first_send_does_not_replay_placeholder_history(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn direct_responses_also_resolve_new_chats(pool: PgPool) {
+async fn direct_responses_require_explicit_hat_bound_chats(pool: PgPool) {
     let (bear, [owner, _other, _admin]) = seed(&pool).await;
-    den_service::bears::db::ensure_bear_profile_binding_rows(&pool, bear)
-        .await
-        .unwrap();
     let runtime = Arc::new(NoResolutionRuntime::default());
     let app = app_with_runtime(&pool, runtime.clone()).await;
     let cookie = login(&app, owner).await;
@@ -300,6 +303,8 @@ async fn direct_responses_also_resolve_new_chats(pool: PgPool) {
         ("new-direct-title", "rename conversation to First title"),
         ("new-direct-tools", "list capabilities"),
     ] {
+        let durable = format!("conv-{}", Uuid::new_v4());
+        bound_conversation(&pool, bear, owner, &durable).await;
         let response = app
             .clone()
             .oneshot(
@@ -309,7 +314,7 @@ async fn direct_responses_also_resolve_new_chats(pool: PgPool) {
                     .header(header::COOKIE, &cookie)
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(Body::from(
-                        json!({"bear_id":bear,"conversation_id":placeholder,"message":message})
+                        json!({"bear_id":bear,"conversation_id":durable,"message":message})
                             .to_string(),
                     ))
                     .unwrap(),
@@ -332,8 +337,8 @@ async fn direct_responses_also_resolve_new_chats(pool: PgPool) {
             .find_map(|line| line.strip_prefix("data: "))
             .unwrap();
         let event: Value = serde_json::from_str(first).unwrap();
-        assert_eq!(event["message_type"], "conversation_resolved");
-        let durable = event["conversation_id"].as_str().unwrap();
+        assert_ne!(event["message_type"], "error");
+        let durable = durable.as_str();
         assert!(Uuid::parse_str(durable.strip_prefix("conv-").unwrap()).is_ok());
         assert!(
             conversation_persistence::get_conversation_for_external_id(&pool, bear, durable)
@@ -402,9 +407,7 @@ async fn direct_responses_also_resolve_new_chats(pool: PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn late_native_resolution_cannot_persist_into_other_members_conversation(pool: PgPool) {
     let (bear, [one, two, _]) = seed(&pool).await;
-    den_service::bears::db::ensure_bear_profile_binding_rows(&pool, bear)
-        .await
-        .unwrap();
+    bound_conversation(&pool, bear, one, "conv-owned-send").await;
     let foreign = conversation(&pool, bear, Some(two), "conv-guessed-foreign").await;
     let app = app_with_runtime(
         &pool,
@@ -446,7 +449,7 @@ async fn late_native_resolution_cannot_persist_into_other_members_conversation(p
         "foreign conversation must not receive the reply"
     );
 
-    let owned = conversation(&pool, bear, Some(one), "conv-own-target").await;
+    let owned = bound_conversation(&pool, bear, one, "conv-own-target").await;
     let owned_app = app_with_runtime(
         &pool,
         Arc::new(ResolvedRuntime("conv-own-target".to_string())),
@@ -486,6 +489,7 @@ async fn late_native_resolution_cannot_persist_into_other_members_conversation(p
     assert!(rows.iter().any(|row| row.content_text == "answer"));
 
     let (_, default_id) = checked_chat_id(&pool, bear, two, "default").await.unwrap();
+    bound_conversation(&pool, bear, two, &default_id).await;
     let default_app = app_with_runtime(&pool, Arc::new(ResolvedRuntime(default_id.clone()))).await;
     let default_cookie = login(&default_app, two).await;
     let response = default_app

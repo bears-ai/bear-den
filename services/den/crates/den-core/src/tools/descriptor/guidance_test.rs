@@ -13,7 +13,7 @@ use crate::{
         },
         descriptor::{builtin_den_tool_descriptors, builtin_den_tool_descriptors_for_profile},
     },
-    BearProfile,
+    RuntimeContextLabel,
 };
 
 #[test]
@@ -195,12 +195,16 @@ fn focus_current_task_is_pair_only_and_does_not_select() {
     assert!(descriptor
         .description
         .contains("does not select, create, replace, or settle"));
-    assert!(builtin_den_tool_descriptors_for_profile(BearProfile::Pair)
-        .iter()
-        .any(|descriptor| descriptor.provider_name == DEN_TASK_FOCUS_PROVIDER));
-    assert!(!builtin_den_tool_descriptors_for_profile(BearProfile::Work)
-        .iter()
-        .any(|descriptor| descriptor.provider_name == DEN_TASK_FOCUS_PROVIDER));
+    assert!(
+        builtin_den_tool_descriptors_for_profile(RuntimeContextLabel::ArmatureConversation)
+            .iter()
+            .any(|descriptor| descriptor.provider_name == DEN_TASK_FOCUS_PROVIDER)
+    );
+    assert!(
+        !builtin_den_tool_descriptors_for_profile(RuntimeContextLabel::JobRun)
+            .iter()
+            .any(|descriptor| descriptor.provider_name == DEN_TASK_FOCUS_PROVIDER)
+    );
 }
 
 #[test]
@@ -225,12 +229,16 @@ fn current_task_status_descriptor_exposes_compatible_outcomes() {
     assert!(descriptor
         .description
         .contains("blocked accepts blocked or failed"));
-    assert!(builtin_den_tool_descriptors_for_profile(BearProfile::Pair)
-        .iter()
-        .any(|descriptor| descriptor.provider_name == DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER));
-    assert!(!builtin_den_tool_descriptors_for_profile(BearProfile::Work)
-        .iter()
-        .any(|descriptor| descriptor.provider_name == DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER));
+    assert!(
+        builtin_den_tool_descriptors_for_profile(RuntimeContextLabel::ArmatureConversation)
+            .iter()
+            .any(|descriptor| descriptor.provider_name == DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER)
+    );
+    assert!(
+        !builtin_den_tool_descriptors_for_profile(RuntimeContextLabel::JobRun)
+            .iter()
+            .any(|descriptor| descriptor.provider_name == DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER)
+    );
 }
 
 #[test]
@@ -298,12 +306,16 @@ fn docket_work_descriptors_keep_execution_evidence_and_surfaces_explicit() {
     );
     assert!(dispatch.input_schema["properties"]["root"].is_object());
     assert!(dispatch.input_schema["properties"]["image"].is_object());
-    assert!(builtin_den_tool_descriptors_for_profile(BearProfile::Pair)
-        .iter()
-        .any(|descriptor| descriptor.provider_name == "dispatch_work"));
-    assert!(!builtin_den_tool_descriptors_for_profile(BearProfile::Work)
-        .iter()
-        .any(|descriptor| descriptor.provider_name == "dispatch_work"));
+    assert!(
+        builtin_den_tool_descriptors_for_profile(RuntimeContextLabel::ArmatureConversation)
+            .iter()
+            .any(|descriptor| descriptor.provider_name == "dispatch_work")
+    );
+    assert!(
+        !builtin_den_tool_descriptors_for_profile(RuntimeContextLabel::JobRun)
+            .iter()
+            .any(|descriptor| descriptor.provider_name == "dispatch_work")
+    );
 
     let work_run = descriptors
         .iter()
@@ -326,9 +338,11 @@ fn docket_work_descriptors_keep_execution_evidence_and_surfaces_explicit() {
         diagnostics.input_schema["properties"]["severity"]["enum"],
         serde_json::json!(["warning", "error"])
     );
-    assert!(builtin_den_tool_descriptors_for_profile(BearProfile::Pair)
-        .iter()
-        .any(|descriptor| descriptor.provider_name == DEN_RUNTIME_DIAGNOSTICS_LIST_PROVIDER));
+    assert!(
+        builtin_den_tool_descriptors_for_profile(RuntimeContextLabel::ArmatureConversation)
+            .iter()
+            .any(|descriptor| descriptor.provider_name == DEN_RUNTIME_DIAGNOSTICS_LIST_PROVIDER)
+    );
 
     for (provider_name, expected_handle) in [
         ("create_job", "job e4e4797b"),

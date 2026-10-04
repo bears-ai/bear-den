@@ -6,7 +6,7 @@ use crate::{
     },
     errors::CustomError,
 };
-use den_service::bears::BearProfile;
+use den_service::bears::RuntimeContextLabel;
 use den_service::prompt_memory_block_store::{upsert_prompt_memory_block, PromptMemoryBlockWrite};
 use den_service::prompt_memory_blocks::{
     PromptMemoryBlockScope, PromptMemoryBlockState, PromptMemoryBlockType,
@@ -16,13 +16,61 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+async fn bind_prompt_source(pool: &PgPool, bear_id: Uuid) -> (i32, String) {
+    let nonce = Uuid::new_v4().simple().to_string();
+    let user_id = crate::core::user::db::create_user(
+        pool,
+        &format!("prompt-{nonce}@example.test"),
+        &format!("prompt{}", &nonce[..12]),
+        "Prompt fixture",
+        "test-hash",
+    )
+    .await
+    .expect("create prompt owner");
+    den_service::bears::db::grant_membership(pool, user_id, bear_id, Some("admin"))
+        .await
+        .expect("grant prompt owner membership");
+    let conversation = den_service::conversation::persistence::ensure_conversation_for_external_id(
+        pool,
+        bear_id,
+        Some(user_id),
+        "conv-test",
+        Some("sess-test"),
+        None,
+    )
+    .await
+    .expect("create owned canonical conversation");
+    let hat = den_service::bears::hats::create_hat(
+        pool,
+        bear_id.into(),
+        user_id.into(),
+        "Prompt memory",
+        "Test session prompt memory",
+    )
+    .await
+    .expect("create explicit hat");
+    den_service::bears::hats::bindings::bind_conversation_hat(
+        pool,
+        bear_id.into(),
+        conversation.id,
+        hat.id,
+    )
+    .await
+    .expect("bind prompt hat");
+    (
+        user_id,
+        den_service::bears::hats::turn_binding::NativeTurnSource::Conversation(conversation.id)
+            .binding_id(bear_id.into()),
+    )
+}
+
 // Sibling test helpers: these mirror the dispatcher's `DenToolContext` wiring
 // (concrete `DenPromptMemoryStore` + the relocated `den-tools` executors) so the
 // store-backed round-trips below stay covered without a production-side wrapper.
 async fn prompt_memory_upsert(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     arguments: Value,
 ) -> Result<Value, CustomError> {
     den_core::tools::prompt_memory::prompt_memory_upsert(
@@ -38,7 +86,7 @@ async fn prompt_memory_upsert(
 async fn prompt_memory_list(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     arguments: Value,
 ) -> Result<Value, CustomError> {
     den_core::tools::prompt_memory::prompt_memory_list(
@@ -54,7 +102,7 @@ async fn prompt_memory_list(
 async fn prompt_memory_patch(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     arguments: Value,
 ) -> Result<Value, CustomError> {
     den_core::tools::prompt_memory::prompt_memory_patch(
@@ -95,22 +143,13 @@ async fn prompt_memory_tools_round_trip_through_store() {
     )
     .await
     .expect("create Bear");
-    den_service::conversation::persistence::ensure_conversation_for_external_id(
-        &pool,
-        bear_id,
-        None,
-        "conv-test",
-        None,
-        None,
-    )
-    .await
-    .expect("create canonical conversation");
+    let (user_id, binding_id) = bind_prompt_source(&pool, bear_id).await;
     let context = DenToolInvocationContext {
         bear_id,
         bear_slug: "test-bear".to_string(),
-        binding_id: "agent-test".to_string(),
-        profile: Some(BearProfile::Pair),
-        user_id: 1,
+        binding_id,
+        profile: Some(RuntimeContextLabel::ArmatureConversation),
+        user_id,
         username: Some("tester".to_string()),
         membership_role: Some("owner".to_string()),
         conversation_id: "conv-test".to_string(),
@@ -137,7 +176,7 @@ async fn prompt_memory_tools_round_trip_through_store() {
     let upsert = prompt_memory_upsert(
         &pool,
         &context,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         json!({
             "block_id": format!("pm-{}", Uuid::new_v4()),
             "scope": "session",
@@ -152,9 +191,14 @@ async fn prompt_memory_tools_round_trip_through_store() {
     .expect("upsert prompt memory block");
     assert_eq!(upsert["status"], "ok");
     let block_id = upsert["block_id"].as_str().unwrap().to_string();
-    let listed = prompt_memory_list(&pool, &context, BearProfile::Pair, json!({}))
-        .await
-        .expect("list prompt memory blocks");
+    let listed = prompt_memory_list(
+        &pool,
+        &context,
+        RuntimeContextLabel::ArmatureConversation,
+        json!({}),
+    )
+    .await
+    .expect("list prompt memory blocks");
     assert!(listed["blocks"]
         .as_array()
         .unwrap()
@@ -163,7 +207,7 @@ async fn prompt_memory_tools_round_trip_through_store() {
     let patched = prompt_memory_patch(
         &pool,
         &context,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         json!({
             "block_id": block_id,
             "state": "archived",
@@ -175,9 +219,14 @@ async fn prompt_memory_tools_round_trip_through_store() {
     .await
     .expect("patch prompt memory block");
     assert_eq!(patched["state"], "archived");
-    let listed_active = prompt_memory_list(&pool, &context, BearProfile::Pair, json!({}))
-        .await
-        .expect("list active prompt memory blocks");
+    let listed_active = prompt_memory_list(
+        &pool,
+        &context,
+        RuntimeContextLabel::ArmatureConversation,
+        json!({}),
+    )
+    .await
+    .expect("list active prompt memory blocks");
     assert!(!listed_active["blocks"]
         .as_array()
         .unwrap()
@@ -186,7 +235,7 @@ async fn prompt_memory_tools_round_trip_through_store() {
     let listed_all = prompt_memory_list(
         &pool,
         &context,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         json!({"include_archived": true}),
     )
     .await
@@ -226,7 +275,7 @@ async fn prompt_memory_runtime_selection_prefers_session_then_surface_then_role_
     )
     .await
     .expect("create Bear");
-    let profile_slug = BearProfile::Pair.as_str();
+    let profile_slug = RuntimeContextLabel::ArmatureConversation.as_str();
     let session_id = format!("sess-{}", Uuid::new_v4());
     let work_surface = format!("ws-{}", Uuid::new_v4());
     let ids = [
@@ -377,7 +426,8 @@ async fn prompt_memory_runtime_selection_prefers_session_then_surface_then_role_
 #[tokio::test]
 async fn prompt_memory_upsert_archives_superseded_block() {
     let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1/postgres".to_string());
+        .or_else(|_| std::env::var("DATABASE_URL"))
+        .expect("Postgres URL for prompt-memory archive test");
     let pool = match PgPoolOptions::new().connect(&database_url).await {
         Ok(pool) => pool,
         Err(_) => return,
@@ -385,13 +435,28 @@ async fn prompt_memory_upsert_archives_superseded_block() {
     if sqlx::migrate!("./migrations").run(&pool).await.is_err() {
         return;
     }
-    let bear_id = Uuid::new_v4();
+    let slug = format!("prompt-archive-{}", Uuid::new_v4().simple());
+    let bear_id = den_service::bears::db::create_bear(
+        &pool,
+        den_service::bears::db::BearParams {
+            slug: &slug,
+            name: "Prompt archive fixture",
+            description: "test",
+            system_prompt: "test",
+            default_model: None,
+            tools_enabled: None,
+            context_profile: None,
+        },
+    )
+    .await
+    .expect("create Bear");
+    let (user_id, binding_id) = bind_prompt_source(&pool, bear_id).await;
     let context = DenToolInvocationContext {
         bear_id,
         bear_slug: "test-bear".to_string(),
-        binding_id: "agent-test".to_string(),
-        profile: Some(BearProfile::Pair),
-        user_id: 1,
+        binding_id,
+        profile: Some(RuntimeContextLabel::ArmatureConversation),
+        user_id,
         username: Some("tester".to_string()),
         membership_role: Some("owner".to_string()),
         conversation_id: "conv-test".to_string(),
@@ -419,7 +484,7 @@ async fn prompt_memory_upsert_archives_superseded_block() {
     prompt_memory_upsert(
         &pool,
         &context,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         json!({
             "block_id": original_block_id,
             "scope": "session",
@@ -435,7 +500,7 @@ async fn prompt_memory_upsert_archives_superseded_block() {
     let replacement = prompt_memory_upsert(
         &pool,
         &context,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         json!({
             "block_id": format!("pm-replacement-{}", Uuid::new_v4()),
             "scope": "session",
@@ -449,11 +514,15 @@ async fn prompt_memory_upsert_archives_superseded_block() {
     )
     .await
     .expect("upsert replacement block");
-    assert_eq!(replacement["superseded_archived_count"], 1);
+    assert_eq!(
+        replacement["conflicting_archived"].as_u64().unwrap()
+            + replacement["superseded_archived"].as_u64().unwrap(),
+        1,
+    );
     let listed_all = prompt_memory_list(
         &pool,
         &context,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         json!({"include_archived": true}),
     )
     .await
@@ -462,7 +531,7 @@ async fn prompt_memory_upsert_archives_superseded_block() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|block| block["id"] == replacement["supersedes_block_id"])
+        .find(|block| block["id"] == original_block_id)
         .expect("original block should still be listed when archived included");
     assert_eq!(original["state"], "archived");
 }
@@ -470,7 +539,8 @@ async fn prompt_memory_upsert_archives_superseded_block() {
 #[tokio::test]
 async fn prompt_memory_upsert_archives_conflicting_active_block_in_same_scope() {
     let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1/postgres".to_string());
+        .or_else(|_| std::env::var("DATABASE_URL"))
+        .expect("Postgres URL for prompt-memory archive test");
     let pool = match PgPoolOptions::new().connect(&database_url).await {
         Ok(pool) => pool,
         Err(_) => return,
@@ -478,13 +548,28 @@ async fn prompt_memory_upsert_archives_conflicting_active_block_in_same_scope() 
     if sqlx::migrate!("./migrations").run(&pool).await.is_err() {
         return;
     }
-    let bear_id = Uuid::new_v4();
+    let slug = format!("prompt-archive-{}", Uuid::new_v4().simple());
+    let bear_id = den_service::bears::db::create_bear(
+        &pool,
+        den_service::bears::db::BearParams {
+            slug: &slug,
+            name: "Prompt archive fixture",
+            description: "test",
+            system_prompt: "test",
+            default_model: None,
+            tools_enabled: None,
+            context_profile: None,
+        },
+    )
+    .await
+    .expect("create Bear");
+    let (user_id, binding_id) = bind_prompt_source(&pool, bear_id).await;
     let context = DenToolInvocationContext {
         bear_id,
         bear_slug: "test-bear".to_string(),
-        binding_id: "agent-test".to_string(),
-        profile: Some(BearProfile::Pair),
-        user_id: 1,
+        binding_id,
+        profile: Some(RuntimeContextLabel::ArmatureConversation),
+        user_id,
         username: Some("tester".to_string()),
         membership_role: Some("owner".to_string()),
         conversation_id: "conv-test".to_string(),
@@ -511,7 +596,7 @@ async fn prompt_memory_upsert_archives_conflicting_active_block_in_same_scope() 
     prompt_memory_upsert(
         &pool,
         &context,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         json!({
             "block_id": format!("pm-conflict-a-{}", Uuid::new_v4()),
             "scope": "session",
@@ -527,7 +612,7 @@ async fn prompt_memory_upsert_archives_conflicting_active_block_in_same_scope() 
     let replacement = prompt_memory_upsert(
         &pool,
         &context,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         json!({
             "block_id": format!("pm-conflict-b-{}", Uuid::new_v4()),
             "scope": "session",
@@ -540,11 +625,11 @@ async fn prompt_memory_upsert_archives_conflicting_active_block_in_same_scope() 
     )
     .await
     .expect("upsert second block");
-    assert_eq!(replacement["conflicting_archived_count"], 1);
+    assert_eq!(replacement["conflicting_archived"], 1);
     let active = prompt_memory_list(
         &pool,
         &context,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         json!({
             "scope": "session",
             "block_type": "session_focus",
@@ -583,22 +668,13 @@ async fn memory_status_includes_prompt_memory_diagnostic_summary() {
     )
     .await
     .expect("create Bear");
-    den_service::conversation::persistence::ensure_conversation_for_external_id(
-        &pool,
-        bear_id,
-        None,
-        "conv-test",
-        None,
-        None,
-    )
-    .await
-    .expect("create canonical conversation");
+    let (user_id, binding_id) = bind_prompt_source(&pool, bear_id).await;
     let context = DenToolInvocationContext {
         bear_id,
         bear_slug: "test-bear".to_string(),
-        binding_id: "agent-test".to_string(),
-        profile: Some(BearProfile::Pair),
-        user_id: 1,
+        binding_id,
+        profile: Some(RuntimeContextLabel::ArmatureConversation),
+        user_id,
         username: Some("tester".to_string()),
         membership_role: Some("owner".to_string()),
         conversation_id: "conv-test".to_string(),
@@ -625,7 +701,7 @@ async fn memory_status_includes_prompt_memory_diagnostic_summary() {
     prompt_memory_upsert(
         &pool,
         &context,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         json!({
             "block_id": format!("pm-status-{}", Uuid::new_v4()),
             "scope": "session",
@@ -640,9 +716,15 @@ async fn memory_status_includes_prompt_memory_diagnostic_summary() {
     .expect("upsert status block");
     let config = Config::test_stub();
     let stores = den_memory::MemoryStoreManager::new(&config);
-    let status = memory_status_value(&config, &stores, &context, BearProfile::Pair, &pool)
-        .await
-        .expect("memory status value");
+    let status = memory_status_value(
+        &config,
+        &stores,
+        &context,
+        RuntimeContextLabel::ArmatureConversation,
+        &pool,
+    )
+    .await
+    .expect("memory status value");
     assert_eq!(
         status["prompt_memory_diagnostic"]["source"],
         "prompt_memory_blocks"

@@ -2,7 +2,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::tools::context::DenToolInvocationContext;
-use crate::{BearProfile, DenError};
+use crate::{DenError, RuntimeContextLabel};
 
 #[derive(Debug, Deserialize)]
 pub struct EntityBrowseArguments {
@@ -79,49 +79,21 @@ pub trait EntityOps: Send + Sync {
     async fn browse_entities(
         &self,
         context: &DenToolInvocationContext,
-        role: BearProfile,
+        role: RuntimeContextLabel,
         arguments: Value,
     ) -> Result<Value, DenError>;
 
     async fn resolve_entity(
         &self,
         context: &DenToolInvocationContext,
-        role: BearProfile,
+        role: RuntimeContextLabel,
         arguments: Value,
     ) -> Result<Value, DenError>;
 
     async fn link_memory_entity(
         &self,
         context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError>;
-
-    async fn merge_entities_tool(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError>;
-
-    async fn split_entity_tool(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError>;
-
-    async fn write_entity_access_rule(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError>;
-
-    async fn write_entity_anchor(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
+        role: RuntimeContextLabel,
         arguments: Value,
     ) -> Result<Value, DenError>;
 }
@@ -129,7 +101,7 @@ pub trait EntityOps: Send + Sync {
 pub async fn entity_browse(
     ops: &impl EntityOps,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     arguments: Value,
 ) -> Result<Value, DenError> {
     ops.browse_entities(context, role, arguments).await
@@ -138,7 +110,7 @@ pub async fn entity_browse(
 pub async fn entity_resolve(
     ops: &impl EntityOps,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     arguments: Value,
 ) -> Result<Value, DenError> {
     ops.resolve_entity(context, role, arguments).await
@@ -147,43 +119,51 @@ pub async fn entity_resolve(
 pub async fn entity_link_memory(
     ops: &impl EntityOps,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     arguments: Value,
 ) -> Result<Value, DenError> {
     ops.link_memory_entity(context, role, arguments).await
 }
 
 pub async fn entity_merge(
-    ops: &impl EntityOps,
-    context: &DenToolInvocationContext,
-    role: BearProfile,
-    arguments: Value,
+    _ops: &impl EntityOps,
+    _context: &DenToolInvocationContext,
+    _role: RuntimeContextLabel,
+    _arguments: Value,
 ) -> Result<Value, DenError> {
-    ops.merge_entities_tool(context, role, arguments).await
+    Err(DenError::NotFound(
+        "entity_merge model helper is retired".to_string(),
+    ))
 }
 
 pub async fn entity_split(
-    ops: &impl EntityOps,
-    context: &DenToolInvocationContext,
-    role: BearProfile,
-    arguments: Value,
+    _ops: &impl EntityOps,
+    _context: &DenToolInvocationContext,
+    _role: RuntimeContextLabel,
+    _arguments: Value,
 ) -> Result<Value, DenError> {
-    ops.split_entity_tool(context, role, arguments).await
+    Err(DenError::NotFound(
+        "entity_split model helper is retired".to_string(),
+    ))
 }
 pub async fn entity_write_access_rule(
-    ops: &impl EntityOps,
-    context: &DenToolInvocationContext,
-    role: BearProfile,
-    arguments: Value,
+    _ops: &impl EntityOps,
+    _context: &DenToolInvocationContext,
+    _role: RuntimeContextLabel,
+    _arguments: Value,
 ) -> Result<Value, DenError> {
-    ops.write_entity_access_rule(context, role, arguments).await
+    Err(DenError::NotFound(
+        "entity_write_access_rule model helper is retired".to_string(),
+    ))
 }
 
 pub async fn entity_write_anchor(
-    ops: &impl EntityOps,
-    context: &DenToolInvocationContext,
-    role: BearProfile,
-    arguments: Value,
+    _ops: &impl EntityOps,
+    _context: &DenToolInvocationContext,
+    _role: RuntimeContextLabel,
+    _arguments: Value,
 ) -> Result<Value, DenError> {
-    ops.write_entity_anchor(context, role, arguments).await
+    Err(DenError::NotFound(
+        "entity_write_anchor model helper is retired".to_string(),
+    ))
 }

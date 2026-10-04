@@ -25,7 +25,9 @@ use den_runtime::{
     },
     current_task::{preview_session_current_task_selection, select_session_current_task},
     pair_reflection::create_pair_reflection_proposals_from_latest_summary,
-    runtime::compaction::{prepare_turn_compaction, TurnCompactionState, TurnCompactionTrigger},
+    runtime::compaction::{
+        prepare_turn_compaction, CompactionSource, TurnCompactionState, TurnCompactionTrigger,
+    },
     runtime::task_context::{resolve_runtime_task_context, RuntimeTaskResolveRequest},
     turn_ids::ClientSessionId,
 };
@@ -36,7 +38,6 @@ use den_service::{
             self,
             access::{HatAccessGrant, ReadOnlyWorkspaceAction, WorkspaceRoot},
         },
-        BearProfile,
     },
     client_sessions, DenState,
 };
@@ -160,7 +161,7 @@ async fn reflect_pair_session(
         &state.config,
         session.bear_id,
         &conversation_id,
-        BearProfile::Pair,
+        CompactionSource::ContextMaintenance,
         TurnCompactionTrigger::ConversationReview,
     )
     .await?;
@@ -852,7 +853,9 @@ pub(crate) async fn session_compact_result(
         &state.config,
         bear.id,
         conversation_id,
-        BearProfile::Pair,
+        CompactionSource::Turn(den_core::TurnExecutionOrigin::ArmatureConversation(
+            den_core::ArmatureAvailability::Connected,
+        )),
         TurnCompactionTrigger::Manual,
     )
     .await?;
@@ -1382,7 +1385,6 @@ async fn session_model_payload(
         &state.sqlx_pool,
         bear,
         user_id,
-        BearProfile::Pair,
         state.config.default_llm_model.as_str(),
         conversation_id,
         Some(&session.client_session_id),

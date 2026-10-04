@@ -1,11 +1,11 @@
 use serde_json::json;
 
-use crate::core::{
-    tools::{session::DenToolInvocationContext, work_surface::infer_work_surface_hint},
+use crate::core::tools::{
+    session::DenToolInvocationContext, work_surface::infer_work_surface_hint,
 };
-use den_service::bears::BearProfile;
+use den_service::bears::RuntimeContextLabel;
 
-fn context_for(role: BearProfile) -> DenToolInvocationContext {
+fn context_for(role: RuntimeContextLabel) -> DenToolInvocationContext {
     DenToolInvocationContext {
         bear_id: uuid::Uuid::nil(),
         bear_slug: "test".to_string(),
@@ -35,19 +35,28 @@ fn context_for(role: BearProfile) -> DenToolInvocationContext {
 
 #[test]
 fn infer_work_surface_hint_marks_pair_as_active_mode() {
-    let payload = infer_work_surface_hint(&context_for(BearProfile::Pair), BearProfile::Pair);
+    let payload = infer_work_surface_hint(
+        &context_for(RuntimeContextLabel::ArmatureConversation),
+        RuntimeContextLabel::ArmatureConversation,
+    );
     assert_eq!(payload["work_surface"]["mode"], json!("active"));
 }
 
 #[test]
 fn infer_work_surface_hint_marks_work_as_active_mode() {
-    let payload = infer_work_surface_hint(&context_for(BearProfile::Work), BearProfile::Work);
+    let payload = infer_work_surface_hint(
+        &context_for(RuntimeContextLabel::JobRun),
+        RuntimeContextLabel::JobRun,
+    );
     assert_eq!(payload["work_surface"]["mode"], json!("active"));
 }
 
 #[test]
 fn infer_work_surface_hint_marks_chat_as_reference_only_mode() {
-    let payload = infer_work_surface_hint(&context_for(BearProfile::Chat), BearProfile::Chat);
+    let payload = infer_work_surface_hint(
+        &context_for(RuntimeContextLabel::ChannelConversation),
+        RuntimeContextLabel::ChannelConversation,
+    );
     assert_eq!(payload["work_surface"]["mode"], json!("reference_only"));
     assert!(payload["work_surface"]["note"]
         .as_str()

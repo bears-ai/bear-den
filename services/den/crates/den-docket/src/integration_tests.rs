@@ -1,4 +1,4 @@
-use den_core::{BearProfile, DenError};
+use den_core::{DenError, RuntimeContextLabel};
 use serde_json::{json, Value};
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use uuid::Uuid;
@@ -308,7 +308,7 @@ async fn creates_session_anchored_task_without_job() {
             outcome_disposition: None,
             result_refs: None,
             result_summary: Some("Verified session-owned settlement.".to_string()),
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
         })
@@ -340,7 +340,7 @@ async fn creates_session_anchored_task_without_job() {
             outcome_disposition: None,
             result_refs: None,
             result_summary: Some("Cross-session attempt.".to_string()),
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
         })
@@ -417,7 +417,7 @@ async fn lists_session_anchored_task_with_latest_run_state() {
             bear_id,
             job_id: None,
             task_id: task.id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             definition: DocketTaskDefinitionPatch::default(),
@@ -477,7 +477,7 @@ async fn session_task_attachment_reassignment_fences_stale_owner_and_releases_on
     service
         .checkout_task_list(
             bear_id,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             user_id,
             crate::TaskListCheckoutRequest {
                 source: crate::TaskListCheckoutSource::DocketJob {
@@ -520,7 +520,7 @@ async fn session_task_attachment_reassignment_fences_stale_owner_and_releases_on
         outcome_disposition: Some(crate::DocketOutcomeDisposition::Completed),
         result_summary: Some("Session task completed.".to_string()),
         result_refs: None,
-        actor_role: BearProfile::Pair,
+        actor_role: RuntimeContextLabel::ArmatureConversation,
         actor_user_id: Some(user_id),
         actor_agent_id: None,
     };
@@ -610,7 +610,7 @@ async fn bear_can_cancel_orphaned_docket_run_and_release_its_pair_claim() {
         .execute_job(DocketJobExecuteRequest {
             bear_id,
             job_id: created.job.id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             session_id: None,
@@ -678,7 +678,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             related_task_ids: vec![second_task_id],
             tags: vec!["inventory".to_string()],
             question_client_session_id: None,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
         })
@@ -703,7 +703,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
         .promote_entry(DocketEntryPromotion {
             bear_id,
             entry_id: finding.id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
         })
@@ -715,7 +715,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
         .promote_entry(DocketEntryPromotion {
             bear_id,
             entry_id: finding.id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
         })
@@ -745,7 +745,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
         .execute_job(DocketJobExecuteRequest {
             bear_id,
             job_id: created.job.id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             session_id: Some("pair-integration-session".to_string()),
@@ -819,7 +819,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             bear_id,
             job_id: None,
             task_id: first_task_id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             definition: DocketTaskDefinitionPatch::default(),
@@ -867,7 +867,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             bear_id,
             job_id: None,
             task_id: first_task_id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             definition: DocketTaskDefinitionPatch::default(),
@@ -896,7 +896,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             bear_id,
             job_id: None,
             task_id: first_task_id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             definition: DocketTaskDefinitionPatch::default(),
@@ -916,7 +916,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             bear_id,
             job_id: None,
             task_id: first_task_id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             definition: DocketTaskDefinitionPatch::default(),
@@ -935,7 +935,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             bear_id,
             job_id: None,
             task_id: first_task_id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             definition: DocketTaskDefinitionPatch::default(),
@@ -964,7 +964,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             bear_id,
             job_id: None,
             task_id: first_task_id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             definition: DocketTaskDefinitionPatch::default(),
@@ -984,7 +984,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             bear_id,
             job_id: None,
             task_id: first_task_id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             definition: DocketTaskDefinitionPatch::default(),
@@ -1004,7 +1004,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             bear_id,
             job_id: None,
             task_id: first_task_id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             definition: DocketTaskDefinitionPatch::default(),
@@ -1023,7 +1023,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
         .execute_job(DocketJobExecuteRequest {
             bear_id,
             job_id: created.job.id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             session_id: Some("pair-integration-session".to_string()),
@@ -1039,7 +1039,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             bear_id,
             job_id: None,
             task_id: second_task_id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             definition: DocketTaskDefinitionPatch::default(),
@@ -1060,7 +1060,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
         .reconcile_execution(DocketJobExecuteRequest {
             bear_id,
             job_id: created.job.id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             session_id: Some("pair-integration-session".to_string()),
@@ -1081,7 +1081,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
         .execute_job(DocketJobExecuteRequest {
             bear_id,
             job_id: created.job.id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             session_id: Some("pair-integration-session".to_string()),
@@ -1101,7 +1101,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             criterion_id,
             status: crate::DocketCriterionStatus::Met,
             evidence: Some(serde_json::json!({"summary":"Both tasks are done"})),
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
         })
@@ -1114,7 +1114,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
         .execute_job(DocketJobExecuteRequest {
             bear_id,
             job_id: created.job.id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             session_id: Some("pair-integration-session".to_string()),
@@ -1158,7 +1158,7 @@ async fn pair_task_settlement_does_not_wait_for_per_job_commit_delivery() {
             bear_id,
             job_id: Some(created.job.id),
             task_id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             definition: DocketTaskDefinitionPatch::default(),
@@ -1199,7 +1199,7 @@ async fn pair_task_settlement_does_not_wait_for_per_job_commit_delivery() {
             bear_id,
             job_id: Some(created.job.id),
             task_id: created.tasks[1].id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             definition: DocketTaskDefinitionPatch::default(),
@@ -1240,7 +1240,7 @@ async fn docket_execution_focus_prefers_conversation_over_client_session() {
         .execute_job(DocketJobExecuteRequest {
             bear_id,
             job_id: created.job.id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             session_id: Some("adapter-session-1".to_string()),
@@ -1265,7 +1265,7 @@ async fn docket_execution_focus_prefers_conversation_over_client_session() {
         .execute_job(DocketJobExecuteRequest {
             bear_id,
             job_id: created.job.id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             session_id: Some("adapter-session-2".to_string()),
@@ -1284,7 +1284,7 @@ async fn docket_execution_focus_prefers_conversation_over_client_session() {
             execution: DocketJobExecuteRequest {
                 bear_id,
                 job_id: created.job.id,
-                actor_role: BearProfile::Pair,
+                actor_role: RuntimeContextLabel::ArmatureConversation,
                 actor_user_id: Some(user_id),
                 actor_agent_id: None,
                 session_id: Some("adapter-session-2".to_string()),
@@ -1327,7 +1327,7 @@ async fn released_pair_attempt_can_settle_its_checked_out_run() {
     let request = DocketJobExecuteRequest {
         bear_id,
         job_id: created.job.id,
-        actor_role: BearProfile::Pair,
+        actor_role: RuntimeContextLabel::ArmatureConversation,
         actor_user_id: Some(user_id),
         actor_agent_id: None,
         session_id: Some("released-attempt-session".to_string()),
@@ -1392,7 +1392,7 @@ async fn execute_job_reconciles_its_own_terminal_session_claim() {
     let request = DocketJobExecuteRequest {
         bear_id,
         job_id: created.job.id,
-        actor_role: BearProfile::Pair,
+        actor_role: RuntimeContextLabel::ArmatureConversation,
         actor_user_id: Some(user_id),
         actor_agent_id: None,
         session_id: Some("terminal-session-claim".to_string()),
@@ -1410,7 +1410,7 @@ async fn execute_job_reconciles_its_own_terminal_session_claim() {
             bear_id,
             job_id: Some(created.job.id),
             task_id: first_task_id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             definition: DocketTaskDefinitionPatch::default(),
@@ -1440,7 +1440,7 @@ async fn execute_job_reconciles_its_own_terminal_session_claim() {
         .execute_job(DocketJobExecuteRequest {
             bear_id,
             job_id: created.job.id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             session_id: Some("terminal-session-claim".to_string()),
@@ -1466,7 +1466,7 @@ async fn execute_job_reconciles_its_own_terminal_session_claim() {
         .execute_job(DocketJobExecuteRequest {
             bear_id,
             job_id: created.job.id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             session_id: Some("terminal-session-claim".to_string()),
@@ -1674,7 +1674,7 @@ async fn docket_execute_rejects_stale_later_active_task() {
         .execute_job(DocketJobExecuteRequest {
             bear_id,
             job_id: created.job.id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             session_id: None,
@@ -1911,7 +1911,7 @@ async fn docket_completes_parent_after_children_are_terminal() {
         .execute_job(DocketJobExecuteRequest {
             bear_id,
             job_id: created.job.id,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             session_id: Some("parent-rollup-session".to_string()),
@@ -1986,7 +1986,7 @@ async fn docket_completing_job_settles_current_run() {
             criterion_id,
             status: crate::DocketCriterionStatus::Met,
             evidence: None,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
         })

@@ -193,7 +193,7 @@ async fn login_cookie(app: &axum::Router, user_id: i32) -> String {
 }
 
 /// Member user + bear (admin membership) for the work UI's scoping checks.
-async fn seed_member(pool: &sqlx::PgPool) -> (i32, Uuid, String) {
+async fn seed_member(pool: &sqlx::PgPool) -> (i32, Uuid, String, den_core::ids::HatId) {
     let unique = Uuid::new_v4().simple().to_string();
     let user_id = sqlx::query_scalar!(
         "INSERT INTO users (email, username, display_name, passhash)
@@ -224,7 +224,16 @@ async fn seed_member(pool: &sqlx::PgPool) -> (i32, Uuid, String) {
     bears_db::grant_membership(pool, user_id, bear_id, Some("admin"))
         .await
         .expect("grant membership");
-    (user_id, bear_id, slug)
+    let hat = hats::create_hat(
+        pool,
+        bear_id.into(),
+        user_id.into(),
+        "Work UI fixture",
+        "Exercise explicit Job creation",
+    )
+    .await
+    .expect("create fixture hat");
+    (user_id, bear_id, slug, hat.id)
 }
 
 async fn assigned_surface_id(pool: &sqlx::PgPool, user_id: i32, bear_id: Uuid) -> Uuid {
@@ -252,7 +261,27 @@ async fn assigned_surface_id(pool: &sqlx::PgPool, user_id: i32, bear_id: Uuid) -
     .execute(pool)
     .await
     .expect("assign work surface");
+    enable_fixture_hat(pool, bear_id, surface.id).await;
     surface.id
+}
+
+async fn enable_fixture_hat(pool: &sqlx::PgPool, bear_id: Uuid, surface_id: Uuid) {
+    let hat = hats::list_hats(pool, bear_id.into())
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|hat| hat.name == "Work UI fixture")
+        .expect("fixture hat");
+    hats::manage::replace_surfaces(pool, bear_id.into(), hat.id, &[surface_id])
+        .await
+        .unwrap();
+    let config = Config::test_stub();
+    let stores = den_memory::MemoryStoreManager::new(&config);
+    let fingerprint =
+        hats::identity::identity_fingerprint(&hat.name, &hat.purpose, &hat.identity_prompt);
+    hats::manage::enable_work_if_empty(pool, &stores, bear_id.into(), hat.id, &fingerprint)
+        .await
+        .unwrap();
 }
 
 async fn assert_job_uses_surface(pool: &sqlx::PgPool, job_id: Uuid, surface_id: Uuid) {
@@ -274,13 +303,13 @@ async fn create_job_form_creates_work_job_with_tasks() {
     let Some(pool) = test_pool().await else {
         return;
     };
-    let (user_id, bear_id, bear_slug) = seed_member(&pool).await;
+    let (user_id, bear_id, bear_slug, hat_id) = seed_member(&pool).await;
     let surface_id = assigned_surface_id(&pool, user_id, bear_id).await;
     let app = test_app(pool.clone()).await;
     let cookie = login_cookie(&app, user_id).await;
 
     let body = format!(
-        "bear_id={bear_id}&goal=Ship+the+site&surface_id={surface_id}&commit_policy=per_task\
+        "bear_id={bear_id}&hat_id={hat_id}&goal=Ship+the+site&surface_id={surface_id}&commit_policy=per_task\
          &work_branch=&task_title=Update+headline&task_criteria=headline+mentions+bears\
          &task_title=&task_criteria="
     );
@@ -404,7 +433,7 @@ async fn work_dashboard_hides_completed_jobs_until_requested() {
     let Some(pool) = test_pool().await else {
         return;
     };
-    let (user_id, bear_id, bear_slug) = seed_member(&pool).await;
+    let (user_id, bear_id, bear_slug, hat_id) = seed_member(&pool).await;
     let surface_id = assigned_surface_id(&pool, user_id, bear_id).await;
     let app = test_app(pool.clone()).await;
     let cookie = login_cookie(&app, user_id).await;
@@ -418,7 +447,7 @@ async fn work_dashboard_hides_completed_jobs_until_requested() {
             &cookie,
             &format!("/bear/{bear_slug}/jobs/new"),
             format!(
-                "bear_id={bear_id}&goal={}&surface_id={surface_id}&commit_policy=none&work_branch=&task_title=Check&task_criteria=done",
+                "bear_id={bear_id}&hat_id={hat_id}&goal={}&surface_id={surface_id}&commit_policy=none&work_branch=&task_title=Check&task_criteria=done",
                 urlencoding::encode(goal)
             ),
         )
@@ -487,7 +516,7 @@ async fn duplicate_job_copies_definition_and_resets_execution_state() {
     let Some(pool) = test_pool().await else {
         return;
     };
-    let (user_id, bear_id, bear_slug) = seed_member(&pool).await;
+    let (user_id, bear_id, bear_slug, hat_id) = seed_member(&pool).await;
     let surface_id = assigned_surface_id(&pool, user_id, bear_id).await;
     let app = test_app(pool.clone()).await;
     let cookie = login_cookie(&app, user_id).await;
@@ -497,7 +526,7 @@ async fn duplicate_job_copies_definition_and_resets_execution_state() {
         &cookie,
         &format!("/bear/{bear_slug}/jobs/new"),
         format!(
-            "bear_id={bear_id}&goal=Reusable+job&surface_id={surface_id}&commit_policy=per_task\
+            "bear_id={bear_id}&hat_id={hat_id}&goal=Reusable+job&surface_id={surface_id}&commit_policy=per_task\
              &work_branch=&task_title=Build+artifact&task_criteria=artifact+exists%3Btests+pass"
         ),
     )
@@ -589,7 +618,7 @@ async fn task_tree_can_add_children_and_reorder_siblings() {
     let Some(pool) = test_pool().await else {
         return;
     };
-    let (user_id, bear_id, bear_slug) = seed_member(&pool).await;
+    let (user_id, bear_id, bear_slug, hat_id) = seed_member(&pool).await;
     let surface_id = assigned_surface_id(&pool, user_id, bear_id).await;
     let app = test_app(pool.clone()).await;
     let cookie = login_cookie(&app, user_id).await;
@@ -599,7 +628,7 @@ async fn task_tree_can_add_children_and_reorder_siblings() {
         &cookie,
         &format!("/bear/{bear_slug}/jobs/new"),
         format!(
-            "bear_id={bear_id}&goal=Edit+the+tree&surface_id={surface_id}&commit_policy=none\
+            "bear_id={bear_id}&hat_id={hat_id}&goal=Edit+the+tree&surface_id={surface_id}&commit_policy=none\
              &task_title=First+root&task_criteria=first+done"
         ),
     )
@@ -709,7 +738,7 @@ async fn job_lifecycle_can_extend_then_complete() {
     let Some(pool) = test_pool().await else {
         return;
     };
-    let (user_id, bear_id, bear_slug) = seed_member(&pool).await;
+    let (user_id, bear_id, bear_slug, hat_id) = seed_member(&pool).await;
     let app = test_app(pool.clone()).await;
     let cookie = login_cookie(&app, user_id).await;
     let surface_name = format!("lifecycle-{}", &Uuid::new_v4().simple().to_string()[..12]);
@@ -732,12 +761,14 @@ async fn job_lifecycle_can_extend_then_complete() {
     .await
     .expect("surface id");
 
+    enable_fixture_hat(&pool, bear_id, surface_id).await;
+
     let response = post_form(
         &app,
         &cookie,
         &format!("/bear/{bear_slug}/jobs/new"),
         format!(
-            "bear_id={bear_id}&goal=Lifecycle+job&surface_id={surface_id}&root=&commit_policy=none\
+            "bear_id={bear_id}&hat_id={hat_id}&goal=Lifecycle+job&surface_id={surface_id}&root=&commit_policy=none\
              &task_title=First+task&task_criteria=first+done"
         ),
     )
@@ -828,7 +859,7 @@ async fn job_scoped_surface_creation_assigns_and_attaches_surface() {
     let Some(pool) = test_pool().await else {
         return;
     };
-    let (user_id, bear_id, bear_slug) = seed_member(&pool).await;
+    let (user_id, bear_id, bear_slug, hat_id) = seed_member(&pool).await;
     let initial_surface_id = assigned_surface_id(&pool, user_id, bear_id).await;
     let app = test_app(pool.clone()).await;
     let cookie = login_cookie(&app, user_id).await;
@@ -837,7 +868,7 @@ async fn job_scoped_surface_creation_assigns_and_attaches_surface() {
         &cookie,
         &format!("/bear/{bear_slug}/jobs/new"),
         format!(
-            "bear_id={bear_id}&goal=Surface+job&surface_id={initial_surface_id}&commit_policy=none\
+            "bear_id={bear_id}&hat_id={hat_id}&goal=Surface+job&surface_id={initial_surface_id}&commit_policy=none\
              &task_title=Use+repo&task_criteria=repo+used"
         ),
     )
@@ -925,14 +956,14 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
     let Some(pool) = test_pool().await else {
         return;
     };
-    let (user_id, bear_id, bear_slug) = seed_member(&pool).await;
+    let (user_id, bear_id, bear_slug, hat_id) = seed_member(&pool).await;
     let surface_id = assigned_surface_id(&pool, user_id, bear_id).await;
     let app = test_app(pool.clone()).await;
     let cookie = login_cookie(&app, user_id).await;
 
     // Create the job through the same form, then dispatch its task.
     let body = format!(
-        "bear_id={bear_id}&goal=Dispatch+me&surface_id={surface_id}&commit_policy=per_task\
+        "bear_id={bear_id}&hat_id={hat_id}&goal=Dispatch+me&surface_id={surface_id}&commit_policy=per_task\
          &task_title=Do+the+thing&task_criteria=thing+is+done\
          &task_title=Do+the+next+thing&task_criteria=next+thing+is+done&allow_default_ref=true"
     );
@@ -1063,7 +1094,7 @@ async fn jobs_and_runs_enforce_member_visibility_before_reads_and_mutations() {
     let Some(pool) = test_pool().await else {
         return;
     };
-    let (owner_id, bear_id, slug) = seed_member(&pool).await;
+    let (owner_id, bear_id, slug, hat_id) = seed_member(&pool).await;
     bears_db::grant_membership(&pool, owner_id, bear_id, Some("member"))
         .await
         .expect("demote owner to member");
@@ -1098,7 +1129,7 @@ async fn jobs_and_runs_enforce_member_visibility_before_reads_and_mutations() {
             &app,
             &owner,
             &format!("/bear/{slug}/jobs/new"),
-            format!("goal={}&surface_id={surface_id}&commit_policy=per_task&allow_default_ref=true&task_title=Check&task_criteria=done",
+            format!("hat_id={hat_id}&goal={}&surface_id={surface_id}&commit_policy=per_task&allow_default_ref=true&task_title=Check&task_criteria=done",
                 urlencoding::encode(goal)),
         )
         .await;
@@ -1259,7 +1290,7 @@ async fn jobs_and_runs_enforce_member_visibility_before_reads_and_mutations() {
     .await
     .expect("restore SameUser visibility");
 
-    let (_, foreign_bear_id, foreign_slug) = seed_member(&pool).await;
+    let (_, foreign_bear_id, foreign_slug, _foreign_hat) = seed_member(&pool).await;
     bears_db::grant_membership(&pool, other_users[0], foreign_bear_id, Some("member"))
         .await
         .expect("member belongs to foreign Bear too");
@@ -1475,8 +1506,8 @@ async fn surface_management_is_owner_scoped_and_grantable() {
     let Some(pool) = test_pool().await else {
         return;
     };
-    let (owner_id, _bear_id, _bear_slug) = seed_member(&pool).await;
-    let (other_id, _other_bear, _other_bear_slug) = seed_member(&pool).await;
+    let (owner_id, _bear_id, _bear_slug, _fixture_hat) = seed_member(&pool).await;
+    let (other_id, _other_bear, _other_bear_slug, _fixture_hat) = seed_member(&pool).await;
     let app = test_app(pool.clone()).await;
     let owner_cookie = login_cookie(&app, owner_id).await;
     let other_cookie = login_cookie(&app, other_id).await;
@@ -1564,7 +1595,7 @@ async fn create_job_enforces_surface_assignment() {
     let Some(pool) = test_pool().await else {
         return;
     };
-    let (user_id, bear_id, bear_slug) = seed_member(&pool).await;
+    let (user_id, bear_id, bear_slug, hat_id) = seed_member(&pool).await;
     let app = test_app(pool.clone()).await;
     let cookie = login_cookie(&app, user_id).await;
 
@@ -1588,7 +1619,7 @@ async fn create_job_enforces_surface_assignment() {
 
     // The bear is not assigned: job creation with the surface is rejected.
     let job_body = format!(
-        "bear_id={bear_id}&goal=Surface+gated&surface_id={surface_id}&root=&commit_policy=per_task\
+        "bear_id={bear_id}&hat_id={hat_id}&goal=Surface+gated&surface_id={surface_id}&root=&commit_policy=per_task\
          &task_title=Do+it&task_criteria=done"
     );
     let response = post_form(
@@ -1610,6 +1641,7 @@ async fn create_job_enforces_surface_assignment() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    enable_fixture_hat(&pool, bear_id, surface_id).await;
     let response = post_form(
         &app,
         &cookie,
@@ -1636,7 +1668,7 @@ async fn member_creates_a_job_bound_to_a_work_enabled_hat_atomically() {
     let Some(pool) = test_pool().await else {
         return;
     };
-    let (admin, bear_id, slug) = seed_member(&pool).await;
+    let (admin, bear_id, slug, _default_hat) = seed_member(&pool).await;
     let surface = assigned_surface_id(&pool, admin, bear_id).await;
     let hat = hats::create_hat(
         &pool,

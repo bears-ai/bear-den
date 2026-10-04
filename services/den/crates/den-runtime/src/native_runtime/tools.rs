@@ -185,7 +185,7 @@ pub(crate) fn merge_den_and_client_tools_with_search(
 ) -> Result<Vec<LlmToolDefinition>, DenError> {
     let effective_policy =
         den_core::EffectivePolicy::compile_for_origin(origin, den_core::Governance::Interactive);
-    let role = effective_policy.trust_profile;
+    let role = effective_policy.context_label;
     let mut merged = den_tools_for_origin(origin, &effective_policy.capabilities);
     if !search_available {
         merged.retain(|tool| {
@@ -281,13 +281,13 @@ pub(crate) fn merge_den_and_client_tools_with_search(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use den_core::{config::Config, ArmatureAvailability, BearProfile};
+    use den_core::{config::Config, ArmatureAvailability, RuntimeContextLabel};
 
     // Exercise the compatibility profiles through the origin-owned production
     // roster; the profile is never passed to the actual policy compiler.
     fn merge_den_and_client_tools(
         config: &Config,
-        role: BearProfile,
+        role: RuntimeContextLabel,
         work_enabled: bool,
         cabinet_enabled: bool,
         may_define_task: bool,
@@ -300,11 +300,13 @@ mod tests {
             ArmatureAvailability::Absent
         };
         let origin = match role {
-            BearProfile::Chat => TurnExecutionOrigin::ChannelConversation,
-            BearProfile::Pair => TurnExecutionOrigin::ArmatureConversation(armature),
-            BearProfile::Work => TurnExecutionOrigin::AuthorizedWorkRun(armature),
-            BearProfile::Curate => TurnExecutionOrigin::InternalCuration,
-            BearProfile::Watch => TurnExecutionOrigin::InboundObservation,
+            RuntimeContextLabel::ChannelConversation => TurnExecutionOrigin::ChannelConversation,
+            RuntimeContextLabel::ArmatureConversation => {
+                TurnExecutionOrigin::ArmatureConversation(armature)
+            }
+            RuntimeContextLabel::JobRun => TurnExecutionOrigin::AuthorizedWorkRun(armature),
+            RuntimeContextLabel::Curation => TurnExecutionOrigin::InternalCuration,
+            RuntimeContextLabel::Observation => TurnExecutionOrigin::InboundObservation,
         };
         super::merge_den_and_client_tools(
             config,
@@ -442,7 +444,7 @@ mod tests {
         let config = native_test_config();
         let merged = merge_den_and_client_tools(
             &config,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             true,
             true,
             true,
@@ -482,7 +484,7 @@ mod tests {
         ]);
         let merged = merge_den_and_client_tools(
             &config,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             true,
             true,
             true,
@@ -506,7 +508,7 @@ mod tests {
         ]);
         let merged = merge_den_and_client_tools(
             &config,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             true,
             true,
             true,
@@ -532,7 +534,7 @@ mod tests {
         ]);
         let merged = merge_den_and_client_tools(
             &config,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             true,
             true,
             true,
@@ -558,7 +560,7 @@ mod tests {
         ]);
         let merged = merge_den_and_client_tools(
             &config,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             true,
             true,
             true,
@@ -583,7 +585,7 @@ mod tests {
         ]);
         let merged = merge_den_and_client_tools(
             &config,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             true,
             true,
             true,
@@ -602,7 +604,10 @@ mod tests {
     #[test]
     fn system_operations_have_no_generic_model_tool_roster() {
         let config = native_test_config();
-        for profile in [BearProfile::Curate, BearProfile::Watch] {
+        for profile in [
+            RuntimeContextLabel::Curation,
+            RuntimeContextLabel::Observation,
+        ] {
             let merged =
                 merge_den_and_client_tools(&config, profile, true, true, true, None, None).unwrap();
             assert!(merged.is_empty(), "{profile:?}");
@@ -617,7 +622,11 @@ mod tests {
             {"name": "terminal_run_command", "parameters": {"type": "object"}},
             {"name": "mcp__outside__send", "parameters": {"type": "object"}},
         ]);
-        for profile in [BearProfile::Chat, BearProfile::Curate, BearProfile::Watch] {
+        for profile in [
+            RuntimeContextLabel::ChannelConversation,
+            RuntimeContextLabel::Curation,
+            RuntimeContextLabel::Observation,
+        ] {
             let tools = merge_den_and_client_tools(
                 &config,
                 profile,
@@ -640,7 +649,7 @@ mod tests {
         let config = native_test_config();
         let merged = merge_den_and_client_tools(
             &config,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             true,
             true,
             false,
@@ -672,7 +681,7 @@ mod tests {
         let config = native_test_config();
         let merged = merge_den_and_client_tools(
             &config,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             false,
             true,
             true,
@@ -692,7 +701,7 @@ mod tests {
         let config = native_test_config();
         let merged = merge_den_and_client_tools(
             &config,
-            BearProfile::Chat,
+            RuntimeContextLabel::ChannelConversation,
             true,
             true,
             true,
@@ -708,7 +717,7 @@ mod tests {
         let config = native_test_config();
         let merged = merge_den_and_client_tools(
             &config,
-            BearProfile::Chat,
+            RuntimeContextLabel::ChannelConversation,
             true,
             true,
             true,
@@ -732,11 +741,19 @@ mod tests {
         ]
         .into_iter()
         .map(|prompt| {
-            merge_den_and_client_tools(&config, BearProfile::Chat, true, true, true, None, prompt)
-                .unwrap()
-                .into_iter()
-                .map(|tool| tool.name)
-                .collect::<Vec<_>>()
+            merge_den_and_client_tools(
+                &config,
+                RuntimeContextLabel::ChannelConversation,
+                true,
+                true,
+                true,
+                None,
+                prompt,
+            )
+            .unwrap()
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
         assert!(!rosters[0].is_empty());
@@ -748,7 +765,7 @@ mod tests {
         let config = native_test_config();
         let merged = merge_den_and_client_tools(
             &config,
-            BearProfile::Chat,
+            RuntimeContextLabel::ChannelConversation,
             true,
             true,
             true,

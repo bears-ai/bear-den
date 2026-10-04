@@ -4,14 +4,11 @@ use time::{Date, OffsetDateTime};
 use uuid::Uuid;
 
 use den_memory::MemoryStoreManager;
-use den_service::{
-    bears::BearProfile,
-    conversation::events::{
-        canonical_persistence_context, memory_curate_completed_projection,
-        memory_curate_enqueued_projection, memory_curate_failed_projection,
-        memory_curate_started_projection, project_to_conversation,
-        spawn_persist_assistant_summary_message, ProjectionProvenance, ProjectionSource,
-    },
+use den_service::conversation::events::{
+    canonical_persistence_context, memory_curate_completed_projection,
+    memory_curate_enqueued_projection, memory_curate_failed_projection,
+    memory_curate_started_projection, project_to_conversation,
+    spawn_persist_assistant_summary_message, ProjectionProvenance, ProjectionSource,
 };
 use std::sync::Arc;
 
@@ -32,7 +29,6 @@ use crate::{
     reflection::curate_retry,
     reflection::ReflectionRunId,
 };
-use std::str::FromStr;
 
 use crate::runtime_compaction::{run_compaction_job, TurnCompactionState, TurnCompactionTrigger};
 use den_core::{config::Config, DenError};
@@ -1259,7 +1255,10 @@ async fn list_bears_with_queued_context_compact_runs(pool: &PgPool) -> Result<Ve
     Ok(rows)
 }
 
-fn parse_context_compact_input(run: &ReflectionRunRow) -> Result<(String, BearProfile), String> {
+#[cfg(test)]
+mod compaction_tests;
+
+fn parse_context_compact_input(run: &ReflectionRunRow) -> Result<String, String> {
     let conversation_id = run
         .input_summary
         .get("conversation_id")
@@ -1267,14 +1266,7 @@ fn parse_context_compact_input(run: &ReflectionRunRow) -> Result<(String, BearPr
         .map(str::to_string)
         .or_else(|| run.conversation_id.clone())
         .ok_or_else(|| "context_compact missing conversation_id".to_string())?;
-    let profile_raw = run
-        .input_summary
-        .get("profile")
-        .and_then(|value| value.as_str())
-        .unwrap_or("pair");
-    let profile =
-        BearProfile::from_str(profile_raw).map_err(|error| format!("invalid profile: {error}"))?;
-    Ok((conversation_id, profile))
+    Ok(conversation_id)
 }
 
 fn context_compact_output_summary(state: &TurnCompactionState) -> serde_json::Value {
@@ -1295,7 +1287,7 @@ pub async fn run_next_context_compact_once(
         return Ok(None);
     };
 
-    let (conversation_id, profile) = match parse_context_compact_input(&run) {
+    let conversation_id = match parse_context_compact_input(&run) {
         Ok(parsed) => parsed,
         Err(error) => {
             let failed = mark_context_compact_failed(pool, bear_id, run.id, &error).await?;
@@ -1308,7 +1300,7 @@ pub async fn run_next_context_compact_once(
         config,
         bear_id,
         &conversation_id,
-        profile,
+        crate::runtime_compaction::CompactionSource::ContextMaintenance,
         TurnCompactionTrigger::PostTurn,
     )
     .await

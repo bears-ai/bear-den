@@ -1,6 +1,6 @@
 use super::*;
 use crate::{DocketService, PgDocketService};
-use den_core::BearProfile;
+use den_core::RuntimeContextLabel;
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn docket_question_requires_a_current_owned_human_session_not_a_role_label(pool: PgPool) {
@@ -66,7 +66,7 @@ async fn docket_question_requires_a_current_owned_human_session_not_a_role_label
         related_task_ids: vec![],
         tags: vec![],
         question_client_session_id: Some(client_id.clone()),
-        actor_role: BearProfile::Work,
+        actor_role: RuntimeContextLabel::JobRun,
         actor_user_id: Some(user),
         actor_agent_id: None,
     };

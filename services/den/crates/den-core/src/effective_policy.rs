@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{DenError, Governance, TrustProfile};
+use crate::{DenError, Governance, RuntimeContextLabel};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -57,7 +57,7 @@ pub enum ArmatureAvailability {
 
 /// A Den-verified execution surface, not a client-supplied stance or hat label.
 /// Construct this only after authenticating the channel/armature or resolving a
-/// Docket Work assignment. The compatibility profile is a projection of this
+/// Docket Work assignment. The execution context label is a projection of this
 /// verified origin, not an independent authority input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TurnExecutionOrigin {
@@ -86,28 +86,40 @@ impl TurnExecutionOrigin {
         }
     }
 
-    fn policy_inputs(self) -> (TrustProfile, ArmatureAvailability) {
+    fn policy_inputs(self) -> (RuntimeContextLabel, ArmatureAvailability) {
         match self {
-            Self::ChannelConversation => (TrustProfile::Chat, ArmatureAvailability::Absent),
-            Self::BrowserTaskSession => (TrustProfile::Pair, ArmatureAvailability::Absent),
-            Self::ArmatureConversation(armature) => (TrustProfile::Pair, armature),
-            Self::AuthorizedWorkRun(armature) => (TrustProfile::Work, armature),
-            Self::InternalCuration => (TrustProfile::Curate, ArmatureAvailability::Absent),
-            Self::InboundObservation => (TrustProfile::Watch, ArmatureAvailability::Absent),
+            Self::ChannelConversation => (
+                RuntimeContextLabel::ChannelConversation,
+                ArmatureAvailability::Absent,
+            ),
+            Self::BrowserTaskSession => (
+                RuntimeContextLabel::ArmatureConversation,
+                ArmatureAvailability::Absent,
+            ),
+            Self::ArmatureConversation(armature) => {
+                (RuntimeContextLabel::ArmatureConversation, armature)
+            }
+            Self::AuthorizedWorkRun(armature) => (RuntimeContextLabel::JobRun, armature),
+            Self::InternalCuration => (RuntimeContextLabel::Curation, ArmatureAvailability::Absent),
+            Self::InboundObservation => (
+                RuntimeContextLabel::Observation,
+                ArmatureAvailability::Absent,
+            ),
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffectivePolicy {
-    pub trust_profile: TrustProfile,
+    /// Origin-derived metadata only; never an input to capability compilation.
+    pub context_label: RuntimeContextLabel,
     pub governance: Governance,
     pub capabilities: CapabilitySet,
 }
 
 impl EffectivePolicy {
     pub fn compile_for_origin(origin: TurnExecutionOrigin, governance: Governance) -> Self {
-        let (trust_profile, armature) = origin.policy_inputs();
+        let (context_label, armature) = origin.policy_inputs();
         use BearCapability::{
             Converse, CreateJob, CurateMemory, DispatchWork, ExecuteFocusedTask, ExecuteJob,
             ManageWorkSurfaces, OwnSessionTasks, ProposeProfileMemory, SelectSessionTask,
@@ -171,7 +183,7 @@ impl EffectivePolicy {
         }
 
         Self {
-            trust_profile,
+            context_label,
             governance,
             capabilities,
         }

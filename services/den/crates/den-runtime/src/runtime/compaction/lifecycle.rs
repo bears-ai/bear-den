@@ -1,11 +1,11 @@
-//! Cross-profile turn compaction lifecycle (READ / WRITE / ENQUEUE).
+//! Source-selected turn compaction lifecycle (READ / WRITE / ENQUEUE).
 //!
-//! Every native profile (`chat`, `pair`, `work`, …) uses the same three hooks:
+//! Ordinary turns and dedicated maintenance share three hooks:
 //! - [`on_turn_assemble_compaction`] — sync READ (and optional sync WRITE)
 //! - [`enqueue_compaction_after_turn`] — async WRITE scheduling
 //! - [`run_compaction_job`] — evaluate + persist (worker, manual, emergency)
 
-use den_core::{config::Config, profile::BearProfile, DenError};
+use den_core::{config::Config, DenError};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -22,7 +22,7 @@ use crate::{
 
 use super::{
     artifact_store,
-    policy::{compaction_policy_for_profile, CompactionMode, CompactionTiming},
+    policy::{compaction_policy_for_source, CompactionMode, CompactionSource, CompactionTiming},
     render::render_compacted_context_block,
     summarize::summarize_compacted_groups,
     {
@@ -74,9 +74,9 @@ pub async fn load_compaction_context(
     pool: &PgPool,
     bear_id: Uuid,
     conversation_id: &str,
-    profile: BearProfile,
+    source: CompactionSource,
 ) -> Result<Option<TurnCompactionState>, DenError> {
-    let policy = compaction_policy_for_profile(profile);
+    let policy = compaction_policy_for_source(source)?;
     let artifact =
         artifact_store::load_latest_iterative_summary(pool, bear_id, conversation_id).await?;
     let compacted_context = artifact
@@ -100,8 +100,9 @@ pub async fn on_turn_assemble_compaction(
     config: &Config,
     bear_id: Uuid,
     conversation_id: &str,
-    profile: BearProfile,
+    source: CompactionSource,
 ) -> Result<Option<TurnCompactionState>, DenError> {
+    compaction_policy_for_source(source)?;
     if CompactionMode::parse(&config.compaction_mode) == CompactionMode::Off {
         return Ok(None);
     }
@@ -111,12 +112,12 @@ pub async fn on_turn_assemble_compaction(
             config,
             bear_id,
             conversation_id,
-            profile,
+            source,
             TurnCompactionTrigger::TurnStart,
         )
         .await
     } else {
-        load_compaction_context(pool, bear_id, conversation_id, profile).await
+        load_compaction_context(pool, bear_id, conversation_id, source).await
     }
 }
 
@@ -126,9 +127,10 @@ pub async fn run_compaction_job(
     config: &Config,
     bear_id: Uuid,
     conversation_id: &str,
-    profile: BearProfile,
+    source: CompactionSource,
     trigger: TurnCompactionTrigger,
 ) -> Result<Option<TurnCompactionState>, DenError> {
+    let policy = compaction_policy_for_source(source)?;
     let mode = CompactionMode::parse(&config.compaction_mode);
     if mode == CompactionMode::Off {
         return Ok(None);
@@ -164,7 +166,6 @@ pub async fn run_compaction_job(
         all_rows
     };
     let groups = super::semantic_groups_from_conversation_messages(&rows);
-    let policy = compaction_policy_for_profile(profile);
 
     let mut decision = choose_compaction_decision(&groups, runtime_trigger.clone(), &policy);
     if decision.is_none() && mode == CompactionMode::Active {
@@ -284,8 +285,12 @@ pub async fn enqueue_compaction_after_turn(
     config: &Config,
     bear_id: Uuid,
     conversation_id: &str,
-    profile: BearProfile,
+    source: CompactionSource,
 ) {
+    if let Err(error) = compaction_policy_for_source(source) {
+        tracing::warn!(?source, %error, "refusing invalid turn compaction source");
+        return;
+    }
     if CompactionMode::parse(&config.compaction_mode) == CompactionMode::Off {
         return;
     }
@@ -295,9 +300,22 @@ pub async fn enqueue_compaction_after_turn(
     if !config.run_workers {
         return;
     }
+    // Retain compatibility metadata for existing audit consumers only. The worker
+    // selects ContextMaintenance from its claimed lane, never from this payload.
+    let profile = match source {
+        CompactionSource::Turn(origin) => Some(
+            den_core::EffectivePolicy::compile_for_origin(
+                origin,
+                den_core::Governance::Interactive,
+            )
+            .context_label
+            .as_str(),
+        ),
+        CompactionSource::ContextMaintenance => None,
+    };
     let input_summary = serde_json::json!({
         "conversation_id": conversation_id,
-        "profile": profile.as_str(),
+        "profile": profile,
         "trigger": "post_turn",
     });
     let result = sqlx::query!(
@@ -324,7 +342,7 @@ pub async fn enqueue_compaction_after_turn(
         tracing::warn!(
             bear_id = %bear_id,
             conversation_id,
-            profile = %profile.as_str(),
+            source = ?source,
             error = %error,
             "failed to enqueue context_compact"
         );
@@ -337,18 +355,18 @@ pub async fn prepare_turn_compaction(
     config: &Config,
     bear_id: Uuid,
     conversation_id: &str,
-    profile: BearProfile,
+    source: CompactionSource,
     trigger: TurnCompactionTrigger,
 ) -> Result<Option<TurnCompactionState>, DenError> {
     match trigger {
         TurnCompactionTrigger::TurnStart => {
-            on_turn_assemble_compaction(pool, config, bear_id, conversation_id, profile).await
+            on_turn_assemble_compaction(pool, config, bear_id, conversation_id, source).await
         }
         TurnCompactionTrigger::PostTurn
         | TurnCompactionTrigger::ConversationReview
         | TurnCompactionTrigger::Manual
         | TurnCompactionTrigger::ModelSafetyMargin => {
-            run_compaction_job(pool, config, bear_id, conversation_id, profile, trigger).await
+            run_compaction_job(pool, config, bear_id, conversation_id, source, trigger).await
         }
     }
 }
@@ -489,11 +507,21 @@ mod tests {
             event: build_compaction_skipped_event(
                 "conv-1",
                 RuntimeCompactionTriggerKind::SemanticGroupCount,
-                &compaction_policy_for_profile(BearProfile::Work),
+                &compaction_policy_for_source(CompactionSource::Turn(
+                    den_core::TurnExecutionOrigin::AuthorizedWorkRun(
+                        den_core::ArmatureAvailability::Absent,
+                    ),
+                ))
+                .unwrap(),
                 "test",
             ),
             decision: None,
-            policy: compaction_policy_for_profile(BearProfile::Work),
+            policy: compaction_policy_for_source(CompactionSource::Turn(
+                den_core::TurnExecutionOrigin::AuthorizedWorkRun(
+                    den_core::ArmatureAvailability::Absent,
+                ),
+            ))
+            .unwrap(),
             groups: vec![RuntimeSemanticGroup {
                 kind: RuntimeSemanticGroupKind::UserTurn,
                 start_message_id: None,

@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 
 use uuid::Uuid;
 
-use den_core::{BearProfile, DenError};
+use den_core::{DenError, RuntimeContextLabel};
 
 use crate::db;
 use crate::model::{
@@ -267,7 +267,7 @@ async fn update_run_state(
             bear_id,
             job_id: None,
             task_id,
-            actor_role: BearProfile::Work,
+            actor_role: RuntimeContextLabel::JobRun,
             actor_user_id: None,
             actor_agent_id,
             definition: DocketTaskDefinitionPatch::default(),

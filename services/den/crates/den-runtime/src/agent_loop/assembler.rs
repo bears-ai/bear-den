@@ -11,12 +11,10 @@ use den_service::{
     bears::{
         db as bears_db,
         hats::{
-            self,
             identity::bound_prompt_text,
             memory_binding::{self, ResolvedMemoryBinding},
         },
-        model::BearProfile,
-        provision::profile_prompt_text,
+        model::RuntimeContextLabel,
         Bear,
     },
     client_sessions,
@@ -42,7 +40,6 @@ use super::{
     },
     runtime_context::{
         assemble_den_owned_runtime_supplement, render_capability_discovery_guidance,
-        runtime_context_already_includes_den_owned_blocks,
     },
     FreeformPolicy, ObjectiveOrientation, ObjectiveOrientationResolutionInput, OrientationTaskRef,
 };
@@ -80,21 +77,12 @@ pub struct AssembleTurnContext<'a> {
 }
 
 impl AssembleTurnContext<'_> {
-    fn profile(&self) -> BearProfile {
-        den_core::tools::descriptor::ToolAudience::from_origin(self.origin).compatibility_profile()
+    fn context_label(&self) -> RuntimeContextLabel {
+        den_core::tools::descriptor::ToolAudience::from_origin(self.origin).context_label()
     }
 
     fn policy(&self) -> den_core::EffectivePolicy {
         den_core::EffectivePolicy::compile_for_origin(self.origin, self.governance)
-    }
-
-    pub fn should_load_den_owned_runtime_context(&self) -> bool {
-        self.include_prompt_memory
-            && self.session_id.is_some()
-            && !self
-                .turn_runtime_context
-                .map(runtime_context_already_includes_den_owned_blocks)
-                .unwrap_or(false)
     }
 
     fn session_hints(&self) -> WorkSurfaceSessionHints {
@@ -165,7 +153,7 @@ async fn load_session_anchored_activity_plan(
         .await?;
     Ok(task_list_projection_from_session_tasks(
         ctx.bear_id,
-        ctx.profile(),
+        ctx.context_label(),
         ctx.conversation_id,
         session_anchor_id,
         Some(client_session_id),
@@ -244,7 +232,7 @@ pub fn recalled_memory_session_diagnostic(recall: Option<&Value>) -> Value {
 }
 
 fn objective_orientation_event_payload(
-    profile: BearProfile,
+    profile: RuntimeContextLabel,
     conversation_id: &str,
     orientation: &ObjectiveOrientation,
 ) -> Result<Value, DenError> {
@@ -267,7 +255,7 @@ async fn record_objective_orientation_event(
         return Ok(());
     };
     let payload =
-        objective_orientation_event_payload(ctx.profile(), ctx.conversation_id, orientation)?;
+        objective_orientation_event_payload(ctx.context_label(), ctx.conversation_id, orientation)?;
     let latest = crate::bearwire_events::latest_bearwire_event_of_type(
         ctx.pool,
         session_id,
@@ -286,7 +274,7 @@ async fn record_objective_orientation_event(
 
     let mut event = BearWireEvent::ephemeral("runtime.objective_orientation", payload);
     event.bear_id = Some(ctx.bear_id.to_string());
-    event.role = Some(ctx.profile().as_str().to_string());
+    event.role = Some(ctx.context_label().as_str().to_string());
     event.human_id = ctx.user_id.map(|id| id.to_string());
     crate::bearwire_events::append_bearwire_event(
         ctx.pool,
@@ -348,54 +336,43 @@ fn active_orientation_task_ref(plan: &TaskListProjection) -> Option<OrientationT
     Some(orientation_task_ref_from_item(plan, item))
 }
 
-async fn shared_only_without_configured_hats(
-    ctx: &AssembleTurnContext<'_>,
-) -> Result<MemoryProjectionScope, DenError> {
-    if hats::list_hats(ctx.pool, BearId::new(ctx.bear_id))
-        .await?
-        .is_empty()
-    {
-        Ok(MemoryProjectionScope::SharedOnly)
-    } else {
-        Err(DenError::Authorization(
-            "a configured Bear requires a canonical hat-bound conversation or Work run".into(),
-        ))
-    }
-}
-
 async fn resolve_memory_projection_scope(
     ctx: &AssembleTurnContext<'_>,
-) -> Result<MemoryProjectionScope, DenError> {
+) -> Result<den_memory::scoped::MemoryReadGrant, DenError> {
+    ctx.origin.require_ordinary_session()?;
     let bear_id = BearId::new(ctx.bear_id);
-    if matches!(ctx.profile(), BearProfile::Curate | BearProfile::Watch) {
-        return Ok(MemoryProjectionScope::Legacy);
-    }
     let work_run = match ctx.session_id {
         Some(session_id) => work_runs::get_live_work_run_by_session(ctx.pool, session_id).await?,
         None => None,
     };
     let binding = if let Some(run) = work_run {
-        if run.bear_id != ctx.bear_id || ctx.profile() != BearProfile::Work {
+        if run.bear_id != ctx.bear_id
+            || !matches!(
+                ctx.origin,
+                den_core::TurnExecutionOrigin::AuthorizedWorkRun(_)
+            )
+        {
             return Err(DenError::Authorization(
                 "a Work-bound session cannot be read as a conversation".into(),
             ));
         }
         memory_binding::for_work_run(ctx.pool, bear_id, run.id).await?
     } else {
-        if ctx.profile() == BearProfile::Work {
-            return shared_only_without_configured_hats(ctx).await;
+        if matches!(
+            ctx.origin,
+            den_core::TurnExecutionOrigin::AuthorizedWorkRun(_)
+        ) {
+            return Err(memory_binding::missing_binding());
         }
         let Some(conversation) =
             get_conversation_for_external_id(ctx.pool, ctx.bear_id, ctx.conversation_id).await?
         else {
-            return shared_only_without_configured_hats(ctx).await;
+            return Err(memory_binding::missing_binding());
         };
         memory_binding::for_conversation(ctx.pool, bear_id, conversation.id).await?
     };
-    Ok(match binding {
-        ResolvedMemoryBinding::Legacy => MemoryProjectionScope::Legacy,
-        ResolvedMemoryBinding::Bound(grant) => MemoryProjectionScope::Bound(grant),
-    })
+    let ResolvedMemoryBinding::Bound(grant) = binding;
+    Ok(grant)
 }
 
 /// Best-effort `## Recalled memory` section (ADR-0038 Phase 2). Returns the rendered block and
@@ -403,7 +380,7 @@ async fn resolve_memory_projection_scope(
 async fn build_recall_section(
     ctx: &AssembleTurnContext<'_>,
     anchor_text: &str,
-    scope: MemoryProjectionScope,
+    grant: den_memory::scoped::MemoryReadGrant,
 ) -> Option<(String, Value)> {
     // TODO(ADR-0038 Phase 2 follow-up): enrich the recall query beyond the raw human message
     // with session focus + the primary work-surface context (see DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md).
@@ -413,33 +390,16 @@ async fn build_recall_section(
     if !embedder.is_enabled() {
         return None;
     }
-    let recall = match scope {
-        MemoryProjectionScope::Legacy => {
-            crate::recall::recall_for_turn_scoped(
-                &qdrant,
-                &embedder,
-                &ctx.config.embedding_standard,
-                ctx.bear_id,
-                ctx.profile().as_str(),
-                query_text,
-                5,
-            )
-            .await
-        }
-        MemoryProjectionScope::Bound(grant) => {
-            den_service::recall::query::recall_for_turn_with_grant(
-                &qdrant,
-                &embedder,
-                &ctx.config.embedding_standard,
-                ctx.bear_id,
-                grant,
-                query_text,
-                5,
-            )
-            .await
-        }
-        MemoryProjectionScope::SharedOnly => return None,
-    };
+    let recall = den_service::recall::query::recall_for_turn_with_grant(
+        &qdrant,
+        &embedder,
+        &ctx.config.embedding_standard,
+        ctx.bear_id,
+        grant,
+        query_text,
+        5,
+    )
+    .await;
     let mut projection = match recall {
         Ok(projection) => projection,
         Err(err) => {
@@ -451,16 +411,13 @@ async fn build_recall_section(
             return None;
         }
     };
-    if let MemoryProjectionScope::Bound(grant) = scope {
-        // Qdrant payloads can outlive a canonical revocation or supersession.
-        // A derived hit never overrides the current SQLite visibility decision.
-        let store = ctx.stores.store_for_bear(ctx.bear_id).await.ok()?;
-        if let Err(error) =
-            super::recall_scope::retain_canonical_passages(&store, grant, &mut projection).await
-        {
-            tracing::warn!(bear_id = %ctx.bear_id, %error, "canonical recall recheck failed");
-            return None;
-        }
+    // A derived hit never overrides the current canonical visibility decision.
+    let store = ctx.stores.store_for_bear(ctx.bear_id).await.ok()?;
+    if let Err(error) =
+        super::recall_scope::retain_canonical_passages(&store, grant, &mut projection).await
+    {
+        tracing::warn!(bear_id = %ctx.bear_id, %error, "canonical recall recheck failed");
+        return None;
     }
     // Read-time contradiction surfacing (ADR-0041 §8): detect over the retrieved passages,
     // mark counterparts, and emit best-effort `memory_conflict` observations.
@@ -522,6 +479,7 @@ pub async fn assemble_native_turn_messages(
 pub async fn assemble_native_turn(
     ctx: AssembleTurnContext<'_>,
 ) -> Result<AssembledNativeTurn, DenError> {
+    ctx.origin.require_ordinary_session()?;
     let bear = bears_db::get_bear(ctx.pool, ctx.bear_id)
         .await?
         .ok_or_else(|| DenError::NotFound("bear not found".to_string()))?;
@@ -535,74 +493,41 @@ pub async fn assemble_native_turn_messages_for_bear(
     Ok(assemble_native_turn_for_bear(ctx, bear).await?.messages)
 }
 
-fn permitted_supplied_runtime_context(
-    supplied: Option<&str>,
-    scope: MemoryProjectionScope,
-) -> Option<&str> {
-    match scope {
-        MemoryProjectionScope::Legacy => supplied.map(str::trim).filter(|text| !text.is_empty()),
-        MemoryProjectionScope::Bound(_) | MemoryProjectionScope::SharedOnly => None,
-    }
-}
-
 pub async fn assemble_native_turn_for_bear(
     ctx: AssembleTurnContext<'_>,
     bear: &Bear,
 ) -> Result<AssembledNativeTurn, DenError> {
-    let memory_scope = match resolve_memory_projection_scope(&ctx).await {
-        Ok(scope) => scope,
-        Err(error) => {
-            if matches!(ctx.profile(), BearProfile::Curate | BearProfile::Watch)
-                || hats::list_hats(ctx.pool, BearId::new(ctx.bear_id))
-                    .await?
-                    .is_empty()
-            {
-                tracing::warn!(bear_id = %ctx.bear_id, %error, "memory binding unavailable; suppressing local memory and recall");
-                MemoryProjectionScope::SharedOnly
-            } else {
-                return Err(error);
-            }
-        }
-    };
-    let compiled_prompt = match memory_scope {
-        MemoryProjectionScope::Bound(grant) => {
-            let hat_id = grant.hat_id().ok_or_else(|| {
-                DenError::Authorization("bound conversation has no hat identity".into())
-            })?;
-            bound_prompt_text(ctx.pool, bear, ctx.profile(), hat_id).await?
-        }
-        MemoryProjectionScope::Legacy | MemoryProjectionScope::SharedOnly => {
-            profile_prompt_text(ctx.pool, bear, ctx.profile()).await?
-        }
-    };
+    if bear.id != ctx.bear_id {
+        return Err(DenError::Authorization(
+            "turn Bear identity disagrees with its source".into(),
+        ));
+    }
+    let grant = resolve_memory_projection_scope(&ctx).await?;
+    let hat_id = grant
+        .hat_id()
+        .ok_or_else(|| DenError::Authorization("bound source has no hat identity".into()))?;
+    let compiled_prompt = bound_prompt_text(ctx.pool, bear, ctx.context_label(), hat_id).await?;
     let mut budget_components = AssembledTurnBudgetComponents {
         compiled_prompt_chars: compiled_prompt.chars().count() as u32,
         ..Default::default()
     };
-    let model_for_profile = bears_db::resolve_model_for_profile(
-        ctx.pool,
-        bear,
-        ctx.profile(),
-        &ctx.config.default_llm_model,
-    )
-    .await
-    .ok();
+    let model_for_budget = bears_db::resolve_model_for_bear(bear, &ctx.config.default_llm_model);
     let projection = match project_key_memory_with_scope(
         KeyMemoryProjectionInput {
             pool: ctx.pool,
             stores: ctx.stores,
             bear,
-            profile: ctx.profile(),
+            profile: ctx.context_label(),
             conversation_id: ctx.conversation_id,
             session_hints: ctx.session_hints(),
             work_surface_status_override: ctx.work_surface_status_override(),
             native_runtime: ctx.native_runtime,
-            model_for_budget: model_for_profile.as_deref(),
+            model_for_budget: Some(&model_for_budget),
             // Fail-closed default: until session identity is resolved to entities (Phase 6),
             // any access-gated record is hidden. No-op today (no access rules exist yet).
             access: den_memory::AccessContext::empty(),
         },
-        memory_scope,
+        MemoryProjectionScope::Bound(grant),
     )
     .await
     {
@@ -610,7 +535,7 @@ pub async fn assemble_native_turn_for_bear(
         Err(err) => {
             tracing::warn!(
                 bear_id = %ctx.bear_id,
-                role = %ctx.profile().as_str(),
+                role = %ctx.context_label().as_str(),
                 conversation_id = %ctx.conversation_id,
                 error = %err,
                 "key memory projection failed; continuing without projected memory"
@@ -624,7 +549,7 @@ pub async fn assemble_native_turn_for_bear(
                 }),
                 cache_key: KeyMemoryProjectionCacheKey {
                     bear_id: ctx.bear_id,
-                    profile: ctx.profile(),
+                    profile: ctx.context_label(),
                     conversation_id: ctx.conversation_id.to_string(),
                     primary_surface_slug: None,
                     sequence_high_water: 0,
@@ -648,7 +573,7 @@ pub async fn assemble_native_turn_for_bear(
         ctx.config,
         ctx.bear_id,
         ctx.conversation_id,
-        ctx.profile(),
+        crate::runtime_compaction::CompactionSource::Turn(ctx.origin),
     )
     .await?;
     let docket = PgDocketService::from_pool(ctx.pool);
@@ -687,7 +612,7 @@ pub async fn assemble_native_turn_for_bear(
         system_text.push_str("\n\n");
         system_text.push_str(&block);
     }
-    let recall_diagnostic = match build_recall_section(&ctx, &system_text, memory_scope).await {
+    let recall_diagnostic = match build_recall_section(&ctx, &system_text, grant).await {
         Some((recall_block, diagnostic)) => {
             budget_components.recall_chars = recall_block.chars().count() as u32;
             system_text.push_str("\n\n");
@@ -696,19 +621,8 @@ pub async fn assemble_native_turn_for_bear(
         }
         None => None,
     };
-    // Bound turns compile their own supplement; opaque armature-provided text
-    // cannot carry profile-local prompt blocks across this boundary.
-    let supplied_runtime =
-        permitted_supplied_runtime_context(ctx.turn_runtime_context, memory_scope);
-    if let Some(runtime) = supplied_runtime {
-        budget_components.runtime_supplement_chars = runtime.chars().count() as u32;
-        system_text.push_str("\n\n");
-        system_text.push_str(runtime);
-    } else if ctx.session_id.is_some()
-        && (ctx.should_load_den_owned_runtime_context()
-            || !matches!(memory_scope, MemoryProjectionScope::Legacy))
-    {
-        let session_id = ctx.session_id.expect("session_id checked above");
+    // Opaque caller text is never a prompt source; compile the current bound supplement.
+    if let Some(session_id) = ctx.session_id {
         let roots = ctx
             .workspace_roots
             .map(|items| items.to_vec())
@@ -716,15 +630,11 @@ pub async fn assemble_native_turn_for_bear(
         let supplement = assemble_den_owned_runtime_supplement(
             ctx.pool,
             ctx.bear_id,
-            ctx.profile().as_str(),
+            ctx.context_label().as_str(),
             session_id,
             &roots,
             &objective_orientation,
-            match memory_scope {
-                MemoryProjectionScope::Legacy => PromptMemoryVisibility::Legacy,
-                MemoryProjectionScope::Bound(_) => PromptMemoryVisibility::BoundSession,
-                MemoryProjectionScope::SharedOnly => PromptMemoryVisibility::SharedOnly,
-            },
+            PromptMemoryVisibility::BoundSession,
         )
         .await?;
         if !supplement.trim().is_empty() {
@@ -739,9 +649,9 @@ pub async fn assemble_native_turn_for_bear(
         system_text.push_str("\n\n");
         system_text.push_str(&capability_discovery);
     }
-    if ctx.profile() == BearProfile::Chat {
+    if ctx.context_label() == RuntimeContextLabel::ChannelConversation {
         let tool_surface_blurb =
-            den_core::tools::descriptor::render_profile_tool_surface_blurb(ctx.profile());
+            den_core::tools::descriptor::render_profile_tool_surface_blurb(ctx.context_label());
         budget_components.tool_surface_guidance_chars = tool_surface_blurb.chars().count() as u32;
         system_text.push_str("\n\n");
         system_text.push_str(&tool_surface_blurb);
@@ -818,7 +728,7 @@ pub async fn assemble_native_turn_for_bear(
             tracing::warn!(
                 bear_id = %ctx.bear_id,
                 conversation_id = %ctx.conversation_id,
-                profile = %ctx.profile().as_str(),
+                profile = %ctx.context_label().as_str(),
                 pruned_message_count = pruned.diagnostics.pruned_message_count,
                 pruned_character_count = pruned.diagnostics.pruned_character_count,
                 "transcript replay used fallback pruning instead of compaction"
@@ -845,27 +755,6 @@ mod identity_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn bound_turns_ignore_opaque_precompiled_runtime_memory() {
-        let text = "Prompt memory blocks are Den-owned: unrelated profile note";
-        assert_eq!(
-            permitted_supplied_runtime_context(Some(text), MemoryProjectionScope::Legacy),
-            Some(text)
-        );
-        assert!(permitted_supplied_runtime_context(
-            Some(text),
-            MemoryProjectionScope::Bound(den_memory::scoped::MemoryReadGrant::new(
-                den_memory::MemorySource::Conversation(Uuid::nil()),
-                None,
-            )),
-        )
-        .is_none());
-        assert!(
-            permitted_supplied_runtime_context(Some(text), MemoryProjectionScope::SharedOnly)
-                .is_none()
-        );
-    }
 
     #[test]
     fn recalled_memory_session_diagnostic_surfaces_conflict_presence() {

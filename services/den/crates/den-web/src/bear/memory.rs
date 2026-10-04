@@ -42,7 +42,7 @@ use den_memory::{
     search_memory_records, LegacyMemoryImportOptions, MemoryRecordRow, MemoryStoreManager,
     PathSummary, SqliteMemoryProposal,
 };
-use den_service::bears::{db as bears_db, hats, BearProfile};
+use den_service::bears::{db as bears_db, hats, RuntimeContextLabel};
 use den_service::conversation::viewer::ConversationViewer;
 use den_service::recall::{
     query::{retain_curated_candidates, search_curated_library},
@@ -1796,7 +1796,7 @@ async fn clear_review_queue_post(
             memory_proposals::ProposalResolutionParams {
                 bear_id: bear.id,
                 proposal_id: proposal.id,
-                reviewer_profile: BearProfile::Curate,
+                reviewer_profile: RuntimeContextLabel::Curation,
                 reviewer_agent_id: None,
                 status: "rejected",
                 review_notes: Some("Cleared from the review queue; source session marked for reflection retry when identifiable."),
@@ -1824,7 +1824,7 @@ async fn clear_review_queue_post(
                 &proposal.proposal_id,
                 "rejected",
                 &json!({
-                    "reviewer_profile": BearProfile::Curate.as_str(),
+                    "reviewer_profile": RuntimeContextLabel::Curation.as_str(),
                     "review_notes": "Cleared from the review queue; source session marked for reflection retry when identifiable.",
                     "decision_summary": "Queue cleared without accepting proposal.",
                 }),
@@ -2570,7 +2570,7 @@ async fn browse_delete_post(
     }
     let role = form
         .role
-        .parse::<BearProfile>()
+        .parse::<RuntimeContextLabel>()
         .map_err(CustomError::ValidationError)?;
     let action = form.action.as_deref().unwrap_or("delete").trim();
     let confirm = form.confirm.trim();
@@ -3093,7 +3093,7 @@ async fn proposal_post(
             memory_proposals::ProposalResolutionParams {
                 bear_id: bear.id,
                 proposal_id,
-                reviewer_profile: BearProfile::Curate,
+                reviewer_profile: RuntimeContextLabel::Curation,
                 reviewer_agent_id: None,
                 status,
                 review_notes: form.review_notes.as_deref(),
@@ -3108,7 +3108,7 @@ async fn proposal_post(
         let manager = state.memory_stores.clone();
         let store = manager.store_for_bear(bear.id).await?;
         let review_payload = json!({
-            "reviewer_profile": BearProfile::Curate.as_str(),
+            "reviewer_profile": RuntimeContextLabel::Curation.as_str(),
             "reviewer_agent_id": Value::Null,
             "review_notes": form.review_notes,
             "decision_summary": form.decision_summary,

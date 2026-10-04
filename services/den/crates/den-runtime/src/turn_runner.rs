@@ -17,12 +17,9 @@ use den_memory::MemoryStoreManager;
 use den_protocol::{
     CheckpointAuditContext, RuntimeContinuation, RuntimeConversationBackend, RuntimeConversationRef,
 };
-use den_service::{
-    client_sessions,
-    conversation::{persistence::ensure_conversation_for_external_id, viewer::ConversationViewer},
+use den_service::conversation::{
+    persistence::get_conversation_for_external_id, viewer::ConversationViewer,
 };
-
-use den_core::conversation_ids::is_native_runtime_conversation_id;
 
 use crate::llm::LlmApiStyle;
 
@@ -128,32 +125,21 @@ pub struct RuntimeMaterializationResult {
     pub created: bool,
 }
 
-/// Materialize a runtime conversation when the client selected a pending `new-*` id.
-///
-/// Prompt bootstrap usually resolves `upstream_target` to `den-conv-*` before the
-/// turn starts; this function then returns early without creating a second conversation.
+/// Reuse the canonical source admitted by the edge, regardless of its external ID.
+/// Native assembly, persistence, and tools must not create a second memory identity.
 pub async fn materialize_runtime_conversation_if_needed<B: RuntimeConversationBackend>(
-    runtime_conversations: &B,
+    _runtime_conversations: &B,
     request: &TurnStartRequest<'_>,
 ) -> Result<RuntimeMaterializationResult, DenError> {
-    if request.upstream_target.starts_with("conv-")
-        || is_native_runtime_conversation_id(request.upstream_target)
-    {
-        return Ok(RuntimeMaterializationResult {
-            conversation_id: request.upstream_target.to_string(),
-            created: false,
-        });
-    }
-    if !request.conversation_selection.starts_with("new-") {
-        return Ok(RuntimeMaterializationResult {
-            conversation_id: request.upstream_target.to_string(),
-            created: false,
-        });
-    }
-    let conv_id = runtime_conversations
-        .create_conversation(request.binding)
-        .await?
-        .id;
+    let conversation = get_conversation_for_external_id(
+        request.sqlx_pool,
+        request.bear_id,
+        request.upstream_target,
+    )
+    .await?
+    .ok_or_else(|| {
+        DenError::Authorization("native turn has no canonical conversation source".into())
+    })?;
     let viewer = ConversationViewer::resolve(
         request.sqlx_pool,
         BearId::new(request.bear_id),
@@ -161,47 +147,17 @@ pub async fn materialize_runtime_conversation_if_needed<B: RuntimeConversationBa
     )
     .await?
     .ok_or_else(|| DenError::Authorization("not a member of this bear".to_string()))?;
-    // The canonical insert never changes the owner on conflict. Do not bind a
-    // session to an existing conversation the human can no longer access.
-    ensure_conversation_for_external_id(
-        request.sqlx_pool,
-        request.bear_id,
-        Some(request.user_id),
-        &conv_id,
-        None,
-        None,
-    )
-    .await?;
     if !viewer
-        .may_access_external(request.sqlx_pool, &conv_id)
+        .may_read_own_source(request.sqlx_pool, conversation.id)
         .await?
     {
-        return Err(DenError::Authorization(format!(
-            "cannot access conversation {conv_id}"
-        )));
+        return Err(DenError::Authorization(
+            "native turn actor does not own its canonical conversation".into(),
+        ));
     }
-    client_sessions::upsert_session(
-        request.sqlx_pool,
-        client_sessions::UpsertClientSession {
-            user_id: request.user_id,
-            bear_id: request.bear_id,
-            bear_slug: request.bear_slug.to_string(),
-            client_session_id: request.session_id.to_string(),
-            runtime_session_id: format!(
-                "client-api-direct:{}:{}:{}",
-                request.client, request.bear_id, request.session_id
-            ),
-            conversation_id: request.conversation_selection.to_string(),
-            resolved_conversation_id: Some(conv_id.clone()),
-            client: request.client.to_string(),
-            cwd: request.cwd.map(str::to_string),
-            current_mode: None,
-        },
-    )
-    .await?;
     Ok(RuntimeMaterializationResult {
-        conversation_id: conv_id,
-        created: true,
+        conversation_id: request.upstream_target.to_string(),
+        created: false,
     })
 }
 

@@ -16,6 +16,7 @@ use den_service::prompt_memory_blocks::{
 
 use crate::agent_loop::ObjectiveOrientation;
 
+#[cfg(test)]
 const OBJECTIVE_ORIENTATION_MARKER: &str = "Den objective orientation is Den-owned";
 const FOCUSED_ACTIVE_TASK_GUIDANCE: &str = "advancing the active task";
 const FOCUSED_MUTABLE_NEXT_TASK_GUIDANCE: &str = "choosing or creating the next concrete task";
@@ -35,7 +36,8 @@ fn oriented_root_task_id(task_ref: &crate::agent_loop::OrientationTaskRef) -> &s
     }
 }
 
-pub fn runtime_context_already_includes_den_owned_blocks(runtime_context: &str) -> bool {
+#[cfg(test)]
+fn runtime_context_already_includes_den_owned_blocks(runtime_context: &str) -> bool {
     let trimmed = runtime_context.trim();
     !trimmed.is_empty()
         && (trimmed.contains("Prompt memory blocks are Den-owned")

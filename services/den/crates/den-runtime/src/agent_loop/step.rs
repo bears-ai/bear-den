@@ -5,8 +5,8 @@ use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use den_core::{
-    config::Config, profile::BearProfile, resolve_agent_primary_request_profile, AgentPrimaryStep,
-    DenError, ThinkingEffort,
+    config::Config, execution_context::RuntimeContextLabel, resolve_agent_primary_request_profile,
+    AgentPrimaryStep, DenError, ThinkingEffort,
 };
 use den_protocol::{RuntimeEventStream, RuntimeSemanticEvent, RuntimeStreamEvent};
 use futures::{stream, Stream, StreamExt, TryStreamExt};
@@ -22,6 +22,7 @@ use crate::{
         session_store::{
             render_recently_discovered_capabilities, AgentLoopSession, AgentLoopSessionStore,
         },
+        source_admission::require_ordinary_session_source,
     },
     context_budget::estimate_context_budget,
     llm::{
@@ -70,7 +71,7 @@ fn native_llm_handshake_timeout_from_raw(raw: Option<&str>) -> Duration {
 pub struct AgentStepOverflowContext {
     pub pool: PgPool,
     pub config: Arc<Config>,
-    pub profile: BearProfile,
+    pub profile: RuntimeContextLabel,
     pub session_store: AgentLoopSessionStore,
 }
 
@@ -452,9 +453,9 @@ impl LazyAgentStepStream {
             "context overflow detected; running emergency compaction"
         );
 
+        require_ordinary_session_source(&ctx.pool, (&session).into()).await?;
         let (new_messages, recovered) =
-            compact_session_messages_for_overflow(&ctx.pool, &ctx.config, &session, ctx.profile)
-                .await?;
+            compact_session_messages_for_overflow(&ctx.pool, &ctx.config, &session).await?;
 
         ctx.session_store.update(&session_key, |s| {
             s.messages.clone_from(&new_messages);
@@ -837,6 +838,11 @@ pub async fn run_agent_step_stream(
     session: &AgentLoopSession,
     overflow: Option<AgentStepOverflowContext>,
 ) -> Result<RuntimeEventStream, DenError> {
+    // Validate before preflight persistence or compaction (which can itself infer).
+    // Pure budget-stop callers without a pool may still stop without any effect.
+    if let Some(context) = overflow.as_ref() {
+        require_ordinary_session_source(&context.pool, session.into()).await?;
+    }
     let mut session = session.clone();
     let mut recovered_from_preflight_context_budget = false;
     let mut messages = repair_tool_call_message_chain(session.messages.clone());
@@ -958,13 +964,9 @@ pub async fn run_agent_step_stream(
             profile = %overflow.profile.as_str(),
             "context budget exceeded before LLM call; running emergency compaction"
         );
-        let (new_messages, recovered) = compact_session_messages_for_overflow(
-            &overflow.pool,
-            &overflow.config,
-            &session,
-            overflow.profile,
-        )
-        .await?;
+        let (new_messages, recovered) =
+            compact_session_messages_for_overflow(&overflow.pool, &overflow.config, &session)
+                .await?;
         overflow
             .session_store
             .update(&session.session_key, |stored| {
@@ -1035,13 +1037,26 @@ pub async fn run_agent_step_stream(
             })),
         })
     });
-    let base_stream = Box::pin(LazyAgentStepStream::new(
-        llm.clone(),
-        request,
-        session.session_key.clone(),
-        session.api_style,
-        overflow,
-    )) as RuntimeEventStream;
+    let context = overflow.as_ref().ok_or_else(|| {
+        DenError::Authorization("ordinary inference requires source validation dependencies".into())
+    })?;
+    let pool = context.pool.clone();
+    let llm = llm.clone();
+    let admission_session = session.clone();
+    // Streaming is lazy: revalidate again at consumption, not just construction.
+    let base_stream = Box::pin(
+        stream::once(async move {
+            require_ordinary_session_source(&pool, (&admission_session).into()).await?;
+            Ok::<RuntimeEventStream, DenError>(Box::pin(LazyAgentStepStream::new(
+                llm,
+                request,
+                admission_session.session_key,
+                admission_session.api_style,
+                overflow,
+            )) as RuntimeEventStream)
+        })
+        .try_flatten(),
+    ) as RuntimeEventStream;
     let prefix_events = [
         Some(resolved_request_profile_progress_event(&request_profile)),
         Some(resolved_control_progress_event(&session.agent_loop_control)),
@@ -1143,13 +1158,14 @@ mod tests {
                 model_handle: Some("openai/test"),
                 model_default: None,
                 bear_override: None,
-                stance_override: None,
                 task_escalation: None,
-                stance: None,
+                origin: den_core::TurnExecutionOrigin::ChannelConversation,
+                governance: den_core::Governance::AutonomousContinuation,
                 objective_orientation: None,
                 pre_risk: false,
             },
-        );
+        )
+        .expect("ordinary test origin");
 
         let RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
             kind,

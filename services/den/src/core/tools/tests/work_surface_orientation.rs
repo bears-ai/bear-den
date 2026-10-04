@@ -1,17 +1,15 @@
 use serde_json::json;
 
-use crate::core::{
-    tools::{
-        session::DenToolInvocationContext,
-        work_surface::{
-            build_work_surface_orientation_payload, collect_memory_tree_paths,
-            infer_work_surface_hint, work_surface_anchor_paths, work_surface_candidate_slug,
-        },
+use crate::core::tools::{
+    session::DenToolInvocationContext,
+    work_surface::{
+        build_work_surface_orientation_payload, collect_memory_tree_paths, infer_work_surface_hint,
+        work_surface_anchor_paths, work_surface_candidate_slug,
     },
 };
-use den_service::bears::BearProfile;
+use den_service::bears::RuntimeContextLabel;
 
-fn context_for(role: BearProfile) -> DenToolInvocationContext {
+fn context_for(role: RuntimeContextLabel) -> DenToolInvocationContext {
     DenToolInvocationContext {
         bear_id: uuid::Uuid::nil(),
         bear_slug: "test".to_string(),
@@ -42,14 +40,16 @@ fn context_for(role: BearProfile) -> DenToolInvocationContext {
 #[test]
 fn work_surface_candidate_slug_prefers_trusted_repo_like_hint() {
     assert_eq!(
-        work_surface_candidate_slug(&context_for(BearProfile::Pair)).as_deref(),
+        work_surface_candidate_slug(&context_for(RuntimeContextLabel::ArmatureConversation))
+            .as_deref(),
         Some("builder-bear")
     );
 }
 
 #[test]
 fn work_surface_anchor_paths_are_stable() {
-    let (canonical, profile_local) = work_surface_anchor_paths(BearProfile::Pair, "builder-bear");
+    let (canonical, profile_local) =
+        work_surface_anchor_paths(RuntimeContextLabel::ArmatureConversation, "builder-bear");
     assert_eq!(canonical[0], "core/work_surfaces/builder-bear/index.md");
     assert_eq!(canonical[1], "core/work_surfaces/builder-bear/overview.md");
     assert_eq!(
@@ -76,15 +76,15 @@ fn collect_memory_tree_paths_walks_nested_values() {
 
 #[test]
 fn build_work_surface_orientation_payload_reports_existing_anchors() {
-    let context = context_for(BearProfile::Pair);
-    let hint_payload = infer_work_surface_hint(&context, BearProfile::Pair);
+    let context = context_for(RuntimeContextLabel::ArmatureConversation);
+    let hint_payload = infer_work_surface_hint(&context, RuntimeContextLabel::ArmatureConversation);
     let files = vec![
         "core/work_surfaces/builder-bear/index.md".to_string(),
         "core/work_surfaces/builder-bear/overview.md".to_string(),
         "pair/work_surfaces/builder-bear/current-understanding.md".to_string(),
     ];
     let payload = build_work_surface_orientation_payload(
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         &hint_payload,
         &files,
         Some("builder-bear".to_string()),
@@ -92,38 +92,46 @@ fn build_work_surface_orientation_payload_reports_existing_anchors() {
     assert_eq!(payload["work_surface"]["status"], json!("oriented"));
     assert_eq!(payload["work_surface"]["slug"], json!("builder-bear"));
     assert!(payload["canonical_paths"].as_array().unwrap().len() >= 2);
-    assert!(!payload["profile_local_paths"].as_array().unwrap().is_empty());
+    assert!(!payload["profile_local_paths"]
+        .as_array()
+        .unwrap()
+        .is_empty());
     assert!(payload["recommended_read_order"].as_array().unwrap().len() >= 3);
 }
 
 #[test]
 fn build_work_surface_orientation_payload_reports_unresolved_without_slug() {
-    let context = context_for(BearProfile::Pair);
-    let hint_payload = infer_work_surface_hint(&context, BearProfile::Pair);
-    let payload =
-        build_work_surface_orientation_payload(BearProfile::Pair, &hint_payload, &[], None);
+    let context = context_for(RuntimeContextLabel::ArmatureConversation);
+    let hint_payload = infer_work_surface_hint(&context, RuntimeContextLabel::ArmatureConversation);
+    let payload = build_work_surface_orientation_payload(
+        RuntimeContextLabel::ArmatureConversation,
+        &hint_payload,
+        &[],
+        None,
+    );
     assert_eq!(payload["work_surface"]["status"], json!("unresolved"));
     assert_eq!(payload["canonical_paths"], json!([]));
 }
 
 #[test]
 fn work_surface_anchor_paths_skip_profile_local_paths_for_chat() {
-    let (canonical, profile_local) = work_surface_anchor_paths(BearProfile::Chat, "builder-bear");
+    let (canonical, profile_local) =
+        work_surface_anchor_paths(RuntimeContextLabel::ChannelConversation, "builder-bear");
     assert_eq!(canonical[0], "core/work_surfaces/builder-bear/index.md");
     assert!(profile_local.is_empty());
 }
 
 #[test]
 fn build_work_surface_orientation_payload_for_chat_is_reference_only() {
-    let context = context_for(BearProfile::Chat);
-    let hint_payload = infer_work_surface_hint(&context, BearProfile::Chat);
+    let context = context_for(RuntimeContextLabel::ChannelConversation);
+    let hint_payload = infer_work_surface_hint(&context, RuntimeContextLabel::ChannelConversation);
     let files = vec![
         "core/work_surfaces/builder-bear/index.md".to_string(),
         "core/work_surfaces/builder-bear/overview.md".to_string(),
         "chat/work_surfaces/builder-bear/current-understanding.md".to_string(),
     ];
     let payload = build_work_surface_orientation_payload(
-        BearProfile::Chat,
+        RuntimeContextLabel::ChannelConversation,
         &hint_payload,
         &files,
         Some("builder-bear".to_string()),

@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use den_core::{
     ids::{BearId, UserId},
-    BearProfile,
+    RuntimeContextLabel,
 };
 use den_docket::{
     work_runs, DocketCheckpointDirectiveAcknowledge, DocketService, DocketWorkBoundaryCheck,
@@ -462,7 +462,7 @@ pub(crate) async fn work_checkpoint_evidence_result(
             reserve: ReserveArtifactInput {
                 bear_id: bear.id,
                 created_by_user_id: Some(user_id),
-                owner_profile: BearProfile::Work,
+                owner_profile: RuntimeContextLabel::JobRun,
                 kind: "runtime_checkpoint".to_string(),
                 title: Some("Work checkpoint acknowledgement".to_string()),
                 summary: Some(summary.to_string()),

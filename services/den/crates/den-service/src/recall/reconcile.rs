@@ -58,6 +58,8 @@ struct HeadRow {
 
 pub async fn list_indexable_heads(store: &BearMemoryStore) -> Result<Vec<IndexRequest>, DenError> {
     let bear_id = store.bear_id();
+    // sqlx-dynamic: canonical per-Bear SQLite has no compile-time query metadata;
+    // this fixed query binds the Bear ID and never derives scope from a path.
     let rows = sqlx::query_as::<_, HeadRow>(
         r"
         SELECT m.memory_id, m.sequence_no, m.scope_type, m.scope_profile, m.scope_hat_id, m.kind, m.visibility,
@@ -65,6 +67,10 @@ pub async fn list_indexable_heads(store: &BearMemoryStore) -> Result<Vec<IndexRe
                m.logical_path, m.work_surface_ref, m.content_text
         FROM memory_records m
         WHERE m.bear_id = ?
+          AND m.scope_type IN ('shared', 'hat')
+          AND m.scope_profile IS NULL
+          AND m.scope_source_kind IS NULL
+          AND m.scope_source_id IS NULL
           AND m.visibility = 'normal'
           AND m.invalid_at IS NULL
           AND m.logical_path IS NOT NULL
@@ -80,6 +86,8 @@ pub async fn list_indexable_heads(store: &BearMemoryStore) -> Result<Vec<IndexRe
               SELECT MAX(h.sequence_no) FROM memory_records h
               WHERE h.bear_id = m.bear_id
                 AND h.logical_path = m.logical_path
+                AND h.scope_type = m.scope_type
+                AND h.scope_hat_id IS m.scope_hat_id
                 AND h.visibility = 'normal'
           )
         ORDER BY m.logical_path
@@ -141,23 +149,24 @@ pub async fn list_indexable_heads(store: &BearMemoryStore) -> Result<Vec<IndexRe
         .collect())
 }
 
-/// A configured Bear must not keep exporting old profile-local notes to its
-/// derived recall store or embedding provider. Reconcile removes their old
-/// points because they are omitted from the current head-ID set; no-hat Bears
-/// retain legacy profile recall until explicitly configured.
+/// Canonical shared heads plus curated heads belonging to the Bear's current
+/// hats. Raw legacy/source records and missing/foreign hats never enter this
+/// set. Both reconciliation and the watermark use this exact eligibility set.
 pub async fn list_authorized_indexable_heads(
     pg: &PgPool,
     store: &BearMemoryStore,
 ) -> Result<Vec<IndexRequest>, DenError> {
     let mut heads = list_indexable_heads(store).await?;
-    if !hats::list_hats(pg, BearId::new(store.bear_id()))
+    let owned_hats: HashSet<HatId> = hats::list_hats(pg, BearId::new(store.bear_id()))
         .await?
-        .is_empty()
-    {
-        heads.retain(|head| {
-            MemoryScopeType::parse(&head.scope_type) != Some(MemoryScopeType::ProfileLocal)
-        });
-    }
+        .into_iter()
+        .map(|hat| hat.id)
+        .collect();
+    heads.retain(|head| match MemoryScopeType::parse(&head.scope_type) {
+        Some(MemoryScopeType::Shared) => head.scope_hat_id.is_none(),
+        Some(MemoryScopeType::Hat) => head.scope_hat_id.is_some_and(|id| owned_hats.contains(&id)),
+        _ => false,
+    });
     Ok(heads)
 }
 
@@ -174,9 +183,18 @@ pub async fn reconcile_bear<E: PassageEmbedder>(
     let indexer = RecallIndexer::new(pg, qdrant, embedder, embedding_standard.to_string());
 
     let mut outcome = ReconcileOutcome::default();
-    let mut head_ids: HashSet<String> = HashSet::new();
+    let head_ids: HashSet<&str> = heads.iter().map(|head| head.memory_id.as_str()).collect();
+    // Remove ineligible derived data before any embedding call can fail. Canonical
+    // SQLite history is untouched; no legacy record is promoted or reassigned.
+    let indexed_ids = registry::list_indexed_memory_ids(pg, bear_id, embedding_standard).await?;
+    for mid in indexed_ids {
+        if !head_ids.contains(mid.as_str()) {
+            let removed = indexer.remove_record(bear_id, &mid).await?;
+            outcome.removed_records += 1;
+            outcome.removed_points += removed;
+        }
+    }
     for req in &heads {
-        head_ids.insert(req.memory_id.clone());
         let o = indexer.index_record(req).await?;
         outcome.indexed_records += 1;
         outcome.embedded_chunks += o.embedded_chunks;
@@ -184,14 +202,6 @@ pub async fn reconcile_bear<E: PassageEmbedder>(
         outcome.removed_points += o.removed_points;
     }
 
-    let indexed_ids = registry::list_indexed_memory_ids(pg, bear_id, embedding_standard).await?;
-    for mid in indexed_ids {
-        if !head_ids.contains(&mid) {
-            let removed = indexer.remove_record(bear_id, &mid).await?;
-            outcome.removed_records += 1;
-            outcome.removed_points += removed;
-        }
-    }
     Ok(outcome)
 }
 

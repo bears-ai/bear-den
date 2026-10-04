@@ -146,9 +146,16 @@ def test_native_stack_and_seeded_bear_are_ready():
     assert landing.status_code == 200, landing.text[:400]
     assert "Test Bear" in landing.text
 
-    for path in ("overview", "profiles", "memory"):
+    for path in ("overview", "advanced", "memory"):
         response = session.get(f"{DEN}/bear/{SEEDED_BEAR_SLUG}/{path}", timeout=10)
         assert response.status_code == 200, f"{path}: {response.text[:400]}"
+
+    for path in ("profiles", "stances"):
+        response = session.get(
+            f"{DEN}/bear/{SEEDED_BEAR_SLUG}/{path}", timeout=10, allow_redirects=False
+        )
+        assert response.status_code == 308, f"{path}: {response.text[:400]}"
+        assert response.headers["Location"] == f"/bear/{SEEDED_BEAR_SLUG}/advanced"
 
 
 def test_bearwire_rejects_unauthenticated_session_open():

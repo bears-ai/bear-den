@@ -11,12 +11,12 @@ use den_core::tools::work_surface::{
 use den_llm::model_registry;
 use den_memory::{
     has_work_surface_canonical_anchor, head_record_for_logical_path,
-    list_entity_anchor_head_records, list_profile_local_head_records, memory_sequence_high_water,
-    record_visible, scoped, AccessContext, BearMemoryStore, MemoryRecordRow, MemoryScopeType,
-    MemoryStoreManager,
+    list_entity_anchor_head_records, memory_sequence_high_water, record_visible, scoped,
+    AccessContext, BearMemoryStore, MemoryRecordRow, MemoryScopeType, MemoryStoreManager,
 };
 use den_service::bears::{
-    managed_blocks::get_compiled_bear_config, model::BearProfile, provision::profile_config_hash,
+    managed_blocks::{compile_and_store_managed_config_for_bear, get_compiled_bear_config},
+    model::RuntimeContextLabel,
     Bear,
 };
 
@@ -32,7 +32,7 @@ const PROJECTED_MEMORY_TRUNCATION_ELLIPSIS: &str = "...";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyMemoryProjectionCacheKey {
     pub bear_id: Uuid,
-    pub profile: BearProfile,
+    pub profile: RuntimeContextLabel,
     pub conversation_id: String,
     pub primary_surface_slug: Option<String>,
     pub sequence_high_water: i64,
@@ -41,7 +41,6 @@ pub struct KeyMemoryProjectionCacheKey {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryProjectionScope {
-    Legacy,
     Bound(scoped::MemoryReadGrant),
     SharedOnly,
 }
@@ -58,7 +57,7 @@ pub struct KeyMemoryProjectionInput<'a> {
     pub pool: &'a PgPool,
     pub stores: &'a MemoryStoreManager,
     pub bear: &'a Bear,
-    pub profile: BearProfile,
+    pub profile: RuntimeContextLabel,
     pub conversation_id: &'a str,
     pub session_hints: WorkSurfaceSessionHints,
     pub work_surface_status_override: Option<&'a str>,
@@ -84,7 +83,7 @@ struct ProjectionBudget {
 enum BudgetTier {
     SharedCore,
     WorkSurface,
-    ProfileLocal,
+    BoundSource,
     Situation,
 }
 
@@ -93,20 +92,22 @@ impl BudgetTier {
         match self {
             Self::SharedCore => 0,
             Self::WorkSurface => 1,
-            Self::ProfileLocal => 2,
+            Self::BoundSource => 2,
             Self::Situation => 3,
         }
     }
 }
 
 fn projection_budget_for_profile_and_model(
-    role: BearProfile,
+    role: RuntimeContextLabel,
     context_window: Option<u32>,
 ) -> ProjectionBudget {
     let base_global_cap = match role {
-        BearProfile::Pair | BearProfile::Chat | BearProfile::Work => 8_000,
-        BearProfile::Curate => 6_000,
-        BearProfile::Watch => 4_000,
+        RuntimeContextLabel::ArmatureConversation
+        | RuntimeContextLabel::ChannelConversation
+        | RuntimeContextLabel::JobRun => 8_000,
+        RuntimeContextLabel::Curation => 6_000,
+        RuntimeContextLabel::Observation => 4_000,
     };
     let global_cap = match context_window {
         Some(ctx) if ctx >= 1_000_000 => base_global_cap * 2,
@@ -252,27 +253,22 @@ async fn admit_record(
 pub(crate) async fn compiled_prompt_cache_token(
     pool: &PgPool,
     bear: &Bear,
-    role: BearProfile,
-    _native_runtime: bool,
 ) -> Result<String, DenError> {
     if bear.context_profile.is_none() {
-        return Ok(format!("legacy:{}:{}", bear.id, bear.provisioning_version));
+        return Ok(format!("bound:{}:{}", bear.id, bear.provisioning_version));
     }
     if let Some(compiled) = get_compiled_bear_config(pool, bear.id).await? {
         return Ok(compiled.config_hash);
     }
-    let hash = profile_config_hash(pool, bear, role).await?;
-    Ok(hash
-        .get("compiled_config_hash")
-        .and_then(Value::as_str)
-        .unwrap_or("missing")
-        .to_string())
+    Ok(compile_and_store_managed_config_for_bear(pool, bear)
+        .await?
+        .config_hash)
 }
 
 pub async fn project_key_memory(
     input: KeyMemoryProjectionInput<'_>,
 ) -> Result<KeyMemoryProjectionResult, DenError> {
-    project_key_memory_with_scope(input, MemoryProjectionScope::Legacy).await
+    project_key_memory_with_scope(input, MemoryProjectionScope::SharedOnly).await
 }
 
 pub async fn project_key_memory_with_scope(
@@ -281,9 +277,7 @@ pub async fn project_key_memory_with_scope(
 ) -> Result<KeyMemoryProjectionResult, DenError> {
     let store = input.stores.store_for_bear(input.bear.id).await?;
     let sequence_high_water = memory_sequence_high_water(&store).await?;
-    let compiled_config_token =
-        compiled_prompt_cache_token(input.pool, input.bear, input.profile, input.native_runtime)
-            .await?;
+    let compiled_config_token = compiled_prompt_cache_token(input.pool, input.bear).await?;
     let status =
         work_surface_projection_status(&input.session_hints, input.work_surface_status_override);
     let primary_slug = work_surface_candidate_slug_from_hints(&input.session_hints);
@@ -306,7 +300,6 @@ pub async fn project_key_memory_with_scope(
     );
     let mut tallies = ProjectionTallies::default();
     let mut sections = Vec::<String>::new();
-    let strict_shared_anchors = !matches!(scope, MemoryProjectionScope::Legacy);
 
     // Tier 1 — shared identity anchors
     {
@@ -321,9 +314,7 @@ pub async fn project_key_memory_with_scope(
             }
             let Some(record) = head_record_for_logical_path(&store, path)
                 .await?
-                .filter(|record| {
-                    !strict_shared_anchors || record.scope_type == MemoryScopeType::Shared
-                })
+                .filter(|record| record.scope_type == MemoryScopeType::Shared)
             else {
                 continue;
             };
@@ -388,12 +379,9 @@ pub async fn project_key_memory_with_scope(
                     tallies.omitted_budget.push(path);
                     continue;
                 }
-                let Some(record) =
-                    head_record_for_logical_path(&store, &path)
-                        .await?
-                        .filter(|record| {
-                            !strict_shared_anchors || record.scope_type == MemoryScopeType::Shared
-                        })
+                let Some(record) = head_record_for_logical_path(&store, &path)
+                    .await?
+                    .filter(|record| record.scope_type == MemoryScopeType::Shared)
                 else {
                     continue;
                 };
@@ -432,7 +420,7 @@ pub async fn project_key_memory_with_scope(
         let mut blocks = Vec::new();
         let records = list_entity_anchor_head_records(&store, 6).await?;
         for record in records {
-            if strict_shared_anchors && record.scope_type != MemoryScopeType::Shared {
+            if record.scope_type != MemoryScopeType::Shared {
                 continue;
             }
             let path = record
@@ -463,15 +451,11 @@ pub async fn project_key_memory_with_scope(
         }
     }
 
-    // Tier 3 — role-local highlights
+    // Tier 3 — verified source-local and selected-hat highlights
     {
-        let mut tracker = BudgetTracker::new(&budget, BudgetTier::ProfileLocal);
+        let mut tracker = BudgetTracker::new(&budget, BudgetTier::BoundSource);
         let mut blocks = Vec::new();
-        let surface_ref = if tier2_active {
-            primary_slug.as_deref()
-        } else {
-            None
-        };
+
         let records = match scope {
             MemoryProjectionScope::Bound(grant) => scoped::search(
                 &store,
@@ -486,37 +470,6 @@ pub async fn project_key_memory_with_scope(
             .take(budget.tiers[2].max_records)
             .collect(),
             MemoryProjectionScope::SharedOnly => Vec::new(),
-            MemoryProjectionScope::Legacy => {
-                if let Some(surface) = surface_ref {
-                    let mut rows = list_profile_local_head_records(
-                        &store,
-                        input.profile.as_str(),
-                        Some(surface),
-                        8,
-                    )
-                    .await?;
-                    if rows.len() < budget.tiers[2].max_records {
-                        let remaining = (budget.tiers[2].max_records - rows.len()) as i64;
-                        let global = list_profile_local_head_records(
-                            &store,
-                            input.profile.as_str(),
-                            None,
-                            remaining,
-                        )
-                        .await?;
-                        rows.extend(global);
-                    }
-                    rows
-                } else {
-                    list_profile_local_head_records(
-                        &store,
-                        input.profile.as_str(),
-                        None,
-                        budget.tiers[2].max_records as i64,
-                    )
-                    .await?
-                }
-            }
         };
         for record in records {
             let entry = json!({
@@ -553,7 +506,7 @@ pub async fn project_key_memory_with_scope(
         let mut tracker = BudgetTracker::new(&budget, BudgetTier::Situation);
         if let Some(record) = head_record_for_logical_path(&store, TIER4_SITUATION_PATH)
             .await?
-            .filter(|record| !strict_shared_anchors || record.scope_type == MemoryScopeType::Shared)
+            .filter(|record| record.scope_type == MemoryScopeType::Shared)
         {
             let entry = json!({
                 "tier": 4,

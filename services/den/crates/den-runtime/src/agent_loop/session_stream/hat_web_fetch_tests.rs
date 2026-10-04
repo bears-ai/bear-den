@@ -47,7 +47,7 @@ fn fetch_stream(pool: &PgPool, bear: Uuid, user: i32, conversation: &str) -> Ses
         "hat-web-client".into(),
         Some(Uuid::new_v4().to_string()),
         Arc::new(Config::test_stub()),
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         NativeToolDispatchMode::DeferToClient,
     )
 }

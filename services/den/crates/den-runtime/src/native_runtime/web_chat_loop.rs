@@ -12,7 +12,7 @@ use den_protocol::{
     RuntimeErrorCategory, RuntimeEventStream, RuntimeSemanticEvent, RuntimeStreamEvent,
     ToolCallFinishStatus,
 };
-use den_service::bears::BearProfile;
+use den_service::bears::RuntimeContextLabel;
 use futures::Stream;
 use serde_json::Value;
 use sqlx::PgPool;
@@ -161,7 +161,7 @@ impl NativeWebChatLoopStream {
                 &config,
                 bear_id,
                 &conversation_id,
-                BearProfile::Chat,
+                crate::runtime_compaction::CompactionSource::Turn(session.origin),
             )
             .await;
         });
@@ -235,7 +235,7 @@ impl NativeWebChatLoopStream {
             runtime.session_id.clone(),
             Some(runtime.request_id.clone()),
             runtime.config.clone(),
-            BearProfile::Chat,
+            RuntimeContextLabel::ChannelConversation,
             NativeToolDispatchMode::ServerSideInProcess,
         ))
     }
@@ -261,7 +261,7 @@ impl NativeWebChatLoopStream {
             let overflow = AgentStepOverflowContext {
                 pool: runtime.pool.clone(),
                 config: runtime.config.clone(),
-                profile: BearProfile::Chat,
+                profile: RuntimeContextLabel::ChannelConversation,
                 session_store: runtime.session_store.clone(),
             };
             let raw = run_agent_step_stream(&runtime.llm, &session, Some(overflow)).await?;
@@ -573,7 +573,7 @@ async fn execute_one_web_chat_den_tool(
             bear_id: runtime.bear_id,
             bear_slug: runtime.bear_slug.clone(),
             binding_id: runtime.turn_binding_id.clone(),
-            profile: Some(BearProfile::Chat),
+            profile: Some(RuntimeContextLabel::ChannelConversation),
             user_id: runtime.user_id,
             username: runtime.username.clone(),
             membership_role: runtime.membership_role.clone(),

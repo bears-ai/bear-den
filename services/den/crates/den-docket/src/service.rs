@@ -8,7 +8,7 @@
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use den_core::{ids::HatId, BearProfile, DenError};
+use den_core::{ids::HatId, DenError, RuntimeContextLabel};
 
 use super::db;
 use super::model::{
@@ -215,7 +215,7 @@ pub trait DocketService: Send + Sync {
     async fn checkout_task_list(
         &self,
         bear_id: Uuid,
-        viewer_role: BearProfile,
+        viewer_role: RuntimeContextLabel,
         user_id: i32,
         request: TaskListCheckoutRequest,
     ) -> Result<Option<TaskListProjection>, DenError>;
@@ -560,7 +560,7 @@ impl DocketService for PgDocketService {
     async fn checkout_task_list(
         &self,
         bear_id: Uuid,
-        viewer_role: BearProfile,
+        viewer_role: RuntimeContextLabel,
         user_id: i32,
         request: TaskListCheckoutRequest,
     ) -> Result<Option<TaskListProjection>, DenError> {

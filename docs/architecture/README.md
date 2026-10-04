@@ -21,7 +21,7 @@ Use the [topic map](../README.md) first: it distinguishes verified current behav
 Without reading the source, these docs should let you answer:
 
 - what Den is and what a Bear is;
-- how roles, channels, and armatures differ;
+- how hats, verified sources, channels, and armatures differ;
 - where memory, tasks, approvals, and transcript state live;
 - how a turn runs from user input to model output to tool execution;
 - which parts of the system are protocol-neutral core and which are edge adapters;
@@ -34,7 +34,7 @@ Bear Den consists of these architectural layers:
 
 | Layer | Responsibility |
 |------|----------------|
-| Product model | Bears, roles, work surfaces, tasks, approvals, memory, and skills |
+| Product model | Bears, hats, canonical conversations/Jobs, work surfaces, tasks, approvals, memory, and skills |
 | Runtime core | Native turn loop, context assembly, tool orchestration, continuation, compaction, and event production |
 | Persistence | Per-Bear SQLite for cognition; Den Postgres for conversations, approvals, identity, compiled configs, Docket, and schedulers |
 | Tooling | Den-hosted tools, armature-local tools, external web/retrieval integrations, and sandbox execution |
@@ -58,7 +58,7 @@ Bear Den consists of these architectural layers:
 - [Den state machine inventory](den-state-machine-inventory.md) is the living reference for conversation/session/turn/run state axes, owners, transitions, and invariants.
 - [workflow state overview](workflow-state-overview.md) remains the focused explanation of the canonical current-turn workflow state and derived `operational_focus`.
 
-### Bear model and stances
+### Bear model and execution context
 
 - [bears and den](bears-and-den.md)
 - [hats and execution context](bear-stances.md)

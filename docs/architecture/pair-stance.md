@@ -1,8 +1,6 @@
 # Pair stance
 
-The `pair` stance is the Bear's live collaborative operating mode for trusted work surfaces such as ACP-enabled editors, design tools, and future productivity clients.
-
-It is the stance users experience when the Bear is working side-by-side with them inside an active workspace rather than speaking from a pure chat surface.
+Pair describes live collaboration through a verified armature, not a configurable trust stance. Current working-tree WIP requires an owned canonical conversation and real Bear-owned hat even with zero hats; see [the maintained topic](../topics/bear-memory-hats.md). Pending IDE `den-conv-*` materialization follows admission. The latest image has not been rebuilt.
 
 ## Job description
 
@@ -13,25 +11,25 @@ It should:
 - inspect the active workspace or artifacts before settling on conclusions when evidence is available;
 - use trusted client-mediated tools with human approval;
 - advance the task through concrete action, not only explanation;
-- keep local learning in stance-local memory when useful;
+- keep local learning in canonical own-conversation notes when useful;
 - and request broader background work when the task exceeds inline collaboration.
 
 It should not behave like an unbounded autonomous worker.
 
 ## Stance grounding
 
-`pair` is a stance, not a separate assistant identity.
+The selected hat supplies responsibility/identity; verified origin, governance, and live source/grant checks supply execution boundaries. Historical `pair` is a derived audit encoding, not an authority input.
 
 It should ground itself in the current **work surface** first: repository, local checkout, design document set, service, deployment, project, or similar active context.
 
 Recommended retrieval order for local-understanding questions:
 
 1. current conversation and trusted session briefing
-2. current stance/channel/work-surface hints
+2. verified source/hat/armature and work-surface state
 3. canonical work-surface anchors
-4. stance-local working memory for that work surface
+4. authorized own-source notes and selected-hat knowledge
 5. Bear-global shared anchors
-6. broader Bear memory search
+6. search within the same authorized source/hat/core scope
 7. direct artifact inspection
 8. general world knowledge
 
@@ -41,7 +39,7 @@ Recommended retrieval order for local-understanding questions:
 |------------|--------------|
 | Private/raw context | Sees trusted workspace/session context and approved tool results |
 | External communication | Narrow read-oriented Den tools plus client-mediated actions |
-| Durable state | Writes stance-local memory or structured Den records |
+| Durable state | Writes own-source notes or authorized structured Den records |
 | Shared memory | Cannot directly write shared canonical memory |
 | Autonomous work | Requests handoff or Docket work rather than executing arbitrary background action |
 
@@ -85,7 +83,7 @@ Examples:
 
 Expected behavior:
 
-- write stance-local notes
+- write own-source private notes
 - let review/curation decide what becomes shared Bear memory
 
 ### Broader research or report work
@@ -119,7 +117,9 @@ Delegate when:
 
 ## Tool profile
 
-`pair` should expose a deliberately narrow, trusted tool surface:
+Verified armature turns expose descriptor-owned tool surfaces, stable across prompt phrasing and narrowed by actual policy. Pair Plan/shared scaffold model tools are retired; historical rows/records are not live planning/shared-write authority. Hat action/resource filtering remains partial for supported web, filesystem reads, and sandbox egress; broader Den effects and other persistent client choices remain next.
+
+Typical surfaces:
 
 - armature-local file/workspace/browser tools mediated by the client permission model
 - Den-hosted memory, planning, retrieval, and session/context tools

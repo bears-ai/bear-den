@@ -66,9 +66,7 @@ pub(super) async fn host_allowed_for_live_run(
     }
     let bear_id = BearId::new(run.bear_id);
     let binding = memory_binding::for_work_run(pool, bear_id, run.id).await?;
-    if !matches!(binding, ResolvedMemoryBinding::Bound(_)) {
-        return Ok(false);
-    }
+
     let at_provision = provisioned_snapshot(run)?;
     if !at_provision.dynamic_authorization {
         return Ok(false);
@@ -100,9 +98,7 @@ pub(super) async fn active_run_still_authorized(
 ) -> Result<bool, DenError> {
     let bear_id = BearId::new(run.bear_id);
     let binding = memory_binding::for_work_run(pool, bear_id, run.id).await?;
-    if matches!(binding, ResolvedMemoryBinding::Legacy) {
-        return Ok(true);
-    }
+
     let at_provision = provisioned_snapshot(run)?;
     if !at_provision.dynamic_authorization {
         return Err(DenError::Authorization(
@@ -143,9 +139,7 @@ pub(super) async fn for_run(
     context: &WorkRunDispatchContext,
     root_name: &str,
 ) -> Result<Option<AllowedOutboundHosts>, DenError> {
-    let ResolvedMemoryBinding::Bound(grant) = binding else {
-        return Ok(None);
-    };
+    let ResolvedMemoryBinding::Bound(grant) = binding;
     let hat_id = grant
         .hat_id()
         .ok_or_else(|| DenError::Authorization("bound Work run has no hat".into()))?;

@@ -4,8 +4,8 @@ use std::{
 };
 
 use den_core::{
+    execution_context::RuntimeContextLabel,
     governance::Governance,
-    profile::BearProfile,
     tools::capability_catalog::{CapabilityEntry, SessionCapabilityDescriptor},
     TurnExecutionOrigin,
 };
@@ -147,7 +147,7 @@ pub struct AgentLoopSession {
     /// Verified at turn start and retained across in-process continuations.
     /// The compatibility profile below is a projection, not an origin grant.
     pub origin: TurnExecutionOrigin,
-    pub profile: BearProfile,
+    pub profile: RuntimeContextLabel,
     pub overflow_retry_attempted: bool,
     pub overflow_compaction_recovered: bool,
 }
@@ -478,7 +478,7 @@ pub fn agent_loop_session_key(
 
 #[cfg(test)]
 mod tests {
-    use den_core::profile::BearProfile;
+    use den_core::execution_context::RuntimeContextLabel;
 
     use crate::agent_loop::{
         resolve_agent_loop_control, AgentLoopControlResolutionInput, DocketExecutionOrientation,
@@ -546,12 +546,15 @@ mod tests {
                 model_handle: Some("openai/test"),
                 model_default: None,
                 bear_override: None,
-                stance_override: None,
                 task_escalation: None,
-                stance: Some(BearProfile::Pair),
+                origin: den_core::TurnExecutionOrigin::ArmatureConversation(
+                    den_core::ArmatureAvailability::Connected,
+                ),
+                governance: den_core::Governance::Interactive,
                 objective_orientation: Some(&objective_orientation),
                 pre_risk: false,
-            }),
+            })
+            .expect("ordinary test origin"),
             governance: Governance::Interactive,
             objective_orientation,
             checkpoint_state: Default::default(),
@@ -565,7 +568,7 @@ mod tests {
             latest_projected_memory: None,
             latest_recalled_memory: None,
             cached_activity_plan_projection: None,
-            profile: BearProfile::Pair,
+            profile: RuntimeContextLabel::ArmatureConversation,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
         }

@@ -45,9 +45,14 @@ async fn bound_identity_is_selected_by_hat_and_not_by_interaction_mode(pool: PgP
     )
     .await
     .unwrap();
-    let before_summary = bound_prompt_text(&pool, &bear, BearProfile::Pair, security.id)
-        .await
-        .unwrap();
+    let before_summary = bound_prompt_text(
+        &pool,
+        &bear,
+        RuntimeContextLabel::ArmatureConversation,
+        security.id,
+    )
+    .await
+    .unwrap();
     assert!(before_summary.contains("Support: No short summary has been configured."));
     assert!(!before_summary.contains("Help customers"));
     let other_bear = db::create_bear(
@@ -100,17 +105,28 @@ async fn bound_identity_is_selected_by_hat_and_not_by_interaction_mode(pool: PgP
     )
     .await
     .unwrap();
-    let pair = bound_prompt_text(&pool, &bear, BearProfile::Pair, security.id)
+    let pair = bound_prompt_text(
+        &pool,
+        &bear,
+        RuntimeContextLabel::ArmatureConversation,
+        security.id,
+    )
+    .await
+    .unwrap();
+    let work = bound_prompt_text(&pool, &bear, RuntimeContextLabel::JobRun, security.id)
         .await
         .unwrap();
-    let work = bound_prompt_text(&pool, &bear, BearProfile::Work, security.id)
-        .await
-        .unwrap();
-    let other = bound_prompt_text(&pool, &bear, BearProfile::Chat, support.id)
-        .await
-        .unwrap();
+    let other = bound_prompt_text(
+        &pool,
+        &bear,
+        RuntimeContextLabel::ChannelConversation,
+        support.id,
+    )
+    .await
+    .unwrap();
     for selected in [&pair, &work] {
-        assert!(selected.contains("Bear-wide steering only"));
+        assert!(selected.contains("# Den baseline"));
+        assert!(!selected.contains("Bear-wide steering only"));
         assert!(selected.contains("Lumen, wearing the Security hat"));
         assert!(selected.contains("A hat is the Bear's metaphor for a role or responsibility"));
         assert!(selected.contains("Assesses security risks"));
@@ -130,13 +146,13 @@ async fn bound_identity_is_selected_by_hat_and_not_by_interaction_mode(pool: PgP
     assert!(other.contains("Security: Assesses security risks"));
     assert!(!other.contains("Review risks"));
     assert!(matches!(
-        bound_prompt_text(&pool, &bear, BearProfile::Curate, security.id).await,
+        bound_prompt_text(&pool, &bear, RuntimeContextLabel::Curation, security.id).await,
         Err(DenError::Authorization(_))
     ));
     assert!(bound_prompt_text(
         &pool,
         &bear,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         HatId::new(uuid::Uuid::new_v4())
     )
     .await
@@ -152,9 +168,14 @@ async fn bound_identity_is_selected_by_hat_and_not_by_interaction_mode(pool: PgP
     )
     .await
     .unwrap();
-    let refreshed = bound_prompt_text(&pool, &bear, BearProfile::Pair, security.id)
-        .await
-        .unwrap();
+    let refreshed = bound_prompt_text(
+        &pool,
+        &bear,
+        RuntimeContextLabel::ArmatureConversation,
+        security.id,
+    )
+    .await
+    .unwrap();
     assert!(refreshed.contains("Inspect new risks {{ untrusted }}"));
     assert!(!refreshed.contains("Help customers"));
     assert!(refreshed.contains("Support: Assists customers"));
@@ -167,9 +188,14 @@ async fn bound_identity_is_selected_by_hat_and_not_by_interaction_mode(pool: PgP
     )
     .await
     .unwrap();
-    let next_turn = bound_prompt_text(&pool, &bear, BearProfile::Pair, security.id)
-        .await
-        .unwrap();
+    let next_turn = bound_prompt_text(
+        &pool,
+        &bear,
+        RuntimeContextLabel::ArmatureConversation,
+        security.id,
+    )
+    .await
+    .unwrap();
     assert!(next_turn.contains("Support: Answers customer questions"));
     assert!(!next_turn.contains("Support: Assists customers"));
 }
@@ -183,7 +209,7 @@ async fn managed_bound_base_compiles_without_stance_identity_or_role_contract(po
         "composition_version": 1,
         "role_contracts": {
             "chat": "OLD CHAT IDENTITY", "pair": "OLD PAIR IDENTITY",
-            "curate": "CURATE INTERNAL", "work": "OLD WORK IDENTITY", "watch": "WATCH INTERNAL"
+            "curate": "{{ invalid_unused_template", "work": "OLD WORK IDENTITY", "watch": "{{ current_date }}"
         },
         "user_steering": "Keep answers concise", "bear_context": "Shared charter"
     });
@@ -225,19 +251,19 @@ async fn managed_bound_base_compiles_without_stance_identity_or_role_contract(po
     assert!(compiled.rendered_prompt_hashes["bound_base"].is_string());
     assert!(compiled.rendered_prompt_hashes["bound_work_mode"].is_string());
     assert!(compiled.rendered_prompts["bound_source_version"].is_string());
-    let internal = crate::bears::provision::profile_prompt_text(&pool, &bear, BearProfile::Curate)
-        .await
-        .unwrap();
-    assert_eq!(
-        internal,
-        compiled.rendered_prompts["curate"].as_str().unwrap(),
-        "internal curation must keep its independently compiled role prompt"
-    );
-    assert!(!internal.contains("wearing the Security hat"));
-    let pair = bound_prompt_text(&pool, &bear, BearProfile::Pair, hat.id)
-        .await
-        .unwrap();
-    let work = bound_prompt_text(&pool, &bear, BearProfile::Work, hat.id)
+    for role in RuntimeContextLabel::ALL {
+        assert!(compiled.rendered_prompts.get(role.as_str()).is_none());
+        assert!(compiled.rendered_prompt_hashes.get(role.as_str()).is_none());
+    }
+    let pair = bound_prompt_text(
+        &pool,
+        &bear,
+        RuntimeContextLabel::ArmatureConversation,
+        hat.id,
+    )
+    .await
+    .unwrap();
+    let work = bound_prompt_text(&pool, &bear, RuntimeContextLabel::JobRun, hat.id)
         .await
         .unwrap();
     for selected in [pair, work] {

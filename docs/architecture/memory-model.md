@@ -1,15 +1,15 @@
 # Memory Model
 
-**Current architecture and partial cutover.** Profile-local and shared memory below still describe unbound legacy sessions. When a conversation or eligible Work run is bound to a hat, model-facing memory tools and turn-start context now use its own source-local notes, hat-curated records, and Bear `core/` instead. Turn-start projection resolves any live Work run bound to the session before a conversation; Pair/Chat cannot reuse a Work session ID to borrow its source. Bound prompt-memory selection, prompt-block tools, and status diagnostics also exclude other profile/session context; prompt-memory remains a separate Den Postgres surface, not canonical cognition. The ordinary member memory library now shows only shared and Bear-owned hat-curated records; admin inspection intentionally sees raw scopes and review evidence. Member semantic search is available when Qdrant/embeddings are configured: the vector leg filters to Bear-owned hat/core candidates and rechecks each current, access-visible ID against canonical SQLite, rebuilding snippet text there. Otherwise it falls back to curated keyword search. Source-local raw notes are never indexed. Bear-wide management inspection is Bear-admin-only, while ordinary browser chat/BearWire conversation access is checked against canonical human ownership and Docket Work access follows job/task visibility. Legacy unbound memory, historical NULL-owner conversations, and ambiguous client-session IDs still prevent a claim of complete isolation. See the verified [Bear memory and hats topic](../topics/bear-memory-hats.md) and the remaining [active plan](../roadmap/HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md).
+**Current working-tree WIP, not a shipped/rebuilt image.** Every ordinary conversation, Job, and run requires a real Bear-owned hat, even with zero hats. Historical profile-local records and paths below are restricted admin/review data, not a live ordinary memory lane; old unbound transcripts remain owner/admin read-only. No ownership, default hat, import, or promotion is automatic. When a conversation or eligible Work run is bound to a hat, model-facing memory tools and turn-start context now use its own source-local notes, hat-curated records, and Bear `core/` instead. Turn-start projection resolves any live Work run bound to the session before a conversation; Pair/Chat cannot reuse a Work session ID to borrow its source. Bound prompt-memory selection, prompt-block tools, and status diagnostics also exclude other profile/session context; prompt-memory remains a separate Den Postgres surface, not canonical cognition. The ordinary member memory library now shows only shared and Bear-owned hat-curated records; admin inspection intentionally sees raw scopes and review evidence. Member semantic search is available when Qdrant/embeddings are configured: the vector leg filters to Bear-owned hat/core candidates and rechecks each current, access-visible ID against canonical SQLite, rebuilding snippet text there. Otherwise it falls back to curated keyword search. Recall indexes only eligible current core/hat records: source-local and profile-local records are never indexed, even with zero hats. Stale legacy derived-point cleanup is retried before embedding while canonical old SQLite is preserved; profile-string recall APIs are removed. Bear-wide management inspection is Bear-admin-only, while ordinary browser chat/BearWire conversation access is checked against canonical human ownership and Docket Work access follows job/task visibility. Historical NULL-owner conversations, ambiguous client-session IDs, and same-creator generic artifact isolation still need audit; ordinary Legacy memory/network/Cargo fallback is denied. See the verified [Bear memory and hats topic](../topics/bear-memory-hats.md) and the remaining [active plan](../roadmap/HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md).
 
-Bear memory is the durable knowledge a Bear can use across stances, work surfaces, channels, and time.
+Bear memory is the durable knowledge a Bear can use across authorized hats, work surfaces, channels, and time.
 
 In the current architecture, canonical Bear cognition lives in **per-Bear SQLite**. Memory is not the same thing as transcript history, task state, or external retrieval indexes.
 
 ## Summary
 
 - canonical Bear cognition is stored in per-Bear SQLite
-- shared knowledge and stance-local knowledge are distinct
+- own-source private notes, selected-hat knowledge, and Bear-wide knowledge are distinct
 - work-surface grounding matters as much as Bear-global memory
 - transcript history is not the Bear's memory store
 - Docket jobs/tasks are infrastructure, not cognition
@@ -17,11 +17,11 @@ In the current architecture, canonical Bear cognition lives in **per-Bear SQLite
 
 ## Core distinctions
 
-### Shared vs stance-local memory
+### Shared, hat, and source-local memory
 
-Shared memory is durable Bear knowledge that should be usable across stances and surfaces.
+Bear-wide `core/` is shared curated knowledge; hat knowledge belongs to its authorized audience, and raw notes belong to their canonical source.
 
-Stance-local memory is scoped knowledge that may remain local indefinitely or later be promoted in unbound sessions. Bound conversations and Work runs instead write raw notes under their canonical source ID. With automatic sharing enabled for a hat, Curate may rewrite a verified conversation note into newly authored hat knowledge for all authorized wearers, including eligible Job runs; a Bear admin can also author a hat entry from a verifiable source note. Bear-wide hat→`core/` publication requires a separate explicit Bear-admin decision. Source notes stay private, while legacy unattributed profile-local records retain their unverified owners and profile scope.
+Ordinary conversations and Work runs write raw notes under their canonical source ID. Legacy profile-local records remain historical admin/review data, never a fallback for an unbound session. With automatic sharing enabled for a hat, Curate may rewrite a verified conversation note into newly authored hat knowledge for all authorized wearers, including eligible Job runs; a Bear admin can also author a hat entry from a verifiable source note. Bear-wide hat→`core/` publication requires a separate explicit Bear-admin decision. Source notes stay private, while legacy unattributed profile-local records retain their unverified owners and profile scope.
 
 ### Bear-global vs work-surface-local memory
 
@@ -87,17 +87,17 @@ Examples of work surfaces:
 Recommended retrieval order for local-understanding questions:
 
 1. current conversation and trusted session briefing
-2. current stance/channel/work-surface resolution state
+2. verified source, hat, channel/armature, and work-surface state
 3. canonical work-surface anchors
-4. work-surface stance-local memory
+4. authorized own-source notes and selected-hat knowledge
 5. Bear-global shared anchors
-6. broader Bear memory search
+6. broader search within the same authorized source/hat/core scope
 7. direct artifact inspection or external docs
 8. general world knowledge
 
 ## Canonical memory layout
 
-The architecture still uses familiar logical paths such as `core/` and role-local branches, but those are logical-path projections over canonical memory records rather than a separate canonical filesystem.
+Logical paths are projections over canonical memory records, not a separate canonical filesystem or authority. `core/` remains Bear-wide; the role-local paths below describe retained historical storage, not ordinary model access. Old Pair Plan/shared scaffold model tools are retired; their rows/records confer no live shared-write authority.
 
 Important conceptual areas:
 

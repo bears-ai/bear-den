@@ -569,9 +569,7 @@ pub async fn has_grant_for_own_conversation(
         ));
     }
     let binding = memory_binding::for_conversation(pool, bear_id, conversation_id).await?;
-    let ResolvedMemoryBinding::Bound(bound) = binding else {
-        return Ok(false);
-    };
+    let ResolvedMemoryBinding::Bound(bound) = binding;
     let Some(hat_id) = bound.hat_id() else {
         return Ok(false);
     };

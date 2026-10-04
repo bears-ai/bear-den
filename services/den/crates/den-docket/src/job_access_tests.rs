@@ -1,4 +1,4 @@
-use den_core::{BearProfile, DenError};
+use den_core::{DenError, RuntimeContextLabel};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -77,7 +77,7 @@ async fn checkout_rechecks_exact_job_and_membership_before_projection_or_attachm
         let error = service
             .checkout_task_list(
                 bear_id,
-                BearProfile::Pair,
+                RuntimeContextLabel::ArmatureConversation,
                 member,
                 checkout(private.job.id, session_anchor_id),
             )
@@ -95,7 +95,7 @@ async fn checkout_rechecks_exact_job_and_membership_before_projection_or_attachm
     let owner_projection = service
         .checkout_task_list(
             bear_id,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             owner,
             checkout(private.job.id, None),
         )
@@ -106,7 +106,7 @@ async fn checkout_rechecks_exact_job_and_membership_before_projection_or_attachm
     let admin_projection = service
         .checkout_task_list(
             bear_id,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             admin,
             checkout(private.job.id, None),
         )
@@ -118,7 +118,7 @@ async fn checkout_rechecks_exact_job_and_membership_before_projection_or_attachm
     let visible_projection = service
         .checkout_task_list(
             bear_id,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             member,
             checkout(visible.job.id, Some(session_id)),
         )
@@ -142,7 +142,7 @@ async fn checkout_rechecks_exact_job_and_membership_before_projection_or_attachm
         let error = service
             .checkout_task_list(
                 bear_id,
-                BearProfile::Pair,
+                RuntimeContextLabel::ArmatureConversation,
                 member,
                 checkout(private.job.id, session_anchor_id),
             )
@@ -205,7 +205,7 @@ async fn revoked_membership_denies_owner_and_admin_but_local_projection_is_uncha
     let projection = service
         .checkout_task_list(
             bear_id,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             owner,
             checkout(job.job.id, None),
         )
@@ -233,7 +233,7 @@ async fn revoked_membership_denies_owner_and_admin_but_local_projection_is_uncha
         let error = service
             .checkout_task_list(
                 bear_id,
-                BearProfile::Pair,
+                RuntimeContextLabel::ArmatureConversation,
                 user_id,
                 checkout(job.job.id, Some(session_id)),
             )
@@ -246,7 +246,7 @@ async fn revoked_membership_denies_owner_and_admin_but_local_projection_is_uncha
     let local = service
         .checkout_task_list(
             bear_id,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             owner,
             TaskListCheckoutRequest {
                 source: TaskListCheckoutSource::LocalProjection(Box::new(projection.clone())),

@@ -1,12 +1,12 @@
 //! Deterministic continuation probes for compaction quality (Phase G).
 
-use den_core::profile::BearProfile;
+use den_core::{ArmatureAvailability, TurnExecutionOrigin};
 use serde_json::json;
 
 use super::{
-    choose_compaction_decision, compaction_policy_for_profile, merge_iterative_summary,
+    choose_compaction_decision, compaction_policy_for_source, merge_iterative_summary,
     render_compacted_context_block, semantic_groups_from_conversation_messages,
-    summarize_compacted_groups, TranscriptGroupingRow,
+    summarize_compacted_groups, CompactionSource, TranscriptGroupingRow,
 };
 use crate::runtime_conversations::{RuntimeCompactionTriggerKind, RuntimeSemanticGroupKind};
 
@@ -68,7 +68,10 @@ fn pair_tool_heavy_fixture() -> Vec<TranscriptGroupingRow> {
 fn continuation_probe_preserves_unresolved_approval_after_compaction_evaluation() {
     let rows = pair_tool_heavy_fixture();
     let groups = semantic_groups_from_conversation_messages(&rows);
-    let policy = compaction_policy_for_profile(BearProfile::Pair);
+    let policy = compaction_policy_for_source(CompactionSource::Turn(
+        TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+    ))
+    .unwrap();
 
     let decision = choose_compaction_decision(
         &groups,
@@ -168,7 +171,13 @@ fn conversation_review_creates_summary_decision_below_pressure_threshold() {
 
 #[test]
 fn chat_policy_allows_more_groups_before_compaction_than_pair() {
-    let pair = compaction_policy_for_profile(BearProfile::Pair);
-    let chat = compaction_policy_for_profile(BearProfile::Chat);
+    let pair = compaction_policy_for_source(CompactionSource::Turn(
+        TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected),
+    ))
+    .unwrap();
+    let chat = compaction_policy_for_source(CompactionSource::Turn(
+        TurnExecutionOrigin::ChannelConversation,
+    ))
+    .unwrap();
     assert!(chat.max_groups_before_compaction > pair.max_groups_before_compaction);
 }

@@ -2,7 +2,7 @@
 
 **Status:** Canonical runtime architecture.
 
-This document is the architecture source of truth for the live Bear Den runtime model.
+This document describes the Den runtime, including current working-tree WIP. The [maintained hats topic](../topics/bear-memory-hats.md) owns source-admission and retirement claims: the implementation session reports passing workspace all-target checks and 121 root tests, but the latest Docker image has not been rebuilt. Mandatory real-hat admission applies even with zero hats; inference/results/continuations/direct dispatch recheck live actor/source/hat and exact Work eligibility. Old unbound history is owner/admin read-only; no ordinary Legacy memory/network/Cargo fallback or fabricated default/import/promotion remains. Hat action/resource filtering is still partial, not a complete `HatGrantResolver`.
 
 The file path retains the historical `den-native-runtime.md` name for link compatibility, but the preferred architecture term is **Den runtime** or **in-process Den runtime**, not "native runtime".
 
@@ -19,14 +19,14 @@ It rests on these decisions:
 
 The earlier plan converged on a clean trait seam (`RuntimeTurnBackend` / `RuntimeCancellationBackend` / `RuntimeConversationBackend`) whose only implementation was Letta. That seam is a faithful re-model of Letta's HTTP **process boundary** — it enshrines "Den control plane + Letta execution process," a split that only ever existed because we built on Letta, an external project.
 
-The target removes that split entirely. There is **no Letta server, no Letta Code SDK, no Codepool harness process, and no git-backed MemFS memory sidecar**. Den runs a single in-process agent loop for every stance, talks directly to Bifrost for inference, and stores all Bear memory/cognition in per-Bear SQLite. The runtime is no longer pluggable "for optionality": the in-process Den loop *is* the runtime.
+The target removes that split entirely. There is **no Letta server, no Letta Code SDK, no Codepool harness process, and no git-backed MemFS memory sidecar**. Den runs an in-process agent loop for verified ordinary sources, with dedicated source-verified internal inference paths, talks directly to Bifrost for inference, and stores all Bear memory/cognition in per-Bear SQLite. The runtime is no longer pluggable "for optionality": the in-process Den loop *is* the runtime.
 
 ## Guiding principles
 
-- **One agent loop, in-process, for every stance.** The Letta-era split between different runtime families is deleted. Stances differ only by **capability profile**: tool roster, memory scope, approval/autonomy policy, and whether they get a code sandbox.
+- **In-process runtime, verified sources.** Origin/governance select capability ceilings; canonical actor/source/hat and exact Work run own admission. The removed Rust aliases leave derived runtime-context labels only, with historical schema/audit encoding, not configurable stances.
 - **One loop primitive, patterns as policy.** The step (assemble context -> stream model -> execute tools -> persist) is the primitive. Reasoning "patterns" are a thin, data-driven **strategy policy** over it, not forked runtimes. See [Loop strategies](#loop-strategies).
 - **A turn is a Tokio task owned by Den**, not an HTTP call to another service. Cancellation is a `CancellationToken`, not external run-ids.
-- **Den owns conversation identity, message/context state, approvals, and compaction.** No conversation "materialization", no run-ids, no approval-deny recovery, no synthetic `TurnCompleted`.
+- **Den owns conversation identity, message/context state, approvals, and compaction.** Pending IDE sessions materialize durable `den-conv-*` only after hat admission; edges cannot invent canonical sources or synthetic terminal outcomes.
 - **Tool exchanges must be replayable transcript state.** Tool requests/results that affect model behavior are first-class model-history artifacts: stable tool-call id, canonical tool name, typed arguments, matching result/error, and bounded output/summary. ACP/BearWire/web projections may render them differently, but no edge cache may be the only record of what tool ran or what happened.
 - **Non-blocking structured updates are not tool dependencies.** Conversation titles, advisory in-flight task status, and similar surface/control-plane updates can be persisted and projected without creating client obligations or forcing model continuation. The descriptor registry owns whether a model-facing action is a blocking tool, a client obligation, a non-blocking structured update, or ephemeral progress.
 - **Bifrost is the inference substrate** (OpenAI-compatible), called directly by Den.
@@ -86,8 +86,8 @@ flowchart TB
 
 This is the most important conceptual line in the target, and it is not "content vs records." Per-Bear SQLite already holds *operational* records (the promotion/review audit trail and the change-tracking sequence). The real boundary is:
 
-- **Bear cognition -> per-Bear SQLite** (canonical, via `sqlx`): stance-local + shared/promoted memory, references, memory proposals, watch observations, promotion/curate decisions and audit, and reflection-run **outcome** records. This is the durable record of what the Bear knows and how it decided to know it.
-- **Control-plane infrastructure the Bear plugs into -> Den Postgres**: conversations/transcript, approvals, the stance-runtime registry, **Docket** jobs/tasks (ADR-0034), and the reflection **scheduler/queue**.
+- **Bear cognition -> per-Bear SQLite** (canonical, via `sqlx`): source-local + hat/shared knowledge and restricted historical profile-local records, references, memory proposals, watch observations, promotion/curate decisions and audit, and reflection-run **outcome** records. This is the durable record of what the Bear knows and how it decided to know it.
+- **Control-plane infrastructure the Bear plugs into -> Den Postgres**: conversations/transcript, hat bindings/grants, approvals, historical registry rows, **Docket** jobs/tasks (ADR-0034), and the reflection **scheduler/queue**.
 
 The metaphor (from ADR-0034): a Bear *uses* Den's schedulers and trackers the way a person uses a project tracker. The tracker is infrastructure, not part of the Bear.
 
@@ -104,17 +104,17 @@ The Postgres queue row references the SQLite run id; once a run completes, Postg
 
 ## Turn context assembly
 
-Every turn builds **Turn Context** by projecting the Bear Operating Environment into a stance-appropriate slice. The assembler is Den-owned end-to-end; there is no provider-side prompt or memory injection.
+Every admitted ordinary turn builds **Turn Context** from its verified canonical source/hat and execution origin. The assembler is Den-owned end-to-end; there is no provider-side prompt or memory injection.
 
 ### Layer 1 — Compiled system prompt (`bear_compiled_configs`)
 
-For legacy/no-hat turns and internal `curate`/`watch` roles, the **system message base** comes from **`bear_compiled_configs.rendered_prompts_json[profile]`** when a managed `context_profile` exists (or `bears.system_prompt` for an unmigrated Bear). For hat-bound `chat`/`pair`/`work` turns, Den instead composes compiled `bound_base` (Bear-wide baseline and steering), a repository-owned `bound_*_mode` fragment, and the currently verified Bear-owned hat's identity text via the repository-owned `bound_hat_identity` fragment. Hat text is not a permission grant; a configured Bear without a verified binding cannot fall back to a per-stance identity.
+Managed compilation emits `bound_base` (Bear-wide baseline/steering) and repository-owned platform `bound_*_mode` components only, independently of legacy role contracts/metadata. Ordinary turn assembly selects the current canonical hat via `bound_hat_identity`; there is no no-hat stance prompt fallback. Dedicated Curate briefings use direct source-verified tool-free inference with repository Markdown instructions, not ordinary stance compilation. No production inference selects a role prompt or role contract. Worker briefings consume direct verified `MemorySource`; live source admission precedes every production inference/continuation and direct tools recheck it. Generic system starts/tools/results/continuations are denied.
 
 Compilation merges:
 
-- published **`system_blocks`** (Den-global, versioned fragments such as `den_baseline`, `space_instruction.*`),
+- published baseline **`system_blocks`** (Den-global versioned prose; historical `space_instruction.*` contracts remain inspection data),
 - per-Bear **`bear_block_bindings`** (`inherit` vs `custom` overrides),
-- Bear-local **`context_profile`** fields (`user_steering`, `bear_context`, and stance-contract fallbacks).
+- Bear-local bound-base fields (`user_steering`, `bear_context`), parsed without coupling to legacy contracts/metadata.
 
 Under [ADR-0046](../decisions/adr-0046-file-backed-prompt-fragments-and-compiled-runtime-prompts.md), this layer evolves into a **hybrid prompt source model**:
 
@@ -124,13 +124,13 @@ Under [ADR-0046](../decisions/adr-0046-file-backed-prompt-fragments-and-compiled
 
 The architecture and rollout details live in [prompt-fragment-registry.md](prompt-fragment-registry.md) and the [Prompt Fragment Registry implementation plan](../roadmap/PROMPT_FRAGMENT_REGISTRY_IMPLEMENTATION_PLAN.md).
 
-The row is written by `compile_and_store_managed_config_for_bear` and keyed by `config_hash` / per-stance `rendered_prompt_hashes_json` for drift checks on stance bindings (`bear_profile_bindings` during the compatibility migration). Bound base/mode components also have hashes and a prompt-source version; missing or stale compiled components are regenerated before a bound turn. The hat-identity component reads the current hat record per turn, so changing its authored text does not require copying or editing stance contracts.
+`compile_and_store_managed_config_for_bear` stores bound base/mode hashes and prompt-source version; missing/stale components are regenerated before an admitted turn. Initialization ensures memory/runtime plan/managed config but never creates/refreshes a profile registry. `/models` is Bear-wide and profile model/loop rows are not live overrides. Defaults/control/compaction use verified origin and canonical source. The hat-identity component reads the current hat record per turn, so changing its authored text does not require copying or editing stance contracts.
 
 **Target invariant:** the native agent loop **must** read managed Bear-wide and mode components from `bear_compiled_configs` (plus the current canonical hat identity for bound turns). It must **not** recompose prompts via `compose_role_context(..., resolved: None)`, which bypasses managed-block resolution and diverges from Letta-era behavior.
 
 Additional invariant from ADR-0046: the turn hot path must not parse frontmatter, read prompt files from disk, or render runtime-authored database templates. Runtime-authored prompt content is compile-time-only; turn-time templating is reserved for explicitly approved repository-owned fragments.
 
-Legacy Bears without `context_profile` continue to use `bears.system_prompt` until migrated.
+An unmanaged Bear's Bear-wide base does not bypass real-hat admission or enable a legacy per-stance prompt lane.
 
 Recompile triggers match provisioning today: bear create/update, managed-block binding changes, and reconcile when `context_profile` is present.
 
@@ -144,21 +144,21 @@ This is distinct from:
 
 | Mechanism | Purpose |
 |-----------|------|
-| **Compiled system prompt** | Bound turns: Bear-wide base and mode from `bear_compiled_configs`, plus current hat identity; legacy/internal turns: per-stance compiled prompt |
-| **Prompt memory blocks** | Editable in-context state in Den Postgres — session/work-surface/stance scoped ([prompt-memory contract](den-prompt-memory-block-contract.md)) |
+| **Compiled system prompt** | Bear-wide bound base/platform mode plus current verified hat identity; dedicated internal inference has its own narrow source |
+| **Prompt memory blocks** | Ordinary reads select Bear-wide/exact-session blocks; mutations are session-confined; historical profile/work-surface blocks are not ordinary context ([prompt-memory contract](den-prompt-memory-block-contract.md)) |
 | **Key memory projection** | Read-only proactive slice of **canonical SQLite memory** (path anchors) |
 | **Derived recall** | Vector search over chunked passages ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)); bounded turn-start + hybrid `memory_search` |
 | **`memory_search` / `memory_read` tools** | On-demand retrieval; `memory_search` becomes hybrid when Qdrant is configured |
 
 #### v1 selection policy (locked)
 
-Projection follows the **work-surface-first** precedence in [`memory-model.md`](memory-model.md), stays stance-scoped, and remains small enough for every turn. Implementation lives in the context assembler (`core/agent_loop/`), reading through the memory store manager — not ad hoc in gateways.
+Projection follows the **work-surface-first** precedence in [`memory-model.md`](memory-model.md), stays within canonical own-source/selected-hat/core grants, and remains small enough for every turn. Implementation lives in the context assembler (`core/agent_loop/`), reading through the memory store manager — not ad hoc in gateways.
 
 **Tiers** (ordered; stop when the global character budget is exhausted):
 
 1. **Shared identity anchors** — latest-head `scope_type=shared` records at Bear-global anchor paths, in order: `core/bear-overview.md`, `core/bear-glossary.md`, `core/shared-conventions.md`. Include only `visibility=normal` in v1.
 2. **Active work-surface anchors** — latest-head shared records at canonical surface paths for the primary work surface (see work-surface gating below): `core/work_surfaces/<slug>/index.md`, `overview.md`, `glossary.md`, `architecture.md`, `decisions.md`, `conventions.md`.
-3. **Stance-local highlights** — latest-head `scope_type=role_local` records for the active stance; prefer rows with `work_surface_ref` matching the primary slug when tier 2 is active, otherwise recent Bear-global stance-local rows by `sequence_no`.
+3. **Own-source and selected-hat highlights** — current canonically authorized records; historical profile-local rows never become a fallback. Derived recall hits are independently rechecked and reconstructed from SQLite.
 4. **Situation/session briefing** — optional short trusted briefing records when modeled (not transcript); at most one record in v1.
 
 **Explicitly excluded from proactive projection** (tools or curate review only):
@@ -172,7 +172,7 @@ Projection follows the **work-surface-first** precedence in [`memory-model.md`](
 
 #### v1 budgets
 
-Budgets are in **characters** (Den has no model tokenizer). Per-tier quotas apply inside a per-stance global cap:
+Budgets are character-selection heuristics, not authority. The following v1 profile-named caps describe historical projection tuning, not configurable stances or admission for internal/zero-hat sources; verified-origin policy owns current defaults/control:
 
 | Profile | Global char cap |
 |---------|-----------------|
@@ -213,17 +213,17 @@ Primary slug selection uses the same session signals as tools today (`work_surfa
 
 #### v1 rendering
 
-Keep compiled Bear-wide/mode components hash-stable. Append projection as a separate block after the selected hat identity and compiled base/mode for a bound turn; no-hat legacy and internal roles retain `bear_compiled_configs.rendered_prompts_json[stance]`:
+Keep compiled Bear-wide/mode components hash-stable. Append authorized projection after the current verified hat identity and compiled base/mode; no ordinary legacy prompt lane exists:
 
 ```text
-<compiled Bear-wide base + verified hat identity + mode, or legacy stance prompt>
+<compiled Bear-wide base + verified hat identity + platform mode>
 
 # Projected memory
 ## Shared anchors
 …
 ## Work surface: <slug>    (omit section if tier 2 skipped)
 …
-## Own-source and hat highlights (bound) or stance highlights (legacy)
+## Authorized own-source and selected-hat highlights
 …
 ## Situation                  (omit if empty)
 …
@@ -244,7 +244,7 @@ Cache projection **per agent-loop turn** (one user prompt, multiple tool steps).
 After compiled prompt + key memory projection, the assembler appends **turn-local** Den-owned supplements when applicable:
 
 - **ACP / channel runtime context** — plan mode, workboard, trusted-session mode, tool-surface reminders (today’s `<system-reminder>` envelope for `pair`),
-- **prompt memory blocks** — selected from `prompt_memory_blocks` for `(bear, stance, session, work_surfaces)`,
+- **prompt memory blocks** — Bear-wide/exact-current-session selection, with historical profile/work-surface blocks excluded,
 - **compaction envelope** — Den-owned transcript bounding artifacts.
 
 These supplements remain distinct from the compiled prompt base even after file-backed prompt extraction. Repository-owned prompt fragments may contribute narrowly-scoped turn-time templated supplements (for example date or budget reminders), but runtime-authored prompt content remains pre-turn compiled.
@@ -283,6 +283,7 @@ Letta Archives and Letta pgvector are removed with Letta. Semantic recall is a *
 - **Platform embedding standard:** versioned contract shared by Bear memory and Cabinet ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)); initial id `bears-embed-v1` (`text-embedding-3-small`, 1536d via Bifrost).
 - **Vector store:** Qdrant collections named per embedding standard; passage metadata in Den Postgres; vectors are disposable (rebuild from SQLite / Cabinet sources).
 - **Complements key memory projection:** anchors = fixed logical paths; recall = fuzzy / cross-corpus passages when policy allows.
+- **Eligibility and cleanup:** only eligible current core/hat records are indexed; source/profile-local records are never indexed, even with zero hats. Stale legacy derived-point cleanup is retried before embedding; canonical old SQLite is preserved. Profile-string recall APIs are removed.
 - **Implementation:** [Derived recall index plan](../roadmap/DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md).
 
 ## Loop strategies
@@ -298,15 +299,15 @@ Most "agent patterns" (Plan & Solve, Reflexion, Reflection, REWOO, STORM, LATS, 
 
 **Explicitly deferred** (high complexity, narrow gain, very high call cost): true LATS tree search and LLM Compiler DAG engines. We do **not** build a pluggable "agent-pattern" framework; that would re-introduce the speculative abstraction this migration exists to delete.
 
-## Stance model and provisioning
+## Runtime initialization and remaining cutover
 
-- A former per-role "agent" becomes a **Den-owned runtime stance**: **`bear_compiled_configs` system prompt** + **key memory projection policy** + model + tool roster + memory scope + approval policy + sandbox flag. There is no external agent create/patch/recompile/drift.
-- Reconcile compares the stance binding `config_hash` (`bear_profile_bindings.config_hash` during the compatibility migration) to the current compiled prompt hash; the in-process Den runtime re-reads compiled prompts on each turn rather than caching stale text in an external agent.
-- `bears.letta_agent_id` is deprecated; stance identity is a Den-owned binding. Letta provisioning, drift detection, and Letta tool-catalog resolution are removed. The model catalog comes from Bifrost's model list.
+Native initialization opens the Bear memory store, ensures its runtime plan, and compiles managed bound configuration; it never creates/refreshes a profile registry. Admin stance detail/configuration/provisioning, per-profile model, and profile-registration routes are gone. Bear-wide `/models` and canonical conversation selection replace live profile model/loop overrides; historical rows/contracts remain inspection data.
+
+Removal of the `TrustProfile` / `BearProfile` / `BearStance` aliases leaves five-source-kind derived runtime-context metadata (`RuntimeContextLabel`), retaining historical schema/audit encoding only. Every ordinary source requires a real hat and live canonical admission; labels cannot recreate authority. Pair Plan/shared scaffold model tools are retired.
 
 ### Current gap (implementation)
 
-Phase 3–4 native wiring now loads **`bear_compiled_configs`** via `profile_prompt_text` and projects **key memory** from per-Bear SQLite in the context assembler (`core/agent_loop/key_memory_projection.rs`) for all stances including `chat`. **Derived recall** (Qdrant + platform embedding standard, [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)) is wired for turn-start injection and hybrid `memory_search` when `QDRANT_URL` is set. Remaining parity gaps: conversation-persisted work-surface binding (v1.1), richer situation briefing records, and golden ACP traces validating end-to-end grounding.
+Hat grant/action/resource filtering remains partial for supported Den web, exact-root editor filesystem reads, and upgraded sandbox egress. Broader Den effects/catalogs and other bounded persistent client choices are next under [Gate 0A](../roadmap/HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md#gate-0a--hat-owned-tool-and-network-permissions-partial-cutover-exit-pending). Latest-image rebuild/smoke, real model curation, and real provider Job/revocation evidence remain outstanding; see [the topic](../topics/bear-memory-hats.md).
 
 ## What this supersedes
 

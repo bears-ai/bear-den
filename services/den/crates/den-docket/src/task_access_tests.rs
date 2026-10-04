@@ -1,4 +1,4 @@
-use den_core::{BearProfile, DenError};
+use den_core::{DenError, RuntimeContextLabel};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -147,7 +147,7 @@ async fn exact_task_access_and_session_listing_exclude_historical_foreign_attach
     let checked_out = service
         .checkout_task_list(
             bear_id,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             viewer,
             checkout(visible.job.id, viewer_session),
         )
@@ -253,7 +253,7 @@ async fn settled_standalone_task_remains_readable_only_with_creator_and_own_sess
             outcome_disposition: None,
             result_summary: Some("Finished the standalone task".to_string()),
             result_refs: None,
-            actor_role: BearProfile::Pair,
+            actor_role: RuntimeContextLabel::ArmatureConversation,
             actor_user_id: Some(owner),
             actor_agent_id: None,
         })
@@ -382,7 +382,7 @@ async fn session_visibility_is_filtered_before_limit() {
     service
         .checkout_task_list(
             bear_id,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             owner,
             checkout(private.job.id, session_id),
         )
@@ -391,7 +391,7 @@ async fn session_visibility_is_filtered_before_limit() {
     let projection = service
         .checkout_task_list(
             bear_id,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             viewer,
             checkout(visible.job.id, session_id),
         )

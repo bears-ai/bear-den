@@ -2,36 +2,12 @@ use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::core::{
-    tools::{
-        arguments::DenToolChannelContext, context::DenToolContext,
-        session::DenToolInvocationContext,
-    },
-    user::db::create_user,
+use crate::core::{tools::memory_review::DenMemoryReviewStore, user::db::create_user};
+use den_core::tools::review::{
+    MemoryProposalResolution, MemoryReviewStore, ProposalProjection, ResolveProposalRequest,
 };
-use den_core::tools::review::resolve_memory_proposal;
-use den_service::bears::{db, db::grant_membership, db::BearParams, BearProfile};
+use den_service::bears::{db, db::grant_membership, db::BearParams, RuntimeContextLabel};
 use den_service::memory_proposals::CreateMemoryProposal;
-
-async fn seed_curate_agent(
-    pool: &PgPool,
-    bear_id: Uuid,
-    agent_id: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    sqlx::query(
-        r"
-        INSERT INTO bear_profile_bindings (bear_id, profile, binding_id)
-        VALUES ($1, 'curate', $2)
-        ON CONFLICT (bear_id, profile)
-        DO NOTHING
-        ",
-    )
-    .bind(bear_id)
-    .bind(agent_id)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
 
 #[sqlx::test]
 async fn memory_resolve_proposal_projects_typed_conversation_records(
@@ -63,7 +39,6 @@ async fn memory_resolve_proposal_projects_typed_conversation_records(
     grant_membership(&pool, user_id, bear_id, Some("admin")).await?;
 
     let agent_id = format!("agent-{}", Uuid::new_v4());
-    seed_curate_agent(&pool, bear_id, &agent_id).await?;
 
     let conversation = den_service::conversation::persistence::ensure_conversation_for_external_id(
         &pool,
@@ -77,15 +52,29 @@ async fn memory_resolve_proposal_projects_typed_conversation_records(
 
     let config = crate::config::Config::test_stub();
     let stores = den_memory::MemoryStoreManager::new(&config);
+    let store = stores.store_for_bear(bear_id).await?;
+    let source = den_memory::append_memory_record(
+        &store,
+        &den_memory::LogicalMemoryPath::source_local(
+            den_memory::MemorySource::Conversation(conversation.id),
+            "note",
+        ),
+        "note",
+        "pair",
+        None,
+        "Candidate finding",
+        &json!({}),
+    )
+    .await?;
     let proposal = den_runtime::memory::create_proposal(
         &pool,
         &config,
         &stores,
         CreateMemoryProposal {
             bear_id,
-            source_profile: BearProfile::Pair,
-            source_agent_id: Some("agent-pair".to_string()),
-            source_paths: vec!["pair/notes/test.md".to_string()],
+            source_profile: RuntimeContextLabel::ArmatureConversation,
+            source_agent_id: None,
+            source_paths: vec![source.logical_path.clone().expect("source-local path")],
             source_refs: json!({
                 "conversation_id": "conv-memory-resolve-tool-test",
                 "session_id": "client-memory-resolve-tool-session"
@@ -105,46 +94,30 @@ async fn memory_resolve_proposal_projects_typed_conversation_records(
     )
     .await?;
 
-    let context = DenToolInvocationContext {
-        bear_id,
-        bear_slug: "test-memory-resolve-tool-bear".to_string(),
-        binding_id: agent_id,
-        profile: Some(BearProfile::Curate),
-        user_id,
-        username: Some("tester".to_string()),
-        membership_role: Some("admin".to_string()),
-        conversation_id: "conv-memory-resolve-tool-test".to_string(),
-        session_id: "client-memory-resolve-tool-session".to_string(),
-        work_run_id: None,
-        client_session_id: Some("client-memory-resolve-tool-session".to_string()),
-        conversation_selection: Some("conv-memory-resolve-tool-test".to_string()),
-        runtime_target: None,
-        workspace_roots: vec!["/workspace".to_string()],
-        session_capabilities: Vec::new(),
-        session_policy: None,
-        activity: None,
-        runtime: None,
-        context_budget: None,
-        projected_memory: None,
-        recalled_memory: None,
-        request_id: Some(Uuid::new_v4().to_string()),
-        channel: DenToolChannelContext::default(),
-    };
-
-    let tool_context = DenToolContext::new(&pool, &config, &stores);
-    let payload = resolve_memory_proposal(
-        &tool_context,
-        &context,
-        BearProfile::Curate,
-        json!({
-            "proposal_id": proposal.id,
-            "status": "rejected",
-            "decision_summary": "Not suitable"
-        }),
-    )
-    .await?;
-
-    assert_eq!(payload["proposal"]["status"], "rejected");
+    let review = DenMemoryReviewStore::new(&pool, &config, &stores);
+    let resolved = review
+        .resolve_proposal(ResolveProposalRequest {
+            bear_id,
+            reviewer_profile: RuntimeContextLabel::Curation,
+            binding_id: agent_id,
+            proposal_id: proposal.id,
+            status: MemoryProposalResolution::Rejected,
+            review_notes: None,
+            decision_summary: Some("Not suitable".to_string()),
+            projection: ProposalProjection {
+                user_id,
+                conversation_id: Some("conv-memory-resolve-tool-test".to_string()),
+                scope_id: "client-memory-resolve-tool-session".to_string(),
+            },
+        })
+        .await?;
+    assert_eq!(resolved["status"], "rejected");
+    let persisted = review.get_proposal(bear_id, proposal.id).await?.unwrap();
+    assert_eq!(persisted["status"], "rejected");
+    let canonical = den_memory::get_memory_proposal(&store, &proposal.id.to_string())
+        .await?
+        .expect("canonical proposal");
+    assert_eq!(canonical.payload_json["decision_summary"], "Not suitable");
 
     let projection_context = den_service::conversation::events::canonical_persistence_context(
         pool.clone(),

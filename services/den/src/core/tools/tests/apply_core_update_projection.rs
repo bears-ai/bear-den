@@ -15,7 +15,7 @@ use den_core::tools::{
     dispatch::has_native_session_executor,
 };
 use den_core::{ArmatureAvailability, Governance, TurnExecutionOrigin};
-use den_service::bears::{db, db::grant_membership, db::BearParams, BearProfile};
+use den_service::bears::{db, db::grant_membership, db::BearParams, RuntimeContextLabel};
 
 #[sqlx::test]
 async fn retired_core_update_tool_is_not_advertised_or_executable_without_hats(
@@ -54,11 +54,11 @@ async fn retired_core_update_tool_is_not_advertised_or_executable_without_hats(
     .execute(&pool)
     .await?;
 
-    let context = DenToolInvocationContext {
+    let mut context = DenToolInvocationContext {
         bear_id,
         bear_slug: "test-retired-memory-apply-tool-bear".to_string(),
         binding_id: agent_id,
-        profile: Some(BearProfile::Pair),
+        profile: Some(RuntimeContextLabel::ArmatureConversation),
         user_id,
         username: Some("tester".to_string()),
         membership_role: Some("admin".to_string()),
@@ -90,14 +90,8 @@ async fn retired_core_update_tool_is_not_advertised_or_executable_without_hats(
 
     for has_hat in [false, true] {
         if has_hat {
-            den_service::bears::hats::create_hat(
-                &pool,
-                den_core::ids::BearId::new(bear_id),
-                den_core::ids::UserId::new(user_id),
-                "Review",
-                "Review source provenance",
-            )
-            .await?;
+            crate::core::tools::tests::source_fixture::admit_tool_source(&pool, &mut context)
+                .await?;
         }
         for tool_name in [
             DEN_MEMORY_APPLY_CORE_UPDATE,
@@ -120,11 +114,15 @@ async fn retired_core_update_tool_is_not_advertised_or_executable_without_hats(
             )
             .await;
             assert!(
-                matches!(blocked, Err(crate::errors::CustomError::NotFound(_))),
+                if has_hat {
+                    matches!(blocked, Err(crate::errors::CustomError::NotFound(_)))
+                } else {
+                    matches!(blocked, Err(crate::errors::CustomError::Authorization(_)))
+                },
                 "retired tool {tool_name} unexpectedly accepted: {blocked:?}"
             );
             let mut internal_context = context.clone();
-            internal_context.profile = Some(BearProfile::Curate);
+            internal_context.profile = Some(RuntimeContextLabel::Curation);
             let internal = invoke_den_tool_for_origin(
                 &pool,
                 &config,

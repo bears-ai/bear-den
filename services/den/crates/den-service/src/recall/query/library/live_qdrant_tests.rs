@@ -27,6 +27,22 @@ async fn note(
     append_memory_record(store, &path, "note", "curate", None, content, &json!({})).await
 }
 
+struct RecordingEmbedder {
+    synthetic: DeterministicEmbedder,
+    inputs: std::sync::Mutex<Vec<String>>,
+}
+
+impl PassageEmbedder for RecordingEmbedder {
+    fn dimensions(&self) -> u32 {
+        self.synthetic.dimensions()
+    }
+
+    async fn embed(&self, inputs: &[String]) -> Result<Vec<Vec<f32>>, DenError> {
+        self.inputs.lock().unwrap().extend_from_slice(inputs);
+        self.synthetic.embed(inputs).await
+    }
+}
+
 fn memory_filter(bear_id: Uuid, memory_id: &str) -> Value {
     json!({"must": [
         {"key": "bear_id", "match": {"value": bear_id.to_string()}},
@@ -76,14 +92,17 @@ async fn real_qdrant_reconciles_first_hat_and_rechecks_member_hits(
         "use a new isolated collection"
     );
     let store = stores.store_for_bear(bear_id).await?;
-    let embedder = DeterministicEmbedder::new(config.embedding_dimensions);
+    let embedder = RecordingEmbedder {
+        synthetic: DeterministicEmbedder::new(config.embedding_dimensions),
+        inputs: std::sync::Mutex::new(Vec::new()),
+    };
     let standard = &config.embedding_standard;
 
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let legacy = note(
             &store,
             LogicalMemoryPath::profile_local("pair", "old"),
-            "Synthetic legacy note; remove its derived point at first hat",
+            "Synthetic legacy note; never embed even without a hat",
         )
         .await?;
         let shared = note(
@@ -98,13 +117,71 @@ async fn real_qdrant_reconciles_first_hat_and_rechecks_member_hits(
             "Synthetic private conversation note; never index",
         )
         .await?;
+        // Seed old derived data explicitly; never send historical/raw text to
+        // an embedder. Forged shared payloads must not authorize old records.
+        for record in [&legacy, &raw] {
+            let point = QdrantPoint {
+                id: record.memory_id.clone(),
+                vector: vec![1.0; config.embedding_dimensions as usize],
+                payload: json!({
+                    "bear_id": bear_id.to_string(), "memory_id": record.memory_id,
+                    "source_class": "bear_memory", "embedding_standard": standard,
+                    "scope_type": "shared", "logical_path": "core/forged.md",
+                    "visibility": "normal", "text": "STALE_RAW_VECTOR_LEAK",
+                }),
+            };
+            qdrant.upsert_points(&[point]).await?;
+            registry::upsert_passage(
+                &pool,
+                registry::NewPassage {
+                    bear_id,
+                    memory_id: &record.memory_id,
+                    logical_path: record.logical_path.as_deref(),
+                    chunk_index: 0,
+                    content_hash: "synthetic-old-hash",
+                    embedding_standard: standard,
+                    source_class: "bear_memory",
+                    point_id: &record.memory_id,
+                },
+            )
+            .await?;
+        }
+        let no_hat_grant = CuratedMemoryGrant::new(vec![]);
+        let mut stale_raw = search_passages(
+            &qdrant,
+            &embedder,
+            curated_scope_filter(bear_id, standard, &no_hat_grant),
+            standard,
+            "synthetic query",
+            10,
+        )
+        .await?;
+        assert_eq!(stale_raw.passages.len(), 2);
+        retain_curated_candidates(&store, &no_hat_grant, &mut stale_raw, 10).await?;
+        assert!(
+            stale_raw.passages.is_empty(),
+            "even forged shared hits cannot claim legacy/source memory"
+        );
+        embedder.inputs.lock().unwrap().clear();
         let before = reconcile_bear(&pool, &qdrant, &embedder, &store, standard).await?;
-        assert_eq!(before.indexed_records, 2);
+        assert_eq!(before.indexed_records, 1);
+        assert_eq!(before.removed_records, 2);
+        assert_eq!(before.removed_points, 2);
+        assert_eq!(
+            *embedder.inputs.lock().unwrap(),
+            vec![shared.content_text.clone()]
+        );
+        assert!(
+            crate::recall::watermark::recall_watermark(&pool, &config, &store)
+                .await?
+                .unwrap()
+                .fully_recallable
+        );
         assert_eq!(
             qdrant
                 .count_with_filter(memory_filter(bear_id, &legacy.memory_id))
                 .await?,
-            1
+            0
         );
         assert_eq!(
             qdrant
@@ -140,8 +217,8 @@ async fn real_qdrant_reconciles_first_hat_and_rechecks_member_hits(
         let after = reconcile_bear(&pool, &qdrant, &embedder, &store, standard).await?;
         assert_eq!(after.indexed_records, 3);
         assert_eq!(
-            after.removed_records, 1,
-            "first hat removes the old profile head"
+            after.removed_records, 0,
+            "legacy/source points were already removed without any hats"
         );
         assert_eq!(
             qdrant
@@ -186,6 +263,19 @@ async fn real_qdrant_reconciles_first_hat_and_rechecks_member_hits(
         assert!(!hits
             .iter()
             .any(|hit| hit.payload["memory_id"] == raw.memory_id));
+        assert!(!embedder
+            .inputs
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|text| text == &legacy.content_text || text == &raw.content_text));
+        for record in [&legacy, &raw] {
+            let preserved = den_memory::fetch_record_by_id(&store, &record.memory_id)
+                .await?
+                .unwrap();
+            assert_eq!(preserved.content_text, record.content_text);
+            assert_eq!(preserved.scope_type, record.scope_type);
+        }
 
         // Poison the *derived* Qdrant payload without touching canonical SQLite.
         let mut poisoned = hits

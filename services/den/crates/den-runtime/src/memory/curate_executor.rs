@@ -10,7 +10,7 @@ use crate::memory::{
     curate_synthesis::{synthesize_verified_hat_note, HatSynthesisDecision},
     get_proposal, resolve_proposal,
 };
-use den_service::bears::{hats, BearProfile};
+use den_service::bears::{hats, RuntimeContextLabel};
 
 pub const MEMORY_CURATE_RUNNER_AGENT_ID: &str = "memory_curate_runner";
 
@@ -481,7 +481,7 @@ async fn resolve_curate_proposal<S: HatSynthesizer>(
                     ProposalResolutionParams {
                         bear_id,
                         proposal_id: proposal.id,
-                        reviewer_profile: BearProfile::Curate,
+                        reviewer_profile: RuntimeContextLabel::Curation,
                         reviewer_agent_id: Some(MEMORY_CURATE_RUNNER_AGENT_ID),
                         status: "retained_local",
                         review_notes: Some(&reason),
@@ -552,7 +552,7 @@ async fn resolve_curate_proposal<S: HatSynthesizer>(
         ProposalResolutionParams {
             bear_id,
             proposal_id: proposal.id,
-            reviewer_profile: BearProfile::Curate,
+            reviewer_profile: RuntimeContextLabel::Curation,
             reviewer_agent_id: Some(MEMORY_CURATE_RUNNER_AGENT_ID),
             status: triage.resolution_status(),
             review_notes: Some(triage.review_notes()),

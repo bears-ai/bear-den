@@ -145,6 +145,25 @@ async fn derived_member_hits_are_rebuilt_from_current_canonical_curated_records(
         .execute(store.pool())
         .await
         .unwrap();
+    // A no-hat grant still cannot turn legacy/raw records into shared
+    // memory by supplying a forged core locator in the vector payload.
+    let mut no_hat = RecallProjection {
+        passages: [&raw, &legacy, &foreign, &source, &shared]
+            .into_iter()
+            .map(|row| stale(&row.memory_id))
+            .collect(),
+        diagnostic: json!({}),
+    };
+    for passage in &mut no_hat.passages {
+        passage.logical_path = Some("core/forged.md".into());
+    }
+    retain_curated_candidates(&store, &CuratedMemoryGrant::new(vec![]), &mut no_hat, 10)
+        .await
+        .unwrap();
+    assert_eq!(no_hat.passages.len(), 1);
+    assert_eq!(no_hat.passages[0].memory_id, shared.memory_id);
+    assert_eq!(no_hat.passages[0].text, shared.content_text);
+
     let grant = CuratedMemoryGrant::new(vec![hat]);
     let mut projection = RecallProjection {
         passages: [

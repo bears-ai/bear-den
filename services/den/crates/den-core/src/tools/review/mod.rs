@@ -4,6 +4,9 @@ pub mod memory_review;
 pub mod observations;
 pub mod store;
 
+#[cfg(test)]
+mod retirement_tests;
+
 pub use memory_review::{
     list_memory_proposals, mark_memory_lifecycle, read_memory_proposal, request_memory_review,
     resolve_memory_proposal,

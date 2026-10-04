@@ -7,10 +7,9 @@ use uuid::Uuid;
 use den_core::DenError;
 
 use super::prompt_fragments::{
-    repository_prompt_bundle_registry, repository_prompt_fragment_registry,
-    repository_prompt_source_version,
+    repository_prompt_fragment_registry, repository_prompt_source_version,
 };
-use super::{context_composition, Bear, BearProfile};
+use super::{context_composition, Bear, RuntimeContextLabel};
 
 #[derive(Debug, Clone, FromRow)]
 struct ManagedBlockResolutionRow {
@@ -165,7 +164,7 @@ pub fn content_hash(content: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-pub fn managed_space_block_key(role: BearProfile) -> String {
+pub fn managed_space_block_key(role: RuntimeContextLabel) -> String {
     format!("space_instruction.{}", role.as_str())
 }
 
@@ -493,22 +492,9 @@ pub fn compile_managed_config_for_bear(
     resolved: ResolvedManagedBlockSet,
 ) -> Result<CompiledBearConfig, DenError> {
     let prompt_registry = repository_prompt_fragment_registry()?;
-    let bundle_registry = repository_prompt_bundle_registry(&prompt_registry)?;
-    bundle_registry.require("pair")?;
+
     let mut rendered_prompts = serde_json::Map::new();
     let mut rendered_prompt_hashes = serde_json::Map::new();
-
-    for role in BearProfile::ALL {
-        let role_prompt = context_composition::render_managed_role_prompt_with_registry(
-            bear,
-            role,
-            Some(&resolved),
-            Some(&prompt_registry),
-        )?;
-        let role_key = role.as_str().to_string();
-        rendered_prompt_hashes.insert(role_key.clone(), json!(content_hash(&role_prompt)));
-        rendered_prompts.insert(role_key, json!(role_prompt));
-    }
 
     let bound_base = context_composition::render_bound_base_prompt_with_registry(
         bear,
@@ -534,13 +520,11 @@ pub fn compile_managed_config_for_bear(
         rendered_prompts.insert(mode.into(), json!(rendered));
     }
 
-    let resolved_json = serde_json::to_value(&resolved)
-        .map_err(|e| DenError::Parsing(format!("serialize resolved managed blocks: {e}")))?;
     let rendered_prompts_value = serde_json::Value::Object(rendered_prompts);
     let rendered_prompt_hashes_value = serde_json::Value::Object(rendered_prompt_hashes);
     let tool_guidance_hashes_value = json!({});
     let config_payload = json!({
-        "resolved_blocks": resolved_json,
+
         "rendered_prompts": rendered_prompts_value,
         "rendered_prompt_hashes": rendered_prompt_hashes_value,
         "tool_guidance_hashes": tool_guidance_hashes_value,
@@ -550,7 +534,7 @@ pub fn compile_managed_config_for_bear(
 
     Ok(CompiledBearConfig {
         bear_id: bear.id,
-        compiled_version: 1,
+        compiled_version: 2,
         resolved_blocks: resolved,
         rendered_prompts: rendered_prompts_value,
         rendered_prompt_hashes: rendered_prompt_hashes_value,

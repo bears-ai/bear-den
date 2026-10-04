@@ -6,7 +6,7 @@
 //! `core::tools::session::DenToolInvocationContext` for existing call sites and
 //! is responsible for constructing it. See `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md`.
 
-use crate::BearProfile;
+use crate::RuntimeContextLabel;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -19,7 +19,8 @@ pub struct DenToolInvocationContext {
     pub bear_id: Uuid,
     pub bear_slug: String,
     pub binding_id: String,
-    pub profile: Option<BearProfile>,
+    /// Historical schema field holding a derived audit label, not a capability.
+    pub profile: Option<RuntimeContextLabel>,
     pub user_id: i32,
     pub username: Option<String>,
     pub membership_role: Option<String>,

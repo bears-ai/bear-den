@@ -1,7 +1,10 @@
 //! Prompt-memory tools (`upsert`, `list`, `patch`) — orchestration layer.
 //!
 //! Runtime-agnostic: depends only on the [`PromptMemoryStore`] capability seam,
-//! the shared validators, and `den-core::BearProfile`. The `den` crate provides
+//! the shared validators, and compatibility profile metadata. Dispatch authorizes
+//! descriptor audiences and canonical sources before calling these helpers;
+//! visibility and session checks constrain the resource, not the profile.
+//! The `den` crate provides
 //! the concrete store and thin `CustomError`-mapping wrappers.
 
 pub mod store;
@@ -13,7 +16,7 @@ pub use types::{
     PromptMemoryBlockType, PromptMemoryBlockWrite, PromptMemoryVisibility,
 };
 
-use crate::{BearProfile, DenError};
+use crate::{DenError, RuntimeContextLabel};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -102,14 +105,9 @@ fn empty_json_object() -> Value {
 pub async fn prompt_memory_upsert(
     store: &impl PromptMemoryStore,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     arguments: Value,
 ) -> Result<Value, DenError> {
-    if role != BearProfile::Pair {
-        return Err(DenError::Authorization(
-            "den.prompt_memory.upsert is currently available only to the pair role".to_string(),
-        ));
-    }
     let args: PromptMemoryUpsertArguments = serde_json::from_value(arguments)?;
     let visibility = store.visibility(context, role).await?;
     if visibility == PromptMemoryVisibility::SharedOnly {
@@ -201,14 +199,9 @@ pub async fn prompt_memory_upsert(
 pub async fn prompt_memory_list(
     store: &impl PromptMemoryStore,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     arguments: Value,
 ) -> Result<Value, DenError> {
-    if role != BearProfile::Pair {
-        return Err(DenError::Authorization(
-            "den.prompt_memory.list is currently available only to the pair role".to_string(),
-        ));
-    }
     let args: PromptMemoryListArguments = serde_json::from_value(arguments)?;
     let visibility = store.visibility(context, role).await?;
     let mut blocks = store.list_blocks(context.bear_id, role.as_str()).await?;
@@ -248,14 +241,9 @@ pub async fn prompt_memory_list(
 pub async fn prompt_memory_patch(
     store: &impl PromptMemoryStore,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
     arguments: Value,
 ) -> Result<Value, DenError> {
-    if role != BearProfile::Pair {
-        return Err(DenError::Authorization(
-            "den.prompt_memory.patch is currently available only to the pair role".to_string(),
-        ));
-    }
     let args: PromptMemoryPatchArguments = serde_json::from_value(arguments)?;
     let visibility = store.visibility(context, role).await?;
     if visibility != PromptMemoryVisibility::Legacy {

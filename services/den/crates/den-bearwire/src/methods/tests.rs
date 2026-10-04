@@ -15,7 +15,10 @@ use serde_json::{json, Value};
 use sqlx::Row;
 use uuid::Uuid;
 
-use den_core::{ids::BearId, BearProfile};
+use den_core::{
+    ids::{BearId, UserId},
+    RuntimeContextLabel,
+};
 use den_docket::{
     work_runs::{
         checkout_work_run_for_session, claim_next_work_run, enqueue_work_job,
@@ -875,7 +878,7 @@ async fn ide_default_and_first_interaction_hat_selection_bind_one_canonical_conv
     )
     .await;
     assert_eq!(new_open["result"]["ok"], true, "{new_open}");
-    let (other_bear, other_slug) = create_test_bear(&pool).await;
+    let (other_bear, other_slug) = create_test_bear_without_hats(&pool).await;
     let foreign = hats::create_hat(
         &pool,
         BearId::new(other_bear),
@@ -947,7 +950,7 @@ async fn configured_hats_reject_unbound_ide_turn_before_persisting_a_run_or_mess
     use den_core::ids::{BearId, UserId};
     use den_service::bears::hats::{self, memory_binding};
     let user_id = create_test_user(&pool).await;
-    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear_without_hats(&pool).await;
     let token = create_token_for_bear(&pool, user_id, bear_id).await;
     let owner = BearId::new(bear_id);
     let hat = hats::create_hat(&pool, owner, UserId::new(user_id), "IDE review", "Review")
@@ -1008,6 +1011,125 @@ async fn configured_hats_reject_unbound_ide_turn_before_persisting_a_run_or_mess
     )
     .await;
     assert_eq!(chosen["result"]["ok"], true, "{chosen}");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn ide_default_never_promotes_existing_unbound_history_at_run_start(pool: sqlx::PgPool) {
+    let user = create_test_user(&pool).await;
+    let (bear, slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user, bear).await;
+    let external = format!("den-conv-{}", Uuid::new_v4().simple());
+    let conversation =
+        ensure_conversation_for_external_id(&pool, bear, Some(user), &external, None, None)
+            .await
+            .unwrap();
+    let session_id = format!("legacy-{}", Uuid::new_v4());
+    let result = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "run.start",
+        json!({
+            "bear_slug": slug, "session_id": session_id, "conversation_id": external,
+            "client": "zed", "prompt": "must not promote",
+        }),
+    )
+    .await;
+    assert!(result.get("error").is_some(), "{result}");
+    assert_eq!(
+        den_service::bears::hats::bindings::conversation_hat(
+            &pool,
+            BearId::new(bear),
+            conversation.id,
+        )
+        .await
+        .unwrap(),
+        None
+    );
+    assert!(
+        client_sessions::find_for_user_bear_session_id(&pool, user, bear, &session_id,)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        sqlx::query_scalar!(
+            "SELECT count(*) AS \"count!\" FROM conversation_messages WHERE conversation_id = $1",
+            conversation.id,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn zero_hat_run_start_denies_before_creating_source_session_or_run(pool: sqlx::PgPool) {
+    let user = create_test_user(&pool).await;
+    let (bear, slug) = create_test_bear_without_hats(&pool).await;
+    let token = create_token_for_bear(&pool, user, bear).await;
+    let session_id = format!("zero-hat-{}", Uuid::new_v4());
+    let external = format!("den-conv-{}", Uuid::new_v4().simple());
+    let result = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "run.start",
+        json!({
+            "bear_slug": slug, "session_id": session_id, "conversation_id": external,
+            "client": "zed", "prompt": "must not persist",
+        }),
+    )
+    .await;
+    assert!(result.get("error").is_some(), "{result}");
+    assert!(result.to_string().contains("named hat"), "{result}");
+    let pending = format!("new-acp-zed-{}", Uuid::new_v4().simple());
+    let denied_pending = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "run.start",
+        json!({
+            "bear_slug": slug, "session_id": session_id, "conversation_id": pending,
+            "client": "zed", "prompt": "must not allocate a durable source",
+        }),
+    )
+    .await;
+    assert!(denied_pending.get("error").is_some(), "{denied_pending}");
+    assert!(
+        den_service::conversation::persistence::list_conversations_for_bear(&pool, bear, 100,)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        den_service::conversation::persistence::get_conversation_for_external_id(
+            &pool, bear, &external,
+        )
+        .await
+        .unwrap()
+        .is_none()
+    );
+    assert!(
+        client_sessions::find_for_user_bear_session_id(&pool, user, bear, &session_id,)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        sqlx::query_scalar!(
+            "SELECT count(*) AS \"count!\" FROM turn_runs WHERE session_id = $1",
+            session_id,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
+    assert!(
+        den_service::bears::hats::list_hats(&pool, BearId::new(bear))
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -1254,6 +1376,24 @@ async fn create_test_user(pool: &sqlx::PgPool) -> i32 {
 }
 
 async fn create_test_bear(pool: &sqlx::PgPool) -> (uuid::Uuid, String) {
+    let (bear_id, slug) = create_test_bear_without_hats(pool).await;
+    let user_id = create_test_user(pool).await;
+    let hat = den_service::bears::hats::create_hat(
+        pool,
+        BearId::new(bear_id),
+        UserId::new(user_id),
+        "Test collaboration",
+        "Collaborate in ordinary test conversations",
+    )
+    .await
+    .expect("create explicit fixture hat");
+    den_service::bears::hats::set_ide_default_hat(pool, BearId::new(bear_id), hat.id)
+        .await
+        .expect("set explicit fixture default hat");
+    (bear_id, slug)
+}
+
+async fn create_test_bear_without_hats(pool: &sqlx::PgPool) -> (uuid::Uuid, String) {
     let suffix = Uuid::new_v4().simple().to_string();
     let slug = format!("bearwire-test-{}", &suffix[..12]);
     let bear_id = bears_db::create_bear(
@@ -1270,9 +1410,7 @@ async fn create_test_bear(pool: &sqlx::PgPool) -> (uuid::Uuid, String) {
     )
     .await
     .expect("create Bear");
-    bears_db::ensure_bear_profile_binding_rows(pool, bear_id)
-        .await
-        .expect("ensure Bear profile bindings");
+
     (bear_id, slug)
 }
 
@@ -1329,6 +1467,24 @@ async fn upsert_test_session(
     bear_slug: &str,
     session_id: &str,
 ) {
+    let external = format!("den-conv-{}", Uuid::new_v4().simple());
+    let conversation =
+        ensure_conversation_for_external_id(pool, bear_id, Some(user_id), &external, None, None)
+            .await
+            .expect("create owned fixture source");
+    if let Some(hat) = den_service::bears::hats::ide_default_hat(pool, BearId::new(bear_id))
+        .await
+        .expect("load fixture hat")
+    {
+        den_service::bears::hats::bindings::bind_conversation_hat(
+            pool,
+            BearId::new(bear_id),
+            conversation.id,
+            hat,
+        )
+        .await
+        .expect("bind fixture source before opening its session");
+    }
     client_sessions::upsert_session(
         pool,
         client_sessions::UpsertClientSession {
@@ -1337,7 +1493,7 @@ async fn upsert_test_session(
             bear_slug: bear_slug.to_string(),
             client_session_id: session_id.to_string(),
             runtime_session_id: format!("bearwire-test:{bear_id}:{session_id}"),
-            conversation_id: format!("den-conv-{}", Uuid::new_v4().simple()),
+            conversation_id: external,
             resolved_conversation_id: None,
             client: "bearwire-test".to_string(),
             cwd: Some("/workspace".to_string()),
@@ -1464,6 +1620,16 @@ async fn create_checkoutable_work_run_for_target(
     bear_id: uuid::Uuid,
     execution_target: WorkExecutionTarget,
 ) -> uuid::Uuid {
+    create_checkoutable_work_run_fixture(pool, user_id, bear_id, execution_target, true).await
+}
+
+async fn create_checkoutable_work_run_fixture(
+    pool: &sqlx::PgPool,
+    user_id: i32,
+    bear_id: uuid::Uuid,
+    execution_target: WorkExecutionTarget,
+    bind_hat: bool,
+) -> uuid::Uuid {
     let surface_id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO work_surfaces (id, name, kind, created_by_user_id, created_at, updated_at)
@@ -1488,49 +1654,74 @@ async fn create_checkoutable_work_run_for_target(
         .await
         .expect("assign bear to work surface");
 
-    let job = PgDocketService::from_pool(pool)
-        .create_job(
-            DocketJobCreate {
-                bear_id,
-                created_by_user_id: user_id,
-                created_by_role: "pair".to_string(),
-                goal: "Checkout must not replace the Pair task".to_string(),
-                work_surface_id: Some(surface_id),
-                work_surface_assignments: vec![],
-                commit_policy: Some(DocketCommitPolicy::PerTask),
-                work_branch: None,
-                visibility: TaskListVisibility::SameUser,
-                source_conversation_id: None,
-                objective_kind: None,
-                supersedes_job_id: None,
-                overlap_resolution: DocketJobOverlapResolution::Reject,
-                criteria: vec![DocketJobCriterionInput {
-                    kind: DocketCriterionKind::Narrative,
-                    description: "Work checkout succeeds".to_string(),
-                    spec: None,
-                    sibling_order: 0,
-                }],
-                tasks: vec![DocketTaskInput {
-                    client_key: None,
-                    parent_client_key: None,
-                    parent_task_id: None,
-                    sibling_order: Some(0),
-                    kind: DocketTaskKind::Execution,
-                    scope: DocketTaskScope::Template,
-                    title: "Work task".to_string(),
-                    body: "Work task body".to_string(),
-                    completion_criteria: vec!["Work completes".to_string()],
-                    difficulty: Some(DocketTaskDifficulty::Trivial),
-                    effort_hint: Some(DocketEffortHint::Low),
-                    routing_strategy: RoutingStrategy::Auto,
-                    expected_context_size: None,
-                    result_rollup_policy: None,
-                }],
-            },
-            den_docket::DocketJobCreationAuthority::HumanRequest,
+    let hat_id = if bind_hat {
+        let hat = den_service::bears::hats::create_hat(
+            pool,
+            BearId::new(bear_id),
+            UserId::new(user_id),
+            &format!("Test Work {surface_id}"),
+            "Execute the assigned test surface",
         )
         .await
-        .expect("create work job");
+        .expect("create Work fixture hat");
+        den_service::bears::hats::allow_surface(pool, BearId::new(bear_id), hat.id, surface_id)
+            .await
+            .expect("grant assigned fixture surface");
+        sqlx::query!(
+            "UPDATE bear_hats SET work_enabled = true WHERE id = $1",
+            hat.id.as_uuid()
+        )
+        .execute(pool)
+        .await
+        .expect("enable fixture Work hat");
+        Some(hat.id)
+    } else {
+        None
+    };
+    let input = DocketJobCreate {
+        bear_id,
+        created_by_user_id: user_id,
+        created_by_role: "pair".to_string(),
+        goal: "Checkout must not replace the Pair task".to_string(),
+        work_surface_id: Some(surface_id),
+        work_surface_assignments: vec![],
+        commit_policy: Some(DocketCommitPolicy::PerTask),
+        work_branch: None,
+        visibility: TaskListVisibility::SameUser,
+        source_conversation_id: None,
+        objective_kind: None,
+        supersedes_job_id: None,
+        overlap_resolution: DocketJobOverlapResolution::Reject,
+        criteria: vec![DocketJobCriterionInput {
+            kind: DocketCriterionKind::Narrative,
+            description: "Work checkout succeeds".to_string(),
+            spec: None,
+            sibling_order: 0,
+        }],
+        tasks: vec![DocketTaskInput {
+            client_key: None,
+            parent_client_key: None,
+            parent_task_id: None,
+            sibling_order: Some(0),
+            kind: DocketTaskKind::Execution,
+            scope: DocketTaskScope::Template,
+            title: "Work task".to_string(),
+            body: "Work task body".to_string(),
+            completion_criteria: vec!["Work completes".to_string()],
+            difficulty: Some(DocketTaskDifficulty::Trivial),
+            effort_hint: Some(DocketEffortHint::Low),
+            routing_strategy: RoutingStrategy::Auto,
+            expected_context_size: None,
+            result_rollup_policy: None,
+        }],
+    };
+    let docket = PgDocketService::from_pool(pool);
+    let authority = den_docket::DocketJobCreationAuthority::HumanRequest;
+    let job = match hat_id {
+        Some(hat) => docket.create_job_with_hat(input, hat, authority).await,
+        None => docket.create_job(input, authority).await,
+    }
+    .expect("create Work fixture Job with its source binding");
     let attached_target = matches!(
         execution_target,
         WorkExecutionTarget::AttachedArmature { .. }
@@ -2833,7 +3024,7 @@ async fn session_open_preserves_sandbox_work_session_binding(pool: sqlx::PgPool)
             .await
             .unwrap()
             .owner_profile,
-        BearProfile::Work
+        RuntimeContextLabel::JobRun
     );
     let session = den_service::client_sessions::find_for_user_bear_session_id(
         &pool,
@@ -3161,17 +3352,34 @@ async fn ordinary_native_run_starts_without_a_registered_pair_profile(pool: sqlx
     )
     .await
     .unwrap();
-    assert!(bears_db::profile_binding_id(&pool, bear, BearProfile::Pair)
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        bears_db::profile_binding_id(&pool, bear, RuntimeContextLabel::ArmatureConversation)
+            .await
+            .unwrap()
+            .is_none()
+    );
     let token = create_token_for_bear(&pool, user, bear).await;
+    let hat = den_service::bears::hats::create_hat(
+        &pool,
+        BearId::new(bear),
+        UserId::new(user),
+        "Ordinary",
+        "Source-bound collaboration",
+    )
+    .await
+    .unwrap();
+    den_service::bears::hats::set_ide_default_hat(&pool, BearId::new(bear), hat.id)
+        .await
+        .unwrap();
     let mut config = den_core::config::Config::test_stub();
     config.den_secret_encryption_key = "bearwire-test-secret-key".to_string();
     config.llm_api_url = start_mock_openai_sse_server();
     config.default_llm_model = "openai/bearwire-test-model".to_string();
     seed_test_bifrost_virtual_key(&pool, bear, &config).await;
     let session_id = format!("session-{}", Uuid::new_v4().simple());
+    use den_service::conversation::persistence as conversation_persistence;
+
+    let selection = format!("new-acp-zed-{}", Uuid::new_v4().simple());
     let result = rpc_value(
         test_state_with_config(pool.clone(), config),
         &token,
@@ -3179,15 +3387,91 @@ async fn ordinary_native_run_starts_without_a_registered_pair_profile(pool: sqlx
         json!({
             "bear_slug": slug,
             "session_id": session_id,
-            "conversation_id": format!("new-acp-zed-{}", Uuid::new_v4().simple()),
+            "conversation_id": selection,
             "client": "zed",
             "prompt": "Check this Bear's identity",
         }),
     )
     .await;
     assert_eq!(result["result"]["ok"], true, "{result}");
-    let resolved = wait_for_resolved_conversation_id(&pool, user, &slug, &session_id).await;
-    wait_for_user_message(&pool, bear, &resolved, "Check this Bear's identity").await;
+    let run_id = result["result"]["run_id"].as_str().unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let events = bearwire_events::list_bearwire_events_after(&pool, &session_id, None, 100)
+            .await
+            .unwrap();
+        let conversations = conversation_persistence::list_conversations_for_bear(&pool, bear, 100)
+            .await
+            .unwrap();
+        let session = client_sessions::find_for_user_bear_session(&pool, user, &slug, &session_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let resolved = session
+            .resolved_conversation_id
+            .as_deref()
+            .unwrap_or(&session.conversation_id);
+        let diagnostics = format!(
+            "callback={result}; run={:?}; selection={selection}; resolved={resolved}; conversations={conversations:?}; events={events:?}",
+            turn_runs::get_run(&pool, run_id).await.unwrap(),
+        );
+        assert!(
+            !events.iter().any(|row| row.event_type == "run.failed"),
+            "{diagnostics}"
+        );
+        if events.iter().any(|row| row.event_type == "run.completed") {
+            assert_eq!(conversations.len(), 1, "{diagnostics}");
+            let source = &conversations[0];
+            assert_eq!(
+                source.external_conversation_id.as_deref(),
+                Some(resolved),
+                "{diagnostics}"
+            );
+            assert!(matches!(
+                den_service::bears::hats::memory_binding::for_conversation(
+                    &pool, BearId::new(bear), source.id,
+                ).await.unwrap(),
+                den_service::bears::hats::memory_binding::ResolvedMemoryBinding::Bound(grant)
+                    if grant.hat_id() == Some(hat.id)
+            ));
+            assert_ne!(resolved, selection, "{diagnostics}");
+            assert!(resolved.starts_with("den-conv-"), "{diagnostics}");
+            assert!(conversation_persistence::get_conversation_for_external_id(
+                &pool, bear, &selection,
+            ).await.unwrap().is_none(), "{diagnostics}");
+            let messages =
+                conversation_persistence::list_messages_page(&pool, source.id, None, 100)
+                    .await
+                    .unwrap();
+            assert_eq!(
+                messages
+                    .iter()
+                    .filter(|message| message.content_text == "Check this Bear's identity")
+                    .count(),
+                1,
+                "{diagnostics}; messages={messages:?}"
+            );
+            assert_eq!(
+                messages
+                    .iter()
+                    .filter(|message| message.content_text == "hello from bearwire")
+                    .count(),
+                1,
+                "{diagnostics}; messages={messages:?}"
+            );
+            assert!(bears_db::profile_binding_id(
+                &pool,
+                bear,
+                RuntimeContextLabel::ArmatureConversation
+            )
+            .await
+            .unwrap()
+            .is_none());
+            break;
+        }
+        assert!(tokio::time::Instant::now() < deadline, "{diagnostics}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -5843,7 +6127,7 @@ async fn focused_pair_git_commit_creates_candidate_task_artifact(pool: sqlx::PgP
             .await
             .unwrap()
             .owner_profile,
-        BearProfile::Pair
+        RuntimeContextLabel::ArmatureConversation
     );
     assert_eq!(citations[0].kind, "git_commit");
     assert_eq!(
@@ -6692,9 +6976,29 @@ async fn configured_hats_reject_legacy_work_checkout_before_session_or_attempt_b
     use den_core::ids::{BearId, UserId};
     use den_service::bears::hats;
     let user_id = create_test_user(&pool).await;
-    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear_without_hats(&pool).await;
     let token = create_token_for_bear(&pool, user_id, bear_id).await;
-    let work_run_id = create_checkoutable_work_run(&pool, user_id, bear_id).await;
+    let work_run_id = create_checkoutable_work_run_fixture(
+        &pool,
+        user_id,
+        bear_id,
+        WorkExecutionTarget::Sandbox,
+        false,
+    )
+    .await;
+    let state = test_state(pool.clone());
+    let no_hat_denied = rpc_value(
+        state.clone(),
+        &token,
+        "work.checkout",
+        json!({
+            "bear_slug": bear_slug, "session_id": format!("work-{}", Uuid::new_v4().simple()),
+            "work_order_id": work_run_id,
+            "compatibility": { "protocol": 1, "capabilities": ["tool_attempt_token"] },
+        }),
+    )
+    .await;
+    assert!(no_hat_denied.get("error").is_some(), "{no_hat_denied}");
     hats::create_hat(
         &pool,
         BearId::new(bear_id),
@@ -8291,7 +8595,7 @@ async fn conversation_diagnostics_includes_bounded_owned_checkpoint_artifacts(po
         den_runtime::agent_loop::CheckpointArtifactInput {
             bear_id,
             created_by_user_id: Some(user_id),
-            owner_profile: BearProfile::Pair,
+            owner_profile: RuntimeContextLabel::ArmatureConversation,
             run_id: run_id.clone(),
             turn_step_id: None,
             orientation_kind: None,

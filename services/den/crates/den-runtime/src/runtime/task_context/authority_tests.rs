@@ -1,6 +1,6 @@
 use super::*;
 use den_core::{
-    ArmatureAvailability, EffectivePolicy, Governance, TrustProfile, TurnExecutionOrigin,
+    ArmatureAvailability, EffectivePolicy, Governance, RuntimeContextLabel, TurnExecutionOrigin,
 };
 use den_docket::{TaskListItem, TaskListItemStatus, TaskListSourceRef, TaskListSyncState};
 use sqlx::{postgres::PgPoolOptions, types::time::OffsetDateTime};
@@ -94,10 +94,14 @@ async fn absent_session_task_capability_never_queries_or_borrows_cached_focus() 
             assert!(!policy
                 .capabilities
                 .contains(BearCapability::OwnSessionTasks));
-            for annotation in [policy.trust_profile, TrustProfile::Pair, TrustProfile::Work] {
+            for annotation in [
+                policy.context_label,
+                RuntimeContextLabel::ArmatureConversation,
+                RuntimeContextLabel::JobRun,
+            ] {
                 for cached in [false, true] {
                     let mut request = request(policy.clone());
-                    request.policy.trust_profile = annotation;
+                    request.policy.context_label = annotation;
                     if !cached {
                         request.cached_activity_plan_projection = None;
                     }
@@ -128,7 +132,7 @@ async fn editor_and_browser_session_authority_requires_durable_owner_session_loo
                 .contains(BearCapability::OwnSessionTasks));
             let mut request = request(policy);
             // Annotation cannot revoke authority, nor can a cache mask DB failure.
-            request.policy.trust_profile = TrustProfile::Watch;
+            request.policy.context_label = RuntimeContextLabel::Observation;
             let result = resolve_runtime_task_context(&pool, request).await;
             assert!(
                 matches!(result, Err(DenError::DatabaseUnavailable(_))),

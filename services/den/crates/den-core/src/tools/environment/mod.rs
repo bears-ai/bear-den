@@ -16,7 +16,7 @@ pub use store::EnvironmentOps;
 
 use serde_json::{json, Value};
 
-use crate::{tools::prompt_memory::PromptMemoryVisibility, BearProfile};
+use crate::{tools::prompt_memory::PromptMemoryVisibility, RuntimeContextLabel};
 
 use crate::tools::{
     context::DenToolInvocationContext, identity::BearDirectory, memory::source_client_session_id,
@@ -25,7 +25,7 @@ use crate::tools::{
 async fn memory_status_for_environment(
     env: &impl EnvironmentOps,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
 ) -> Value {
     if env.uses_native_runtime() {
         return env
@@ -54,7 +54,7 @@ pub async fn session_info(
     dir: &impl BearDirectory,
     env: &impl EnvironmentOps,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
 ) -> Result<Value, crate::DenError> {
     let mut context = context.clone();
     if context.workspace_roots.is_empty() {
@@ -89,7 +89,7 @@ pub async fn bear_environment(
     dir: &impl BearDirectory,
     env: &impl EnvironmentOps,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    role: RuntimeContextLabel,
 ) -> Result<Value, crate::DenError> {
     let member_count = dir.member_count(context.bear_id).await.unwrap_or(0);
     let current_user = dir.current_user(context.user_id).await.ok();

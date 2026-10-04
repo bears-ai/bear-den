@@ -47,6 +47,23 @@ async fn approved_tool_continuation_requires_the_same_owned_live_conversation(po
     ensure_conversation_for_external_id(&pool, bear, Some(user), &other_external, None, None)
         .await
         .unwrap();
+    let hat = den_service::bears::hats::create_hat(
+        &pool,
+        BearId::new(bear),
+        UserId::new(user),
+        "Continuation",
+        "Continue the owned test source",
+    )
+    .await
+    .unwrap();
+    den_service::bears::hats::bindings::bind_conversation_hat(
+        &pool,
+        BearId::new(bear),
+        conversation.id,
+        hat.id,
+    )
+    .await
+    .unwrap();
     let client_id = format!("client-{}", Uuid::new_v4().simple());
     let upsert = |target: &str| UpsertClientSession {
         user_id: user,
@@ -63,17 +80,19 @@ async fn approved_tool_continuation_requires_the_same_owned_live_conversation(po
     client_sessions::upsert_session(&pool, upsert(&external))
         .await
         .unwrap();
-    assert!(db::profile_binding_id(&pool, bear, BearProfile::Pair)
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        db::profile_binding_id(&pool, bear, RuntimeContextLabel::ArmatureConversation)
+            .await
+            .unwrap()
+            .is_none()
+    );
     let origin =
         den_core::TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected);
     let source = || ContinuationSource {
         bear_id: bear,
         user_id: Some(user),
         origin,
-        profile: BearProfile::Pair,
+        profile: RuntimeContextLabel::ArmatureConversation,
         conversation_id: &external,
         client_session_id: &client_id,
         work_run_id: None,
@@ -116,7 +135,7 @@ async fn approved_tool_continuation_requires_the_same_owned_live_conversation(po
     assert!(require_continuation_binding(
         &pool,
         ContinuationSource {
-            profile: BearProfile::Work,
+            profile: RuntimeContextLabel::JobRun,
             ..source()
         },
         &expected,
@@ -169,7 +188,7 @@ async fn work_continuation_needs_exact_live_run_and_internal_continuations_are_d
         bear_id: bear,
         user_id: None,
         origin: den_core::TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Absent),
-        profile: BearProfile::Work,
+        profile: RuntimeContextLabel::JobRun,
         conversation_id: "unused",
         client_session_id: "unbound-work-session",
         work_run_id: Some(work_id),
@@ -195,7 +214,7 @@ async fn work_continuation_needs_exact_live_run_and_internal_continuations_are_d
         bear_id: bear,
         user_id: None,
         origin: den_core::TurnExecutionOrigin::InternalCuration,
-        profile: BearProfile::Curate,
+        profile: RuntimeContextLabel::Curation,
         conversation_id: "unused",
         client_session_id: "unused",
         work_run_id: None,
@@ -207,7 +226,7 @@ async fn work_continuation_needs_exact_live_run_and_internal_continuations_are_d
     db::ensure_bear_profile_binding_rows(&pool, bear)
         .await
         .unwrap();
-    let registered = db::profile_binding_id(&pool, bear, BearProfile::Curate)
+    let registered = db::profile_binding_id(&pool, bear, RuntimeContextLabel::Curation)
         .await
         .unwrap()
         .unwrap();
@@ -217,10 +236,10 @@ async fn work_continuation_needs_exact_live_run_and_internal_continuations_are_d
     ));
     let watch = ContinuationSource {
         origin: den_core::TurnExecutionOrigin::InboundObservation,
-        profile: BearProfile::Watch,
+        profile: RuntimeContextLabel::Observation,
         ..internal
     };
-    let registered = db::profile_binding_id(&pool, bear, BearProfile::Watch)
+    let registered = db::profile_binding_id(&pool, bear, RuntimeContextLabel::Observation)
         .await
         .unwrap()
         .unwrap();

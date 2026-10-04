@@ -187,14 +187,12 @@ pub async fn load_conversation_model_selection_view(
     pool: &PgPool,
     bear: &bears::Bear,
     user_id: i32,
-    profile: bears::BearProfile,
     default_model: &str,
     conversation_external_id: &str,
     source_client_session_id: Option<&str>,
     acp_friendly_options: bool,
 ) -> Result<ConversationModelSelectionView, DenError> {
-    let base_model =
-        bears::db::resolve_model_for_profile(pool, bear, profile, default_model).await?;
+    let base_model = bears::db::resolve_model_for_bear(bear, default_model);
     let model_options = if acp_friendly_options {
         list_selectable_model_options_for_acp(pool).await?
     } else {

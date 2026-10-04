@@ -6,7 +6,7 @@
 //! groups migrate (read surface first; write surface follows).
 //! See `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md`.
 
-use crate::{BearProfile, DenError};
+use crate::{DenError, RuntimeContextLabel};
 use serde_json::Value;
 
 use super::RoleMemoryEntryWrite;
@@ -20,7 +20,7 @@ pub trait RoleMemoryStore: Send + Sync {
     async fn read(
         &self,
         context: &DenToolInvocationContext,
-        role: BearProfile,
+        role: RuntimeContextLabel,
         path: &str,
     ) -> Result<Value, DenError>;
 
@@ -28,14 +28,14 @@ pub trait RoleMemoryStore: Send + Sync {
     async fn browse(
         &self,
         context: &DenToolInvocationContext,
-        role: BearProfile,
+        role: RuntimeContextLabel,
     ) -> Result<Value, DenError>;
 
     /// Search role memory (tool-shaped JSON). `limit` is already clamped.
     async fn search(
         &self,
         context: &DenToolInvocationContext,
-        role: BearProfile,
+        role: RuntimeContextLabel,
         query: &str,
         limit: i64,
     ) -> Result<Value, DenError>;
@@ -45,14 +45,14 @@ pub trait RoleMemoryStore: Send + Sync {
     async fn status_base(
         &self,
         context: &DenToolInvocationContext,
-        role: BearProfile,
+        role: RuntimeContextLabel,
     ) -> Result<(Value, PromptMemoryVisibility), DenError>;
 
     /// Persist a role-memory entry; returns tool-shaped JSON.
     async fn write_entry(
         &self,
         context: &DenToolInvocationContext,
-        role: BearProfile,
+        role: RuntimeContextLabel,
         entry: RoleMemoryEntryWrite,
     ) -> Result<Value, DenError>;
 }

@@ -186,12 +186,11 @@ async fn hats_only_attenuate_bear_surface_grants() {
         memory_binding::for_conversation(&pool, BearId::new(bear), conversation_id).await,
         Err(DenError::Authorization(_))
     ));
-    assert_eq!(
+    assert!(matches!(
         memory_binding::for_conversation(&pool, BearId::new(other_bear), other_conversation_id)
-            .await
-            .unwrap(),
-        memory_binding::ResolvedMemoryBinding::Legacy
-    );
+            .await,
+        Err(DenError::Authorization(_))
+    ));
     assert_eq!(
         conversation_hat(&pool, BearId::new(bear), conversation_id)
             .await
@@ -414,9 +413,30 @@ async fn hats_only_attenuate_bear_surface_grants() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    memory_binding::require_eligible_job(&pool, BearId::new(other_bear), no_hat_job)
-        .await
-        .expect("a Bear without hats retains legacy Jobs");
+    assert!(matches!(
+        memory_binding::require_eligible_job(&pool, BearId::new(other_bear), no_hat_job).await,
+        Err(DenError::Authorization(_))
+    ));
+    let no_hat_job_run = sqlx::query_scalar!(
+        "INSERT INTO bear_job_runs (job_id) VALUES ($1) RETURNING id",
+        no_hat_job,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let no_hat_work_run = sqlx::query_scalar!(
+        "INSERT INTO bear_work_runs (bear_id, job_id, job_run_id) VALUES ($1, $2, $3) RETURNING id",
+        other_bear,
+        no_hat_job,
+        no_hat_job_run,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(matches!(
+        memory_binding::for_work_run(&pool, BearId::new(other_bear), no_hat_work_run).await,
+        Err(DenError::Authorization(_))
+    ));
     bind_job_hat(&pool, BearId::new(bear), job_id, hat.id)
         .await
         .expect("bind eligible draft Job");

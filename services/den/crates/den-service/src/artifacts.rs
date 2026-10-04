@@ -13,7 +13,7 @@
 
 use std::{fmt, str::FromStr};
 
-use den_core::{BearProfile, DenError};
+use den_core::{DenError, RuntimeContextLabel};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::PgPool;
@@ -149,7 +149,7 @@ impl FromStr for ArtifactVisibility {
 pub struct ReserveArtifactInput {
     pub bear_id: Uuid,
     pub created_by_user_id: Option<i32>,
-    pub owner_profile: BearProfile,
+    pub owner_profile: RuntimeContextLabel,
     pub kind: String,
     pub title: Option<String>,
     pub summary: Option<String>,
@@ -342,7 +342,7 @@ pub struct ArtifactMetadata {
     pub artifact_ref: String,
     pub bear_id: Uuid,
     pub created_by_user_id: Option<i32>,
-    pub owner_profile: BearProfile,
+    pub owner_profile: RuntimeContextLabel,
     pub kind: String,
     pub title: Option<String>,
     pub summary: Option<String>,
@@ -1298,7 +1298,7 @@ mod tests {
         ReserveArtifactInput {
             bear_id,
             created_by_user_id: Some(user_id),
-            owner_profile: BearProfile::Pair,
+            owner_profile: RuntimeContextLabel::ArmatureConversation,
             kind: "tool_output".to_string(),
             title: Some("sample".to_string()),
             summary: None,
@@ -1319,7 +1319,7 @@ mod tests {
         ReserveArtifactInput {
             bear_id,
             created_by_user_id: Some(user_id),
-            owner_profile: BearProfile::Pair,
+            owner_profile: RuntimeContextLabel::ArmatureConversation,
             kind: "report".to_string(),
             title: Some("garage sample".to_string()),
             summary: None,

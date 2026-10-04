@@ -15,7 +15,7 @@ use den_service::bears::{
     context_profile_from_json, context_profile_to_json, db as bears_db,
     db::BearParams,
     templates::first_bear_template,
-    Bear, BearProfile,
+    Bear,
 };
 
 pub const BEAR_SLUG_VALIDATION_MESSAGE: &str =
@@ -602,9 +602,12 @@ pub fn composed_system_prompt_for_profile_json(
         live_reflection_activity_threshold: 20,
         live_reflection_sweep_limit: 25,
     };
-    den_service::bears::compose_role_context(&bear, BearProfile::Chat, None)
-        .map(|context| context.composed_prompt)
-        .map_err(CustomError::from)
+    let registry =
+        den_service::bears::repository_prompt_fragment_registry().map_err(CustomError::from)?;
+    den_service::bears::context_composition::render_bound_base_prompt_with_registry(
+        &bear, None, &registry,
+    )
+    .map_err(CustomError::from)
 }
 
 pub fn build_context_profile_json_for_template(

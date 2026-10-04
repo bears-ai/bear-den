@@ -40,17 +40,6 @@ pub(crate) struct DenWebFetcher<'a> {
     pub(crate) config: &'a Config,
 }
 
-const fn map_decision(decision: web_policy::WebApprovalDecision) -> WebApproval {
-    match decision {
-        web_policy::WebApprovalDecision::Preferred => WebApproval::Preferred,
-        web_policy::WebApprovalDecision::Allowed => WebApproval::Allowed,
-        web_policy::WebApprovalDecision::ApprovedUrl => WebApproval::ApprovedUrl,
-        web_policy::WebApprovalDecision::ApprovedHost => WebApproval::ApprovedHost,
-        web_policy::WebApprovalDecision::Blocked => WebApproval::Blocked,
-        web_policy::WebApprovalDecision::RequiresApproval => WebApproval::RequiresApproval,
-    }
-}
-
 /// Atomically consume a Den-bound approval. A supplied request ID has no
 /// authority without the matching approved row and exact original URL.
 async fn consume_web_fetch_once(
@@ -107,85 +96,56 @@ impl WebFetcher for DenWebFetcher<'_> {
                 .await
                 .map_err(CustomError::into_den)?;
         let bear_id = BearId::new(context.bear_id);
-        // A configured Bear never inherits a legacy Bear-wide allow or URL
-        // approval. An unknown conversation can use the legacy path only when
-        // this Bear has no hats at all.
-        let binding = match memory_binding::for_external_conversation(
-            self.pool,
-            bear_id,
-            &context.conversation_id,
-        )
-        .await
-        {
-            Ok(binding) => binding,
-            Err(DenError::NotFound(_)) => {
-                memory_binding::legacy_only_without_hats(self.pool, bear_id).await?
+        // Bear-wide allows never authorize ordinary model egress.
+        memory_binding::for_external_conversation(self.pool, bear_id, &context.conversation_id)
+            .await?;
+        let decision = {
+            if context.work_run_id.is_some() {
+                return Err(DenError::Authorization(
+                    "Job web fetch requires a verified Job/surface network policy".into(),
+                ));
             }
-            Err(err) => return Err(err),
-        };
-        let decision = match binding {
-            memory_binding::ResolvedMemoryBinding::Legacy => {
-                // A native approval bound to this exact request is consumed
-                // even when a separate standing policy already permits it.
-                // Otherwise revoking that policy could resurrect the old
-                // approved continuation as a later one-time fetch.
-                let approved_once = consume_web_fetch_once(self.pool, context, raw_url).await?;
-                if decision == web_policy::WebApprovalDecision::RequiresApproval && approved_once {
-                    WebApproval::ApprovedOnce
-                } else {
-                    map_decision(decision)
-                }
-            }
-            memory_binding::ResolvedMemoryBinding::Bound(_) => {
-                if context.work_run_id.is_some() {
-                    return Err(DenError::Authorization(
-                        "Job web fetch requires a verified Job/surface network policy".into(),
-                    ));
-                }
-                let conversation = persistence::get_conversation_for_external_id(
-                    self.pool,
-                    context.bear_id,
-                    &context.conversation_id,
-                )
+            let conversation = persistence::get_conversation_for_external_id(
+                self.pool,
+                context.bear_id,
+                &context.conversation_id,
+            )
+            .await?
+            .ok_or_else(|| {
+                DenError::Authorization("canonical conversation required for web fetch".into())
+            })?;
+            let human = UserId::new(context.user_id);
+            let viewer = ConversationViewer::resolve(self.pool, bear_id, human)
                 .await?
                 .ok_or_else(|| {
-                    DenError::Authorization("canonical conversation required for web fetch".into())
+                    DenError::Authorization("current Bear membership required for web fetch".into())
                 })?;
-                let human = UserId::new(context.user_id);
-                let viewer = ConversationViewer::resolve(self.pool, bear_id, human)
-                    .await?
-                    .ok_or_else(|| {
-                        DenError::Authorization(
-                            "current Bear membership required for web fetch".into(),
-                        )
-                    })?;
-                if !viewer
-                    .may_read_own_source(self.pool, conversation.id)
-                    .await?
-                {
-                    return Err(DenError::Authorization(
-                        "web fetch requires the current conversation owner".into(),
-                    ));
-                }
-                let approved_once = is_hat_one_shot_destination(&normalized.url)
-                    && consume_web_fetch_once(self.pool, context, raw_url).await?;
-                if decision == web_policy::WebApprovalDecision::Blocked {
-                    WebApproval::Blocked
-                } else if access::has_web_fetch_grants_for_own_conversation(
-                    self.pool,
-                    bear_id,
-                    conversation.id,
-                    human,
-                    &normalized.url,
-                )
+            if !viewer
+                .may_read_own_source(self.pool, conversation.id)
                 .await?
-                {
-                    WebApproval::HatGranted
-                } else if approved_once {
-                    WebApproval::ApprovedOnce
-                } else {
-                    WebApproval::RequiresApproval
-                }
+            {
+                return Err(DenError::Authorization(
+                    "web fetch requires the current conversation owner".into(),
+                ));
+            }
+            let approved_once = is_hat_one_shot_destination(&normalized.url)
+                && consume_web_fetch_once(self.pool, context, raw_url).await?;
+            if decision == web_policy::WebApprovalDecision::Blocked {
+                WebApproval::Blocked
+            } else if access::has_web_fetch_grants_for_own_conversation(
+                self.pool,
+                bear_id,
+                conversation.id,
+                human,
+                &normalized.url,
+            )
+            .await?
+            {
+                WebApproval::HatGranted
+            } else if approved_once {
+                WebApproval::ApprovedOnce
+            } else {
+                WebApproval::RequiresApproval
             }
         };
         Ok((
@@ -279,70 +239,57 @@ impl WebFetcher for DenWebFetcher<'_> {
 
     async fn authorize_search(&self, context: &DenToolInvocationContext) -> Result<(), DenError> {
         let bear_id = BearId::new(context.bear_id);
-        let binding = match memory_binding::for_external_conversation(
+        memory_binding::for_external_conversation(self.pool, bear_id, &context.conversation_id)
+            .await?;
+        if context.work_run_id.is_some() {
+            return Err(DenError::Authorization(
+                "Job search requires verified Job and provider egress policy".into(),
+            ));
+        }
+        let provider_url = match self.config.den_search_provider.as_str() {
+            "brave" => BRAVE_SEARCH_URL,
+            _ => return Err(DenError::Authorization(
+                "a supported search provider must be configured before granting search to a hat"
+                    .into(),
+            )),
+        };
+        if web_policy::decide_web_fetch_approval(self.pool, context.bear_id, provider_url)
+            .await
+            .map_err(CustomError::into_den)?
+            .1
+            == web_policy::WebApprovalDecision::Blocked
+        {
+            return Err(DenError::Authorization(
+                "search provider is blocked by Bear web policy".into(),
+            ));
+        }
+        let conversation = persistence::get_conversation_for_external_id(
             self.pool,
-            bear_id,
+            context.bear_id,
             &context.conversation_id,
         )
-        .await
+        .await?
+        .ok_or_else(|| {
+            DenError::Authorization("canonical conversation required for search".into())
+        })?;
+        let human = UserId::new(context.user_id);
+        let provider_host = url::Url::parse(provider_url)
+            .map_err(|err| DenError::System(format!("invalid search provider URL: {err}")))?
+            .host_str()
+            .ok_or_else(|| DenError::System("search provider URL is missing a host".into()))?
+            .to_string();
+        if !access::has_web_search_grants_for_own_conversation(
+            self.pool,
+            bear_id,
+            conversation.id,
+            human,
+            &provider_host,
+        )
+        .await?
         {
-            Ok(binding) => binding,
-            Err(DenError::NotFound(_)) => {
-                memory_binding::legacy_only_without_hats(self.pool, bear_id).await?
-            }
-            Err(err) => return Err(err),
-        };
-        if let memory_binding::ResolvedMemoryBinding::Bound(_) = binding {
-            if context.work_run_id.is_some() {
-                return Err(DenError::Authorization(
-                    "Job search requires verified Job and provider egress policy".into(),
-                ));
-            }
-            let provider_url = match self.config.den_search_provider.as_str() {
-                "brave" => BRAVE_SEARCH_URL,
-                _ => return Err(DenError::Authorization(
-                    "a supported search provider must be configured before granting search to a hat".into(),
-                )),
-            };
-            if web_policy::decide_web_fetch_approval(self.pool, context.bear_id, provider_url)
-                .await
-                .map_err(CustomError::into_den)?
-                .1
-                == web_policy::WebApprovalDecision::Blocked
-            {
-                return Err(DenError::Authorization(
-                    "search provider is blocked by Bear web policy".into(),
-                ));
-            }
-            let conversation = persistence::get_conversation_for_external_id(
-                self.pool,
-                context.bear_id,
-                &context.conversation_id,
-            )
-            .await?
-            .ok_or_else(|| {
-                DenError::Authorization("canonical conversation required for search".into())
-            })?;
-            let human = UserId::new(context.user_id);
-            let provider_host = url::Url::parse(provider_url)
-                .map_err(|err| DenError::System(format!("invalid search provider URL: {err}")))?
-                .host_str()
-                .ok_or_else(|| DenError::System("search provider URL is missing a host".into()))?
-                .to_string();
-            if !access::has_web_search_grants_for_own_conversation(
-                self.pool,
-                bear_id,
-                conversation.id,
-                human,
-                &provider_host,
-            )
-            .await?
-            {
-                return Err(DenError::Authorization(
-                    "web search requires this hat's search-tool and exact provider-host grants"
-                        .into(),
-                ));
-            }
+            return Err(DenError::Authorization(
+                "web search requires this hat's search-tool and exact provider-host grants".into(),
+            ));
         }
         Ok(())
     }

@@ -1,7 +1,4 @@
-use super::context_composition::{
-    default_role_contracts_for_bear, BearContextProfile, RoleContracts, CONTEXT_PROFILE_VERSION,
-    DEFAULT_ROLE_CONTRACT_VERSION,
-};
+use super::context_composition::{BearContextProfile, RoleContracts, CONTEXT_PROFILE_VERSION};
 
 pub const TEMPLATE_VERSION: &str = "1";
 
@@ -14,16 +11,6 @@ pub struct BearTemplate {
     pub default_user_steering: &'static str,
     pub context_placeholder: &'static str,
     pub starter_prompts: &'static [&'static str],
-    pub role_emphasis: RoleEmphasis,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct RoleEmphasis {
-    pub chat: &'static str,
-    pub pair: &'static str,
-    pub curate: &'static str,
-    pub work: &'static str,
-    pub watch: &'static str,
 }
 
 pub const SOFTWARE_PRODUCT_BUILDER: BearTemplate = BearTemplate {
@@ -39,13 +26,6 @@ pub const SOFTWARE_PRODUCT_BUILDER: BearTemplate = BearTemplate {
         "Pair with me on debugging this issue.",
         "Help me prioritize what to build next.",
     ],
-    role_emphasis: RoleEmphasis {
-        chat: "Clarify product goals, explain technical tradeoffs, and help reason through architecture, scope, and priorities.",
-        pair: "In Collaboration Space, work hands-on through the user's active artifacts: inspect code before diagnosing it, make progress through direct edits and reviewable changes, and keep implementation grounded in the current workspace.",
-        curate: "Organize product decisions, technical notes, backlog items, bugs, and reusable implementation context.",
-        work: "Draft specs, tickets, test plans, code changes, migration plans, release notes, and debugging checklists.",
-        watch: "Track recurring issues, open risks, dependency changes, regressions, TODOs, and launch-readiness signals.",
-    },
 };
 
 pub const PERSONAL_ASSISTANT: BearTemplate = BearTemplate {
@@ -61,13 +41,6 @@ pub const PERSONAL_ASSISTANT: BearTemplate = BearTemplate {
         "Break this goal into manageable next steps.",
         "Help me make a decision between these options.",
     ],
-    role_emphasis: RoleEmphasis {
-        chat: "Think through plans, decisions, messages, schedules, priorities, and everyday tradeoffs.",
-        pair: "In Collaboration Space, work directly inside the user's current materials: create the first useful structure when starting from scratch, inspect drafts and notes before reorganizing them, and help complete concrete personal work with minimal delay.",
-        curate: "Keep useful summaries of preferences, routines, recurring tasks, important contacts, and ongoing commitments.",
-        work: "Draft emails, checklists, plans, agendas, reminders, summaries, and decision notes.",
-        watch: "Monitor upcoming deadlines, unresolved tasks, repeated blockers, schedule conflicts, and follow-up needs.",
-    },
 };
 
 pub const RESEARCH_WRITING_PARTNER: BearTemplate = BearTemplate {
@@ -83,13 +56,6 @@ pub const RESEARCH_WRITING_PARTNER: BearTemplate = BearTemplate {
         "Review this draft for clarity and structure.",
         "Help me compare these sources or arguments.",
     ],
-    role_emphasis: RoleEmphasis {
-        chat: "Discuss ideas, arguments, evidence, structure, counterpoints, and interpretation with careful reasoning.",
-        pair: "In Collaboration Space, work through the actual draft, notes, and sources: sample materials before imposing structure, inspect existing publishing or document conventions, and help turn research artifacts into concrete writing progress.",
-        curate: "Organize sources, excerpts, claims, citations, outlines, open questions, and reusable research context.",
-        work: "Draft outlines, summaries, literature notes, argument maps, revision plans, abstracts, and polished prose.",
-        watch: "Track unsupported claims, citation gaps, unresolved questions, deadline risks, source conflicts, and revision needs.",
-    },
 };
 
 pub const FIRST_BEAR_TEMPLATES: &[BearTemplate] = &[
@@ -104,25 +70,10 @@ pub fn first_bear_template(id: &str) -> Option<&'static BearTemplate> {
         .find(|template| template.id == id)
 }
 
-fn append_emphasis(base: String, emphasis: &str) -> String {
-    format!("{base}\n\nTemplate emphasis: {emphasis}")
-}
-
 impl BearTemplate {
-    pub fn role_contracts_for_bear(&self, bear_name: &str) -> RoleContracts {
-        let base = default_role_contracts_for_bear(bear_name);
-        RoleContracts {
-            chat: append_emphasis(base.chat, self.role_emphasis.chat),
-            pair: append_emphasis(base.pair, self.role_emphasis.pair),
-            curate: append_emphasis(base.curate, self.role_emphasis.curate),
-            work: append_emphasis(base.work, self.role_emphasis.work),
-            watch: append_emphasis(base.watch, self.role_emphasis.watch),
-        }
-    }
-
     pub fn context_profile(
         &self,
-        bear_name: &str,
+        _bear_name: &str,
         user_steering: &str,
         bear_context: &str,
         first_task: Option<&str>,
@@ -131,8 +82,8 @@ impl BearTemplate {
             composition_version: CONTEXT_PROFILE_VERSION,
             template_id: Some(self.id.to_string()),
             template_version: Some(TEMPLATE_VERSION.to_string()),
-            role_contract_version: Some(DEFAULT_ROLE_CONTRACT_VERSION.to_string()),
-            role_contracts: self.role_contracts_for_bear(bear_name),
+            role_contract_version: None,
+            role_contracts: RoleContracts::default(),
             user_steering: user_steering.trim().to_string(),
             bear_context: bear_context.trim().to_string(),
             starter_prompts: self.starter_prompts.iter().map(|s| s.to_string()).collect(),

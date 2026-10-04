@@ -14,7 +14,7 @@ fn context<'a>(
     config: &'a Config,
     stores: &'a MemoryStoreManager,
     bear_id: Uuid,
-    profile: BearProfile,
+    profile: RuntimeContextLabel,
     conversation_id: &'a str,
     session_id: Option<&'a str>,
 ) -> AssembleTurnContext<'a> {
@@ -24,15 +24,19 @@ fn context<'a>(
         stores,
         bear_id,
         origin: match profile {
-            BearProfile::Chat => den_core::TurnExecutionOrigin::ChannelConversation,
-            BearProfile::Pair => den_core::TurnExecutionOrigin::ArmatureConversation(
+            RuntimeContextLabel::ChannelConversation => {
+                den_core::TurnExecutionOrigin::ChannelConversation
+            }
+            RuntimeContextLabel::ArmatureConversation => {
+                den_core::TurnExecutionOrigin::ArmatureConversation(
+                    den_core::ArmatureAvailability::Connected,
+                )
+            }
+            RuntimeContextLabel::JobRun => den_core::TurnExecutionOrigin::AuthorizedWorkRun(
                 den_core::ArmatureAvailability::Connected,
             ),
-            BearProfile::Work => den_core::TurnExecutionOrigin::AuthorizedWorkRun(
-                den_core::ArmatureAvailability::Connected,
-            ),
-            BearProfile::Curate => den_core::TurnExecutionOrigin::InternalCuration,
-            BearProfile::Watch => den_core::TurnExecutionOrigin::InboundObservation,
+            RuntimeContextLabel::Curation => den_core::TurnExecutionOrigin::InternalCuration,
+            RuntimeContextLabel::Observation => den_core::TurnExecutionOrigin::InboundObservation,
         },
         governance: den_core::Governance::Interactive,
         conversation_id,
@@ -63,7 +67,7 @@ async fn model_turn_uses_verified_hat_identity_without_cross_hat_or_stance_ident
             "composition_version": 1,
             "role_contracts": {
                 "chat": "OLD CHAT IDENTITY", "pair": "OLD PAIR IDENTITY",
-                "curate": "CURATE INTERNAL", "work": "OLD WORK IDENTITY", "watch": "WATCH INTERNAL"
+                "curate": "{{ invalid_unused_template", "work": "OLD WORK IDENTITY", "watch": "{{ current_date }}"
             },
             "user_steering": "Shared Bear voice", "bear_context": "Common charter"
         }))),
@@ -160,27 +164,26 @@ async fn model_turn_uses_verified_hat_identity_without_cross_hat_or_stance_ident
         .to_string_lossy()
         .to_string();
     let stores = MemoryStoreManager::new(&config);
-    let first = assemble_native_turn_for_bear(
-        context(
-            &pool,
-            &config,
-            &stores,
-            bear_id,
-            BearProfile::Pair,
-            "conv-turn-security",
-            None,
-        ),
-        &bear,
-    )
-    .await
-    .unwrap();
+    let mut first_context = context(
+        &pool,
+        &config,
+        &stores,
+        bear_id,
+        RuntimeContextLabel::ArmatureConversation,
+        "conv-turn-security",
+        Some("identity-runtime-session"),
+    );
+    first_context.turn_runtime_context = Some("OPAQUE LEGACY PROMPT MEMORY");
+    let first = assemble_native_turn_for_bear(first_context, &bear)
+        .await
+        .unwrap();
     let same_hat_chat = assemble_native_turn_for_bear(
         context(
             &pool,
             &config,
             &stores,
             bear_id,
-            BearProfile::Chat,
+            RuntimeContextLabel::ChannelConversation,
             "conv-turn-security",
             None,
         ),
@@ -194,7 +197,7 @@ async fn model_turn_uses_verified_hat_identity_without_cross_hat_or_stance_ident
             &config,
             &stores,
             bear_id,
-            BearProfile::Chat,
+            RuntimeContextLabel::ChannelConversation,
             "conv-turn-support",
             None,
         ),
@@ -221,6 +224,7 @@ async fn model_turn_uses_verified_hat_identity_without_cross_hat_or_stance_ident
     assert!(first_system.contains("Shared Bear voice"));
     assert!(first_system.contains("Interactive collaboration mode"));
     assert!(!first_system.contains("OLD PAIR IDENTITY"));
+    assert!(!first_system.contains("OPAQUE LEGACY PROMPT MEMORY"));
     assert!(!first_system.contains("Help customers"));
     let same_chat_system = same_hat_chat
         .messages
@@ -244,7 +248,7 @@ async fn model_turn_uses_verified_hat_identity_without_cross_hat_or_stance_ident
                 &config,
                 &stores,
                 bear_id,
-                BearProfile::Pair,
+                RuntimeContextLabel::ArmatureConversation,
                 "conv-turn-unbound",
                 None
             ),
@@ -260,7 +264,7 @@ async fn model_turn_uses_verified_hat_identity_without_cross_hat_or_stance_ident
                 &config,
                 &stores,
                 bear_id,
-                BearProfile::Pair,
+                RuntimeContextLabel::ArmatureConversation,
                 "conv-turn-missing",
                 None
             ),
@@ -276,7 +280,7 @@ async fn model_turn_uses_verified_hat_identity_without_cross_hat_or_stance_ident
                 &config,
                 &stores,
                 bear_id,
-                BearProfile::Work,
+                RuntimeContextLabel::JobRun,
                 "den-conv-work-without-job",
                 Some("missing-work-session"),
             ),
@@ -354,7 +358,7 @@ async fn model_turn_uses_verified_hat_identity_without_cross_hat_or_stance_ident
             &config,
             &stores,
             bear_id,
-            BearProfile::Work,
+            RuntimeContextLabel::JobRun,
             "den-conv-work-identity",
             Some("hat-work-session"),
         ),
@@ -374,7 +378,10 @@ async fn model_turn_uses_verified_hat_identity_without_cross_hat_or_stance_ident
     assert!(work_system.contains("Review secrets"));
     assert!(!work_system.contains("Help customers"));
     assert!(!work_system.contains("OLD WORK IDENTITY"));
-    for profile in [BearProfile::Pair, BearProfile::Chat] {
+    for profile in [
+        RuntimeContextLabel::ArmatureConversation,
+        RuntimeContextLabel::ChannelConversation,
+    ] {
         assert!(
             matches!(
                 assemble_native_turn_for_bear(
@@ -412,7 +419,7 @@ async fn model_turn_uses_verified_hat_identity_without_cross_hat_or_stance_ident
             &config,
             &stores,
             bear_id,
-            BearProfile::Pair,
+            RuntimeContextLabel::ArmatureConversation,
             "conv-turn-security",
             None,
         ),
@@ -427,5 +434,62 @@ async fn model_turn_uses_verified_hat_identity_without_cross_hat_or_stance_ident
         .and_then(|message| message.content.as_deref())
         .unwrap();
     assert!(refreshed_system.contains("Inspect newly scoped secrets"));
+    assert!(refreshed_system.contains("Shared Bear voice"));
+    assert!(refreshed_system.contains("Interactive collaboration mode"));
+    assert!(!refreshed_system.contains("OLD PAIR IDENTITY"));
+    assert!(!refreshed_system.contains("OPAQUE LEGACY PROMPT MEMORY"));
     assert!(!refreshed_system.contains("Review secrets"));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn zero_hat_ordinary_sources_fail_before_assembly_even_without_prompt_memory(pool: PgPool) {
+    let bear_id = db::create_bear(
+        &pool,
+        BearParams {
+            slug: "zero-hat-assembly",
+            name: "No hat",
+            description: "",
+            system_prompt: "old identity",
+            default_model: None,
+            tools_enabled: None,
+            context_profile: None,
+        },
+    )
+    .await
+    .unwrap();
+    let bear = db::get_bear(&pool, bear_id).await.unwrap().unwrap();
+    persistence::ensure_conversation_for_external_id(
+        &pool,
+        bear_id,
+        None,
+        "conv-unbound-no-hats",
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let config = Config::test_stub();
+    let stores = MemoryStoreManager::new(&config);
+    for profile in [
+        RuntimeContextLabel::ArmatureConversation,
+        RuntimeContextLabel::ChannelConversation,
+        RuntimeContextLabel::JobRun,
+        RuntimeContextLabel::Curation,
+        RuntimeContextLabel::Observation,
+    ] {
+        for external in ["conv-unbound-no-hats", "conv-missing-no-hats"] {
+            let ctx = context(&pool, &config, &stores, bear_id, profile, external, None);
+            assert!(
+                matches!(
+                    assemble_native_turn_for_bear(ctx, &bear).await,
+                    Err(DenError::Authorization(_))
+                ),
+                "{profile:?}: {external}"
+            );
+        }
+    }
+    assert!(hats::list_hats(&pool, BearId::new(bear_id))
+        .await
+        .unwrap()
+        .is_empty());
 }

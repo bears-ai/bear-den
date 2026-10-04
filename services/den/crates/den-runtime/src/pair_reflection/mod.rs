@@ -1,6 +1,6 @@
 use den_core::{config::Config, DenError};
 use den_memory::MemoryStoreManager;
-use den_service::bears::BearProfile;
+use den_service::bears::RuntimeContextLabel;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -141,7 +141,7 @@ async fn create_pair_reflection_proposals_for_artifact(
         pool,
         config,
         stores,
-        BearProfile::Pair,
+        RuntimeContextLabel::ArmatureConversation,
         Some("pair_reflection".to_string()),
         &bundle,
         &extraction_output,

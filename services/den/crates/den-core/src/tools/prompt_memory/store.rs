@@ -5,7 +5,7 @@
 //! persistence is inverted behind this trait, implemented by `den-runtime` over
 //! `prompt_memory_block_store`. See `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md`.
 
-use crate::{tools::context::DenToolInvocationContext, BearProfile, DenError};
+use crate::{tools::context::DenToolInvocationContext, DenError, RuntimeContextLabel};
 use uuid::Uuid;
 
 use super::types::{
@@ -19,7 +19,7 @@ pub trait PromptMemoryStore: Send + Sync {
     async fn visibility(
         &self,
         context: &DenToolInvocationContext,
-        role: BearProfile,
+        role: RuntimeContextLabel,
     ) -> Result<PromptMemoryVisibility, DenError>;
 
     /// All blocks for a bear/profile (newest first), unfiltered.
@@ -34,7 +34,7 @@ pub trait PromptMemoryStore: Send + Sync {
     async fn patch_block(
         &self,
         bear_id: Uuid,
-        profile: BearProfile,
+        profile: RuntimeContextLabel,
         block_id: &str,
         patch: &PromptMemoryBlockPatch,
     ) -> Result<(), DenError>;

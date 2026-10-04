@@ -39,17 +39,20 @@ impl StoredInternalSession {
             origin,
             den_core::Governance::Interactive,
         )
-        .trust_profile;
+        .context_label;
         let agent_loop_control = resolve_agent_loop_control(AgentLoopControlResolutionInput {
             model_handle: Some("openai/test"),
             model_default: None,
             bear_override: None,
-            stance_override: None,
             task_escalation: None,
-            stance: Some(profile),
+            origin: den_core::TurnExecutionOrigin::ArmatureConversation(
+                den_core::ArmatureAvailability::Connected,
+            ),
+            governance: den_core::Governance::Interactive,
             objective_orientation: None,
             pre_risk: false,
-        });
+        })
+        .expect("ordinary test origin");
         let session = AgentLoopSession {
             session_key: agent_loop_session_key(&conversation_id, &client_session_id, &run_id),
             bear_id: Uuid::new_v4(),

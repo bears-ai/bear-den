@@ -6,8 +6,8 @@ use uuid::Uuid;
 use den_core::{AgentLoopControlLevel, DenError};
 
 use super::model::{
-    Bear, BearProfile, BearProfileBinding, BearSkillManifestEntry, BearSkillProposal,
-    BearWithMembership,
+    Bear, BearProfileBinding, BearSkillManifestEntry, BearSkillProposal, BearWithMembership,
+    RuntimeContextLabel,
 };
 
 pub struct BearParams<'a> {
@@ -477,7 +477,7 @@ pub async fn ensure_bear_profile_binding_rows(
     pool: &PgPool,
     bear_id: Uuid,
 ) -> Result<(), DenError> {
-    for profile in BearProfile::ALL {
+    for profile in RuntimeContextLabel::ALL {
         sqlx::query!(
             r"
             INSERT INTO bear_profile_bindings (bear_id, profile, binding_id)
@@ -526,7 +526,7 @@ pub async fn list_bear_profile_bindings(
 pub async fn get_bear_profile_binding(
     pool: &PgPool,
     bear_id: Uuid,
-    profile: BearProfile,
+    profile: RuntimeContextLabel,
 ) -> Result<Option<BearProfileBinding>, DenError> {
     sqlx::query_as!(
         BearProfileBinding,
@@ -550,7 +550,7 @@ pub async fn get_bear_profile_binding(
 pub async fn profile_binding_id(
     pool: &PgPool,
     bear_id: Uuid,
-    profile: BearProfile,
+    profile: RuntimeContextLabel,
 ) -> Result<Option<String>, DenError> {
     sqlx::query_scalar!(
         r"
@@ -569,7 +569,7 @@ pub async fn profile_binding_id(
 pub async fn mark_bear_profile_binding_provisioning(
     pool: &PgPool,
     bear_id: Uuid,
-    profile: BearProfile,
+    profile: RuntimeContextLabel,
 ) -> Result<(), DenError> {
     sqlx::query!(
         r"
@@ -589,7 +589,7 @@ pub async fn mark_bear_profile_binding_provisioning(
 pub async fn mark_bear_profile_binding_ready(
     pool: &PgPool,
     bear_id: Uuid,
-    profile: BearProfile,
+    profile: RuntimeContextLabel,
     binding_id: &str,
     version: i32,
     config_hash: &serde_json::Value,
@@ -619,7 +619,7 @@ pub async fn mark_bear_profile_binding_ready(
 pub async fn mark_bear_profile_binding_synced(
     pool: &PgPool,
     bear_id: Uuid,
-    profile: BearProfile,
+    profile: RuntimeContextLabel,
     version: i32,
     config_hash: &serde_json::Value,
 ) -> Result<(), DenError> {
@@ -647,7 +647,7 @@ pub async fn mark_bear_profile_binding_synced(
 pub async fn mark_bear_profile_binding_failed(
     pool: &PgPool,
     bear_id: Uuid,
-    profile: BearProfile,
+    profile: RuntimeContextLabel,
     message: &str,
 ) -> Result<(), DenError> {
     sqlx::query!(
@@ -934,35 +934,10 @@ pub async fn list_profile_model_settings(
     .map_err(Into::into)
 }
 
-pub async fn profile_model_setting(
-    pool: &PgPool,
-    bear_id: Uuid,
-    profile: BearProfile,
-) -> Result<Option<String>, DenError> {
-    sqlx::query_scalar!(
-        r"
-        SELECT model
-        FROM bear_profile_model_settings
-        WHERE bear_id = $1 AND profile = $2
-        ",
-        bear_id,
-        profile.as_str()
-    )
-    .fetch_optional(pool)
-    .await
-    .map(|row| {
-        row.flatten().and_then(|model| {
-            let trimmed = model.trim().to_string();
-            (!trimmed.is_empty()).then_some(trimmed)
-        })
-    })
-    .map_err(Into::into)
-}
-
 pub async fn set_profile_model_setting(
     pool: &PgPool,
     bear_id: Uuid,
-    profile: BearProfile,
+    profile: RuntimeContextLabel,
     model: Option<&str>,
 ) -> Result<(), DenError> {
     let model = model.map(str::trim).filter(|s| !s.is_empty());
@@ -994,26 +969,6 @@ pub async fn bear_agent_loop_control_setting(
         WHERE id = $1
         ",
         bear_id
-    )
-    .fetch_optional(pool)
-    .await?
-    .flatten();
-    parse_agent_loop_control_setting(raw.as_deref())
-}
-
-pub async fn profile_agent_loop_control_setting(
-    pool: &PgPool,
-    bear_id: Uuid,
-    profile: BearProfile,
-) -> Result<Option<AgentLoopControlLevel>, DenError> {
-    let raw = sqlx::query_scalar!(
-        r"
-        SELECT agent_loop_control_level
-        FROM bear_profile_model_settings
-        WHERE bear_id = $1 AND profile = $2
-        ",
-        bear_id,
-        profile.as_str()
     )
     .fetch_optional(pool)
     .await?
@@ -1073,7 +1028,7 @@ pub async fn set_bear_tool_budget_multiplier(
 pub async fn set_profile_agent_loop_control_setting(
     pool: &PgPool,
     bear_id: Uuid,
-    profile: BearProfile,
+    profile: RuntimeContextLabel,
     level: Option<AgentLoopControlLevel>,
 ) -> Result<(), DenError> {
     sqlx::query!(
@@ -1095,17 +1050,6 @@ pub async fn set_profile_agent_loop_control_setting(
     Ok(())
 }
 
-pub async fn agent_loop_control_overrides_for_profile(
-    pool: &PgPool,
-    bear_id: Uuid,
-    profile: BearProfile,
-) -> Result<(Option<AgentLoopControlLevel>, Option<AgentLoopControlLevel>), DenError> {
-    Ok((
-        bear_agent_loop_control_setting(pool, bear_id).await?,
-        profile_agent_loop_control_setting(pool, bear_id, profile).await?,
-    ))
-}
-
 fn parse_agent_loop_control_setting(
     value: Option<&str>,
 ) -> Result<Option<AgentLoopControlLevel>, DenError> {
@@ -1123,29 +1067,17 @@ fn parse_agent_loop_control_setting(
     }
 }
 
-pub async fn resolve_model_for_profile(
-    pool: &PgPool,
-    bear: &Bear,
-    profile: BearProfile,
-    system_default_model: &str,
-) -> Result<String, DenError> {
-    let profile_model = profile_model_setting(pool, bear.id, profile).await?;
-    Ok(resolve_model_from_values(
-        profile_model.as_deref(),
-        bear.default_model.as_deref(),
-        system_default_model,
-    ))
+pub fn resolve_model_for_bear(bear: &Bear, system_default_model: &str) -> String {
+    resolve_model_from_values(bear.default_model.as_deref(), system_default_model)
 }
 
-pub fn resolve_model_from_values(
-    profile_model: Option<&str>,
+fn resolve_model_from_values(
     bear_default_model: Option<&str>,
     system_default_model: &str,
 ) -> String {
-    profile_model
+    bear_default_model
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .or_else(|| bear_default_model.map(str::trim).filter(|s| !s.is_empty()))
         .unwrap_or_else(|| system_default_model.trim())
         .to_string()
 }
@@ -1197,95 +1129,4 @@ pub async fn update_live_reflection_settings(
 mod tests;
 
 #[cfg(test)]
-mod model_setting_tests {
-    use super::*;
-
-    #[test]
-    fn parses_agent_loop_control_settings() {
-        assert_eq!(
-            parse_agent_loop_control_setting(Some("careful")).unwrap(),
-            Some(AgentLoopControlLevel::Careful)
-        );
-        assert_eq!(parse_agent_loop_control_setting(Some(" ")).unwrap(), None);
-        assert!(parse_agent_loop_control_setting(Some("careless")).is_err());
-    }
-
-    #[test]
-    fn resolves_profile_override_then_bear_default_then_system_default() {
-        assert_eq!(
-            resolve_model_from_values(
-                Some("openai/gpt-4.1"),
-                Some("openai/gpt-4o-mini"),
-                "openai/gpt-5-mini",
-            ),
-            "openai/gpt-4.1"
-        );
-        assert_eq!(
-            resolve_model_from_values(None, Some("openai/gpt-4o-mini"), "openai/gpt-5-mini"),
-            "openai/gpt-4o-mini"
-        );
-        assert_eq!(
-            resolve_model_from_values(Some("   "), Some(""), "openai/gpt-5-mini"),
-            "openai/gpt-5-mini"
-        );
-    }
-
-    #[sqlx::test(migrations = "../../migrations")]
-    async fn persists_bear_and_profile_agent_loop_control_overrides(pool: PgPool) {
-        let bear_id = create_bear(
-            &pool,
-            BearParams {
-                slug: "loop-control-test-bear",
-                name: "Loop Control Test Bear",
-                description: "test",
-                system_prompt: "test",
-                default_model: None,
-                tools_enabled: None,
-                context_profile: None,
-            },
-        )
-        .await
-        .expect("create bear");
-
-        set_bear_agent_loop_control_setting(&pool, bear_id, Some(AgentLoopControlLevel::Standard))
-            .await
-            .expect("set bear loop control");
-        set_profile_agent_loop_control_setting(
-            &pool,
-            bear_id,
-            BearProfile::Work,
-            Some(AgentLoopControlLevel::Strict),
-        )
-        .await
-        .expect("set profile loop control");
-
-        assert_eq!(
-            bear_agent_loop_control_setting(&pool, bear_id)
-                .await
-                .unwrap(),
-            Some(AgentLoopControlLevel::Standard)
-        );
-        assert_eq!(
-            profile_agent_loop_control_setting(&pool, bear_id, BearProfile::Work)
-                .await
-                .unwrap(),
-            Some(AgentLoopControlLevel::Strict)
-        );
-        assert_eq!(
-            agent_loop_control_overrides_for_profile(&pool, bear_id, BearProfile::Work)
-                .await
-                .unwrap(),
-            (
-                Some(AgentLoopControlLevel::Standard),
-                Some(AgentLoopControlLevel::Strict)
-            )
-        );
-
-        let settings = list_profile_model_settings(&pool, bear_id).await.unwrap();
-        assert_eq!(settings.len(), 1);
-        assert_eq!(
-            settings[0].agent_loop_control_level.as_deref(),
-            Some("strict")
-        );
-    }
-}
+mod model_setting_tests;

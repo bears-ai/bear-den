@@ -18,9 +18,8 @@ pub mod sync;
 pub mod templates;
 
 pub use context_composition::{
-    compose_role_context, context_profile_from_json, context_profile_to_json,
-    default_role_contracts_for_bear, render_managed_role_prompt, BearContextProfile,
-    ComposedRoleContext, RoleContracts,
+    context_profile_from_json, context_profile_to_json, default_role_contracts_for_bear,
+    BearContextProfile, RoleContracts,
 };
 pub use managed_blocks::{
     compile_and_store_managed_config_for_bear, compile_managed_config_for_bear,
@@ -32,8 +31,8 @@ pub use managed_blocks::{
     SystemBlockKind, SystemBlockRow, SystemBlockScope, SystemBlockVersionRow,
 };
 pub use model::{
-    Bear, BearProfile, BearProfileBinding, BearSkillManifestEntry, BearSkillProposal,
-    BearWithMembership,
+    Bear, BearProfileBinding, BearSkillManifestEntry, BearSkillProposal, BearWithMembership,
+    RuntimeContextLabel,
 };
 pub use prompt_fragments::{
     render_turn_fragment, repository_prompt_bundle_registry, repository_prompt_fragment_registry,

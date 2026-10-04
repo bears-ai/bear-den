@@ -8,7 +8,17 @@
 
 use uuid::Uuid;
 
-use crate::DenError;
+use crate::{tools::context::DenToolInvocationContext, DenError, TurnExecutionOrigin};
+
+/// Effect-time authorization of the canonical ordinary-session source.
+#[allow(async_fn_in_trait)]
+pub trait SourceAuthorizer: Send + Sync {
+    async fn authorize_source(
+        &self,
+        context: &DenToolInvocationContext,
+        origin: TurnExecutionOrigin,
+    ) -> Result<(), DenError>;
+}
 
 /// Membership role string that grants Bear-admin privileges.
 pub const BEAR_ROLE_ADMIN: &str = "admin";

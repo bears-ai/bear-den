@@ -48,7 +48,7 @@ use den_service::{
     artifacts::{self, ArtifactAccessContext},
     bears::{
         db::{self as bears_db, role_is_bear_admin},
-        hats, BearProfile,
+        hats, RuntimeContextLabel,
     },
     client_sessions,
     conversation::{persistence as conversation_persistence, viewer::ConversationViewer},
@@ -767,16 +767,13 @@ async fn chat_notes(
             "only this conversation's creator can inspect its private notes".into(),
         ));
     }
-    let grant = match hats::memory_binding::for_conversation(
-        state.sqlx_pool(),
-        BearId::new(q.bear_id),
-        conversation.id,
-    )
-    .await?
-    {
-        hats::memory_binding::ResolvedMemoryBinding::Legacy => return Ok(Json(Vec::new())),
-        hats::memory_binding::ResolvedMemoryBinding::Bound(grant) => grant,
-    };
+    let hats::memory_binding::ResolvedMemoryBinding::Bound(grant) =
+        hats::memory_binding::for_conversation(
+            state.sqlx_pool(),
+            BearId::new(q.bear_id),
+            conversation.id,
+        )
+        .await?;
     let store = state.memory_stores.store_for_bear(q.bear_id).await?;
     let notes = den_memory::scoped::recent_source(&store, grant, 50)
         .await?
@@ -808,16 +805,6 @@ async fn chat_conversations(
         .await?
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
 
-    let default_row = || ChatConversationRow {
-        id: "default".to_string(),
-        title: "Main chat".to_string(),
-        hat_id: None,
-        own_notes_available: false,
-        last_message_at: None,
-        latest_context_budget: None,
-        latest_context_budget_updated_at: None,
-    };
-
     let archived_ids = archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
     let visible = viewer.list_visible(state.sqlx_pool(), 100).await?;
     let ids: Vec<Uuid> = visible.iter().map(|row| row.id).collect();
@@ -831,7 +818,7 @@ async fn chat_conversations(
     .into_iter()
     .map(|row| (row.id, (row.hat_id, row.created_by_user_id)))
     .collect();
-    let mut conversations = visible
+    let conversations = visible
         .into_iter()
         .filter_map(|row| {
             let id = row.external_conversation_id?;
@@ -884,9 +871,7 @@ async fn chat_conversations(
             purpose: hat.purpose,
         })
         .collect::<Vec<_>>();
-    if hats.is_empty() && !conversations.iter().any(|row| row.id == "default") {
-        conversations.insert(0, default_row());
-    }
+
     Ok(Json(ChatConversationsResponse {
         conversations,
         hats,
@@ -1441,13 +1426,8 @@ async fn chat_model_response_for(
         })));
     }
 
-    let base_model = bears_db::resolve_model_for_profile(
-        state.sqlx_pool(),
-        &bear,
-        BearProfile::Chat,
-        state.config.default_llm_model.as_str(),
-    )
-    .await?;
+    let base_model =
+        bears_db::resolve_model_for_bear(&bear, state.config.default_llm_model.as_str());
 
     if conv_id.starts_with("new-") {
         return Ok(ChatModelResponse {
@@ -1455,7 +1435,7 @@ async fn chat_model_response_for(
             requested_model: None,
             selected_model: None,
             effective_model: base_model,
-            source: "stance_or_bear_default".to_string(),
+            source: "bear_or_deployment_default".to_string(),
             model_options,
         });
     }
@@ -1486,7 +1466,7 @@ async fn chat_model_response_for(
         source: if state_row.as_ref().map(|row| row.selection_mode.as_str()) == Some("explicit") {
             "conversation_explicit".to_string()
         } else {
-            "stance_or_bear_default".to_string()
+            "bear_or_deployment_default".to_string()
         },
         model_options,
     })
@@ -1689,7 +1669,9 @@ async fn maybe_handle_direct_capabilities_list(
     if !chat_turn_is_capabilities_meta_query(message.trim()) {
         return Ok(None);
     }
-    let text = den_core::tools::descriptor::render_profile_tool_surface_blurb(BearProfile::Chat);
+    let text = den_core::tools::descriptor::render_profile_tool_surface_blurb(
+        RuntimeContextLabel::ChannelConversation,
+    );
     conversation_persistence::append_message(
         pool,
         canonical_conversation_id,
@@ -1738,18 +1720,31 @@ async fn chat_send_native_inner(
         .starts_with("new-")
         .then(|| format!("conv-{}", Uuid::new_v4()));
     let conv_id = resolved_id.clone().unwrap_or(requested_id);
-    if state.config.llm_api_url.trim().is_empty() {
-        return Err(CustomError::System(
-            "Chat is unavailable: LLM_API_URL is not set (required when AGENT_RUNTIME=native)."
-                .to_string(),
-        ));
-    }
 
     let membership_role =
         bears_db::membership_role_for_user(state.sqlx_pool(), user_id, body.bear_id)
             .await?
             .flatten();
     let session_id = browser_client_session_id(user_id, bear.id, &conv_id);
+    den_service::conversation::viewer::require_ordinary_tool_source(
+        state.sqlx_pool(),
+        BearId::new(bear.id),
+        UserId::new(user_id),
+        &conv_id,
+    )
+    .await
+    .map_err(|error| match error {
+        den_core::DenError::NotFound(_) => CustomError::Authorization(
+            "a named hat is required; create a hat-bound conversation before sending".into(),
+        ),
+        error => error.into(),
+    })?;
+    if state.config.llm_api_url.trim().is_empty() {
+        return Err(CustomError::System(
+            "Chat is unavailable: LLM_API_URL is not set (required when AGENT_RUNTIME=native)."
+                .into(),
+        ));
+    }
     let canonical_conversation =
         ensure_chat_conversation(state.sqlx_pool(), bear.id, user_id, &viewer, &conv_id).await?;
     hats::memory_binding::for_conversation(

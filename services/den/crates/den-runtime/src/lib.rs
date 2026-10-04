@@ -98,6 +98,5 @@ pub use runtime::conversations as runtime_conversations;
 pub use runtime::pair_turn;
 pub use runtime::provider as runtime_provider;
 pub use runtime::role as role_runtime;
-pub use runtime::role_registry as role_runtime_registry;
 pub use runtime::task_context as runtime_task_context;
 pub use runtime::turn_state;
