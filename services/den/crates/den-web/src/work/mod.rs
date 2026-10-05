@@ -200,6 +200,7 @@ use den_sandbox::protocol::CatalogResponse;
 use den_sandbox::SandboxClient;
 use den_service::bears::{db as bears_db, hats, RuntimeContextLabel};
 
+mod knowledge;
 pub mod surfaces;
 
 #[cfg(test)]
@@ -217,6 +218,7 @@ pub fn router() -> Router<AppState> {
 /// scope used for resolution and presentation.
 pub fn docket_router() -> Router<AppState> {
     Router::new()
+        .merge(knowledge::router())
         .route("/jobs", get(index))
         .route("/jobs/new", get(new_job_form).post(create_job))
         .route("/jobs/{job_id}", get(job_detail))
@@ -1477,6 +1479,23 @@ async fn job_detail(
     let Some((bear_id, bear_slug)) = owner else {
         return Err(CustomError::NotFound("job not found".to_string()));
     };
+    let mission = knowledge::view(
+        &state,
+        BearId::new(bear_id),
+        job_id,
+        den_core::ids::UserId::new(user_id),
+    )
+    .await?;
+    let mission_choices = den_service::cabinet::search(
+        state.sqlx_pool(),
+        den_cabinet::SearchRequest {
+            scope: den_cabinet::ActorScope::user(den_core::ids::UserId::new(user_id)),
+            query: String::new(),
+            filters: den_cabinet::SearchFilters::default(),
+        },
+    )
+    .await
+    .map_err(|error| CustomError::from(den_core::DenError::from(error)))?;
     let bear_name = bears_db::list_bears_for_user(state.sqlx_pool(), user_id)
         .await?
         .into_iter()
@@ -1691,6 +1710,8 @@ async fn job_detail(
             bear_id => bear_id.to_string(),
             bear_slug => bear_slug,
             bear_name => bear_name,
+            mission,
+            mission_choices,
             job_id => route_id(job_id),
             goal => projection.job.goal,
             job_display_id => uuid_hex_prefix(job_id, DISPLAY_ID_HEX_LEN),

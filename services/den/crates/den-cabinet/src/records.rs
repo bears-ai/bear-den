@@ -143,6 +143,19 @@ pub enum AttachmentRole {
     Other,
 }
 
+impl AttachmentRole {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::SourcePdf => "source_pdf",
+            Self::GeneratedReport => "generated_report",
+            Self::Image => "image",
+            Self::Data => "data",
+            Self::Other => "other",
+        }
+    }
+}
+
 /// Collection/Mission policy knobs. Defaults express the open-wiki default:
 /// Bears may write, no review gate, all kinds allowed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

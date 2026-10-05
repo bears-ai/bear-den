@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO artifact_links(artifact_id,target_kind,target_id,role,metadata,created_by_user_id) VALUES($1,'cabinet_snapshot',$2,'citation',$3,$4)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Jsonb",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6df39e801bdd9de725a8e47f21ffc270494ea6424e6845ef5c22ef6bff7e8180"
+}

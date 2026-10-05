@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO artifact_links(artifact_id,target_kind,target_id,role,metadata,created_by_user_id) VALUES($1,'cabinet_item',$2,$3,$4,$5) ON CONFLICT(artifact_id,target_kind,target_id,role) DO UPDATE SET artifact_id=artifact_links.artifact_id RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a1e8658eafeac24ad594c1bc651963dc1484cab1ca8ea3c62cec366b759bc1be"
+}

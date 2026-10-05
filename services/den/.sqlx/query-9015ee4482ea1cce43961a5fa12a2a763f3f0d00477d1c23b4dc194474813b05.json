@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS(SELECT 1 FROM artifact_links WHERE artifact_id=$1 AND target_kind IN('cabinet_item','cabinet_snapshot')) AS \"retained!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "retained!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "9015ee4482ea1cce43961a5fa12a2a763f3f0d00477d1c23b4dc194474813b05"
+}

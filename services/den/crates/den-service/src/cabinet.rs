@@ -16,7 +16,16 @@ use den_cabinet::{
     SearchRequest, SourceKind, SourceLink, SourceRole, UnlinkSourceRequest, UpdateItemRequest,
     VersionSummary,
 };
+pub mod attachments;
 pub mod pages;
+pub mod snapshots;
+
+/// Serialize cross-domain edits against Cabinet policy/topology changes.
+pub async fn write_fence(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+) -> Result<(), CabinetError> {
+    pages::lock(tx).await
+}
 
 use serde::Serialize;
 use sqlx::types::Json;

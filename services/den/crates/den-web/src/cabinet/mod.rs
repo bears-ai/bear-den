@@ -29,11 +29,13 @@ use den_cabinet::{
 };
 use den_core::ids::UserId;
 use den_service::cabinet as cabinet_service;
+mod attachments;
 mod pages;
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .merge(pages::router())
+        .merge(attachments::router())
         .route("/cabinet", get(index))
         .route("/cabinet/new", get(new_form).post(create))
         .route("/cabinet/{cabinet_ref}", get(item))
@@ -247,6 +249,9 @@ async fn item(
     let page = cabinet_service::pages::metadata(state.sqlx_pool(), &scope, &cabinet_ref)
         .await
         .map_err(cabinet_error)?;
+    let attachments = cabinet_service::attachments::list(state.sqlx_pool(), &scope, &cabinet_ref)
+        .await
+        .map_err(cabinet_error)?;
     let children = cabinet_service::pages::children(state.sqlx_pool(), &scope, &cabinet_ref)
         .await
         .map_err(cabinet_error)?;
@@ -295,6 +300,8 @@ async fn item(
             sources => sources,
             page,
             children,
+            attachments,
+            byte_storage_enabled => state.media.is_some(),
             people_names,
             bear_names,
             reviewer_names,

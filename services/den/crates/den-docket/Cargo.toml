@@ -5,7 +5,7 @@ edition = "2021"
 
 # Docket: Den's control-plane work-management subsystem (ADR-0034).
 # Service-layer leaf in the den workspace (DEN_CRATE_SPLIT_PLAN.md): depends only
-# on den-core. New jobs/tasks use the relational ADR-0034 tables. Historical
+# on den-core and the provider-neutral Cabinet reference contract. New jobs/tasks use the relational ADR-0034 tables. Historical
 # task-list tables may exist in old migrations/data, but den-docket keeps no
 # active read/write shims for them.
 
@@ -14,6 +14,7 @@ workspace = true
 
 [dependencies]
 den-core = { path = "../den-core" }
+den-cabinet = { path = "../den-cabinet" }
 serde.workspace = true
 serde_json.workspace = true
 sqlx = { workspace = true, default-features = false, features = ["runtime-tokio-rustls", "postgres", "time", "json", "uuid", "macros"] }

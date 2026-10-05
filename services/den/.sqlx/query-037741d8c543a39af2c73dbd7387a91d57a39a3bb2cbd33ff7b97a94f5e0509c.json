@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO artifact_json_payloads (artifact_id, payload) VALUES ($1, $2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "037741d8c543a39af2c73dbd7387a91d57a39a3bb2cbd33ff7b97a94f5e0509c"
+}

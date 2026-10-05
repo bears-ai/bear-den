@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO job_cabinet_refs(job_id,cabinet_ref,revision) VALUES($1,$2,1) ON CONFLICT(job_id) DO UPDATE SET cabinet_ref=EXCLUDED.cabinet_ref,revision=job_cabinet_refs.revision+1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "93bc60e2e69d7097e7367710e7ba912fcd40633966e05e4908c8b546259b3219"
+}

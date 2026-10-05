@@ -4,7 +4,8 @@
 //! Docket jobs/tasks use the ADR-0034 relational Postgres tables. Historical
 //! task-list tables may exist in old migrations/data, but this crate should not
 //! keep active read/write shims for them.
-//! This crate is a service-layer leaf: it depends only on `den-core`. The
+//! This crate is a service-layer leaf; Cabinet reference types are its only
+//! cross-domain contract dependency, never Cabinet persistence. The
 //! relational jobs/tasks realization is tracked in
 //! `docs/roadmap/DOCKET_IMPLEMENTATION_PLAN.md`; the crate split itself in
 //! `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md`.
@@ -28,6 +29,7 @@ mod hat_job_tests;
 mod integration_tests;
 #[cfg(test)]
 mod job_access_tests;
+pub mod missions;
 pub mod model;
 #[cfg(test)]
 mod primary_output_tests;

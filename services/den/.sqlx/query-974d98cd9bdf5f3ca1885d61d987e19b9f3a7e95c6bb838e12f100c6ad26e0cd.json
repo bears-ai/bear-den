@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM artifact_links WHERE id=$1 AND target_kind='cabinet_item' AND target_id=$2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "974d98cd9bdf5f3ca1885d61d987e19b9f3a7e95c6bb838e12f100c6ad26e0cd"
+}

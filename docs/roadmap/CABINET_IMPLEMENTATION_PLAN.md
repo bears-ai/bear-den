@@ -1,6 +1,6 @@
 # Cabinet implementation plan
 
-**Status:** In progress — Phase 0 landed (contract doc + `den-cabinet` types/checks); Phase 1 implemented (Postgres storage + `den_service::cabinet` facade, `cabinet_search/read/history/create/update/source_link/lifecycle` tools with the per-Bear `bears.cabinet_enabled` gate, person-only item deletion, `/cabinet` wiki UI, [user guide](../guides/cabinet.md)); Phase 2 page hierarchy, inherited access, Bear-write review and web administration are implemented in the branch; Docket Mission annotations and snapshot citations remain open. Phases 3–4 remain unstarted.
+**Status:** In progress — Phase 0 landed (contract doc + `den-cabinet` types/checks); Phase 1 implemented (Postgres storage + `den_service::cabinet` facade, `cabinet_search/read/history/create/update/source_link/lifecycle` tools with the per-Bear `bears.cabinet_enabled` gate, person-only item deletion, `/cabinet` wiki UI, [user guide](../guides/cabinet.md)); Phase 2 page hierarchy, inherited access, Bear-write review, web administration, Docket Mission annotations and private immutable document copies are implemented in the local branch. Phase 3 finalized-artifact linking/detach, retention and permission-rechecking downloads are implemented; new-file uploads and derived recall remain open. Phase 4 remains open.
 **Scope:** Shared, human-editable, policy-controlled knowledge for Den.
 **Decisions (2026-08):** one Cabinet layer per Den; humans and authorized Bears edit directly (true wiki — every write publishes an immutable version, revision history is the safety net); review/approval is Phase 2 policy, not a Phase 1 gate; Phase 1 storage is Den Postgres behind the provider-neutral facade.
 **Decision (2026-09) — one structural concept:** Cabinet has a **page tree** and nothing else. There are no collection or Mission containers: a Mission *is* a page (optionally `kind: mission`) carrying a goal description, whose child pages are the grouped material. Access policy and membership live on pages and inherit down the tree, narrowing only. A Docket Job may name a page's `cabinet_ref`; Cabinet stores no Job identity, so work management never leaks into the knowledge layer.
@@ -60,6 +60,8 @@ Den owns the agent-facing facade, authorization, and policy. The backing provide
 
 **Exit:** a Mission page can govern its own subtree without broadening access to unrelated Cabinet pages, and a Job can name the page whose subtree documents it.
 
+**Local implementation evidence (2026-10-05):** `den-docket::missions` owns a Job's optional page annotation with optimistic revision; `den-service::cabinet::snapshots` captures an exact published version into a private `cabinet_document_snapshot` artifact linked as Job source evidence. Job detail lists readable saved copies and serves scoped downloads, without changing Job status or Work audience. `den-web/src/work/tests/knowledge.rs` checks stale annotations, hidden page refs/titles, cross-Job downloads, immutable version/hash/content and retention after page deletion.
+
 ### Phase 3 — Attachments and recall integration
 
 - Integrate Cabinet attachments through artifact refs; Cabinet retains page/ACL policy while artifacts retain payload identity and lifecycle.
@@ -67,6 +69,8 @@ Den owns the agent-facing facade, authorization, and policy. The backing provide
 - Do not begin this phase until the artifact-ref and recall contracts are available.
 
 **Exit:** an authorized Cabinet item can cite an immutable attachment/version and contribute filtered recall passages without becoming a blob store.
+
+**Partial delivery (2026-10-05):** page attachments use existing registry `artifact_links`, deterministic typed attachment refs and independent page/artifact authorization. Cabinet links and snapshot citations prevent deletion/expiration/GC; ordinary page links can be detached, while snapshot retention release remains operator-only. Downloads support JSON and configured Garage content (16 MiB limit, size/hash verification, no browser-visible storage URL). New-file upload and recall passage production are not implemented; the combined Phase 3 exit is not met. See the [artifact plan](ARTIFACT_REFS_IMPLEMENTATION_PLAN.md#phase-4--cabinet-attachment-integration) and [guide](../guides/cabinet.md#attachments-and-private-copies).
 
 ### Phase 4 — Provider selection, migration, and operations
 

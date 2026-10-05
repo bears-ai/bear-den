@@ -119,7 +119,7 @@ A source link is provenance, not content. Cabinet never fetches, caches, or owns
 
 ### Attachment link
 
-Binding from a Cabinet item to a Den artifact ref (ADR-0004 §9). Reserved until Phase 3; the record shape is fixed now so nothing else squats on it.
+Binding from a Cabinet item to a Den artifact ref (ADR-0004 §9). The local implementation uses the registry's existing `artifact_links` rows with `target_kind = cabinet_item`; `CabinetAttachmentRef` deterministically wraps the link ID, not another independently writable attachment store.
 
 | Field | Requirement |
 |-------|-------------|
@@ -129,7 +129,11 @@ Binding from a Cabinet item to a Den artifact ref (ADR-0004 §9). Reserved until
 | `role` | required: `source_pdf`, `generated_report`, `image`, `data`, `other` (open enum) |
 | `created_by`, `created_at` | required provenance |
 
-Cabinet owns item/ACL policy for the link. The artifact registry owns payload identity, lifecycle, and read authorization of the bytes. Linking never copies content and never exempts the reader from artifact read policy.
+Cabinet owns item/ACL policy for the link. The artifact registry owns payload identity, lifecycle, and read authorization of the bytes. Linking never copies content and never exempts the reader from artifact read policy. Human artifact reads require current membership in the artifact's Bear plus its visibility policy; Bear reads require the same Bear and Bear-visible content. Unreadable attachments are omitted, including metadata/counts. Linking requires finalized readable content; detach requires page write authority and the exact page/link identity.
+
+Registry links of kind `cabinet_item` or `cabinet_snapshot` retain payloads. Database triggers refuse artifact deletion or transition to deleted/expired while retained, and GC candidates exclude them. Page tombstones do not release retention; ordinary attachments can be detached, while snapshot retention release is operator-only. This can block Bear deletion via cascades as well. No separate writable retention status duplicates link state.
+
+Docket owns optional Job→page annotations. Capturing an exact published page version creates a private `cabinet_document_snapshot` artifact with page/version refs, captured title, content and hash, plus an immutable snapshot citation link; the web capture transaction also attaches Job source evidence. A captured private copy remains readable to its authorized creator after source-page access changes or deletion. It neither promotes audience nor changes Job state. Job download authorization checks Job visibility, its registry link and artifact access independently. New-file uploads and model-facing attachment/capture tools remain pending.
 
 ### Review state
 
@@ -250,8 +254,8 @@ Phase 0 exits with an assertion-style check suite (Rust tests colocated with the
 | Page tree (`parent_item_ref`, `position`, `path`) | defined | rejected | implemented (2) |
 | Page policy + membership, ancestor resolution | defined | blanket capability check only | implemented (2) |
 | Organize (reparent/reorder), review ops + review states beyond `none` | defined | rejected | implemented (2) |
-| Attachment links | defined | rejected | implemented (3) |
-| Recall passage handoff | distinction defined | — | implemented (3) |
+| Attachment links | defined | rejected | finalized-artifact links/detach/download implemented locally (3); uploads pending |
+| Recall passage handoff | distinction defined | — | planned (3), not implemented |
 
 ## Documentation obligations
 

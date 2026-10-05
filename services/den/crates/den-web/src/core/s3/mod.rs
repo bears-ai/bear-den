@@ -129,6 +129,14 @@ impl MediaStore {
         }
     }
 
+    /// Internal, short-lived GET used by the permission-rechecking artifact proxy.
+    pub fn presign_internal_download(&self, object_key: &str) -> String {
+        self.bucket
+            .get_object(Some(&self.credentials), object_key)
+            .sign(Duration::from_mins(5))
+            .to_string()
+    }
+
     /// Presigned GET URL for the browser to display/download an object.
     ///
     /// Always uses the **public** endpoint so the URL works from the browser.

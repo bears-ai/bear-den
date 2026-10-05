@@ -1,0 +1,48 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT j.created_by_user_id,j.visibility,COALESCE(lower(btrim(ub.role))='admin',false) AS \"admin!\",a.cabinet_ref AS \"cabinet_ref?\",COALESCE(a.revision,0) AS \"revision!\" FROM bear_jobs j JOIN user_bear ub ON ub.bear_id=j.bear_id AND ub.user_id=$3 LEFT JOIN job_cabinet_refs a ON a.job_id=j.id WHERE j.id=$1 AND j.bear_id=$2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "created_by_user_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "visibility",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "admin!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 3,
+        "name": "cabinet_ref?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "revision!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      true,
+      null
+    ]
+  },
+  "hash": "42ffb2579ea9877c604333a9cec5e3703434904ab0a5314545b3bd937f65371c"
+}

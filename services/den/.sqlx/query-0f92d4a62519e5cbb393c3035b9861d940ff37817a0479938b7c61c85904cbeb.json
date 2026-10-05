@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT l.id,l.role,l.created_at,a.artifact_ref FROM artifact_links l JOIN artifacts a ON a.id=l.artifact_id WHERE l.target_kind='cabinet_item' AND l.target_id=$1 ORDER BY l.created_at,l.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "role",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 3,
+        "name": "artifact_ref",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "0f92d4a62519e5cbb393c3035b9861d940ff37817a0479938b7c61c85904cbeb"
+}

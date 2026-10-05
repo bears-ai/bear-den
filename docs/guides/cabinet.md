@@ -8,7 +8,7 @@ Cabinet is a **tree of pages** and nothing else — there are no separate folder
 or collections. A page can hold content, child pages, or both. A "Mission" is
 just a page describing a goal, with its plans and references as child pages;
 a Docket job can point at that page when it needs the documentation for its
-work. The branch web UI now supports child pages, sibling order and inherited access; the Docket Mission reference/snapshot workflow remains target work.
+work. The web UI supports child pages, sibling order and inherited access. A Job's **Mission knowledge** section links a page and can save a private copy of its published version.
 
 Contract and design: [cabinet-contract.md](../architecture/cabinet-contract.md).
 Plan and phase status: [CABINET_IMPLEMENTATION_PLAN.md](../roadmap/CABINET_IMPLEMENTATION_PLAN.md).
@@ -40,6 +40,14 @@ Open **`/cabinet`** while logged in.
   the most destructive thing a Bear can do to shared knowledge is archive it.
   Hard purge (removing the retained revisions) is an operator action, not a
   button here.
+
+## Attachments and private copies
+
+On a readable page, **Attachments** lists only files you may also read under their artifact policy. Page write authority lets you link an existing finalized `artifact_…` reference, choose its role and remove the link. Adding a link does not give other page readers access to a private file. **Download** rechecks both page and artifact permissions. JSON content is supported; finalized Garage file downloads require configured byte storage, are limited to 16 MiB, and verify size/hash without exposing storage URLs or keys. Uploading a new file from Cabinet is not implemented yet.
+
+On a Job, choose an accessible Cabinet page under **Mission knowledge** and save the link. A Job owner or Bear admin can then **Save a private copy** of the published version. **Saved document evidence** offers downloads of readable copies with their captured titles. A copy stays unchanged after page edits or deletion, is private to the person who captured it under current Bear membership, and does not give the Bear or other Job readers access. Restricting the source page later does not revoke the already-captured private copy.
+
+Linked attachments and captured copies retain their artifacts: expiration/GC and ordinary deletion cannot remove retained payloads. Detaching a page attachment releases that link's retention, but another page or snapshot link may still retain it. Deleting a page does not release retention. Snapshot retention has no ordinary web release control yet; purge requires operator remediation. Retention can also block deletion of the artifact's Bear through database cascades, so detach ordinary links or arrange operator remediation before deleting that Bear.
 
 ## What Bears can do
 
@@ -79,6 +87,6 @@ the bytes behind them.
 
 - Search is substring matching over titles and current content (no semantic
   recall yet; that is Phase 3, via the derived recall index).
-- The existing model tool request schemas remain the root/search interfaces; hierarchy and access/review management are currently web/facade operations. Docket Mission annotations and immutable snapshot citations are not delivered by this slice.
-- Attachments (files on pages, via artifact refs) are Phase 3.
+- The existing model tool request schemas remain the root/search interfaces; hierarchy, access/review, attachments and Job Mission/copy management are currently web/facade operations, not new model tools.
+- New file uploads and Cabinet recall remain pending. Attachments currently link already-finalized artifacts.
 - The editor is a plain Markdown textarea; rendered views sanitize HTML.

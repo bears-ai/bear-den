@@ -1,0 +1,36 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT j.created_by_user_id,j.visibility,COALESCE(lower(btrim(ub.role))='admin',false) AS \"admin!\" FROM bear_jobs j JOIN user_bear ub ON ub.bear_id=j.bear_id AND ub.user_id=$3 WHERE j.id=$1 AND j.bear_id=$2 FOR UPDATE OF j",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "created_by_user_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "visibility",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "admin!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "207c3cc637d6cb101b0d2cf18d910ce9d05ac478b0e655ec6ec1ffd62d9664a7"
+}

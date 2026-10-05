@@ -130,7 +130,7 @@ All `/admin/*` routes use `permission_required!(…, "admin")`.
 
 ## Cabinet (`src/cabinet/mod.rs`)
 
-Shared-knowledge wiki over the `den_service::cabinet` facade (Cabinet Phase 1; contract in `docs/architecture/cabinet-contract.md`).
+Shared-knowledge wiki over the `den_service::cabinet` facade (hierarchy/policy/review plus finalized-artifact attachment slice; recall and new-file upload remain pending; contract in `docs/architecture/cabinet-contract.md`).
 
 - `GET /cabinet` — list/search items (`q`, `lifecycle=archived`)
 - `GET /cabinet/new` / `POST /cabinet/new` — create an item (first published revision)
@@ -141,6 +141,9 @@ Shared-knowledge wiki over the `den_service::cabinet` facade (Cabinet Phase 1; c
 - `POST /cabinet/{cabinet_ref}/delete` — tombstone the item; **people only** (the facade refuses Bears), revisions retained so existing citations keep resolving
 - `POST /cabinet/{cabinet_ref}/sources` — link provenance (kind, locator, role)
 - `POST /cabinet/{cabinet_ref}/sources/{source_ref}/remove` — unlink provenance
+- `POST /cabinet/{cabinet_ref}/attachments` — link an existing finalized `artifact_ref` and typed role; page write plus independent artifact content access required
+- `POST /cabinet/{cabinet_ref}/attachments/{attachment_ref}/remove` — detach the exact page/link; page write required
+- `GET /cabinet/{cabinet_ref}/attachments/{attachment_ref}/content` — permission-rechecking download; JSON or configured Garage content (16 MiB, size/hash checked), no-store/nosniff/attachment headers, no storage URL exposed
 
 All `/cabinet/*` routes use `login_required!(…)`; page/ancestor membership and policy are enforced by the shared facade. `GET /cabinet` without a query lists accessible roots; each page shows accessible children. `GET /cabinet/new?parent={cabinet_ref}` creates a child under current destination authority. `POST /{cabinet_ref}/policy`, `/organize`, `/review` apply named membership/policy, bounded move/order and human pending-version decisions. Policy administration is separate from review authority; audience changes require acknowledgement. Archive cascades only with subtree authority, restore is one-page, and deletion refuses non-deleted children.
 
@@ -151,6 +154,9 @@ All `/cabinet/*` routes use `login_required!(…)`; page/ancestor membership and
 - `POST /bear/{bear_slug}/jobs/new` — create the Docket job (tasks assigned to the work stance; created_by_role `ui`)
 - `POST /bear/{bear_slug}/jobs/new` — if this Bear has hats, the creator selects a Work-enabled hat whose grant covers the chosen surface; Docket binds it in the same transaction as Job creation and its initial run. Bears with no hats retain the legacy unbound form. `GET /bear/{bear_slug}/jobs/{job_id}` — job detail: editable goal/surface/commit policy/branch, task tree with statuses, job dispatch, duplication, run history with publish outcomes. `POST /bear/{bear_slug}/jobs/{job_id}/hat` is Bear-admin-only and binds an eligible draft Job once to a Work-enabled hat covering all its surfaces.
 - `POST /bear/{bear_slug}/jobs/{job_id}/edit` — update job-level settings; task-tree editing remains separate/deferred
+- `POST /bear/{bear_slug}/jobs/{job_id}/mission` — owner/admin link or clear an accessible Cabinet page using the current annotation `revision`; Docket owns the reference and stale writes fail
+- `POST /bear/{bear_slug}/jobs/{job_id}/mission/snapshot` — owner/admin capture the exact published `version` with annotation `revision`; private retained JSON artifact plus Job source evidence in one transaction, no Job-status or Work-audience change
+- `GET /bear/{bear_slug}/jobs/{job_id}/evidence/{artifact_ref}/content` — download Job-linked JSON document evidence after Job and artifact authorization; saved copies are listed on Job detail only when readable; no-store/nosniff/attachment headers
 - `POST /bear/{bear_slug}/jobs/{job_id}/duplicate` — copy job intent/settings/criteria/task hierarchy into a fresh ready job; run state and publish branch are reset
 - `POST /bear/{bear_slug}/jobs/{job_id}/cancel` — cancel the active Bear-owned Docket lifecycle run and release any stale Pair execution claim; this works even if its original Pair session is defunct and is distinct from sandbox work-run cancellation
 - `POST /bear/{bear_slug}/jobs/{job_id}/complete` — after all tasks finish, accept remaining criteria as a human decision and close the job/current run

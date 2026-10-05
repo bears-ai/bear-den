@@ -11,6 +11,47 @@
     · source change policy <strong>{{ commit_policy_label }}</strong>
     {% if work_branch %} · publishes to <code>{{ work_branch }}</code>{% endif %}
 </p>
+
+<section class="box">
+    <h2>Mission knowledge</h2>
+    {% if mission.reference %}
+    <p><a href="/cabinet/{{ mission.reference }}">{{ mission.title | e }}</a></p>
+    {% else %}
+    <p>No accessible Mission page linked.</p>
+    {% endif %}
+    {% if mission.can_edit %}
+    <form method="post" action="/bear/{{ bear_slug | urlencode }}/jobs/{{ job_id }}/mission">
+        <input type="hidden" name="revision" value="{{ mission.revision }}">
+        <label>Cabinet page
+            <select name="cabinet_ref">
+                <option value="">No page</option>
+                {% for page in mission_choices %}
+                <option value="{{ page.cabinet_ref }}" {% if page.cabinet_ref == mission.reference %}selected{% endif %}>{{ page.title | e }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <button type="submit">Save knowledge link</button>
+    </form>
+    {% if mission.reference and mission.version %}
+    <form method="post" action="/bear/{{ bear_slug | urlencode }}/jobs/{{ job_id }}/mission/snapshot">
+        <input type="hidden" name="revision" value="{{ mission.revision }}">
+        <input type="hidden" name="version" value="{{ mission.version }}">
+        <button type="submit">Save a private copy</button>
+        <details><summary>About this copy</summary><p>Saves this published version as private evidence. Later page edits do not change it. It does not change the Job status or give the Bear access.</p></details>
+    </form>
+    {% endif %}
+    {% endif %}
+    <h3>Saved document evidence</h3>
+    {% if mission.evidence %}
+    <ul>
+        {% for evidence in mission.evidence %}
+        <li>{{ evidence.title | e }} · <a href="/bear/{{ bear_slug | urlencode }}/jobs/{{ job_id }}/evidence/{{ evidence.reference }}/content">Download saved copy</a></li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p>No saved documents available.</p>
+    {% endif %}
+</section>
 {% if can_manage_hat %}
 <div class="box">
   <h3>Hat for this Job</h3>

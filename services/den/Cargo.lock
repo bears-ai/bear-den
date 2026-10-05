@@ -715,6 +715,7 @@ dependencies = [
 name = "den-docket"
 version = "0.1.2"
 dependencies = [
+ "den-cabinet",
  "den-core",
  "serde",
  "serde_json",

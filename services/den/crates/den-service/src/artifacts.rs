@@ -20,6 +20,12 @@ use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+mod scoped_access;
+pub use scoped_access::{
+    authorize_for_reader, content_location_for_reader, json_content_for_reader,
+    verify_content_bytes, ArtifactReader, ArtifactRef,
+};
+
 const ARTIFACT_REF_PREFIX: &str = "artifact_";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -515,10 +521,14 @@ pub async fn create_json_artifact_in_tx(
     )
     .fetch_one(&mut **tx)
     .await?;
+    let content_sha256 = {
+        use sha2::{Digest, Sha256};
+        format!("{:x}", Sha256::digest(&payload_bytes))
+    };
     let row = sqlx::query_as!(
         ArtifactRow,
         "UPDATE artifacts
-         SET lifecycle = 'finalized', content_bytes = $3, metadata = metadata,
+         SET lifecycle = 'finalized', content_bytes = $3, content_sha256 = $4, metadata = metadata,
              finalized_at = NOW(), updated_at = NOW()
          WHERE id = $1 AND bear_id = $2 AND lifecycle = 'pending'
          RETURNING
@@ -529,14 +539,17 @@ pub async fn create_json_artifact_in_tx(
         artifact.id,
         artifact.bear_id,
         i64::try_from(payload_bytes.len()).expect("payload size is bounded"),
+        content_sha256,
     )
     .fetch_one(&mut **tx)
     .await?;
-    sqlx::query("INSERT INTO artifact_json_payloads (artifact_id, payload) VALUES ($1, $2)")
-        .bind(artifact.id)
-        .bind(input.payload)
-        .execute(&mut **tx)
-        .await?;
+    sqlx::query!(
+        "INSERT INTO artifact_json_payloads (artifact_id, payload) VALUES ($1, $2)",
+        artifact.id,
+        input.payload
+    )
+    .execute(&mut **tx)
+    .await?;
     artifact_from_row(row)
 }
 
@@ -1008,6 +1021,34 @@ pub async fn list_artifact_citations(
         .collect()
 }
 
+pub async fn list_docket_artifact_links(
+    pool: &PgPool,
+    bear_id: Uuid,
+    target_kind: DocketArtifactTargetKind,
+    target_id: Uuid,
+) -> Result<Vec<ArtifactLink>, DenError> {
+    list_artifact_links(pool, bear_id, target_kind.as_str(), &target_id.to_string()).await
+}
+
+pub async fn attach_docket_artifact_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    input: AttachDocketArtifactInput,
+) -> Result<ArtifactLink, DenError> {
+    attach_artifact_in_tx(
+        tx,
+        AttachArtifactInput {
+            artifact_ref: input.artifact_ref,
+            bear_id: input.bear_id,
+            target_kind: input.target_kind.as_str().into(),
+            target_id: input.target_id.to_string(),
+            role: input.role.as_str().into(),
+            metadata: input.metadata,
+            created_by_user_id: input.created_by_user_id,
+        },
+    )
+    .await
+}
+
 pub async fn list_docket_artifact_citations(
     pool: &PgPool,
     bear_id: Uuid,
@@ -1062,6 +1103,7 @@ pub async fn list_expired_artifact_gc_candidates(
             AND expires_at IS NOT NULL
             AND expires_at <= $2
             AND lifecycle IN ('finalized', 'expired')
+            AND NOT EXISTS (SELECT 1 FROM artifact_links l WHERE l.artifact_id = artifacts.id AND l.target_kind IN ('cabinet_item','cabinet_snapshot'))
          ORDER BY expires_at ASC, created_at ASC
          LIMIT $3",
         bear_id,

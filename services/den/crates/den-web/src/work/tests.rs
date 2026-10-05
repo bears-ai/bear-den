@@ -3,6 +3,7 @@
 //! route, same pattern as `bear::settings::tests`.
 
 use super::*;
+mod knowledge;
 use axum::{
     body::Body,
     http::{header, Request, StatusCode},
@@ -156,6 +157,7 @@ async fn test_app(pool: sqlx::PgPool) -> axum::Router {
     store.migrate().await.expect("session store migration");
     Router::new()
         .merge(router())
+        .merge(crate::cabinet::router())
         .nest("/bear/{bear_slug}", docket_router())
         .route("/test-login/{user_id}", get(test_login))
         .with_state(test_state(pool.clone()))

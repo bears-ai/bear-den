@@ -75,6 +75,8 @@ Both pass after that manifest correction. Phase 1 is functionally implemented; P
 
 **Phase 3 progress:** Docket now rejects a `done` task update unless `result_refs` contains structured `primary_output` (`git_commit` or `den_artifact`) evidence and a recorded validation attempt that names the same ref and, when supplied, immutable identity, command, and execution provenance. This is a provenance/handoff integrity check, not a judgment that the output is correct. Completion writes a Docket-owned **evidence receipt** containing the recorded output, identity, and validation attempt. Artifact finalization/link checks are available for workflows that explicitly require them, but are not settlement gates; Git commit reachability/OID resolution is likewise not a universal gate. BearWire's `docket.jobs.diagnostics` now composes Docket job/task state with access-filtered, non-clickable task artifact citations via `den-service`; the citation projection is covered by a serialization check that excludes storage keys, digests, provenance, and metadata. The same diagnostics response now includes a minimal safe run summary and access-filtered run artifact citations. Its existing criterion diagnostics projection also returns access-filtered criterion citations. Conversation history renders both task-linked and conversation-linked citations as non-clickable structured resources containing only opaque `artifact_...` identifiers, with focused checks confirming that no backing fields are rendered. The remaining unchecked Phase 3 work is provenance when future work/runtime flows create artifacts; it has no producer yet, so no integration should be invented ahead of that flow.
 
+**Cabinet/Mission slice (local branch, 2026-10-05):** existing finalized artifacts can be linked/detached on Cabinet pages and downloaded after independent page/artifact authorization. Registry links canonically retain attachments and private published-document snapshot citations; a database trigger prevents deletion/expiration while retained, and GC excludes them. Docket owns optional Job Mission page annotations; Job detail lists readable JSON evidence and serves scoped downloads of captured copies. Snapshot capture preserves exact version/title/content/hash, stays private, and does not settle a Job or promote Work access. Database-backed `den-web/src/work/tests/knowledge.rs` covers independent ACLs, hidden metadata, cross-Job downloads, stale revisions and retention after source-page tombstone. Garage downloads use configured storage with a 16 MiB size/hash-verified proxy; new uploads/presigned upload issuance and an end-to-end Garage byte-flow test remain open, so Phase 2 is not complete. Snapshot retention release remains operator-only and retained artifacts may block Bear deletion via cascades; see the [Cabinet guide](../guides/cabinet.md#attachments-and-private-copies).
+
 ## Implementation phases
 
 ### Phase 0 — Inventory and initial decisions
@@ -151,11 +153,11 @@ Initial implementation decisions:
 
 **Goal:** Let Cabinet use artifact refs without conflating Cabinet records with blob storage. The Cabinet item, ACL, and review contract is owned by the [Cabinet implementation plan](CABINET_IMPLEMENTATION_PLAN.md).
 
-- [ ] Add Cabinet attachment link model: Cabinet item -> artifact ref + attachment role.
-- [ ] Support `cabinet_durable` lifecycle or equivalent retention promotion for attached artifacts.
-- [ ] Ensure artifact GC never deletes Cabinet-durable attachments.
-- [ ] Preserve Cabinet ACL/retention policy separately from ephemeral run artifact policy.
-- [ ] Add attach/detach operations with authorization checks.
+- [x] Add Cabinet attachment link model: Cabinet item -> artifact ref + attachment role (existing `artifact_links`, deterministic typed attachment ref).
+- [x] Support `cabinet_durable` lifecycle or equivalent retention promotion for attached artifacts (retention derived from Cabinet link existence, no duplicate writable status).
+- [x] Ensure artifact GC never deletes Cabinet-durable attachments (candidate exclusion plus deletion/lifecycle trigger).
+- [x] Preserve Cabinet ACL/retention policy separately from ephemeral run artifact policy (independent artifact reader authorization, no audience promotion).
+- [x] Add attach/detach operations with authorization checks.
 
 **Exit gate:** Cabinet items can attach artifact refs as source documents, generated reports, or evidence, with durable retention semantics.
 
