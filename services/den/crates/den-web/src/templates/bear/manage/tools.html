@@ -3,11 +3,8 @@
 {% block manage %}
 <div class="box">
     <h2>Tools</h2>
-    <p class="form-hint">
-        Typical availability by verified execution context. A tool is available
-        only when the current human, channel or connected armature, hat, Job,
-        work surface, policy, and approvals permit it. A dot is not a grant.
-    </p>
+    <p class="button-row"><a href="/bear/{{ bear.slug | urlencode }}/resources">Inspect reach</a>{% if can_manage_bear %}<a href="/bear/{{ bear.slug | urlencode }}/hats">Manage hat grants</a>{% endif %}</p>
+    <p class="form-hint">Potential availability, not a permission grant. Local tools require a connected editor or eligible Job.</p>
 
     {% if tools and tools | length > 0 %}
     <table>

@@ -1,26 +1,10 @@
 {% extends "base.html" %}
-
-{% block title %}Home{% endblock %}
-
+{% block title %}Bears{% endblock %}
 {% block content %}
-<section>
-    <h2>Your bears</h2>
-    <p><a href="/bears/new">Create a new bear</a> (you become its admin).</p>
-    {% if bears and bears | length > 0 %}
-    <ul>
-        {% for b in bears %}
-        <li>
-            <a href="/bear/{{ b.slug | e }}">{{ b.name | e }}</a>
-            {% if b.is_admin %}<span class="form-hint">(you are admin)</span>{% endif %}
-            — <a href="/bear/{{ b.slug | e }}/overview">Overview</a>
-            {% if b.description %}
-            <p>{{ b.description | e }}</p>
-            {% endif %}
-        </li>
-        {% endfor %}
-    </ul>
-    {% else %}
-    <p>You do not have access to any bears yet. Create one above, ask a bear admin to invite you, or use <a href="/settings">Settings</a> if you are setting up your account.</p>
-    {% endif %}
+<main class="den-hub">
+<section class="box"><h2>Your Bears</h2><p class="button-row"><a class="button-link" href="/bears/new">Create a Bear</a><a href="/reviews">Reviews</a></p>
+{% if bears %}<ul class="den-record-list">{% for bear in bears %}<li><a href="/bear/{{ bear.slug | urlencode }}/overview"><strong>{{ bear.name | e }}</strong></a><span>{{ bear.description | e }}</span><a href="/bear/{{ bear.slug | urlencode }}">Chat</a>{% if bear.is_admin %}<span class="form-hint">Admin</span>{% endif %}</li>{% endfor %}</ul>{% else %}<p>No Bears assigned to you yet.</p>{% endif %}
 </section>
+<details class="box"><summary>Import a Bear</summary><form method="post" action="/bears/import" enctype="multipart/form-data"><label for="import-bundle">Bundle file (.bear)</label><input type="file" name="bundle" id="import-bundle" accept=".bear,application/zip" required><p>Creates a new Bear. Model choices, hats, connections and membership need review on this Den.</p><button type="submit">Import bundle</button></form></details>
+</main>
 {% endblock %}

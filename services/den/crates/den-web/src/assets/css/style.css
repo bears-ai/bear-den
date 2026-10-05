@@ -24,6 +24,7 @@
 @import url("menu.css");
 @import url("common.css");
 @import url("specifics.css");
+@import url("management.css");
 
 :root {
     --narrow-width: 700px;

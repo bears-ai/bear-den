@@ -197,7 +197,7 @@ async fn index(
             .map(|surface| {
                 serde_json::json!({
                     "id": route_id(surface.id),
-                    "reference": entity_ref(surface.id, "Work surface", &surface.name, None),
+                    "reference": entity_ref(surface.id, "Repository", &surface.name, None),
                     "name": surface.name,
                     "description": surface.description,
                     "bear_slug": bears.get(&surface.bear_id).cloned().unwrap_or_default(),
@@ -210,7 +210,7 @@ async fn index(
         .map(|surface| {
             serde_json::json!({
                 "id": route_id(surface.id),
-                "reference": entity_ref(surface.id, "Work surface", &surface.name, None),
+                "reference": entity_ref(surface.id, "Repository", &surface.name, None),
                 "name": surface.name,
                 "description": surface.description,
                 "upstream_url": surface.upstream_url,
@@ -225,7 +225,7 @@ async fn index(
         "work/surfaces.html",
         auth_session,
         context! {
-            title => "Work surfaces",
+            title => "Repositories",
             managed => managed,
             available => available,
             message => query.message,
@@ -260,7 +260,7 @@ async fn new_form(
         "work/surface_new.html",
         auth_session,
         context! {
-            title => "New work surface",
+            title => "Connect repository",
             images => images,
             bear_id => query.bear_id.map(|id| id.to_string()),
             return_job_id => query.return_job_id.map(|id| id.to_string()),
@@ -509,9 +509,9 @@ async fn detail(
         "work/surface.html",
         auth_session,
         context! {
-            title => "Work surface",
+            title => "Repository",
             surface_id => route_id(surface.id),
-            surface_reference => entity_ref(surface.id, "Work surface", &surface.name, None),
+            surface_reference => entity_ref(surface.id, "Repository", &surface.name, None),
             name => surface.name,
             description => surface.description,
             upstream_url => surface.upstream_url,

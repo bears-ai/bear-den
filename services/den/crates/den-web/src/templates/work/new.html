@@ -1,6 +1,7 @@
-{% extends "base.html" %}
-{% block title %}New Docket job<script>
-(function () {
+{% extends "work/_manage.html" %}
+{% block title %}New Job · {{ bear_slug | e }}{% endblock %}
+{% block head %}<script>
+document.addEventListener('DOMContentLoaded', function () {
     var surface = document.querySelector('select[name="surface_id"]');
     var hats = document.getElementById('job-hat-choice');
     if (!surface || !hats) return;
@@ -14,12 +15,12 @@
     }
     surface.addEventListener('change', updateHats);
     updateHats();
-})();
+});
 </script>
 {% endblock %}
-{% block content %}
-<p><a href="/bear/{{ bear_slug }}/jobs">← Docket</a></p>
-<h1>New work job</h1>
+{% block manage %}
+<p><a href="/bear/{{ bear_slug }}/jobs">← Jobs</a></p>
+<h2>New Job</h2>
 <p>
     Creates a Docket job that runs autonomously in one shared sandbox session.
     Choose a source change policy explicitly. Publishing policies push successful runs to the
@@ -34,7 +35,7 @@
         </label>
     </p>
     <p>
-        <label>Work surface<br>
+        <label>Repository<br>
             {% if surfaces %}
             <select name="surface_id">
                 <option value="">— none —</option>
@@ -42,9 +43,9 @@
                 <option value="{{ surface.id }}">{{ surface.name }} (git: {{ surface.default_ref }})</option>
                 {% endfor %}
             </select>
-            <small><a href="/work/surfaces">manage surfaces</a></small>
+            <small><a href="/work/surfaces">manage repositories</a></small>
             {% else %}
-            <small>No surfaces are assigned to your bears yet — <a href="/work/surfaces/new">create one</a> and assign it to this Bear.</small>
+            <small>No repositories are assigned to your Bears yet — <a href="/work/surfaces/new">create one</a> and assign it to this Bear.</small>
             {% endif %}
         </label>
     </p>

@@ -1,57 +1,15 @@
 {% extends "bear/_manage.html" %}
-{% block title %}Identity · {{ bear.slug }}{% endblock %}
+{% block title %}Purpose · {{ bear.name | e }}{% endblock %}
 {% block manage %}
-<div class="box">
-    <h2>Identity &amp; charter</h2>
-    <p class="form-hint">
-        The Bear's name and charter describe its enduring purpose. Hats describe
-        the responsibilities it can take on. The model is a swappable engine.
-    </p>
-
-    <dl>
-        <dt>Name</dt>
-        <dd>{{ bear.name | e }}</dd>
-        <dt>Slug</dt>
-        <dd><code>{{ bear.slug | e }}</code></dd>
-        <dt>Description</dt>
-        <dd>
-            {% if bear.description %}{{ bear.description | e }}{% else %}<em
-                >No description</em
-            >{% endif %}
-        </dd>
-        <dt>Default model</dt>
-        <dd>
-            {% if bear.default_model %}<code>{{ bear.default_model | e }}</code
-            >{% else %}<em>inherited from Den</em>{% endif %}
-        </dd>
-    </dl>
-
-    <h3>Hats</h3>
-    {% if hats %}
-    <ul>
-        {% for hat in hats %}
-        <li>
-            {% if can_manage_bear %}<a href="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}">{{ hat.name | e }}</a>{% else %}{{ hat.name | e }}{% endif %}
-            {% if hat.short_summary %} — {{ hat.short_summary | e }}{% endif %}
-        </li>
-        {% endfor %}
-    </ul>
-    {% else %}<p class="form-hint">No hats configured yet.</p>{% endif %}
-
-    {% if can_manage_bear %}
-    <p class="button-row">
-        <a class="button-link" href="/bear/{{ bear.slug | e }}/edit/overview"
-            >Edit name &amp; description</a
-        >
-        <a class="button-link" href="/bear/{{ bear.slug | e }}/edit/prompt"
-            >Edit charter</a
-        >
-        <a class="button-link" href="/bear/{{ bear.slug | e }}/hats"
-            >Manage hats</a
-        >
-    </p>
-    {% else %}
-    <p class="form-hint">Bear admins can edit identity and hats.</p>
-    {% endif %}
-</div>
+<section class="box">
+  <h2>Purpose</h2>
+  <dl><dt>Name</dt><dd>{{ bear.name | e }}</dd><dt>Handle</dt><dd>{{ bear.slug | e }}</dd><dt>Description</dt><dd>{{ bear.description | default("No description yet", true) | e }}</dd><dt>Default model</dt><dd>{{ bear.default_model | default("Inherited from Den", true) | e }}</dd></dl>
+  {% if can_manage_bear %}<p class="button-row"><a class="button-link" href="/bear/{{ bear.slug | urlencode }}/edit/overview">Edit name &amp; description</a><a href="/bear/{{ bear.slug | urlencode }}/edit/prompt">Edit purpose &amp; steering</a><a href="/bear/{{ bear.slug | urlencode }}/models">Models &amp; budget</a></p>{% endif %}
+</section>
+<section class="box" id="hats">
+  <h2>Hats</h2>
+  {% if hats %}<ul class="den-record-list">{% for hat in hats %}<li>{% if can_manage_bear %}<a href="/bear/{{ bear.slug | urlencode }}/hats/{{ hat.id }}">{{ hat.name | e }}</a>{% else %}<strong>{{ hat.name | e }}</strong>{% endif %}{% if hat.short_summary %}<span>{{ hat.short_summary | e }}</span>{% endif %}</li>{% endfor %}</ul>{% else %}<p>No responsibilities configured.</p>{% endif %}
+  {% if can_manage_bear %}<a href="/bear/{{ bear.slug | urlencode }}/hats">Manage responsibilities</a>{% endif %}
+</section>
+{% if can_manage_bear %}<details class="box"><summary>Inspect Bear-wide steering</summary><pre class="bear-manage-prompt-preview">{{ bear.system_prompt | e }}</pre><p><a href="/bear/{{ bear.slug | urlencode }}/context">Inspect effective prompt &amp; context</a></p><p class="form-hint">Hat identity and platform instructions are composed separately. Edits apply to future turns; authored text does not grant access.</p></details>{% endif %}
 {% endblock %}

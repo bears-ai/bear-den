@@ -1,65 +1,22 @@
 {% extends "bear/_manage.html" %}
-{% block title %}Portability · {{ bear.slug }}{% endblock %}
+{% block title %}Backup &amp; move · {{ bear.name | e }}{% endblock %}
 {% block manage %}
-<div class="box">
-    <h2>Portability</h2>
-    <p class="form-hint">
-        A Bear is its curated memory and configuration — not its transcripts.
-        Export produces a bundle you can carry to another Den; this server
-        keeps its own record.
-    </p>
-
-    <h3>Export</h3>
-    <p>
-        <a class="button-link" href="/bear/{{ bear.slug | e }}/export.bear"
-            >Download bundle (.bear)</a
-        >
-    </p>
-    <p class="form-hint">
-        The bundle contains identity, configuration, and the Bear's canonical
-        SQLite memory as of this moment. Anything the reflection lanes have
-        not yet curated into memory stays behind in this Den's transcripts.
-    </p>
-
-    <h3>What moves, what stays</h3>
-    <table>
-        <thead>
-            <tr>
-                <th>Concern</th>
-                <th>In the bundle?</th>
-            </tr>
-        </thead>
-        <tbody>
-            <tr><td>Identity, charter, stance configuration</td><td>Yes</td></tr>
-            <tr><td>Canonical memory (all scopes), promotions, proposals</td><td>Yes</td></tr>
-            <tr><td>Conversations and transcripts</td><td>No — stay on this Den</td></tr>
-            <tr><td>Jobs, runs, approvals in flight</td><td>No — stay on this Den</td></tr>
-            <tr><td>Membership (people)</td><td>No — re-granted on the target</td></tr>
-            <tr><td>Connections, tokens, secrets</td><td>Never — re-attached on the target</td></tr>
-            <tr><td>Recall index (derived)</td><td>No — rebuilt from memory on import</td></tr>
-        </tbody>
-    </table>
-
-    <h3>Import</h3>
-    {% if can_manage_bear %}
-    <form
-        method="post"
-        action="/bears/import"
-        enctype="multipart/form-data"
-        class="bear-manage-import-form"
-    >
-        <p>
-            <label for="bundle">Bundle file (.bear)</label>
-            <input type="file" id="bundle" name="bundle" required />
-        </p>
-        <p class="form-hint">
-            Importing creates a <strong>new Bear</strong> on this Den from the
-            bundle. It does not modify this one.
-        </p>
-        <p><button type="submit">Import bundle</button></p>
-    </form>
-    {% else %}
-    <p class="form-hint">Bear admins can import bundles.</p>
-    {% endif %}
-</div>
+<section class="box">
+  <h2>Backup &amp; move</h2>
+  <table><caption>Contents of the current .bear bundle</caption><thead><tr><th>Material</th><th>Included?</th></tr></thead><tbody>
+    <tr><td>Name, description, Bear-wide steering and model/configuration</td><td>Yes</td></tr>
+    <tr><td>Canonical SQLite memory, all scopes and history</td><td>Yes — includes private source-local notes</td></tr>
+    <tr><td>Hat definitions, identity, access grants and IDE default</td><td>No — configure on the destination</td></tr>
+    <tr><td>Conversations, Jobs, runs and approvals</td><td>No — stay on this Den</td></tr>
+    <tr><td>Cabinet pages and artifact payloads</td><td>No — shared Den records</td></tr>
+    <tr><td>Membership, repository connections and secrets</td><td>No — re-authorize on the destination</td></tr>
+    <tr><td>Derived search index</td><td>No — not canonical memory</td></tr>
+  </tbody></table>
+  {% if can_manage_bear %}<p><strong>Contains private memory.</strong> Download only to a trusted location; do not share this bundle as if it contained only shared knowledge.</p><p><a class="button-link" href="/bear/{{ bear.slug | urlencode }}/export.bear">Download .bear bundle</a></p>{% else %}<p>Export requires Bear-admin access.</p>{% endif %}
+  <details><summary>Snapshot timing</summary><p>Export snapshots current canonical memory. It does not flush pending curation or include recent transcript knowledge that has not become memory. There is no full-Den backup or skill-package export here.</p></details>
+</section>
+<section class="box"><h2>Import as a new Bear</h2>
+{% if can_manage_bear %}<form method="post" action="/bears/import" enctype="multipart/form-data"><label for="bundle">Bundle file (.bear)</label><input type="file" id="bundle" name="bundle" accept=".bear,application/zip" required><p>Creates a new Bear; does not overwrite this one.</p><button type="submit">Import bundle</button></form>{% else %}<p>A verified user can create/import a Bear from the Bears page. This Bear cannot be exported without admin access.</p>{% endif %}
+<details><summary>After import</summary><ol><li>Check the new Bear under Purpose and Models.</li><li>Create hats and review knowledge before enabling Work.</li><li>Re-attach repository connections and re-authorize access.</li><li>Grant membership on the new Bear deliberately.</li></ol><p>Imported memory alone does not establish live hats or permission grants.</p></details>
+</section>
 {% endblock %}

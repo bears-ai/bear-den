@@ -43,14 +43,22 @@ pub async fn bear_page(
             CustomError::NotFound("Bear not found or you do not have access.".to_string())
         })?;
 
+    let can_manage_bear = super::member::viewer_can_manage_bear(
+        state.sqlx_pool(),
+        auth_session.user.as_ref().expect("authenticated user"),
+        bear.id,
+    )
+    .await?;
     web::render_template(
         &state,
         "bear_chat.html",
         auth_session,
         context! {
             bear_id => bear.id.to_string(),
-            bear_slug => bear.slug,
-            bear_name => bear.name,
+            bear_slug => bear.slug.clone(),
+            bear_name => bear.name.clone(),
+            can_manage_bear,
+            ..super::settings::bear_nav_context(&bear, "chat"),
         },
     )
     .await

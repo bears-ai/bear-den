@@ -1,7 +1,7 @@
-{% extends "base.html" %}
-{% block title %}Docket{% endblock %}
-{% block content %}
-<h1>Docket</h1>
+{% extends "work/_manage.html" %}
+{% block title %}Jobs · {{ bear_slug | e }}{% endblock %}
+{% block manage %}
+<h2>Jobs</h2>
 
 <section>
     {% if not provider_status.configured %}
@@ -15,13 +15,12 @@
 
 
 <section>
-    <h2>Jobs</h2>
-    <p><a href="/bear/{{ bear_slug }}/jobs/new">New job</a> · <a href="/work/surfaces">Work surfaces</a></p>
+    <p class="button-row"><a class="button-link" href="/bear/{{ bear_slug }}/jobs/new">New Job</a><a href="/work/surfaces">Repositories</a><a href="/cabinet">Shared pages</a></p>
     {% if show_completed %}<p><a href="/bear/{{ bear_slug }}/jobs{% if show_archived %}?archived=show{% endif %}">Hide completed jobs</a></p>{% else %}<p><a href="/bear/{{ bear_slug }}/jobs?completed=show{% if show_archived %}&archived=show{% endif %}">Show completed jobs</a></p>{% endif %}
     {% if show_archived %}<p><a href="/bear/{{ bear_slug }}/jobs{% if show_completed %}?completed=show{% endif %}">Hide archived jobs</a></p>{% else %}<p><a href="/bear/{{ bear_slug }}/jobs?archived=show{% if show_completed %}&completed=show{% endif %}">Show archived jobs</a></p>{% endif %}
     {% if jobs %}
     <table>
-        <thead><tr><th>Job</th><th>Status</th><th>Work surface</th><th>Docket run</th><th>Sandbox runs</th></tr></thead>
+        <thead><tr><th>Job</th><th>Status</th><th>Repository</th><th>Docket run</th><th>Sandbox runs</th></tr></thead>
         <tbody>{% for job in jobs %}
             <tr>
                 <td><a href="/bear/{{ job.bear_slug }}/jobs/{{ job.route_id }}" title="UUID prefix for {{ job.full_id }}">Job <code class="entity-reference-id">{{ job.display_id }}</code>: {{ job.title }}</a></td>
@@ -30,7 +29,7 @@
         {% endfor %}</tbody>
     </table>
     {% else %}
-    <p>{% if show_completed %}No Docket jobs yet.{% else %}No active Docket jobs. <a href="/bear/{{ bear_slug }}/jobs?completed=show">Show completed jobs</a>.{% endif %}</p>
+    <p>{% if show_completed %}No Jobs yet.{% else %}No active Jobs. <a href="/bear/{{ bear_slug }}/jobs?completed=show">Show completed jobs</a>.{% endif %}</p>
     {% endif %}
 </section>
 {% endblock %}

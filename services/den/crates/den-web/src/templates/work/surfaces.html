@@ -1,22 +1,18 @@
 {% extends "base.html" %}
-{% block title %}Work surfaces{% endblock %}
+{% block title %}Repositories{% endblock %}
+{% block breadcrumb %}<a href="/connections">Connections</a> / Repositories{% endblock %}
 {% block content %}
-<p><a href="/">← Dashboard</a></p>
-<h1>Work surfaces</h1>
-<p>
-    A work surface is a git upstream that background work runs on. Surfaces are
-    assigned to bears; any member of an assigned bear can create and dispatch
-    jobs on it. Credentials are stored encrypted and pushed to the sandbox
-    provider — they never enter sandboxes.
-</p>
+<p><a href="/">← Bears</a></p>
+<h1>Repositories</h1>
+<details><summary>Repository access</summary><p>Repository assignment, eligible hats, Job authority and current policy govern work. Repository credentials are write-only and remain on this Den.</p></details>
 
 {% if message %}
 <p><strong>{{ message }}</strong></p>
 {% endif %}
 
 <section>
-    <h2>Surfaces you manage</h2>
-    <p><a href="/work/surfaces/new">New work surface</a></p>
+    <h2>Repositories you manage</h2>
+    <p><a href="/work/surfaces/new">Connect repository</a></p>
     {% if managed %}
     <table>
         <thead>
@@ -44,7 +40,7 @@
     {% if available %}
     <table>
         <thead>
-            <tr><th>Surface</th><th>Bear</th><th>Description</th></tr>
+            <tr><th>Repository</th><th>Bear</th><th>Description</th></tr>
         </thead>
         <tbody>
             {% for surface in available %}

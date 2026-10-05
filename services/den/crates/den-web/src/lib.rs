@@ -25,6 +25,7 @@ pub mod cabinet;
 pub mod design;
 pub mod filters;
 pub mod home;
+pub mod management_hub;
 pub mod onboarding;
 pub mod public;
 pub mod stack_health;
@@ -34,6 +35,8 @@ pub mod v1;
 pub mod web_chat_runtime;
 pub mod work;
 
+#[cfg(test)]
+mod ownership_ui_tests;
 #[cfg(test)]
 mod tests;
 
@@ -346,6 +349,7 @@ pub async fn server(
                 .merge(bear::memory::router())
                 .merge(bear::manage::router())
                 .merge(onboarding::router())
+                .merge(management_hub::router())
                 .merge(cabinet::router())
                 .merge(work::router())
                 .nest("/bear/{bear_slug}", work::docket_router())

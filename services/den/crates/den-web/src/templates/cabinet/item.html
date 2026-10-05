@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{{ item_title }}{% endblock %}
+{% block breadcrumb %}<a href="/">Bears</a> / <a href="/cabinet">Cabinet</a>{% endblock %}
 {% block content %}
 <p><a href="/cabinet">← Cabinet</a></p>
 
@@ -16,20 +17,21 @@
 
 {% if lifecycle == "archived" %}
 <p>
-    <strong>This item is archived.</strong>
+    <strong>This page is archived.</strong>
 </p>
 <form method="post" action="/cabinet/{{ cabinet_ref }}/restore">
     <button type="submit">Restore</button>
 </form>
 {% endif %}
 
-<h1>{{ item_title }}</h1>
+<h1>{{ item_title | e }}</h1>
+<p class="button-row">{% if is_current and lifecycle == "active" %}<a class="button-link" href="/cabinet/{{ cabinet_ref }}/edit">Edit page</a>{% endif %}<a href="/cabinet/{{ cabinet_ref }}/history">Versions &amp; authors</a><a href="#sources">Sources</a></p>
 <article>
 {{ content | markdown }}
 </article>
 
 <section>
-    <h2>Sources</h2>
+    <h2 id="sources">Sources</h2>
     {% if sources %}
     <ul>
         {% for source in sources %}
@@ -88,13 +90,13 @@
 </p>
 {% if is_current and lifecycle == "active" %}
 <form method="post" action="/cabinet/{{ cabinet_ref }}/archive">
-    <button type="submit">Archive item</button>
+    <button type="submit">Archive page</button>
 </form>
 {% endif %}
 {% if is_current and lifecycle != "deleted" %}
 <form method="post" action="/cabinet/{{ cabinet_ref }}/delete"
       onsubmit="return confirm('Delete this item? It leaves Cabinet for everyone. Existing citations of its revisions keep working. Bears cannot do this.');">
-    <button type="submit">Delete item</button>
+    <button type="submit">Delete page</button>
 </form>
 {% endif %}
 {% endblock %}

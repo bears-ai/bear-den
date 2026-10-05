@@ -1,0 +1,102 @@
+/* Ownership-led navigation and state/action-first management surfaces. */
+.bear-manage-main {
+    min-width: 0;
+}
+.bear-manage-nav {
+    border-inline-end: var(--thin-line-unit) solid var(--border-color);
+    padding-inline-end: calc(var(--spacing-unit) * 2);
+}
+.bear-manage-nav a {
+    display: inline-block;
+    padding-block: calc(var(--spacing-unit) / 2);
+}
+.bear-manage-nav a[aria-current="page"] {
+    border-inline-start: var(--chunky-line-unit) solid var(--accent-color);
+    padding-inline-start: var(--spacing-unit);
+}
+.bear-overview-actions,
+.den-reach-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+    gap: var(--spacing-unit);
+    margin-block: calc(var(--spacing-unit) * 2);
+}
+.bear-overview-actions a,
+.den-reach-grid > section {
+    border: var(--thin-line-unit) solid var(--border-color);
+    padding: calc(var(--spacing-unit) * 2);
+}
+.bear-overview-actions a span {
+    display: block;
+    color: var(--meta-color);
+    margin-top: var(--spacing-unit);
+    font-size: smaller;
+}
+.den-record-list {
+    list-style: none;
+    padding: 0;
+}
+.den-record-list li {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: var(--spacing-unit);
+    padding-block: var(--spacing-unit);
+    border-bottom: var(--thin-line-unit) solid var(--border-color);
+}
+.den-hub {
+    max-width: var(--medium-width);
+    margin-inline: auto;
+}
+.den-management-form-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-unit);
+    align-items: end;
+    margin-bottom: calc(var(--spacing-unit) * 2);
+}
+.bear-manage-main table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+}
+body.bear_chat .bear-manage {
+    flex: 1;
+    min-height: 0;
+}
+body.bear_chat .bear-manage-main {
+    display: flex;
+    flex-direction: column;
+    min-height: 30rem;
+}
+@media (max-width: 51.99rem) {
+    .bear-manage-nav {
+        border-inline-end: none;
+        border-bottom: var(--thin-line-unit) solid var(--border-color);
+        padding-inline-end: 0;
+        padding-bottom: var(--spacing-unit);
+    }
+    .bear-manage-nav ul {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0 var(--spacing-unit);
+    }
+    .bear-manage-nav-group {
+        margin-top: var(--spacing-unit);
+    }
+}
+@media (max-width: 699px) {
+    body > header {
+        flex-wrap: wrap;
+    }
+    body > header nav {
+        width: 100%;
+    }
+    body > header nav ul.menu {
+        flex-wrap: wrap;
+        gap: var(--spacing-unit);
+    }
+    body > header nav ul.menu > li.den-header-destination {
+        display: flex !important;
+    }
+}

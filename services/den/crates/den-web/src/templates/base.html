@@ -46,12 +46,17 @@
                     {{ icons.logo("logo-symbol", "") }}
                     <span class="logo-wordmark">{{ app_display_name }}</span>
                 </a>
-                <nav>
+                <nav aria-label="Den">
                     <ul class="menu">
                         <li class="menu-item-home">
-                            <a href="/">Home</a>
+                            <a href="/">{% if session is defined and session.username is defined %}Bears{% else %}Home{% endif %}</a>
                         </li>
 
+                        {% if session is defined and session.username is defined %}
+                        <li class="den-header-destination"><a href="/cabinet">Cabinet</a></li>
+                        <li class="den-header-destination"><a href="/connections">Connections</a></li>
+                        <li class="den-header-destination"><a href="/reviews">Reviews</a></li>
+                        {% endif %}
                         {% if error_code is defined %}
                         <li class="menu-item-user">⚠️</li>
                         {% else %}
@@ -74,7 +79,7 @@
                             <ul class="submenu">
                                 {% if session is defined and session.username is
                                 defined %}
-                                <li><a href="/work/surfaces">Work surfaces</a></li>
+                                <li><a href="/work/surfaces">Repositories</a></li>
                                 <li><a href="/settings">Settings</a></li>
                                 {% if session.is_admin %}
                                 <li><a href="/admin">Admin</a></li>

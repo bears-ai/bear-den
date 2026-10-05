@@ -1,0 +1,3 @@
+{% extends "bear/_manage.html" %}
+{% set bear = {"name": bear_name | default(bear_slug), "slug": bear_slug} %}
+{% set bear_nav_active = "docket" %}

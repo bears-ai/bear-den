@@ -1,46 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Cabinet{% endblock %}
+{% block breadcrumb %}<a href="/">Bears</a> / This Den / Cabinet{% endblock %}
 {% block content %}
-<p><a href="/">← Dashboard</a></p>
-<h1>Cabinet</h1>
-<p>
-    Shared knowledge for this Den. Humans and Bears read and edit the same
-    items; every edit publishes a new immutable revision.
-</p>
-
-{% if message %}
-<p><strong>{{ message }}</strong></p>
-{% endif %}
-
-<form method="get" action="/cabinet">
-    <input type="text" name="q" value="{{ q or '' }}" placeholder="Search titles and content">
-    <button type="submit">Search</button>
-</form>
-
-<p>
-    <a href="/cabinet/new">New item</a>
-    {% if archived %}
-    · <a href="/cabinet">Show active items</a>
-    {% else %}
-    · <a href="/cabinet?lifecycle=archived">Show archived items</a>
-    {% endif %}
-</p>
-
-{% if items %}
-<table>
-    <thead>
-        <tr><th>Title</th><th>Updated</th></tr>
-    </thead>
-    <tbody>
-        {% for item in items %}
-        <tr>
-            <td><a href="/cabinet/{{ item.cabinet_ref }}">{{ item.title }}</a></td>
-            <td>{{ item.updated_at | timeago }}</td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
-{% else %}
-<p>{% if q %}No items match that search.{% else %}No items yet — create the first one.{% endif %}</p>
-{% endif %}
+<main class="den-hub">
+<section class="box">
+<h2>Shared pages</h2>
+{% if message %}<p role="status">{{ message | e }}</p>{% endif %}
+<form method="get" action="/cabinet" class="den-management-form-row"><label for="cabinet-search">Search pages</label><input id="cabinet-search" type="text" name="q" value="{{ q | default("", true) | e }}" placeholder="Titles and content"><button type="submit">Search</button></form>
+<p class="button-row"><a class="button-link" href="/cabinet/new">New page</a>{% if archived %}<a href="/cabinet">Active pages</a>{% else %}<a href="/cabinet?lifecycle=archived">Archived pages</a>{% endif %}</p>
+{% if items %}<table><thead><tr><th>Page</th><th>Updated</th></tr></thead><tbody>{% for item in items %}<tr><td><a href="/cabinet/{{ item.cabinet_ref }}">{{ item.title | e }}</a></td><td>{{ item.updated_at | timeago }}</td></tr>{% endfor %}</tbody></table>{% else %}<p>{% if q %}No pages match that search.{% else %}No pages yet.{% endif %}</p>{% endif %}
+</section>
+<details class="box"><summary>Access &amp; organization</summary><p>Cabinet is shared by this Den. In this build, Den users can read and edit pages; each edit publishes a new immutable version. A Mission can be documented as an ordinary page. Nested pages, page-specific membership/review and attachments are not yet available; there is no working restriction control for them here.</p></details>
+</main>
 {% endblock %}

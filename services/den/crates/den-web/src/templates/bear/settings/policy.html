@@ -1,120 +1,36 @@
 {% extends "bear/_manage.html" %}
-
-{% block title %}Resources · {{ bear.slug }}{% endblock %}
-
+{% block title %}What it can use · {{ bear.name | e }}{% endblock %}
 {% block manage %}
-<div class="box">
-<h2>Resources</h2>
-<p class="form-hint">What this Bear acts on and reads. The Bear's <em>knowledge</em> of a resource travels with an export as memory; the resource itself — and the policy or connection behind it — stays with this Den.</p>
-
-<h3>The web</h3>
-{% if hats_configured %}
-<p class="form-hint">Preferred sources affect search ordering; blocks still deny Den-hosted web access. Old Bear-wide allows and approvals do not authorize a configured hat. Manage tool and exact HTTPS-host grants on the <a href="/bear/{{ bear.slug | e }}/hats">Hats</a> page. Each permitted Job and work surface needs its own enforced egress policy.</p>
-{% else %}
-<p class="form-hint">The open web is a resource under policy: sources you prefer, allow, or block, plus standing approvals — not a connection.</p>
-{% endif %}
-
-{% if message %}
-<p><strong>{{ message | e }}</strong></p>
-{% endif %}
-
+{% if message %}<p role="status">{{ message | e }}</p>{% endif %}
+<div class="den-reach-grid">
+  <section class="box"><h2>Repositories</h2>
+    {% if repositories %}<ul>{% for repository in repositories %}<li><strong>{{ repository.name | e }}</strong>{% if repository.description %} · {{ repository.description | e }}{% endif %}</li>{% endfor %}</ul>{% else %}<p>No repositories assigned to this Bear.</p>{% endif %}
+    <p><a href="/work/surfaces">Inspect permitted repositories</a> · <a href="/connections">Manage connections</a></p>
+  </section>
+  <section class="box"><h2>Shared pages</h2><p><a class="button-link" href="/cabinet">Open Cabinet</a></p><p class="form-hint">Shared Den knowledge, separate from Bear memory.</p></section>
+  <section class="box"><h2>Tools &amp; hats</h2><p><a href="/bear/{{ bear.slug | urlencode }}/tools">Inspect tools by origin</a></p>{% if can_manage_bear %}<p><a href="/bear/{{ bear.slug | urlencode }}/hats">Manage exact destinations and permitted uses</a></p>{% else %}<p><a href="/bear/{{ bear.slug | urlencode }}/identity#hats">View responsibilities</a></p>{% endif %}</section>
+</div>
+<section class="box">
+<h2>Web sources</h2>
 {% if can_manage_bear %}
-<h4>Sources</h4>
-<form method="post" action="/bear/{{ bear.slug | e }}/web-sources" style="margin-bottom: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: end;">
-  <label>Scope<br><select name="scope_kind"><option value="host">host</option><option value="url">url</option></select></label>
-  <label>Value<br><input type="text" name="scope_value" placeholder="docs.rs" size="36" required></label>
-  <label>Policy<br><select name="policy"><option value="preferred">preferred</option>{% if not hats_configured %}<option value="allowed">allowed</option>{% endif %}<option value="blocked">blocked</option></select></label>
+<form method="post" action="/bear/{{ bear.slug | urlencode }}/web-sources" class="den-management-form-row">
+  <label>Scope<br><select name="scope_kind"><option value="host">Host</option><option value="url">URL</option></select></label>
+  <label>Destination<br><input type="text" name="scope_value" placeholder="docs.rs" size="30" required></label>
+  <label>Policy<br><select name="policy"><option value="preferred">Preferred</option>{% if not hats_configured %}<option value="allowed">Historical allow</option>{% endif %}<option value="blocked">Blocked</option></select></label>
   <button type="submit">Save source</button>
 </form>
 {% endif %}
-{% if web_sources and web_sources | length > 0 %}
-<table>
-  <thead><tr><th>Policy</th><th>Scope</th><th>Label</th><th></th></tr></thead>
-  <tbody>
-  {% for source in web_sources %}
-    <tr>
-      <td><code>{{ source.policy | e }}</code>{% if hats_configured and source.policy == 'allowed' %} (not a hat grant){% endif %}</td>
-      <td><code>{{ source.scope_kind | e }}</code> / <code>{{ source.scope_value | e }}</code></td>
-      <td>{% if source.label %}{{ source.label | e }}{% else %}<em>none</em>{% endif %}</td>
-      <td>{% if can_manage_bear %}<form method="post" action="/bear/{{ bear.slug | e }}/web-sources/{{ source.id }}/delete"><button type="submit">Delete</button></form>{% endif %}</td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
-{% else %}
-<p><em>No web sources configured.</em></p>
-{% endif %}
-
+{% if web_sources %}<table><thead><tr><th>Policy</th><th>Destination</th><th>Label</th><th>Action</th></tr></thead><tbody>{% for source in web_sources %}<tr><td>{{ source.policy | e }}</td><td>{{ source.scope_value | e }}</td><td>{{ source.label | default("—", true) | e }}</td><td>{% if can_manage_bear %}<form method="post" action="/bear/{{ bear.slug | urlencode }}/web-sources/{{ source.id }}/delete"><button type="submit">Remove</button></form>{% endif %}</td></tr>{% endfor %}</tbody></table>{% else %}<p>No web sources configured.</p>{% endif %}
+<details><summary>How source policy and access differ</summary><p>Preferred sources affect ordering; blocks deny access. Old Bear-wide allows and approvals do not authorize a configured hat. A source preference or historical allow is not a hat tool grant. Exact HTTPS destinations and web tools are authorized on each hat. Combining private data, external content and outbound actions deserves review, not a “safe” badge.</p></details>
+</section>
 {% if can_manage_bear %}
-<h4>Approvals</h4>
-{% if hats_configured %}
-<p class="form-hint">Bear-wide approvals are unavailable once hats are configured. Existing approvals were revoked; use the Hat editor for exact destinations.</p>
-{% else %}
-<form method="post" action="/bear/{{ bear.slug | e }}/web-approvals" style="margin-bottom: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: end;">
-  <label>Scope<br><select name="scope_kind"><option value="host">host</option><option value="url">url</option></select></label>
-  <label>Value<br><input type="text" name="scope_value" placeholder="example.com" size="36" required></label>
-  <button type="submit">Record approval</button>
-</form>
+<details class="box"><summary>Standing approvals</summary>
+{% if hats_configured %}<p>Bear-wide approvals do not authorize configured hats. <a href="/bear/{{ bear.slug | urlencode }}/hats">Manage hat access</a>.</p>{% else %}
+<form method="post" action="/bear/{{ bear.slug | urlencode }}/web-approvals" class="den-management-form-row"><label>Scope<br><select name="scope_kind"><option value="host">Host</option><option value="url">URL</option></select></label><label>Destination<br><input type="text" name="scope_value" placeholder="example.com" required></label><button type="submit">Record approval</button></form>
 {% endif %}
+{% if web_approvals %}<table><thead><tr><th>Destination</th><th>Approved by</th><th>Action</th></tr></thead><tbody>{% for approval in web_approvals %}<tr><td>{{ approval.scope_value | e }}</td><td>{{ approval.approved_by_user_label | default("Unknown", true) | e }}</td><td><form method="post" action="/bear/{{ bear.slug | urlencode }}/web-approvals/{{ approval.id }}/revoke"><button type="submit">Revoke</button></form></td></tr>{% endfor %}</tbody></table>{% else %}<p>No active Bear-wide approvals.</p>{% endif %}
+</details>
+<details class="box"><summary>Recent web activity</summary>{% if web_fetches %}<table><thead><tr><th>Host</th><th>URL</th><th>Status</th><th>When</th></tr></thead><tbody>{% for fetch in web_fetches %}<tr><td>{{ fetch.host | e }}</td><td>{{ fetch.url | e }}</td><td>{{ fetch.http_status | default("—", true) }}</td><td>{{ fetch.fetched_at }}</td></tr>{% endfor %}</tbody></table>{% else %}<p>No recent fetches.</p>{% endif %}</details>
+<details class="box"><summary>Editor plan-mode sessions</summary>{% if plan_mode_rows %}<table><thead><tr><th>User</th><th>Session</th><th>State</th></tr></thead><tbody>{% for row in plan_mode_rows %}<tr><td>{{ row.username | default("Unknown", true) | e }}</td><td>{{ row.acp_session_id | e }}</td><td>{{ row.state | e }}</td></tr>{% endfor %}</tbody></table>{% else %}<p>No plan-mode sessions.</p>{% endif %}</details>
 {% endif %}
-{% if web_approvals and web_approvals | length > 0 %}
-<table>
-  <thead><tr><th>Scope</th><th>Source</th><th>By</th><th>Created</th><th></th></tr></thead>
-  <tbody>
-  {% for a in web_approvals %}
-    <tr>
-      <td><code>{{ a.scope_kind | e }}</code> / <code>{{ a.scope_value | e }}</code></td>
-      <td>{{ a.source | e }}</td>
-      <td>{% if a.approved_by_user_label %}{{ a.approved_by_user_label | e }}{% else %}<em>unknown</em>{% endif %}</td>
-      <td>{{ a.created_at }}</td>
-      <td>{% if can_manage_bear %}<form method="post" action="/bear/{{ bear.slug | e }}/web-approvals/{{ a.id }}/revoke"><button type="submit">Revoke</button></form>{% endif %}</td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
-{% else %}
-<p><em>No active web approvals.</em></p>
-{% endif %}
-
-<h4>Recent fetches</h4>
-{% if web_fetches and web_fetches | length > 0 %}
-<table>
-  <thead><tr><th>Host</th><th>URL</th><th>Status</th><th>When</th></tr></thead>
-  <tbody>
-  {% for f in web_fetches %}
-    <tr>
-      <td>{{ f.host | e }}</td>
-      <td><code>{{ f.url | e }}</code></td>
-      <td>{% if f.http_status %}{{ f.http_status }}{% else %}<em>n/a</em>{% endif %}</td>
-      <td>{{ f.fetched_at }}</td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
-{% else %}
-<p><em>No recent fetches logged.</em></p>
-{% endif %}
-
-<h3>Internal</h3>
-<p class="form-hint">Cabinet (shared knowledge) and Docket projects will appear here as internal resources when they are deployed with this Den. External resources reached through <a href="/bear/{{ bear.slug | e }}/connections">connections</a> — repositories, documents, servers — are not yet available.</p>
-
-<h3>Plan mode sessions</h3>
-{% if plan_mode_rows and plan_mode_rows | length > 0 %}
-<table>
-  <thead><tr><th>User</th><th>Session</th><th>State</th><th>Updated</th></tr></thead>
-  <tbody>
-  {% for p in plan_mode_rows %}
-    <tr>
-      <td>{% if p.username %}{{ p.username | e }}{% else %}user {{ p.user_id }}{% endif %}</td>
-      <td><code>{{ p.acp_session_id | e }}</code></td>
-      <td>{{ p.state | e }}</td>
-      <td>{{ p.updated_at }}</td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
-{% else %}
-<p><em>No plan mode sessions.</em></p>
-{% endif %}
-</div>
 {% endblock %}

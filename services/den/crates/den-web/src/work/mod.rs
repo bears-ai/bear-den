@@ -726,7 +726,8 @@ async fn index(
         "work/index.html",
         auth_session,
         context! {
-            title => "Docket",
+            title => "Jobs",
+                        can_manage_bear => bear.is_admin,
             jobs => jobs_with_work,
             provider_status => provider_status,
             bear_slug => bear_slug,
@@ -786,7 +787,8 @@ async fn new_job_form(
         "work/new.html",
         auth_session,
         context! {
-            title => "New work job",
+            title => "New Job",
+                        can_manage_bear => bear.is_admin,
             bears => bear_slugs,
             bear_slug => bear.slug,
             catalog => catalog,
@@ -1694,6 +1696,7 @@ async fn job_detail(
             job_display_id => uuid_hex_prefix(job_id, DISPLAY_ID_HEX_LEN),
             job_full_id => job_id.to_string(),
             can_manage_hat => bear.is_admin,
+                        can_manage_bear => bear.is_admin,
             job_hat => hat_id,
             job_hat_name,
             hat_choices,
@@ -2106,7 +2109,8 @@ async fn run_detail(
         "work/run.html",
         auth_session,
         context! {
-            title => "Work run",
+            title => "Job run",
+                        can_manage_bear => bear.is_admin,
             bear_slug => bear_slug,
             run => view,
             outcome => work_run_outcome(&run, &task_statuses, cargo_failure.as_ref()),

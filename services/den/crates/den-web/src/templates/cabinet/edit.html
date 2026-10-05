@@ -1,8 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Edit: {{ item_title }}{% endblock %}
+{% block breadcrumb %}<a href="/">Bears</a> / <a href="/cabinet">Cabinet</a>{% endblock %}
 {% block content %}
-<p><a href="/cabinet/{{ cabinet_ref }}">← Back to item</a></p>
-<h1>Edit Cabinet item</h1>
+<p><a href="/cabinet/{{ cabinet_ref }}">← Back to page</a></p>
+<h1>Edit Cabinet page</h1>
 
 {% if error %}
 <p><strong>{{ error }}</strong></p>

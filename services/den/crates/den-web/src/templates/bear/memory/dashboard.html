@@ -2,7 +2,9 @@
 %}Memory · {{ bear.slug }}{% endblock %} {% block manage %} {% include "bear/memory/_memory_nav.html" %}
 
 <div class="box">
-    <h2>Memory admin inspection</h2>
+    <h2>Memory</h2>
+    <p class="form-hint">Admin inspection includes private and historical records, not only shared knowledge.</p>
+    <details><summary>Store &amp; search diagnostics</summary>
     <p class="form-hint">
         This is the Bear's owned, portable mind: it travels with an export, unlike
         the transcripts that formed it. Canonical memory lives in this Bear's
@@ -64,12 +66,13 @@
         Memory store statistics are unavailable for this Bear.
     </p>
     {% endif %}
+</details>
 </div>
 
 {% include "bear/memory/_own_notes.html" %}
 
 <div class="box">
-    <h3>Review queue</h3>
+    <h3 id="review-queue">Review queue</h3>
     <p class="form-hint">
         Showing the 10 most recent reviewable proposals out of {{ reviewable_proposal_count }} total
         ({{ pending_review_count }} pending, {{ needs_human_review_count }} needs human review).

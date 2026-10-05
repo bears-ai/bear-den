@@ -10,7 +10,7 @@
   <h2>Memory entry
     {% if is_head %}<span class="form-hint">(current head)</span>{% else %}<span class="form-hint">(superseded version)</span>{% endif %}
   </h2>
-  <p><a href="/bear/{{ bear.slug }}/memory/browse">← Back to library</a></p>
+  <p class="button-row"><a href="/bear/{{ bear.slug }}/memory/browse">Back to library</a><a href="/bear/{{ bear.slug }}/memory/browse#memory-delete-form">Request review or remove a supported path</a><a href="/bear/{{ bear.slug }}/hats">Reviewed hat/core corrections</a></p>
 
   <dl>
     <dt>Memory id</dt><dd><code>{{ record.memory_id | e }}</code></dd>
@@ -20,7 +20,7 @@
     <dt>Visibility</dt><dd>{{ record.visibility | e }}</dd>
     <dt>Author</dt><dd>{{ record.author_profile | e }}{% if record.author_agent_id %} <span class="form-hint">({{ record.author_agent_id | e }})</span>{% endif %}</dd>
     <dt>Logical path</dt><dd>{% if record.logical_path %}<code>{{ record.logical_path | e }}</code>{% else %}<em>none</em>{% endif %}</dd>
-    <dt>Work surface</dt><dd>{% if record.work_surface_ref %}<code>{{ record.work_surface_ref | e }}</code>{% else %}<em>none</em>{% endif %}</dd>
+    <dt>Linked resource</dt><dd>{% if record.work_surface_ref %}<code>{{ record.work_surface_ref | e }}</code>{% else %}<em>none</em>{% endif %}</dd>
     {% if record.supersedes_memory_id %}
     <dt>Supersedes</dt><dd><a href="/bear/{{ bear.slug | e }}/memory/records/{{ record.supersedes_memory_id | urlencode }}"><code>{{ record.supersedes_memory_id | e }}</code></a></dd>
     {% endif %}
@@ -31,7 +31,7 @@
 
 <div class="box">
   <h3>Content</h3>
-  <pre style="white-space: pre-wrap; max-height: 32rem; overflow: auto;">{{ record.content_text | e }}</pre>
+  <pre class="bear-manage-prompt-preview">{{ record.content_text | e }}</pre>
 </div>
 
 <section class="two-columns" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
@@ -83,6 +83,6 @@
 
 <div class="box">
   <h3>Metadata</h3>
-  <pre style="white-space: pre-wrap; max-height: 12rem; overflow: auto;">{{ record.metadata_json | tojson(indent=2) }}</pre>
+  <pre class="bear-manage-prompt-preview">{{ record.metadata_json | tojson(indent=2) }}</pre>
 </div>
 {% endblock %}

@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}New work surface{% endblock %}
+{% block title %}Connect repository{% endblock %}
 {% block content %}
-<p><a href="/work/surfaces">← Work surfaces</a></p>
-<h1>New work surface</h1>
+<p><a href="/work/surfaces">← Repositories</a></p>
+<h1>Connect repository</h1>
 <p>You become the surface's owner and can grant other managers afterwards.</p>
 
 <form method="post" action="/work/surfaces/new">
@@ -66,6 +66,6 @@
         </label>
     </p>
 
-    <p><button type="submit">Create surface</button></p>
+    <p><button type="submit">Connect repository</button></p>
 </form>
 {% endblock %}

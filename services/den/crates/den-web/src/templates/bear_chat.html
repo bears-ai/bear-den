@@ -1,8 +1,8 @@
-{% extends "base.html" %} {% block title %}{{ bear_name | e }}{% endblock %} {%
+{% extends "bear/_manage.html" %} {% block title %}{{ bear_name | e }}{% endblock %} {%
 block head %} {{ super() }}
 <link rel="modulepreload" href="/assets/deep-chat/deepChat.bundle.js" />
 <script type="module" src="/assets/deep-chat/deepChat.bundle.js"></script>
-{% endblock %} {% block content %}
+{% endblock %} {% block manage %}
 <div class="den-wrap">
     {# Keep this real chat toolbar/dropdown in sync with the design fixture at
     src/web/templates/design/chat.html. #}

@@ -1,10 +1,10 @@
-{% extends "base.html" %}
-{% block title %}Docket run{% endblock %}
+{% extends "work/_manage.html" %}
+{% block title %}Job run · {{ bear_slug | e }}{% endblock %}
 {% block head %}
 {% if run.is_active %}<meta http-equiv="refresh" content="10" />{% endif %}
 {% endblock %}
-{% block content %}
-<p><a href="/bear/{{ bear_slug }}/jobs">← Docket</a> · <a href="/bear/{{ bear_slug }}/jobs/{{ run.job_route_id }}" title="{{ run.job_title }}">Job <code class="entity-reference-id">{{ run.job_display_id }}</code></a></p>
+{% block manage %}
+<p><a href="/bear/{{ bear_slug }}/jobs">← Jobs</a> · <a href="/bear/{{ bear_slug }}/jobs/{{ run.job_route_id }}" title="{{ run.job_title }}">Job <code class="entity-reference-id">{{ run.job_display_id }}</code></a></p>
 <h1>Docket run <code class="entity-reference-id">{{ run.display_id }}</code></h1>
 <h2>{{ run.title }}</h2>
 {% if conversation_id %}
@@ -25,7 +25,7 @@
                 {% endif %}
             </td></tr>
             <tr><th>Attempt</th><td>{{ run.attempt }}</td></tr>
-            <tr><th>Work surface / ref</th><td>{% if work_surface_link %}<a href="/work/surfaces/{{ work_surface_link.id }}"><code>{{ work_surface_link.name }}</code></a>{% else %}—{% endif %} {% if run.git_ref %}@ {{ run.git_ref }}{% endif %}</td></tr>
+            <tr><th>Repository / ref</th><td>{% if work_surface_link %}<a href="/work/surfaces/{{ work_surface_link.id }}"><code>{{ work_surface_link.name }}</code></a>{% else %}—{% endif %} {% if run.git_ref %}@ {{ run.git_ref }}{% endif %}</td></tr>
             <tr><th>Image</th><td>{{ run.image or "root default" }}</td></tr>
             <tr><th>Sandbox</th><td>{{ run.sandbox_type or "—" }}</td></tr>
             <tr><th>Sandbox strength</th><td>{{ run.sandbox_strength or "—" }}</td></tr>

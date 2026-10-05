@@ -1,7 +1,10 @@
-{% extends "base.html" %} {% block title %}Design Chat{% endblock %} {% block
+{% extends "bear/_manage.html" %}
+{% set bear = {"name": "Atlas preview", "slug": "ui-preview"} %}
+{% set can_manage_bear = false %}
+{% set bear_nav_active = "chat" %} {% block title %}Design Chat{% endblock %} {% block
 subnav %}
 <li><a class="button-link" href="/design">Design index</a></li>
-{% endblock %} {% block content %}
+{% endblock %} {% block manage %}
 <div class="den-design-chat-shell">
     <div class="den-design-chat-toolbar">
         <div class="den-design-conversation-picker menu-item-submenu">
@@ -57,7 +60,7 @@ subnav %}
                 </li>
             </ul>
         </div>
-        <a class="button-link" href="/design">Bear details</a>
+        <a class="button-link" href="/design">Overview</a>
     </div>
 
     <section class="den-design-activity-strip" aria-label="Agent activity">

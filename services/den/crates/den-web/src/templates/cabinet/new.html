@@ -1,8 +1,9 @@
 {% extends "base.html" %}
-{% block title %}New Cabinet item{% endblock %}
+{% block title %}New Cabinet page{% endblock %}
+{% block breadcrumb %}<a href="/">Bears</a> / <a href="/cabinet">Cabinet</a>{% endblock %}
 {% block content %}
 <p><a href="/cabinet">← Cabinet</a></p>
-<h1>New Cabinet item</h1>
+<h1>New Cabinet page</h1>
 <form method="post" action="/cabinet/new">
     <p>
         <label for="title">Title</label><br>

@@ -1,147 +1,49 @@
 {% extends "bear/_manage.html" %}
-{% block title %}{{ bear.name }} · Overview{% endblock %}
+{% block title %}{{ bear.name | e }} · Overview{% endblock %}
 {% block manage %}
-<div class="box">
-    <h2>{{ bear.name }}</h2>
-    <p>
-        <code>{{ bear.slug }}</code>
-        {% if bear.description %} · {{ bear.description | e }}{% endif %}
-    </p>
-
-    {% if message %}
-    <p><strong>{{ message | e }}</strong></p>
-    {% endif %}
-
-    {% if can_manage_bear %}
-    {% if pending_reviews > 0 %}
-    <p>
-        <a class="button-link" href="/bear/{{ bear.slug | e }}/memory"
-            >{{ pending_reviews }} memor{% if pending_reviews == 1 %}y{% else
-            %}ies{% endif %} awaiting your review</a
-        >
-    </p>
-    {% endif %}
-
-    <p class="form-hint">
-        {{ member_count }} member{% if member_count != 1 %}s{% endif %} ·
-        {{ conversation_count }} conversation{% if conversation_count != 1
-        %}s{% endif %}
-    </p>
-
-    <h3>Recent activity</h3>
-    {% if recent_conversations %}
-    <ul>
-        {% for conv in recent_conversations %}
-        <li>
-            <a
-                href="/bear/{{ bear.slug | e }}/conversations/{{ conv.id | e }}"
-                >{{ conv.title | e }}</a
-            >
-            <span class="form-hint">· {{ conv.updated_at | e }}</span>
-        </li>
-        {% endfor %}
-    </ul>
-    <p class="form-hint">
-        <a href="/bear/{{ bear.slug | e }}/activity">All activity</a>
-    </p>
-    {% else %}
-    <p class="form-hint">
-        No conversations yet.
-        <a href="/bear/{{ bear.slug | e }}">Start one</a>.
-    </p>
-    {% endif %}
-    {% else %}
-    <p><a href="/bear/{{ bear.slug | e }}/memory">Open memory</a></p>
-    {% endif %}
-</div>
-
+<section class="box">
+  <h2>{{ bear.name | e }}</h2>
+  {% if bear.description %}<p>{{ bear.description | e }}</p>{% endif %}
+  {% if message %}<p role="status">{{ message | e }}</p>{% endif %}
+  {% if can_manage_bear %}
+  <p>{% if pending_reviews is none %}<a href="/reviews?bear={{ bear.slug | urlencode }}">Reviews</a> · Count unavailable{% elif pending_reviews > 0 %}<a class="button-link" href="/reviews?bear={{ bear.slug | urlencode }}">{{ pending_reviews }} memory proposal{% if pending_reviews != 1 %}s{% endif %} to review</a>{% else %}No memory proposals awaiting review.{% endif %}</p>
+  {% endif %}
+  <div class="bear-overview-actions">
+    <a href="/bear/{{ bear.slug | urlencode }}"><strong>Chat</strong><span>Start or resume a conversation</span></a>
+    <a href="/bear/{{ bear.slug | urlencode }}/memory"><strong>Memory</strong><span>Inspect what it knows</span></a>
+    <a href="/bear/{{ bear.slug | urlencode }}/resources"><strong>What it can use</strong><span>Inspect access and connections</span></a>
+    <a href="/bear/{{ bear.slug | urlencode }}/jobs"><strong>Jobs</strong><span>Direct work and inspect results</span></a>
+  </div>
+</section>
+<section class="box">
+  <h2>Responsibilities</h2>
+  {% if overview_summary.hats %}
+  <ul class="den-record-list">{% for hat in overview_summary.hats %}<li>
+    <a href="/bear/{{ bear.slug | urlencode }}/{% if can_manage_bear %}hats/{{ hat.id }}{% else %}identity#hats{% endif %}">{{ hat.name | e }}</a>
+    {% if hat.short_summary %}<span>{{ hat.short_summary | e }}</span>{% endif %}
+    <span class="form-hint">{% if hat.work_enabled %}Work enabled{% else %}Work off{% endif %}</span>
+  </li>{% endfor %}</ul>
+  {% else %}<p>No hats configured. {% if can_manage_bear %}<a href="/bear/{{ bear.slug | urlencode }}/hats">Create a hat</a> to start a conversation.{% else %}Ask a Bear admin to configure a hat before chatting.{% endif %}</p>{% endif %}
+  <p><a href="/bear/{{ bear.slug | urlencode }}/identity">Purpose</a>{% if can_manage_bear %} · <a href="/bear/{{ bear.slug | urlencode }}/hats">Manage hats</a>{% endif %}</p>
+</section>
+<section class="box">
+  <h2>Recent Jobs</h2>
+  {% if overview_summary.jobs %}<ul class="den-record-list">{% for job in overview_summary.jobs %}<li><a href="/bear/{{ bear.slug | urlencode }}/jobs/{{ job.id }}">{{ job.goal | e }}</a><span class="form-hint">{{ job.status | e }}</span></li>{% endfor %}</ul>{% else %}<p>No visible Jobs yet.</p>{% endif %}
+  <p class="button-row"><a class="button-link" href="/bear/{{ bear.slug | urlencode }}/jobs/new">New Job</a><a href="/bear/{{ bear.slug | urlencode }}/jobs">All Jobs</a><a href="/cabinet">Shared pages in Cabinet</a></p>
+</section>
 {% if can_manage_bear %}
-{# Responsive disclosure: additive detail on wide viewports, CSS only. #}
-<div class="bear-manage-disclosed">
-    <div class="bear-manage-overview-wide">
-        <section class="box">
-            <h3>Memory</h3>
-            {% if memory_stats %}
-            <table>
-                <tbody>
-                    <tr>
-                        <td>Records</td>
-                        <td>{{ memory_stats.record_count }}</td>
-                    </tr>
-                    <tr>
-                        <td>Shared scope</td>
-                        <td>{{ memory_stats.shared_count }}</td>
-                    </tr>
-                    <tr>
-                        <td>Stance-local</td>
-                        <td>{{ memory_stats.profile_local_count }}</td>
-                    </tr>
-                    <tr>
-                        <td>Distinct paths</td>
-                        <td>{{ memory_stats.distinct_paths }}</td>
-                    </tr>
-                    <tr>
-                        <td>Pending proposals</td>
-                        <td>{{ memory_stats.pending_proposals }}</td>
-                    </tr>
-                    <tr>
-                        <td>Pending observations</td>
-                        <td>{{ memory_stats.pending_observations }}</td>
-                    </tr>
-                </tbody>
-            </table>
-            <p class="form-hint">
-                Recall status: <strong>{{ recall_health.status | e }}</strong> · {{ recall_health.detail | e }}
-                {% if recall_health.last_success_at %}<br />Last successful index: {{ recall_health.last_success_at | e }}{% endif %}
-            </p>
-            {% if recall_health.lag_count is not none %}
-            <table>
-                <tbody>
-                    <tr><td>Awaiting indexing</td><td>{{ recall_health.lag_count }}</td></tr>
-                    <tr><td>Failed index runs</td><td>{{ recall_health.failed_run_count }}</td></tr>
-                </tbody>
-            </table>
-            {% endif %}
-            <p class="form-hint">
-                <a href="/bear/{{ bear.slug | e }}/memory">Open memory</a>
-            </p>
-            {% else %}
-            <p class="form-hint">Memory statistics unavailable.</p>
-            {% endif %}
-        </section>
-
-        <section class="box">
-            <h3>Activity over time</h3>
-            {% if weekly_activity %}
-            <table>
-                <thead>
-                    <tr>
-                        <th>Week of</th>
-                        <th>Conversations</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for row in weekly_activity %}
-                    <tr>
-                        <td>{{ row.week | e }}</td>
-                        <td>{{ row.count }}</td>
-                        <td class="full-width">
-                            <span class="bear-manage-bar-track"
-                                ><span
-                                    class="bear-manage-bar bear-manage-bar-w{{ row.pct }}"
-                                ></span
-                            ></span>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-            {% else %}
-            <p class="form-hint">No activity in the last eight weeks.</p>
-            {% endif %}
-        </section>
-    </div>
-</div>
+<section class="box">
+  <h2>Recent activity</h2>
+  {% if recent_conversations %}<ul class="den-record-list">{% for conv in recent_conversations %}<li><a href="/bear/{{ bear.slug | urlencode }}/conversations/{{ conv.id }}">{{ conv.title | e }}</a><span class="form-hint">{{ conv.updated_at | e }}</span></li>{% endfor %}</ul>{% else %}<p>No conversations yet.</p>{% endif %}
+  <p><a href="/bear/{{ bear.slug | urlencode }}/activity">All activity</a> · <a href="/bear/{{ bear.slug | urlencode }}/context">Inspect prompt &amp; context</a></p>
+</section>
+<details class="box">
+  <summary>Memory &amp; health</summary>
+  {% if recall_health %}<p>Derived search: <strong>{{ recall_health.status | e }}</strong> · {{ recall_health.detail | e }}</p>{% endif %}
+  {% if memory_stats %}<dl><dt>Canonical memory records</dt><dd>{{ memory_stats.record_count }}</dd><dt>Shared records</dt><dd>{{ memory_stats.shared_count }}</dd><dt>Historical profile-local records</dt><dd>{{ memory_stats.profile_local_count }}</dd></dl>{% else %}<p>Memory statistics unavailable.</p>{% endif %}
+  <p>{{ member_count }} member{% if member_count != 1 %}s{% endif %} · {{ conversation_count }} conversation{% if conversation_count != 1 %}s{% endif %}</p>
+  {% if weekly_activity %}<table><caption>Conversation activity over time</caption><thead><tr><th>Week of</th><th>Conversations</th></tr></thead><tbody>{% for row in weekly_activity %}<tr><td>{{ row.week | e }}</td><td>{{ row.count }}</td></tr>{% endfor %}</tbody></table>{% endif %}
+  <a href="/bear/{{ bear.slug | urlencode }}/advanced">Diagnostics</a>
+</details>
 {% endif %}
 {% endblock %}

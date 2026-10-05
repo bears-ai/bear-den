@@ -1421,6 +1421,13 @@ async fn overview_view(
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
+    let overview_summary = super::overview::summary(
+        &state,
+        BearId::new(bear.id),
+        session_user(&auth_session).await?.id,
+        can_manage_bear,
+    )
+    .await?;
     if !can_manage_bear {
         return web::render_template(
             &state,
@@ -1429,6 +1436,7 @@ async fn overview_view(
             context! {
                 message => query.message,
                 can_manage_bear,
+                overview_summary,
                 ..bear_nav_context(&bear, "overview"),
             },
         )
@@ -1455,10 +1463,9 @@ async fn overview_view(
     .fetch_one(state.sqlx_pool())
     .await
     .map_err(|err| CustomError::Database(format!("count bear conversations: {err}")))?;
-    let pending_reviews: i64 = memory_stats
-        .as_ref()
-        .map(|s| s.pending_proposals + s.pending_observations)
-        .unwrap_or(0);
+    let pending_reviews = crate::management_hub::pending_memory_reviews(&state, id)
+        .await
+        .ok();
     let recent_rows: Vec<(Uuid, Option<String>, String)> = sqlx::query!(
         "SELECT id, current_title, to_char(updated_at, 'YYYY-MM-DD HH24:MI') AS \"updated!: String\" \
          FROM conversations WHERE bear_id = $1 ORDER BY updated_at DESC LIMIT 5",
@@ -1524,6 +1531,7 @@ async fn overview_view(
             recent_conversations,
             weekly_activity,
             can_manage_bear,
+            overview_summary,
             bear_nav_active => "overview",
             ..bear_nav_context(&bear, "overview"),
         },
@@ -2582,8 +2590,18 @@ async fn policy_view(
         .is_empty();
     let web_sources: Vec<BearWebSourceRow> = bear_web_sources(state.sqlx_pool(), id).await?;
     let web_approvals: Vec<BearWebApprovalRow> = bear_web_approvals(state.sqlx_pool(), id).await?;
-    let web_fetches: Vec<BearWebFetchRow> = bear_web_fetches(state.sqlx_pool(), id).await?;
-    let plan_mode_rows: Vec<BearPlanModeRow> = bear_plan_mode_rows(state.sqlx_pool(), id).await?;
+    let web_fetches: Vec<BearWebFetchRow> = if can_manage_bear {
+        bear_web_fetches(state.sqlx_pool(), id).await?
+    } else {
+        Vec::new()
+    };
+    let plan_mode_rows: Vec<BearPlanModeRow> = if can_manage_bear {
+        bear_plan_mode_rows(state.sqlx_pool(), id).await?
+    } else {
+        Vec::new()
+    };
+    let repositories =
+        den_service::work_surfaces::list_surfaces_for_bears(state.sqlx_pool(), &[id]).await?;
     web::render_template(
         &state,
         "bear/settings/policy.html",
@@ -2593,6 +2611,7 @@ async fn policy_view(
             web_approvals,
             web_fetches,
             hats_configured,
+            repositories,
             plan_mode_rows,
             message => query.message,
             can_manage_bear,

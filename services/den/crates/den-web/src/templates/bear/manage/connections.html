@@ -1,31 +1,7 @@
 {% extends "bear/_manage.html" %}
-{% block title %}Connections · {{ bear.slug }}{% endblock %}
+{% block title %}Connections · {{ bear.name | e }}{% endblock %}
 {% block manage %}
-<div class="box">
-    <h2>Connections</h2>
-    <p class="form-hint">
-        Authenticated links this Bear reaches the outside world through.
-        Connections stay on this Den — secrets never travel with an export
-        and are re-attached after a move.
-    </p>
-
-    <h3>Editor (armature)</h3>
-    <p>
-        Pair with this Bear from your editor over ACP. The code token
-        authenticates your armature to this Den.
-    </p>
-    <p>
-        <a class="button-link" href="/bear/{{ bear.slug | e }}/code-token"
-            >Manage code token</a
-        >
-    </p>
-
-    <h3>Providers</h3>
-    <p>
-        <em>Not yet available.</em> Provider connections (a GitHub account, a
-        Google account, an SSH host) are not implemented in this build. When
-        they land, each will appear here with its auth status — secrets named,
-        never shown — and the tools and resources it enables.
-    </p>
-</div>
+<section class="box"><h2>Connections</h2><p class="button-row"><a class="button-link" href="/connections">Connections on this Den</a><a href="/bear/{{ bear.slug | urlencode }}/resources">What this Bear can use</a></p></section>
+<section class="box"><h2>Editor access</h2>{% if can_manage_bear %}<p><a class="button-link" href="/bear/{{ bear.slug | urlencode }}/code-token">Manage editor token</a></p>{% else %}<p>A Bear admin manages editor access.</p>{% endif %}<details><summary>What the token permits</summary><p>The code token authenticates the human and editor. It does not choose a hat or grant tools, credentials or Job authority.</p></details></section>
+<details class="box"><summary>Provider accounts</summary><p>Repository credentials are managed on their existing <a href="/connections">Den connection records</a>. Reusable provider-account catalogs are not available yet. Secrets stay on this Den and are never displayed.</p></details>
 {% endblock %}

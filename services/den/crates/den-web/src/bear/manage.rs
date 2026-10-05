@@ -146,7 +146,7 @@ async fn identity_view(
         context! {
             can_manage_bear,
             hats,
-            manage_title => "Identity & charter",
+            manage_title => "Purpose",
             ..bear_nav_context(&bear, "identity"),
         },
     )
@@ -236,7 +236,7 @@ async fn portability_view(
         auth_session,
         context! {
             can_manage_bear,
-            manage_title => "Portability",
+            manage_title => "Backup & move",
             ..bear_nav_context(&bear, "portability"),
         },
     )

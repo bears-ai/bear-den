@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Connections{% endblock %}
+{% block breadcrumb %}<a href="/">Bears</a> / This Den{% endblock %}
+{% block content %}
+<main class="den-hub">
+  <section class="box">
+    <h2>Repository connections</h2>
+    <p class="button-row"><a class="button-link" href="/work/surfaces/new">Connect a repository</a><a href="/work/surfaces">All permitted repositories</a></p>
+    {% if repositories %}
+    <ul class="den-record-list">
+      {% for repository in repositories %}
+      <li><a href="/work/surfaces/{{ repository.id }}">{{ repository.name | e }}</a>
+        <span class="form-hint">{% if repository.github_app_configured %}GitHub App configured{% elif repository.credential_configured %}Credential configured{% else %}No credential configured{% endif %}</span>
+        <a href="/work/surfaces/{{ repository.id }}#connection">Manage connection</a>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}<p>No repository connections you can manage yet.</p>{% endif %}
+  </section>
+  <section class="box">
+    <h2>Editors</h2>
+    {% if bears %}<ul class="den-record-list">{% for bear in bears %}<li><a href="/bear/{{ bear.slug | urlencode }}/connections">{{ bear.name | e }}</a><span class="form-hint">{% if bear.can_manage %}Manage editor access{% else %}View editor setup{% endif %}</span></li>{% endfor %}</ul>{% else %}<p>No Bears assigned to you.</p>{% endif %}
+  </section>
+  <details class="box"><summary>Other provider accounts</summary><p>Reusable GitHub, Google and SSH account catalogs are not available in this build. Repository credentials above are managed on their existing repository records; no separate account has been created.</p></details>
+</main>
+{% endblock %}

@@ -3,8 +3,10 @@
 {% block manage %}
 <div class="box">
   <h2>Hats</h2>
+  <details><summary>Responsibility, knowledge and access</summary>
   <p class="form-hint">A hat names a responsibility and limits which of this Bear's assigned work surfaces it may use. It does not grant a tool, credential, or permission. Conversation notes stay private unless Curate publishes a newly written fact for their hat. Shared hat knowledge can be used by every authorized wearer, including eligible Job runs.</p>
   <p class="form-hint">IDE default: {% if ide_default_hat_id %}the marked hat below{% else %}none selected{% endif %}. New IDE conversations wear this hat unless the human selects another with /hat before the first interaction. Existing conversations and Jobs do not change. With no IDE default, new IDE conversations remain unbound until /hat is selected.</p>
+  </details>
   {% if hats %}
   <ul>
     {% for hat in hats %}

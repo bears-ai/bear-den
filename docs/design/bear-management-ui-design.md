@@ -5,6 +5,12 @@
 **Companion:** [Bear management information architecture](bear-management-model.md) — navigation, canonical owners, reach and portability boundaries.
 **Implementation evidence:** [Bear memory and hats](../topics/bear-memory-hats.md), [Docket and task execution](../topics/docket.md), [Cabinet implementation plan](../roadmap/CABINET_IMPLEMENTATION_PLAN.md), [bear package](../guides/bear-package.md).
 
+## Implementation checkpoint (2026-10-05)
+
+The ownership-led shell, Den header, state/action-first Overview, Purpose/reach/Backup & move screens, shared Connections/Reviews destinations and Chat/Job integration are implemented over existing services. Canonical authorization is retained, including member-safe Job projections and admin-only raw inspection. Existing Cabinet page edit/version/source/lifecycle controls remain in the one shared Den web destination. See the [maintained topic](../topics/bear-memory-hats.md#ownership-led-web-management) for validation evidence and [route contract](../../services/den/crates/den-web/src/ROUTES.md).
+
+The **full target is not complete**: Skills and reusable provider-account catalogs, unified Job/skill/Cabinet approval aggregation, later Cabinet tree/policy/review/attachment phases, and a full hat-aware portability/curation-flush workflow still need backend delivery. Existing memory review/correction and supported-path removal remain their current authorized workflows, not a new universal record editor. The current bundle includes private/source-local SQLite memory but omits hat definitions and grants; Backup & move now exposes these limits rather than implying that everything under Yours already transfers. Browser Chat retains its existing JavaScript client; the navigation and management forms are server-rendered.
+
 ## The promise on screen
 
 A person should be able to **see, understand, and change** what their Bear is, knows, can reach, and has done. The UI is a working control surface, not a read-only dashboard wrapped around chat. It should feel obvious to a non-technical person without paragraphs of in-page instruction: familiar labels, concrete state, a next action, and a natural path to open the covers.

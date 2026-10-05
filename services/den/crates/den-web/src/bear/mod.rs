@@ -5,5 +5,6 @@ pub mod manage;
 pub mod management;
 pub mod member;
 pub mod memory;
+mod overview;
 pub mod profile;
 pub mod settings;

@@ -30,6 +30,38 @@ use crate::{auth_backend::Backend, config::Config};
 
 static TEST_DB_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+#[tokio::test]
+async fn shared_management_hubs_preserve_membership_and_review_authority() {
+    let _guard = TEST_DB_LOCK.lock().await;
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let own_slug = fresh_slug();
+    let other_slug = fresh_slug();
+    let own_bear = create_test_bear(&pool, &own_slug).await;
+    let other_bear = create_test_bear(&pool, &other_slug).await;
+    let admin_id = create_bear_admin_user(&pool, own_bear).await;
+    let member_id = create_bear_user(&pool, own_bear, BEAR_ROLE_MEMBER).await;
+    let _other_admin_id = create_bear_admin_user(&pool, other_bear).await;
+    let app = test_app(pool).await;
+    let admin_cookie = login_cookie(&app, admin_id).await;
+    let member_cookie = login_cookie(&app, member_id).await;
+    let (status, admin_page) = get_as(&app, &admin_cookie, "/reviews").await;
+    assert_eq!(status, StatusCode::OK, "{admin_page}");
+    assert!(admin_page.contains(&format!("/bear/{own_slug}/memory#review-queue")));
+    assert!(!admin_page.contains(&other_slug));
+    let (status, member_page) = get_as(&app, &member_cookie, "/reviews").await;
+    assert_eq!(status, StatusCode::OK, "{member_page}");
+    assert!(member_page.contains("No review access"));
+    assert!(!member_page.contains(&format!("/bear/{own_slug}/memory#review-queue")));
+    let (status, _) = get_as(&app, &admin_cookie, &format!("/reviews?bear={other_slug}")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, connections) = get_as(&app, &member_cookie, "/connections").await;
+    assert_eq!(status, StatusCode::OK, "{connections}");
+    assert!(connections.contains(&format!("/bear/{own_slug}/connections")));
+    assert!(!connections.contains(&other_slug));
+}
+
 #[test]
 fn parses_tool_budget_multiplier_form_values() {
     assert_eq!(parse_tool_budget_multiplier_form_value("").unwrap(), None);
@@ -78,11 +110,19 @@ async fn test_pool() -> Option<sqlx::PgPool> {
 
 fn test_state(pool: sqlx::PgPool) -> AppState {
     let config = Arc::new(Config::test_stub());
-    let mut template_env = Environment::new();
-    minijinja_contrib::add_to_environment(&mut template_env);
+    let mut template_env = crate::template_environment(config.as_ref());
     template_env
             .add_template("bear/settings/policy.html", "{{ message }} {{ web_sources | length }} {{ web_approvals | length }} {{ web_fetches | length }}{% for approval in web_approvals %} {{ approval.approved_by_user_label }}{% endfor %}")
             .expect("add test template");
+    template_env
+        .add_template("reviews.html", include_str!("../../templates/reviews.html"))
+        .expect("add reviews template");
+    template_env
+        .add_template(
+            "connections.html",
+            include_str!("../../templates/connections.html"),
+        )
+        .expect("add connections template");
     template_env
         .add_template("base.html", "{% block content %}{% endblock %}")
         .expect("add base template");
@@ -182,6 +222,7 @@ async fn test_app(pool: sqlx::PgPool) -> axum::Router {
     Router::new()
         .merge(router())
         .merge(super::super::manage::router())
+        .merge(crate::management_hub::router())
         .route("/test-login/{user_id}", get(test_login))
         .with_state(test_state(pool.clone()))
         .layer(
@@ -574,13 +615,13 @@ async fn inspection_gets_require_bear_admin_but_overview_remains_member_viewable
             "member overview exposed {forbidden}"
         );
     }
-    assert!(body.contains("Open memory"));
+    assert!(body.contains(&format!("/bear/{slug}/memory")));
     let (status, body) = get_as(&app, &admin_cookie, &format!("/bear/{slug}/overview")).await;
     assert_eq!(status, StatusCode::OK, "admin overview: {body}");
     for expected in [
         "Recent activity",
         "private conversation title",
-        "Activity over time",
+        "Conversation activity over time",
         "Week of",
         "Memory",
     ] {
@@ -589,7 +630,7 @@ async fn inspection_gets_require_bear_admin_but_overview_remains_member_viewable
             "admin overview missing {expected}: {body}"
         );
     }
-    assert!(body.contains("Recall status") || body.contains("Memory statistics unavailable."));
+    assert!(body.contains("Derived search:") || body.contains("Memory statistics unavailable."));
     assert!(body.contains(&format!("/bear/{slug}/activity")));
 
     let hat = hats::create_hat(

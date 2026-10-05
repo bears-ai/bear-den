@@ -1,19 +1,5 @@
 {% extends "bear/_manage.html" %}
-{% block title %}Skills · {{ bear.slug }}{% endblock %}
+{% block title %}Skills · {{ bear.name | e }}{% endblock %}
 {% block manage %}
-<div class="box">
-    <h2>Skills</h2>
-    <p class="form-hint">
-        Reviewed procedures this Bear owns: how it works, written down. Skills
-        sit with memory — owned knowledge that travels with the Bear — not
-        with this Den's tools and wiring.
-    </p>
-
-    <p>
-        <em>No skills yet.</em> Skills are not implemented in this build. When
-        they land, this page will list each skill with its source, trust, and
-        which stances apply it — and Bear-proposed skills will wait here for
-        your review before they take effect.
-    </p>
-</div>
+<section class="box"><h2>Skills</h2><p role="status">Skill management is not available in this build.</p><p class="button-row"><a href="/bear/{{ bear.slug | urlencode }}/memory">Inspect reviewed knowledge</a><a href="/bear/{{ bear.slug | urlencode }}/tools">Inspect available tools</a></p><details><summary>Owned procedures</summary><p>This destination is reserved for reviewed, owned procedures. A skill catalog and installation/review controls need backend support; no skill has been silently installed.</p></details></section>
 {% endblock %}

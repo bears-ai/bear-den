@@ -1,7 +1,8 @@
 {% extends "base.html" %}
-{% block title %}Surface {{ name }}{% endblock %}
+{% block title %}Repository · {{ name | e }}{% endblock %}
+{% block breadcrumb %}<a href="/connections">Connections</a> / <a href="/work/surfaces">Repositories</a>{% endblock %}
 {% block content %}
-<p><a href="/work/surfaces">← Work surfaces</a></p>
+<p><a href="/work/surfaces">← Repositories</a></p>
 <h1><a href="/work/surfaces/{{ surface_reference.route_id }}" title="UUID prefix for {{ surface_reference.full_id }}">{{ surface_reference.kind }} <code class="entity-reference-id">{{ surface_reference.id }}</code>: {{ surface_reference.title }}</a></h1>
 
 {% if message %}
@@ -58,7 +59,7 @@
 </section>
 
 <section>
-    <h2>Credential</h2>
+    <h2 id="connection">Credential</h2>
     {% if credential_kind %}
     <p>A <code>{{ credential_kind }}</code> credential is set (values are never shown). Submitting a new one replaces it.</p>
     {% else %}

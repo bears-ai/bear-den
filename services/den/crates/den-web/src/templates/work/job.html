@@ -1,7 +1,7 @@
-{% extends "base.html" %}
-{% block title %}Docket job{% endblock %}
-{% block content %}
-<p><a href="/bear/{{ bear_slug }}/jobs">← Docket</a></p>
+{% extends "work/_manage.html" %}
+{% block title %}Job · {{ bear_slug | e }}{% endblock %}
+{% block manage %}
+<p><a href="/bear/{{ bear_slug }}/jobs">← Jobs</a> · <a href="/cabinet">Shared pages</a></p>
 <h1>Job <code class="entity-reference-id">{{ job_display_id }}</code></h1>
 <h2>{{ goal }}</h2>
 <p>
@@ -32,9 +32,9 @@
     <summary>Edit job settings</summary>
     <form method="post" action="/bear/{{ bear_slug }}/jobs/{{ job_id }}/edit">
         <p><label>Goal<br><input name="goal" value="{{ goal }}" required size="80"></label></p>
-        <p><label>Work surface<br>
+        <p><label>Repository<br>
             <select name="surface_id" required>
-                {% if not selected_work_surface_id %}<option value="" selected disabled>Choose a managed work surface…</option>{% endif %}
+                {% if not selected_work_surface_id %}<option value="" selected disabled>Choose a repository…</option>{% endif %}
                 {% for surface in available_surfaces %}
                 <option value="{{ surface.id }}" {% if surface.id == selected_work_surface_id %}selected{% endif %}>{{ surface.name }} ({{ surface.default_ref }})</option>
                 {% endfor %}
@@ -151,7 +151,7 @@
                         <form method="post" action="/bear/{{ bear_slug }}/jobs/{{ job_id }}/tasks/{{ task.id }}/move/up" class="inline-form"><button type="submit" aria-label="Move task up">↑</button></form>
                         <form method="post" action="/bear/{{ bear_slug }}/jobs/{{ job_id }}/tasks/{{ task.id }}/move/down" class="inline-form"><button type="submit" aria-label="Move task down">↓</button></form>
                     </td>
-                    <td style="padding-left: {{ task.depth * 1.5 }}rem">
+                    <td><span class="form-hint">{% for level in range(task.depth) %}↳ {% endfor %}</span>
                         <a href="?task={{ task.id }}#task-{{ task.display_id }}" id="task-{{ task.display_id }}" title="UUID prefix for {{ task.full_id }}"><code class="entity-reference-id">{{ task.display_id }}</code></a>
                         {{ task.description }} <small>({{ task.kind }})</small>
                         <div>

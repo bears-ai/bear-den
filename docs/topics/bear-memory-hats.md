@@ -60,9 +60,19 @@ Curate briefings use a direct, dedicated inference path: a typed Reflection-run 
 - Audit legacy owners/collisions, generic same-creator artifact isolation, and remaining event/list projections without automatically assigning history to hats.
 - Verify real-model curation and a provider Job/revocation flow. Local build/smoke results are not evidence of a public release or live-model privacy quality.
 
+## Ownership-led web management
+
+**Verified 2026-10-05, local branch/image only:** the [selected UI design](../design/bear-management-ui-design.md) now has the shared `Yours` / `This Den` navigation, Purpose/Backup & move labels, direct Overview actions, and the same shell on Chat and Jobs. Overview projects the shared hat directory and Docket's viewer-filtered Jobs; raw activity, fetch logs, plan-session details and steering inspection remain admin-only. `/connections` links to existing authorized repository credential records and Bear editor access, not a new provider-account store. `/reviews` summarizes canonical memory proposals only for Bears the actor administers; it links to existing decision surfaces and does not duplicate approval state. Counts that cannot be loaded are explicitly unavailable.
+
+Evidence: `den-web/src/management_hub.rs`, `bear/overview.rs`, shared templates and `ownership_ui_tests.rs`, plus the database-backed settings/hat/memory/Docket route tests. The production image builds; all management destinations return successfully over HTTP in the local stack. Browser visual review was blocked by the browser tool's inability to reach the private Docker network. Core stack smoke passes with live-model smoke disabled; the optional ACP live-model test fails on the seeded Bear's missing required hat binding.
+
+Skills, reusable provider-account catalogs, the combined Job/skill/Cabinet review inbox, and Cabinet hierarchy/policy/attachments are still unavailable. The current `.bear` bundle omits hat definitions and live grants even though it includes SQLite hat/source-local memory; the UI now warns about those limits and private-note contents. This delivery does not complete the full target design or the hats-plan rollout gates.
+
 ## Read deeper
 
 - [Memory architecture](../architecture/memory-model.md)
+- [Bear management information architecture](../design/bear-management-model.md)
+- [Bear management UI design and implementation checkpoint](../design/bear-management-ui-design.md)
 - [Hats and execution context](../architecture/bear-stances.md)
 - [Work surfaces and conversations](../guides/work-surfaces-and-conversations.md)
 - [State-machine inventory](../architecture/den-state-machine-inventory.md)
