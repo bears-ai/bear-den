@@ -8,10 +8,11 @@
 <p><strong>{{ message }}</strong></p>
 {% endif %}
 
+{% if review=="pending" %}<p role="status"><strong>Pending review — not published.</strong></p>{% endif %}
 {% if not is_current %}
 <p>
     <strong>You are viewing revision {{ revision }}, not the current version.</strong>
-    <a href="/cabinet/{{ cabinet_ref }}">View current</a>
+    {% if has_published %}<a href="/cabinet/{{ cabinet_ref }}">View current</a>{% else %}No version has been published yet.{% endif %}
 </p>
 {% endif %}
 
@@ -99,4 +100,15 @@
     <button type="submit">Delete page</button>
 </form>
 {% endif %}
+
+<section class="box"><h2>Child pages</h2>{% if page.parent %}<p>Parent: <a href="/cabinet/{{ page.parent }}">Open parent page</a></p>{% endif %}
+{% if children %}<ul>{% for child in children %}<li><a href="/cabinet/{{ child.reference }}">{{ child.title | e }}</a></li>{% endfor %}</ul>{% else %}<p>No visible published child pages.</p>{% endif %}
+{% if page.can_write %}<a class="button-link" href="/cabinet/new?parent={{ cabinet_ref | urlencode }}">New child page</a>{% endif %}
+</section>
+<details class="box"><summary>Access &amp; organization</summary>
+<p>Effective Bear-write review: {% if page.review_required %}required{% else %}direct publication{% endif %}. Ancestor restrictions remain in force.</p>
+{% if page.can_manage %}<form method="post" action="/cabinet/{{ cabinet_ref }}/policy"><label>People (usernames, comma-separated; include yourself for a restricted page) <input name="people" value="{{ people_names | join(", ") | e }}"></label><label>Bears (handles, comma-separated) <input name="bears" value="{{ bear_names | join(", ") | e }}"></label><label>Human reviewers (usernames) <input name="reviewers" value="{{ reviewer_names | join(", ") | e }}"></label><label><input type="checkbox" name="bears_may_write" value="true" {% if not page.policy or page.policy.bears_may_write %}checked{% endif %}>Bears may write if otherwise authorized</label><label><input type="checkbox" name="review_required" value="true" {% if page.policy and page.policy.review_required %}checked{% endif %}>Require human review of Bear-written versions</label><label><input type="checkbox" name="confirm_audience" value="true" required>I reviewed who can read this page and its children.</label><button type="submit">Save page access</button></form>{% endif %}
+{% if page.can_write %}<form method="post" action="/cabinet/{{ cabinet_ref }}/organize"><label>Move under <select name="parent"><option value="">Cabinet root</option>{% for destination in destinations %}{% if destination.cabinet_ref != cabinet_ref %}<option value="{{ destination.cabinet_ref }}" {% if page.parent==destination.cabinet_ref %}selected{% endif %}>{{ destination.title | e }}</option>{% endif %}{% endfor %}</select></label><label>Sibling position <input type="number" name="position" min="0" value="{{ page.position }}" required></label><label><input type="checkbox" name="confirm_audience" value="true" required>I reviewed the destination audience. Moving changes inherited access for this page and its children.</label><button type="submit">Move or reorder</button></form>{% endif %}
+</details>
+{% if review=="pending" and page.can_review %}<section class="box"><h2>Review this unpublished version</h2>{% if proposed_title %}<p>Proposed title: <strong>{{ proposed_title | e }}</strong></p>{% endif %}<form method="post" action="/cabinet/{{ cabinet_ref }}/review"><input type="hidden" name="version" value="{{ version_ref }}"><label>Rationale <textarea name="rationale" maxlength="4000" required></textarea></label><button name="decision" value="approved">Approve publication</button><button name="decision" value="rejected">Reject version</button></form><p>A changed published base blocks approval; no silent merge.</p></section>{% endif %}
 {% endblock %}

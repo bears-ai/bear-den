@@ -8,3 +8,4 @@ pub mod memory;
 mod overview;
 pub mod profile;
 pub mod settings;
+pub mod skills;

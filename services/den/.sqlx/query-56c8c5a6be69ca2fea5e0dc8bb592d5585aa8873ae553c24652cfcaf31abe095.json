@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COALESCE(max(depth),0) AS \"depth!\" FROM cabinet_ancestors($1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "depth!",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "56c8c5a6be69ca2fea5e0dc8bb592d5585aa8873ae553c24652cfcaf31abe095"
+}

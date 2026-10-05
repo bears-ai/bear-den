@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT i.cabinet_ref,i.title,v.version_ref,v.revision FROM cabinet_item_versions v JOIN cabinet_items i ON i.id=v.item_id WHERE v.review='pending' AND cabinet_can_review(i.id,$1) ORDER BY v.authored_at LIMIT 100",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "cabinet_ref",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "version_ref",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "revision",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "39aa0cbd92993d1770ea54458c229e09a1e5941a120413439ccdd2077e70afb3"
+}

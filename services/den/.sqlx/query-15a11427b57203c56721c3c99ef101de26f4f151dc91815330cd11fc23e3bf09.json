@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS(SELECT 1 FROM cabinet_items WHERE parent_item_id=$1 AND lifecycle<>'deleted') AS \"children!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "children!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "15a11427b57203c56721c3c99ef101de26f4f151dc91815330cd11fc23e3bf09"
+}

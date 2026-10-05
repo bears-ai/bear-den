@@ -229,7 +229,12 @@ pub async fn update_surface(
         validate_allowed_outbound_hosts(hosts)?;
     }
     let mut tx = pool.begin().await?;
-    let result = sqlx::query(
+    let replace_outbound = update.allowed_outbound_hosts.is_some();
+    let outbound = update
+        .allowed_outbound_hosts
+        .map(validate_allowed_outbound_hosts)
+        .transpose()?;
+    let result = sqlx::query!(
         r"
         UPDATE git_work_surface_details SET
             upstream_url = COALESCE($2, upstream_url),
@@ -238,25 +243,20 @@ pub async fn update_surface(
             allowed_outbound_hosts = CASE WHEN $6 THEN $7 ELSE allowed_outbound_hosts END,
             github_app_installation_id = CASE WHEN $8 THEN $9 ELSE github_app_installation_id END,
             github_app_write_enabled = CASE WHEN $10 THEN $11 ELSE github_app_write_enabled END
-        WHERE id = $1
+        WHERE id = $1 AND (connection_id IS NULL OR (NOT $8 AND NOT $10))
         ",
+        surface_id,
+        update.upstream_url.as_deref().map(str::trim),
+        update.default_ref.as_deref().map(str::trim),
+        update.default_image.is_some(),
+        update.default_image.flatten(),
+        replace_outbound,
+        outbound.as_deref(),
+        update.github_app_installation_id.is_some(),
+        update.github_app_installation_id.flatten(),
+        update.github_app_write_enabled.is_some(),
+        update.github_app_write_enabled.unwrap_or(false)
     )
-    .bind(surface_id)
-    .bind(update.upstream_url.as_deref().map(str::trim))
-    .bind(update.default_ref.as_deref().map(str::trim))
-    .bind(update.default_image.is_some())
-    .bind(update.default_image.flatten())
-    .bind(update.allowed_outbound_hosts.is_some())
-    .bind(
-        update
-            .allowed_outbound_hosts
-            .map(validate_allowed_outbound_hosts)
-            .transpose()?,
-    )
-    .bind(update.github_app_installation_id.is_some())
-    .bind(update.github_app_installation_id.flatten())
-    .bind(update.github_app_write_enabled.is_some())
-    .bind(update.github_app_write_enabled.unwrap_or(false))
     .execute(&mut *tx)
     .await?;
     if result.rows_affected() == 0 {
@@ -294,16 +294,10 @@ pub async fn set_credential(
 ) -> Result<(), DenError> {
     validate_credential_kind(kind)?;
     let encrypted = crate::secrets::encrypt_secret(value, secret_key)?;
-    let r = sqlx::query(
-        r"
-        UPDATE git_work_surface_details
-        SET credential_kind = $2, credential_encrypted = $3
-        WHERE id = $1
-        ",
+    let r = sqlx::query!(
+        "UPDATE git_work_surface_details SET credential_kind = $2, credential_encrypted = $3 WHERE id = $1 AND connection_id IS NULL",
+        surface_id, kind, encrypted
     )
-    .bind(surface_id)
-    .bind(kind)
-    .bind(&encrypted)
     .execute(pool)
     .await?;
     if r.rows_affected() == 0 {
@@ -313,14 +307,10 @@ pub async fn set_credential(
 }
 
 pub async fn clear_credential(pool: &PgPool, surface_id: Uuid) -> Result<(), DenError> {
-    let r = sqlx::query(
-        r"
-        UPDATE git_work_surface_details
-        SET credential_kind = NULL, credential_encrypted = NULL
-        WHERE id = $1
-        ",
+    let r = sqlx::query!(
+        "UPDATE git_work_surface_details SET credential_kind = NULL, credential_encrypted = NULL WHERE id = $1 AND connection_id IS NULL",
+        surface_id
     )
-    .bind(surface_id)
     .execute(pool)
     .await?;
     if r.rows_affected() == 0 {
@@ -761,6 +751,7 @@ pub async fn set_default_catalog_image(pool: &PgPool, image_id: Uuid) -> Result<
 
 #[derive(sqlx::FromRow)]
 struct SurfaceSyncRow {
+    id: Uuid,
     name: String,
     upstream_url: String,
     default_ref: String,
@@ -780,9 +771,10 @@ pub async fn build_managed_config(
     pool: &PgPool,
     secret_key: &str,
 ) -> Result<ManagedConfig, DenError> {
-    let surface_rows = sqlx::query_as::<_, SurfaceSyncRow>(
+    let raw_rows = sqlx::query_as!(
+        SurfaceSyncRow,
         r"
-        SELECT s.name, g.upstream_url, g.default_ref, g.default_image,
+        SELECT s.id, s.name, g.upstream_url, g.default_ref, g.default_image,
                g.allowed_outbound_hosts, g.credential_kind, g.credential_encrypted,
                g.github_app_installation_id, g.github_app_write_enabled
         FROM work_surfaces s
@@ -793,6 +785,20 @@ pub async fn build_managed_config(
     )
     .fetch_all(pool)
     .await?;
+    let mut surface_rows = Vec::new();
+    for mut row in raw_rows {
+        match crate::connections::resolve(pool, row.id).await? {
+            crate::connections::ResolvedConnection::Legacy => {}
+            crate::connections::ResolvedConnection::Denied => continue,
+            crate::connections::ResolvedConnection::Available(connection) => {
+                row.credential_kind = connection.kind;
+                row.credential_encrypted = connection.ciphertext;
+                row.github_app_installation_id = connection.installation;
+                row.github_app_write_enabled = connection.write;
+            }
+        }
+        surface_rows.push(row);
+    }
     let images = list_catalog_images(pool).await?;
 
     let mut hasher = Sha256::new();

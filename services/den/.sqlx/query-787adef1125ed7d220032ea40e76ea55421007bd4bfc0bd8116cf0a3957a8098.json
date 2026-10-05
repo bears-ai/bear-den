@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COALESCE(bool_and((page_policy->'allowed_kinds') IS NULL OR jsonb_typeof(page_policy->'allowed_kinds')='null' OR (page_policy->'allowed_kinds') ? $2),true) AS \"allowed!\" FROM cabinet_ancestors($1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "allowed!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "787adef1125ed7d220032ea40e76ea55421007bd4bfc0bd8116cf0a3957a8098"
+}

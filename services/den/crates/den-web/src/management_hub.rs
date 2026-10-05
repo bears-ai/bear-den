@@ -38,6 +38,7 @@ struct RepositoryConnection {
     name: String,
     credential_configured: bool,
     github_app_configured: bool,
+    reusable: bool,
 }
 
 pub fn router() -> Router<AppState> {
@@ -73,7 +74,10 @@ async fn connections(
     {
         return Ok(redirect.into_response());
     }
-    let repositories = if user.is_admin {
+    let connection_catalog =
+        den_service::connections::list(state.sqlx_pool(), den_core::ids::UserId::new(user.id))
+            .await?;
+    let mut repositories = if user.is_admin {
         work_surfaces::list_all_surfaces(state.sqlx_pool()).await?
     } else {
         work_surfaces::list_surfaces_managed_by(state.sqlx_pool(), user.id).await?
@@ -84,8 +88,17 @@ async fn connections(
         name: surface.name,
         credential_configured: surface.credential_kind.is_some(),
         github_app_configured: surface.github_app_installation_id.is_some(),
+        reusable: false,
     })
     .collect::<Vec<_>>();
+    let linked = den_service::connections::linked_repositories(
+        state.sqlx_pool(),
+        &repositories.iter().map(|row| row.id).collect::<Vec<_>>(),
+    )
+    .await?;
+    for row in &mut repositories {
+        row.reusable = linked.contains(&row.id);
+    }
     let bears = bears_db::list_bears_for_user(state.sqlx_pool(), user.id)
         .await?
         .into_iter()
@@ -99,7 +112,7 @@ async fn connections(
         &state,
         "connections.html",
         auth_session,
-        context! { repositories, bears },
+        context! { repositories, bears, connection_catalog },
     )
     .await
 }
@@ -118,6 +131,12 @@ async fn reviews(
     {
         return Ok(redirect.into_response());
     }
+    let cabinet_reviews = den_service::cabinet::pages::pending_reviews(
+        state.sqlx_pool(),
+        &den_cabinet::ActorScope::user(den_core::ids::UserId::new(user.id)),
+    )
+    .await
+    .map_err(|error| CustomError::from(den_core::DenError::from(error)))?;
     let memberships = bears_db::list_bears_for_user(state.sqlx_pool(), user.id).await?;
     if query
         .bear
@@ -156,7 +175,7 @@ async fn reviews(
         &state,
         "reviews.html",
         auth_session,
-        context! { bears, filtered_bear => query.bear },
+        context! { bears, cabinet_reviews, filtered_bear => query.bear },
     )
     .await
 }

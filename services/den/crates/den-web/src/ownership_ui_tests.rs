@@ -165,7 +165,8 @@ fn backup_page_reports_actual_bundle_limits_and_requires_admin_for_export_link()
     );
     assert!(admin.contains("href=\"/bear/atlas/export.bear\""));
     assert!(admin.contains("includes private source-local notes"));
-    assert!(admin.contains("Hat definitions, identity, access grants and IDE default"));
+    assert!(admin.contains("Hat definitions, identity and IDE choice"));
+    assert!(admin.contains("new IDs, Work and automatic sharing off on import"));
     assert!(admin.contains("does not flush pending curation"));
 }
 

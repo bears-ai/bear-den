@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT g.upstream_url,c.provider FROM git_work_surface_details g JOIN provider_connections c ON c.id=$2 WHERE g.id=$1 AND c.owner_user_id=$3 AND c.revoked_at IS NULL AND EXISTS(SELECT 1 FROM work_surface_managers m WHERE m.surface_id=g.id AND m.user_id=$3) FOR UPDATE OF g,c",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "upstream_url",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "provider",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "44d3024f6dc8a45ba55fac7ba1c863d46fd3881a4e19d672014898d4249f9b4e"
+}

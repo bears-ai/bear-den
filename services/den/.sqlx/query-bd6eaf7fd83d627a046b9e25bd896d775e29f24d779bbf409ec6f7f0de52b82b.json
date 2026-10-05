@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO cabinet_item_versions\n            (version_ref, item_id, revision, content, content_sha256, base_version_ref, review,\n             authored_by, authored_by_user_id, authored_by_bear_id, authored_at)\n           VALUES ($1, $2, 1, $3, $4, NULL, $9, $5, $6, $7, $8)\n           RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Int4",
+        "Uuid",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "bd6eaf7fd83d627a046b9e25bd896d775e29f24d779bbf409ec6f7f0de52b82b"
+}

@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO cabinet_reviews(item_id,version_id,reviewer_user_id,decision,rationale) VALUES($1,$2,$3,$4,$5)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int4",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fa1a937e249c6676b314aa939dd1092c539bcca7f4b5ddb5d75a0d2a2b1aefc0"
+}

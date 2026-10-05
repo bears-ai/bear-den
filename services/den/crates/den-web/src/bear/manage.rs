@@ -103,7 +103,6 @@ mod tests {
 pub fn router() -> Router<AppState> {
     Router::new()
         .route_with_tsr("/bear/{slug}/identity", get(identity_view))
-        .route_with_tsr("/bear/{slug}/skills", get(skills_view))
         .route_with_tsr("/bear/{slug}/tools", get(tools_view))
         .route_with_tsr("/bear/{slug}/connections", get(connections_view))
         .route_with_tsr("/bear/{slug}/portability", get(portability_view))
@@ -148,28 +147,6 @@ async fn identity_view(
             hats,
             manage_title => "Purpose",
             ..bear_nav_context(&bear, "identity"),
-        },
-    )
-    .await
-}
-
-async fn skills_view(
-    Path(slug): Path<String>,
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-) -> Result<Response, CustomError> {
-    let (bear, can_manage_bear) = match load_session_bear(&state, &auth_session, &slug).await? {
-        Ok(v) => v,
-        Err(r) => return Ok(r.into_response()),
-    };
-    web::render_template(
-        &state,
-        "bear/manage/skills.html",
-        auth_session,
-        context! {
-            can_manage_bear,
-            manage_title => "Skills",
-            ..bear_nav_context(&bear, "skills"),
         },
     )
     .await
@@ -230,6 +207,11 @@ async fn portability_view(
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
+    let reconnection_intent = if can_manage_bear {
+        super::settings::portable_hats::receipt(&state, BearId::new(bear.id)).await?
+    } else {
+        Vec::new()
+    };
     web::render_template(
         &state,
         "bear/manage/portability.html",
@@ -237,6 +219,7 @@ async fn portability_view(
         context! {
             can_manage_bear,
             manage_title => "Backup & move",
+            reconnection_intent,
             ..bear_nav_context(&bear, "portability"),
         },
     )

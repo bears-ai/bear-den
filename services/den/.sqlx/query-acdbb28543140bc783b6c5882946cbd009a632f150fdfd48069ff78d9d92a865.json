@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO bear_skills_manifest(bear_id,skill_name,skill_version,source,content_hash,applies_to_profiles,installed_at,catalog_entry_id,enabled,attached_by_user_id) SELECT $1,c.name,c.version,'catalog',c.content_hash,$4,now(),c.id,true,$2 FROM skill_catalog_entries c WHERE c.id=$3 AND c.status='approved' AND c.content_hash=$5 AND EXISTS(SELECT 1 FROM user_bear ub WHERE ub.bear_id=$1 AND ub.user_id=$2 AND lower(btrim(ub.role))='admin') ON CONFLICT(bear_id,skill_name,skill_version) DO UPDATE SET catalog_entry_id=EXCLUDED.catalog_entry_id,content_hash=EXCLUDED.content_hash,applies_to_profiles=EXCLUDED.applies_to_profiles,enabled=true,attached_by_user_id=EXCLUDED.attached_by_user_id,updated_at=now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4",
+        "Uuid",
+        "TextArray",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "acdbb28543140bc783b6c5882946cbd009a632f150fdfd48069ff78d9d92a865"
+}

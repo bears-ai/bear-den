@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT c.id, c.name, c.provider, c.revision, (c.revoked_at IS NOT NULL) AS \"revoked!\", (SELECT count(*) FROM git_work_surface_details g WHERE g.connection_id = c.id) AS \"repository_count!\" FROM provider_connections c WHERE c.owner_user_id = $1 ORDER BY c.name, c.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "provider",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "revision",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "revoked!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 5,
+        "name": "repository_count!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "7e78b7bbc35d4c815e6977f1d31ac1d335c280d8483f821b9cff4480c899f9c2"
+}

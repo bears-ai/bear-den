@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE cabinet_items SET current_version_id=$2,title=COALESCE($3,title),updated_at=now() WHERE id=$1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "72bef071db9ceb9b090684a4957ef1a94454fd45d09e5244619b5ae64443ca0d"
+}

@@ -153,7 +153,9 @@ pub async fn bound_prompt_text(
         (base, mode)
     };
     let identity = render_hat_identity_component(bear, hat, &available_hats)?;
-    Ok([base.as_str(), identity.as_str(), mode.as_str()]
+    let selected_skills = crate::skills::effective(pool, BearId::new(bear.id), profile).await?;
+    let skills = render_turn_fragment(registry.require("bound_skills")?, &json!({"skills": selected_skills}))?;
+    Ok([base.as_str(), identity.as_str(), mode.as_str(), skills.as_str()]
         .into_iter()
         .filter(|section| !section.trim().is_empty())
         .collect::<Vec<_>>()

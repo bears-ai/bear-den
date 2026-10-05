@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE git_work_surface_details SET\n            upstream_url = COALESCE($2, upstream_url),\n            default_ref = COALESCE($3, default_ref),\n            default_image = CASE WHEN $4 THEN $5 ELSE default_image END,\n            allowed_outbound_hosts = CASE WHEN $6 THEN $7 ELSE allowed_outbound_hosts END,\n            github_app_installation_id = CASE WHEN $8 THEN $9 ELSE github_app_installation_id END,\n            github_app_write_enabled = CASE WHEN $10 THEN $11 ELSE github_app_write_enabled END\n        WHERE id = $1 AND (connection_id IS NULL OR (NOT $8 AND NOT $10))\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Bool",
+        "Text",
+        "Bool",
+        "TextArray",
+        "Bool",
+        "Int8",
+        "Bool",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "824baf387c4a954b2ae4f033b311a0b76fa0475e7a02104b3567ffdf30c59ee9"
+}

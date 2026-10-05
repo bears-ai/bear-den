@@ -1,0 +1,1 @@
+CREATE TABLE bear_import_receipts(bear_id UUID PRIMARY KEY REFERENCES bears(id) ON DELETE CASCADE, imported_by_user_id INTEGER NOT NULL REFERENCES users(id), hat_intent JSONB NOT NULL CHECK(jsonb_typeof(hat_intent)='array'), created_at TIMESTAMPTZ NOT NULL DEFAULT now());

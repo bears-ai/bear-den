@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT proposed_title FROM cabinet_item_versions WHERE item_id=$1 AND version_ref=$2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "proposed_title",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "963f241ad701f00169660a150e0524c655e4bf1ca095f8fe0692d6bb8f612f3d"
+}

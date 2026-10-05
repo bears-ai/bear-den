@@ -5,6 +5,7 @@
 <p><a href="/cabinet">← Cabinet</a></p>
 <h1>New Cabinet page</h1>
 <form method="post" action="/cabinet/new">
+    {% if parent %}<input type="hidden" name="parent" value="{{ parent | e }}"><p>New child page of <a href="/cabinet/{{ parent | e }}">the selected page</a>.</p>{% endif %}
     <p>
         <label for="title">Title</label><br>
         <input type="text" id="title" name="title" required>

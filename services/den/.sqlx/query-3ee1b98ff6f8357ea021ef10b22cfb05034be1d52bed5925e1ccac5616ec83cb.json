@@ -1,0 +1,36 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT cabinet_ref,title,position FROM cabinet_items WHERE parent_item_id=$1 AND lifecycle <> 'deleted' AND current_version_id IS NOT NULL AND cabinet_can_access(id,$2,$3,false) ORDER BY position,id LIMIT 100",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "cabinet_ref",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "position",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "3ee1b98ff6f8357ea021ef10b22cfb05034be1d52bed5925e1ccac5616ec83cb"
+}

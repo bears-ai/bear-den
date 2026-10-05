@@ -16,6 +16,7 @@ extern crate self as web;
 pub use den_core::config;
 pub use den_http::{auth_backend, build_info, errors};
 
+pub mod connections;
 pub mod core;
 pub mod observability;
 
@@ -348,8 +349,10 @@ pub async fn server(
                 .merge(bear::management::router())
                 .merge(bear::memory::router())
                 .merge(bear::manage::router())
+                                .merge(bear::skills::router())
                 .merge(onboarding::router())
                 .merge(management_hub::router())
+                .merge(connections::router())
                 .merge(cabinet::router())
                 .merge(work::router())
                 .nest("/bear/{bear_slug}", work::docket_router())

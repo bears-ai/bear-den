@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE skill_catalog_entries SET status='disabled' WHERE id=$1 AND owner_user_id=$2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d91993ef410b4c8c26e9732f46596e5cdf7ec0d6ff6dc8bf570b1a68bcd4154f"
+}

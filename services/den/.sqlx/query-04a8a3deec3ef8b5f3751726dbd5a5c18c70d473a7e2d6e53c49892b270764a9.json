@@ -1,0 +1,53 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT c.name,c.version,c.description,c.content,c.content_hash,m.applies_to_profiles FROM bear_skills_manifest m JOIN skill_catalog_entries c ON c.id=m.catalog_entry_id WHERE m.bear_id=$1 AND m.enabled AND c.status='approved' AND m.content_hash=c.content_hash AND $2=ANY(m.applies_to_profiles) ORDER BY c.name,c.version",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "version",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "content",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "content_hash",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "applies_to_profiles",
+        "type_info": "TextArray"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "04a8a3deec3ef8b5f3751726dbd5a5c18c70d473a7e2d6e53c49892b270764a9"
+}

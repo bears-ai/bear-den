@@ -4,6 +4,12 @@ How to **export**, **transport**, and **import** a Bear's **cognition and config
 
 **Related:** [ADR-0031 — SQLite-first canonical store](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md), [`den-runtime.md`](../architecture/den-runtime.md) (storage boundary), [`memory-model.md`](../architecture/memory-model.md), [`bear-memory.md`](bear-memory.md), [`work-surfaces-and-conversations.md`](work-surfaces-and-conversations.md)
 
+## Current browser bundle (version 2)
+
+The implemented `.bear` ZIP contains `bear.yaml` and `memory.sqlite`, not the fuller target layout below. Version 2 includes hat identity/purpose/directory summaries and IDE preference, secretless resource/web grant **intent**, and approved instruction-only procedure versions with integrity hashes and applicability. Version 1 remains readable. Import mints new hat IDs and remaps canonical hat-memory/proposal scope columns, requires audience acknowledgement, restores Work and automatic sharing **off**, and never restores tools, credentials or live surface grants. Procedures are staged disabled for review; inherited entity bindings/handles are quarantined for fresh resolution. An immutable, admin-only reconnection receipt is shown on Backup & move. Invalid setup is compensated by removing the newly created Bear.
+
+Conversations, Docket work, Cabinet pages, memberships, host credentials, raw secrets and derived indexes remain outside the bundle. Canonical SQLite includes private/source-local memory: this is a private backup, not a shared-knowledge export. Export snapshots current memory; **there is no pre-export curation flush yet**. The rest of this guide describes the fuller portability target, not deployed support for every tier or artifact type.
+
 ## What a portable Bear is (and is not)
 
 | Concern | In the package? | Where it lives at runtime |
@@ -28,7 +34,7 @@ The boundary matches [den-runtime storage](../architecture/den-runtime.md#storag
 
 Transcripts stay Postgres-only (table above), so a package carries what the Bear *remembers*, not the log of how a conversation went. That is the intended model — a Bear is its curated memory, not its transcript — but it creates one timing hazard: salient context from a recent session that the async curation/harvest lane ([ADR-0041 — Archival recall and async curation](../decisions/adr-0041-archival-recall-and-async-curation.md)) has not yet promoted into `memory.sqlite` would be stranded in the non-portable transcript, and a freshly imported Bear could feel amnesiac about the last hour.
 
-Export therefore **flushes pending curation first**: drain (or bound) the harvest/curation backlog so recent salient context is promoted into canonical memory before the SQLite snapshot is taken. After import the Bear still knows you because that knowledge is now memory — not because any transcript traveled. Never resolve this by adding transcripts to the package; the fix is always to curate before export, never to widen what the package carries.
+The target export workflow must **flush pending curation first** (not implemented by the current browser bundle): drain (or bound) the harvest/curation backlog so recent salient context is promoted into canonical memory before the SQLite snapshot is taken. After import the Bear still knows you because that knowledge is now memory — not because any transcript traveled. Never resolve this by adding transcripts to the package; the fix is always to curate before export, never to widen what the package carries.
 
 ## Package layout
 

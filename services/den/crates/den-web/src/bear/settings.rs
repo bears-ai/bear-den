@@ -233,7 +233,8 @@ const MODELS_FLASH_MESSAGE_KEY: &str = "bear_models_flash_message";
 const MODELS_FLASH_ERROR_KEY: &str = "bear_models_flash_error";
 
 const BEAR_BUNDLE_FORMAT: &str = "bear";
-const BEAR_BUNDLE_VERSION: u32 = 1;
+const BEAR_BUNDLE_VERSION: u32 = 2;
+pub(crate) mod portable_hats;
 const BEAR_BUNDLE_MAX_UPLOAD_BYTES: usize = 256 * 1024 * 1024;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -244,6 +245,12 @@ struct BearBundleManifest {
     prompts: BearBundlePrompts,
     #[serde(default)]
     profiles: serde_json::Value,
+    #[serde(default)]
+    hats: Vec<portable_hats::PortableHat>,
+    #[serde(default)]
+    ide_default_hat: Option<den_core::ids::HatId>,
+    #[serde(default)]
+    skills: Vec<den_service::skills::PortableSkill>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1040,6 +1047,9 @@ fn manifest_for_bear(bear: &den_service::bears::Bear) -> Result<BearBundleManife
             context_profile: bear.context_profile.as_ref().map(|v| v.0.clone()),
         },
         profiles: json!({}),
+        hats: Vec::new(),
+        ide_default_hat: None,
+        skills: Vec::new(),
     })
 }
 
@@ -1151,12 +1161,16 @@ fn read_bear_bundle(bytes: &[u8]) -> Result<(BearBundleManifest, Vec<u8>), Custo
         .map_err(|err| CustomError::ValidationError(format!("read memory.sqlite failed: {err}")))?;
     let manifest: BearBundleManifest = serde_yml::from_str(&manifest_yaml)
         .map_err(|err| CustomError::ValidationError(format!("parse bear.yaml failed: {err}")))?;
-    if manifest.format != BEAR_BUNDLE_FORMAT || manifest.version != BEAR_BUNDLE_VERSION {
+    if manifest.format != BEAR_BUNDLE_FORMAT
+        || !(1..=BEAR_BUNDLE_VERSION).contains(&manifest.version)
+    {
         return Err(CustomError::ValidationError(format!(
             "unsupported .bear format {} version {}",
             manifest.format, manifest.version
         )));
     }
+    portable_hats::validate(&manifest.hats, manifest.ide_default_hat)?;
+    den_service::skills::validate_portable(&manifest.skills)?;
     if memory_sqlite.is_empty() {
         return Err(CustomError::ValidationError(
             "memory.sqlite is empty".to_string(),
@@ -1213,7 +1227,11 @@ async fn export_bear_bundle(
         Ok(b) => b,
         Err(r) => return Ok(r.into_response()),
     };
-    let manifest = manifest_for_bear(&bear)?;
+    let mut manifest = manifest_for_bear(&bear)?;
+    manifest.hats = portable_hats::export(&state, BearId::new(bear.id)).await?;
+    manifest.skills = den_service::skills::export(state.sqlx_pool(), BearId::new(bear.id)).await?;
+    manifest.ide_default_hat =
+        hats::ide_default_hat(state.sqlx_pool(), BearId::new(bear.id)).await?;
     let manifest_yaml = serde_yml::to_string(&manifest)
         .map_err(|err| CustomError::System(format!("serialize bear.yaml failed: {err}")))?;
     let memory_sqlite = snapshot_memory_sqlite(&state, bear.id).await?;
@@ -1242,13 +1260,25 @@ async fn import_bear_bundle(
     }
 
     let mut bundle_bytes: Option<Vec<u8>> = None;
+    let mut confirm_imported_knowledge = false;
     while let Some(mut field) = multipart
         .next_field()
         .await
         .map_err(|err| CustomError::ValidationError(format!("invalid .bear upload: {err}")))?
     {
+        if field.name() == Some("confirm_imported_knowledge") {
+            confirm_imported_knowledge = field.text().await.map_err(|err| {
+                CustomError::ValidationError(format!("invalid import acknowledgement: {err}"))
+            })? == "true";
+            continue;
+        }
         if field.name() != Some("bundle") {
             continue;
+        }
+        if bundle_bytes.is_some() {
+            return Err(CustomError::ValidationError(
+                "select exactly one bundle".into(),
+            ));
         }
         let mut data = Vec::new();
         while let Some(chunk) = field.chunk().await.map_err(|err| {
@@ -1262,13 +1292,20 @@ async fn import_bear_bundle(
             data.extend_from_slice(&chunk);
         }
         bundle_bytes = Some(data);
-        break;
     }
 
     let bundle_bytes = bundle_bytes
         .filter(|bytes| !bytes.is_empty())
         .ok_or_else(|| CustomError::ValidationError("please select a .bear bundle".to_string()))?;
     let (manifest, memory_sqlite) = read_bear_bundle(&bundle_bytes)?;
+    if !manifest.hats.is_empty() && !confirm_imported_knowledge {
+        return Err(CustomError::ValidationError(
+            "acknowledge the imported hat knowledge audience before importing".into(),
+        ));
+    }
+    let portable_skills = manifest.skills.clone();
+    let portable = manifest.hats.clone();
+    let imported_default = manifest.ide_default_hat;
     let BearBundleManifest {
         bear:
             BearBundleIdentity {
@@ -1302,6 +1339,7 @@ async fn import_bear_bundle(
     )
     .await?;
 
+    let setup: Result<(), CustomError> = async {
     let birthdate = birthdate.trim();
     if !birthdate.is_empty() {
         sqlx::query!(
@@ -1314,8 +1352,6 @@ async fn import_bear_bundle(
         .map_err(|err| CustomError::ValidationError(format!("invalid Bear birthday: {err}")))?;
     }
 
-    bears_db::grant_membership(state.sqlx_pool(), user.id, bear_id, Some(BEAR_ROLE_ADMIN)).await?;
-
     let memory_path = memory_sqlite_path(state.config.as_ref(), bear_id);
     if let Some(parent) = memory_path.parent() {
         std::fs::create_dir_all(parent).map_err(|err| {
@@ -1326,6 +1362,46 @@ async fn import_bear_bundle(
         CustomError::System(format!("write imported memory.sqlite failed: {err}"))
     })?;
     rewrite_imported_memory_bear_id(&state, bear_id).await?;
+    let mapping = portable_hats::import(
+        &state,
+        BearId::new(bear_id),
+        den_core::ids::UserId::new(user.id),
+        &portable,
+        imported_default,
+    )
+    .await?;
+    let intent = portable.iter().map(|hat| portable_hats::ReconnectionIntent { imported_hat_id: mapping[&hat.original_id], intent: hat.clone() }).collect::<Vec<_>>();
+    sqlx::query!("INSERT INTO bear_import_receipts(bear_id,imported_by_user_id,hat_intent) VALUES($1,$2,$3)", bear_id, user.id, sqlx::types::Json(&intent) as _).execute(state.sqlx_pool()).await?;
+    let store = state.memory_stores.store_for_bear(bear_id).await?;
+    let mut tx =
+        store.pool().begin().await.map_err(|error| {
+            CustomError::System(format!("begin memory import mapping: {error}"))
+        })?;
+    for (original, imported) in mapping {
+        for (table, column) in [
+            ("memory_records", "scope_hat_id"),
+            ("memory_proposals", "target_hat_id"),
+        ] {
+            // sqlx-dynamic: import identifiers are drawn exclusively from this fixed schema whitelist.
+            sqlx::query(&format!(
+                "UPDATE {table} SET {column} = ? WHERE {column} = ? AND bear_id = ?"
+            ))
+            .bind(imported.to_string())
+            .bind(original.to_string())
+            .bind(bear_id.to_string())
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| CustomError::System(format!("map imported hat knowledge: {error}")))?;
+        }
+    }
+    tx.commit().await.map_err(|error| CustomError::System(format!("commit imported hat knowledge: {error}")))?;
+        let entities = den_memory::list_entities(&store, None, 10_001).await?;
+        if entities.len() > 10_000 { return Err(CustomError::ValidationError("bundle contains too many entity bindings".into())); }
+        for entity in entities {
+            den_memory::set_resolution(&store, &entity.entity_id, den_memory::ResolutionState::Provisional, None).await?;
+            den_memory::set_canonical_ref(&store, &entity.entity_id, None).await?;
+            for handle in den_memory::list_handles(&store, &entity.entity_id).await? { den_memory::detach_handle(&store, &handle.handle_id).await?; }
+        }
 
     if let Err(err) =
         provision::initialize_bear_native(state.sqlx_pool(), &state.memory_stores, bear_id).await
@@ -1333,9 +1409,22 @@ async fn import_bear_bundle(
         tracing::warn!(%bear_id, error = %err, "initialization after Bear import failed");
     }
 
+    bears_db::grant_membership(state.sqlx_pool(), user.id, bear_id, Some(BEAR_ROLE_ADMIN)).await?;
+    den_service::skills::stage_import(state.sqlx_pool(), BearId::new(bear_id), den_core::ids::UserId::new(user.id), &portable_skills).await?;
+    Ok(())
+    }.await;
+    if let Err(error) = setup {
+        if let Err(cleanup) = bears_db::delete_bear(state.sqlx_pool(), bear_id).await {
+            tracing::error!(%bear_id, %cleanup, "failed to remove incomplete imported Bear");
+        }
+        if let Some(directory) = memory_sqlite_path(state.config.as_ref(), bear_id).parent() {
+            let _ = std::fs::remove_dir_all(directory);
+        }
+        return Err(error);
+    }
     Ok(Redirect::to(&format!(
         "/bear/{slug}/overview?message={}",
-        urlencoding::encode("Bear imported.")
+        urlencoding::encode("Bear imported. Hats restored with Work and automatic sharing off; reconnect resources and review access before enabling them.")
     ))
     .into_response())
 }

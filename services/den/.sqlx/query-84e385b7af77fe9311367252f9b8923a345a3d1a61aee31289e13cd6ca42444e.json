@@ -1,0 +1,74 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT s.id, s.name, g.upstream_url, g.default_ref, g.default_image,\n               g.allowed_outbound_hosts, g.credential_kind, g.credential_encrypted,\n               g.github_app_installation_id, g.github_app_write_enabled\n        FROM work_surfaces s\n        INNER JOIN git_work_surface_details g ON g.id = s.id\n        WHERE s.kind = 'git_workspace'\n        ORDER BY s.name\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "upstream_url",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "default_ref",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "default_image",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "allowed_outbound_hosts",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 6,
+        "name": "credential_kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "credential_encrypted",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "github_app_installation_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 9,
+        "name": "github_app_write_enabled",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "84e385b7af77fe9311367252f9b8923a345a3d1a61aee31289e13cd6ca42444e"
+}

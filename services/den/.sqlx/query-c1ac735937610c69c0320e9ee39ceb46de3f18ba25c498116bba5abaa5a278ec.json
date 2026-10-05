@@ -1,0 +1,90 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT i.id,p.cabinet_ref AS \"parent_ref?\", i.position,i.page_policy AS \"page_policy:Json<CabinetPolicy>\",i.user_members,i.bear_members,i.reviewer_user_ids,cabinet_can_access(i.id,$2,$3,false) AS \"can_read!\",cabinet_can_access(i.id,$2,$3,true) AS \"can_write!\",cabinet_can_review(i.id,$2) AS \"can_review!\",(EXISTS(SELECT 1 FROM users WHERE id=$2 AND is_admin) OR EXISTS(SELECT 1 FROM cabinet_ancestors(i.id) a WHERE a.created_by_user_id=$2)) AS \"can_manage!\", cabinet_review_required(i.id) AS \"review_required!\" FROM cabinet_items i LEFT JOIN cabinet_items p ON p.id=i.parent_item_id WHERE i.cabinet_ref=$1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "parent_ref?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "position",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 3,
+        "name": "page_policy:Json<CabinetPolicy>",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 4,
+        "name": "user_members",
+        "type_info": "Int4Array"
+      },
+      {
+        "ordinal": 5,
+        "name": "bear_members",
+        "type_info": "UuidArray"
+      },
+      {
+        "ordinal": 6,
+        "name": "reviewer_user_ids",
+        "type_info": "Int4Array"
+      },
+      {
+        "ordinal": 7,
+        "name": "can_read!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 8,
+        "name": "can_write!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 9,
+        "name": "can_review!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 10,
+        "name": "can_manage!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 11,
+        "name": "review_required!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int4",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "c1ac735937610c69c0320e9ee39ceb46de3f18ba25c498116bba5abaa5a278ec"
+}

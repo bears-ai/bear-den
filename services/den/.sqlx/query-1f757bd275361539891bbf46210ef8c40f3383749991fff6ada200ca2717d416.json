@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE git_work_surface_details g SET connection_id = c.id, credential_kind = NULL, credential_encrypted = NULL, github_app_installation_id = NULL, github_app_write_enabled = false FROM provider_connections c WHERE g.id = $1 AND c.id = $2 AND c.owner_user_id = $3 AND c.revoked_at IS NULL AND EXISTS (SELECT 1 FROM work_surface_managers m WHERE m.surface_id = g.id AND m.user_id = $3)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1f757bd275361539891bbf46210ef8c40f3383749991fff6ada200ca2717d416"
+}

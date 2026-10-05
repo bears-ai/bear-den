@@ -1,0 +1,47 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT v.id,v.review,v.base_version_ref,v.proposed_title,c.version_ref AS \"current_ref?\" FROM cabinet_item_versions v JOIN cabinet_items i ON i.id=v.item_id LEFT JOIN cabinet_item_versions c ON c.id=i.current_version_id WHERE v.item_id=$1 AND v.version_ref=$2 FOR UPDATE OF v,i",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "review",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "base_version_ref",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "proposed_title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "current_ref?",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "323a104cebe0c6c55656bc8872c2c5d0e4151790a3cfb702560cc1390ade2b1d"
+}

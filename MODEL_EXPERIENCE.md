@@ -31,6 +31,10 @@ tools:    merged Den-hosted + client descriptors
 | **Transcript** | The model-replay projection of canonical conversation storage — a distinct projection from user-visible history. | Den conversation persistence |
 | **Tool/action descriptors** | The model-facing action surface and schemas for this stance and surface. Descriptors also carry runtime semantics: blocking tool, client obligation, non-blocking structured update, or ephemeral progress. | Descriptor registry + client capabilities |
 
+## Reviewed instruction-only Skills
+
+For verified hat-bound browser/editor/Work turns, Den selects enabled attachments whose catalog version remains approved and whose pinned content hash still matches. The `bound_skills` Markdown fragment renders those procedures through the context compiler; attached uses are explicit. Drafts, disabled catalog versions and detached procedures are absent from subsequent bound prompts. Skills do not install binaries, add tools or grant credentials/resources; existing descriptors and live policy still determine execution. This initial implementation is human-authored catalog review, not model-facing skill proposal/installation tools or internal Curate/Watch procedure configuration.
+
 ## What the model deliberately does not see
 
 The exclusions are as designed as the inclusions:
@@ -82,8 +86,8 @@ Trusted facts come from typed context, not chat text: human identity for an ACP 
 Cabinet is the Den-wide shared knowledge wiki that humans and Bears read and edit together — a tree of pages, with no separate folder or collection concept ([contract](docs/architecture/cabinet-contract.md)). A "Mission" is simply a page whose child pages are the grouped material. The model sees: `cabinet_search`, `cabinet_read`, and `cabinet_history` on every stance; `cabinet_create`, `cabinet_update`, and `cabinet_source_link` on `chat`/`pair`/`curate`; and `cabinet_lifecycle` (archive/restore) on `curate` only. The distinction the descriptors teach:
 
 - **Bear memory is private cognition; Cabinet is shared, durable, human-visible knowledge.** Memory tools never write Cabinet, and Cabinet tools never write memory.
-- **Every write publishes an immutable revision** (Phase 1 direct-edit; no review gate). `cabinet_update` requires the `base_version` from a fresh `cabinet_read`; a stale base returns a structured conflict with the new current version — the model re-reads, merges, and retries. Nothing merges silently.
-- **Authorization is server-side.** Bears with `cabinet_enabled` off do not see the tools, and the facade independently rejects them. Per-page policy — inherited down the page tree, narrowing only — arrives in Phase 2; until then every Cabinet-enabled Bear can read and edit every page.
+- **Every write creates an immutable revision.** Human writes publish directly; page/ancestor policy can require Bear-written versions to remain `pending` until an authorized human review. Rejection preserves the version; approval fails if its published base changed. `cabinet_update` requires the `base_version` from a fresh `cabinet_read`; a stale base returns a structured conflict with the new current version — the model re-reads, merges, and retries. Nothing merges silently.
+- **Authorization is server-side.** Bears with `cabinet_enabled` off do not see the tools, and the facade independently rejects them. Page and ancestor membership/policy now narrow access server-side, including search before LIMIT and known-ref reads/writes. A Cabinet-enabled Bear does not thereby gain access to every page. The current model tool schemas still expose the existing root-create/search operations; child-page organization and policy/review administration are web/facade operations.
 - **Nothing is destructive.** Archiving (via `cabinet_lifecycle`) is reversible and keeps every revision readable, and `cabinet_history` plus a `version_ref` read recovers any earlier state. Deleting an item is reserved to people — the facade refuses a Bear even if it asks — so the model's worst case is an edit someone can revert, not lost knowledge.
 - **Provenance is separable from content.** `cabinet_source_link` records where knowledge came from without publishing a revision; Cabinet stores the link, never the linked bytes.
 

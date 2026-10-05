@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bear_skills_manifest m SET enabled=false,updated_at=now() WHERE m.bear_id=$1 AND m.catalog_entry_id=$3 AND EXISTS(SELECT 1 FROM user_bear ub WHERE ub.bear_id=$1 AND ub.user_id=$2 AND lower(btrim(ub.role))='admin')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "179dc8d158dfa81e09a3b99f4dd6bd213ea67191b505cbef07bb5db2e631c18b"
+}

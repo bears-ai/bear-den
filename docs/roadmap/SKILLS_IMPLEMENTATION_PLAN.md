@@ -18,6 +18,12 @@ Each delivered Skills phase must review and update [`MODEL_EXPERIENCE.md`](../..
 
 ---
 
+## Implemented branch slice (2026-10-05)
+
+Human-authored instruction-only catalog drafts, explicit publication review, immutable approved versions, Bear-admin pinned attachments/detachment, use selection and catalog disablement are implemented in `den-service::skills` and the Bear Skills web page. Drafts and hash-mismatched/disabled attachments are excluded from the context-compiled `bound_skills` component on subsequent verified Chat/Editor/Work turns. Version-2 bundles carry approved procedure content and stage imported procedures disabled. Legacy inactive manifest rows are not auto-activated.
+
+This does not complete the plan: model-authored proposal tools and review lanes, executable/tool-bearing packages, declared capability requirements, internal Curate/Watch procedure integration, reconciliation reporting and larger artifact-backed trees remain target work. No new tool or credential grant is supplied by this slice.
+
 ## Goals
 
 1. Provide an operator-managed Skills catalog for reusable procedures, policies, and capability bundles.

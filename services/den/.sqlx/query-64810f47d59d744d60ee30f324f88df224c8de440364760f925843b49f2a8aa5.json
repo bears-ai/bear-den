@@ -1,0 +1,78 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT c.id,c.name,c.version,c.description,c.content,c.content_hash,c.status,c.owner_user_id,(m.enabled AND m.content_hash=c.content_hash) AS attached,m.applies_to_profiles AS \"applies_to_profiles?\" FROM skill_catalog_entries c LEFT JOIN bear_skills_manifest m ON m.catalog_entry_id=c.id AND m.bear_id=$1 WHERE ($2 AND (c.owner_user_id=$3 OR c.status = 'approved')) OR (c.status='approved' AND m.enabled AND m.content_hash=c.content_hash) ORDER BY c.name,c.version",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "version",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "content",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "content_hash",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "owner_user_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 8,
+        "name": "attached",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 9,
+        "name": "applies_to_profiles?",
+        "type_info": "TextArray"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Bool",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      null,
+      false
+    ]
+  },
+  "hash": "64810f47d59d744d60ee30f324f88df224c8de440364760f925843b49f2a8aa5"
+}

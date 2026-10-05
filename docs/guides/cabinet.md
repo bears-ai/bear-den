@@ -1,14 +1,14 @@
 # Cabinet: shared knowledge
 
 Cabinet is your Den's shared knowledge wiki. People and Bears read and edit the
-same pages; every edit publishes a new immutable revision, and the full
-revision history is always available. There is one Cabinet per Den.
+same pages subject to current page access; every edit creates an immutable revision.
+Human edits publish directly; policy can require review of Bear-written versions. There is one Cabinet per Den.
 
 Cabinet is a **tree of pages** and nothing else — there are no separate folders
 or collections. A page can hold content, child pages, or both. A "Mission" is
 just a page describing a goal, with its plans and references as child pages;
 a Docket job can point at that page when it needs the documentation for its
-work. (Hierarchy arrives in Phase 2; today every page is a root.)
+work. The branch web UI now supports child pages, sibling order and inherited access; the Docket Mission reference/snapshot workflow remains target work.
 
 Contract and design: [cabinet-contract.md](../architecture/cabinet-contract.md).
 Plan and phase status: [CABINET_IMPLEMENTATION_PLAN.md](../roadmap/CABINET_IMPLEMENTATION_PLAN.md).
@@ -20,7 +20,7 @@ Open **`/cabinet`** while logged in.
 - **Browse and search** — the index searches titles and current content.
   Archived items are hidden by default (`Show archived items` toggles).
 - **Create** — `/cabinet/new`: a title plus a Markdown body. The item is
-  visible to everyone in the Den (and to Cabinet-enabled Bears) immediately.
+  visible under its effective page/ancestor access. Use **New child page** on an existing page to inherit its restrictions atomically.
 - **Edit** — every save publishes a new revision. If someone (or some Bear)
   published a newer revision while you were editing, your save is refused and
   the form comes back with your draft preserved and the conflict explained —
@@ -31,8 +31,9 @@ Open **`/cabinet`** while logged in.
 - **Sources** — record where an item's knowledge came from (a URL, a book, an
   artifact, a conversation). Cabinet stores the link, not the linked content,
   and adding or removing one does not publish a revision.
-- **Archive / restore** — archiving hides an item from default search and
-  blocks edits until restored. Reversible, and every revision stays readable.
+- **Organization and access** — the page's details expose move/reorder controls, named people/Bears/reviewers, and Bear-write review policy. Ancestors narrow access; child settings cannot widen it. Access changes and moves require audience acknowledgement; cycles and depth overflow are refused. Policy administration belongs to an accessible page/ancestor owner or Den admin, not every reader or reviewer.
+- **Review** — authorized humans open pending versions from Cabinet or Reviews, inspect proposed content/title, and approve/reject with a rationale. A stale published base blocks approval; no silent merge.
+- **Archive / restore** — archive cascades to children only when the actor can write the subtree; restore restores only the named page. Every retained version still obeys current access.
 - **Delete** — tombstones the item: it leaves Cabinet for everyone, while its
   revisions are retained so anything that already cited them keeps resolving.
   **Only people can delete.** A Bear that tries is refused by the server, so
@@ -59,18 +60,13 @@ reversible archive, and only `curate` can do even that.
 Cabinet is deliberately separate from a Bear's private memory: memory tools
 cannot write Cabinet, and Cabinet tools cannot write Bear memory.
 
-## Permissions (Phase 1)
+## Permissions
 
-- **People:** every logged-in Den user can read, create, and edit every item —
-  the open-wiki default.
+- **People:** open-wiki access applies where no page or ancestor narrows membership. Unreadable pages are omitted from search/tree navigation, and known refs do not bypass access.
 - **Bears:** gated per Bear by the `cabinet_enabled` flag on the Bear record
   (default on, like `work_enabled`). A disabled Bear does not see the Cabinet
   tools and the server independently refuses it access.
-- **Scoped sharing is Phase 2.** Access policy and membership will live on
-  pages and inherit down the tree, narrowing only: put members on a Mission
-  page and its whole subtree becomes private to them, while unrelated pages
-  are untouched. Requests that try to set hierarchy or policy today are
-  refused with a clear policy error.
+- **Scoped sharing:** named membership and policy live on pages and narrow down their subtree. A restricted page administrator must remain a member; reviewers gain review authority only while the page is readable. A Mission is an ordinary page, not a collection entity.
 
 ## Source links
 
@@ -83,7 +79,6 @@ the bytes behind them.
 
 - Search is substring matching over titles and current content (no semantic
   recall yet; that is Phase 3, via the derived recall index).
-- Page hierarchy, sibling ordering, and per-page permissions are Phase 2, so
-  every page is currently a root and every Den user can edit everything.
+- The existing model tool request schemas remain the root/search interfaces; hierarchy and access/review management are currently web/facade operations. Docket Mission annotations and immutable snapshot citations are not delivered by this slice.
 - Attachments (files on pages, via artifact refs) are Phase 3.
 - The editor is a plain Markdown textarea; rendered views sanitize HTML.

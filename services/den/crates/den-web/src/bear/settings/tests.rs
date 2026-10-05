@@ -6,6 +6,8 @@
 //! route before exercising the real router.
 
 use super::*;
+mod backend_management;
+mod portability;
 use axum::{
     body::Body,
     http::{header, Request, StatusCode},
@@ -223,6 +225,8 @@ async fn test_app(pool: sqlx::PgPool) -> axum::Router {
         .merge(router())
         .merge(super::super::manage::router())
         .merge(crate::management_hub::router())
+        .merge(crate::connections::router())
+        .merge(super::super::skills::router())
         .route("/test-login/{user_id}", get(test_login))
         .with_state(test_state(pool.clone()))
         .layer(

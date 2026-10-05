@@ -146,6 +146,7 @@ pub(super) async fn for_run(
     let surface_id = context.work_surface_id.ok_or_else(|| {
         DenError::Authorization("bound Work run has no assigned git work surface".into())
     })?;
+    den_service::connections::require_live_for_surface(pool, surface_id).await?;
     let surface = work_surfaces::surface_by_id(pool, surface_id)
         .await?
         .ok_or_else(|| DenError::Authorization("Job work surface no longer exists".into()))?;

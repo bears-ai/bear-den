@@ -1,13 +1,14 @@
-//! Cabinet Phase 1 facade: authorized search/read/history and direct
-//! create/update over Den Postgres storage.
+//! Cabinet page-tree facade: scoped reads, immutable versions and conditional
+//! Bear-write review over Den Postgres storage.
 //!
 //! Contract: `docs/architecture/cabinet-contract.md` (types in `den-cabinet`).
 //! Every operation takes an explicit [`ActorScope`]; authorization runs here,
 //! not in callers, and nothing outside this module touches the cabinet tables.
-//! Phase 1 is direct-edit: every write publishes an immutable version with
-//! review state `none`; Mission/collection binding and review flows arrive in
-//! later phases and are rejected here.
+//! Direct publication is the default; ancestor policy can require human review.
+//! Legacy collection/Mission binding fields remain rejected compatibility inputs;
+//! the page-only topology and policy helpers own all new structural state.
 
+use den_cabinet::Authority;
 use den_cabinet::{
     validate_source_locator, Actor, ActorScope, CabinetError, CabinetItem, CabinetItemRef,
     CabinetSourceRef, CabinetVersionRef, ContractViolation, CreateItemRequest, HistoryRequest,
@@ -15,6 +16,8 @@ use den_cabinet::{
     SearchRequest, SourceKind, SourceLink, SourceRole, UnlinkSourceRequest, UpdateItemRequest,
     VersionSummary,
 };
+pub mod pages;
+
 use serde::Serialize;
 use sqlx::types::Json;
 use sqlx::PgPool;
@@ -28,6 +31,7 @@ pub struct ItemView {
     pub item: CabinetItem,
     pub version: ItemVersion,
     pub sources: Vec<SourceLink>,
+    pub proposed_title: Option<String>,
 }
 
 const SEARCH_LIMIT: i64 = 50;
@@ -234,6 +238,14 @@ fn source_from_row(row: SourceRow) -> Result<SourceLink, CabinetError> {
     })
 }
 
+fn same_actor_identity(left: &Actor, right: &Actor) -> bool {
+    match (left, right) {
+        (Actor::User { user_id: left }, Actor::User { user_id: right }) => left == right,
+        (Actor::Bear { bear_id: left, .. }, Actor::Bear { bear_id: right, .. }) => left == right,
+        _ => false,
+    }
+}
+
 fn actor_denormalized(scope: &ActorScope) -> (Option<i32>, Option<Uuid>) {
     match &scope.actor {
         Actor::User { user_id } => (Some(user_id.0), None),
@@ -243,8 +255,10 @@ fn actor_denormalized(scope: &ActorScope) -> (Option<i32>, Option<Uuid>) {
 
 async fn load_item_row(
     pool: &PgPool,
+    scope: &ActorScope,
     cabinet_ref: &CabinetItemRef,
 ) -> Result<Option<ItemRow>, CabinetError> {
+    pages::authorize(pool, scope, cabinet_ref, Authority::Read).await?;
     sqlx::query_as!(
         ItemRow,
         r#"SELECT id, cabinet_ref, kind, title, lifecycle, collection_ref, mission_ref,
@@ -359,6 +373,21 @@ pub async fn search(
     pool: &PgPool,
     request: SearchRequest,
 ) -> Result<Vec<ItemSummary>, CabinetError> {
+    search_impl(pool, request, false).await
+}
+
+pub async fn search_roots(
+    pool: &PgPool,
+    request: SearchRequest,
+) -> Result<Vec<ItemSummary>, CabinetError> {
+    search_impl(pool, request, true).await
+}
+
+async fn search_impl(
+    pool: &PgPool,
+    request: SearchRequest,
+    roots_only: bool,
+) -> Result<Vec<ItemSummary>, CabinetError> {
     authorize(pool, &request.scope).await?;
     if request.filters.collection_ref.is_some() || request.filters.mission_ref.is_some() {
         return Err(CabinetError::Policy(
@@ -376,6 +405,7 @@ pub async fn search(
     } else {
         Some(format!("%{}%", escape_like(query)))
     };
+    let (human_actor, bear_actor) = actor_denormalized(&request.scope);
     let rows = sqlx::query!(
         r#"SELECT i.cabinet_ref, i.kind, i.title, i.lifecycle, i.collection_ref, i.mission_ref,
                   i.updated_at, v.version_ref AS current_version_ref
@@ -384,12 +414,17 @@ pub async fn search(
            WHERE i.lifecycle = $1
              AND ($2::text IS NULL OR i.kind = $2)
              AND ($3::text IS NULL OR i.title ILIKE $3 OR v.content ILIKE $3)
+             AND cabinet_can_access(i.id, $5, $6, false)
+             AND (NOT $7 OR i.parent_item_id IS NULL)
            ORDER BY i.updated_at DESC
            LIMIT $4"#,
         lifecycle,
         kind,
         pattern,
-        SEARCH_LIMIT
+        SEARCH_LIMIT,
+        human_actor,
+        bear_actor,
+        roots_only
     )
     .fetch_all(pool)
     .await
@@ -425,7 +460,7 @@ pub async fn search(
 /// and its source links. Tombstoned items read as `NotFound`.
 pub async fn read(pool: &PgPool, request: ReadRequest) -> Result<ItemView, CabinetError> {
     authorize(pool, &request.scope).await?;
-    let row = load_item_row(pool, &request.cabinet_ref)
+    let row = load_item_row(pool, &request.scope, &request.cabinet_ref)
         .await?
         .ok_or(CabinetError::NotFound)?;
     if row.lifecycle == "deleted" {
@@ -441,11 +476,40 @@ pub async fn read(pool: &PgPool, request: ReadRequest) -> Result<ItemView, Cabin
     .await?
     .ok_or(CabinetError::NotFound)?;
     let sources = load_sources(pool, row.id, &row.cabinet_ref).await?;
-    let item = item_from_row(&row, Some(version.version_ref().clone()))?;
+    if matches!(
+        version.review(),
+        ReviewState::Pending | ReviewState::Rejected
+    ) && !same_actor_identity(&version.authored_by().actor, &request.scope.actor)
+    {
+        pages::authorize(
+            pool,
+            &request.scope,
+            &request.cabinet_ref,
+            Authority::Review,
+        )
+        .await?;
+    }
+    let current =
+        load_version(pool, row.id, &row.cabinet_ref, None, row.current_version_id).await?;
+    let item = item_from_row(&row, current.map(|value| value.version_ref().clone()))?;
+    pages::authorize(pool, &request.scope, &request.cabinet_ref, Authority::Read).await?;
+    let proposed_title = if version.review() == ReviewState::Pending {
+        sqlx::query_scalar!(
+            "SELECT proposed_title FROM cabinet_item_versions WHERE item_id=$1 AND version_ref=$2",
+            row.id,
+            version.version_ref().as_str()
+        )
+        .fetch_one(pool)
+        .await
+        .map_err(db_error)?
+    } else {
+        None
+    };
     Ok(ItemView {
         item,
         version,
         sources,
+        proposed_title,
     })
 }
 
@@ -455,7 +519,7 @@ pub async fn history(
     request: HistoryRequest,
 ) -> Result<Vec<VersionSummary>, CabinetError> {
     authorize(pool, &request.scope).await?;
-    let row = load_item_row(pool, &request.cabinet_ref)
+    let row = load_item_row(pool, &request.scope, &request.cabinet_ref)
         .await?
         .ok_or(CabinetError::NotFound)?;
     if row.lifecycle == "deleted" {
@@ -507,6 +571,22 @@ pub async fn create_item(
     pool: &PgPool,
     request: CreateItemRequest,
 ) -> Result<ItemView, CabinetError> {
+    create_at(pool, request, None).await
+}
+
+pub async fn create_child(
+    pool: &PgPool,
+    request: CreateItemRequest,
+    parent: &CabinetItemRef,
+) -> Result<ItemView, CabinetError> {
+    create_at(pool, request, Some(parent)).await
+}
+
+async fn create_at(
+    pool: &PgPool,
+    request: CreateItemRequest,
+    parent: Option<&CabinetItemRef>,
+) -> Result<ItemView, CabinetError> {
     authorize(pool, &request.scope).await?;
     reject_phase2_bindings(
         request.collection_ref.as_ref(),
@@ -525,24 +605,56 @@ pub async fn create_item(
 
     let cabinet_ref = CabinetItemRef::mint();
     let now = OffsetDateTime::now_utc();
-    let version = ItemVersion::first(
+    let mut tx = pool.begin().await.map_err(db_error)?;
+    pages::lock(&mut tx).await?;
+    let parent_page = if let Some(parent) = parent {
+        Some(pages::authorize(pool, &request.scope, parent, Authority::Write).await?)
+    } else {
+        None
+    };
+    if let Some(ref page) = parent_page {
+        let allowed = sqlx::query_scalar!(r#"SELECT COALESCE(bool_and((page_policy->'allowed_kinds') IS NULL OR jsonb_typeof(page_policy->'allowed_kinds')='null' OR (page_policy->'allowed_kinds') ? $2),true) AS "allowed!" FROM cabinet_ancestors($1)"#,page.id,request.kind.as_str()).fetch_one(&mut *tx).await.map_err(db_error)?;
+        let depth = sqlx::query_scalar!(
+            r#"SELECT COALESCE(max(depth),0) AS "depth!" FROM cabinet_ancestors($1)"#,
+            page.id
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db_error)?;
+        if !allowed || depth >= 32 {
+            return Err(CabinetError::Policy(
+                "page kind or depth is disallowed by the destination".into(),
+            ));
+        }
+    }
+    let pending = matches!(request.scope.actor, Actor::Bear { .. })
+        && parent_page
+            .as_ref()
+            .is_some_and(|page| page.review_required);
+    let version = ItemVersion::with_review_state(
         CabinetVersionRef::mint(),
         cabinet_ref.clone(),
+        1,
         request.content,
         request.scope.clone(),
         now,
+        None,
+        if pending {
+            ReviewState::Pending
+        } else {
+            ReviewState::None
+        },
     )
     .map_err(violation)?;
-    version.ensure_phase1_direct_edit().map_err(violation)?;
     let (user_id, bear_id) = actor_denormalized(&request.scope);
     let scope_value = scope_json(&request.scope)?;
 
-    let mut tx = pool.begin().await.map_err(db_error)?;
+    let parent_id = parent_page.map(|page| page.id);
     let item_id = sqlx::query_scalar!(
         r#"INSERT INTO cabinet_items
             (cabinet_ref, kind, title, created_by, created_by_user_id, created_by_bear_id,
-             created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+             created_at, updated_at, parent_item_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8)
            RETURNING id"#,
         cabinet_ref.as_str(),
         request.kind.as_str(),
@@ -551,6 +663,7 @@ pub async fn create_item(
         user_id,
         bear_id,
         now,
+        parent_id
     )
     .fetch_one(&mut *tx)
     .await
@@ -560,7 +673,7 @@ pub async fn create_item(
         r#"INSERT INTO cabinet_item_versions
             (version_ref, item_id, revision, content, content_sha256, base_version_ref, review,
              authored_by, authored_by_user_id, authored_by_bear_id, authored_at)
-           VALUES ($1, $2, 1, $3, $4, NULL, 'none', $5, $6, $7, $8)
+           VALUES ($1, $2, 1, $3, $4, NULL, $9, $5, $6, $7, $8)
            RETURNING id"#,
         version.version_ref().as_str(),
         item_id,
@@ -570,19 +683,22 @@ pub async fn create_item(
         user_id,
         bear_id,
         now,
+        version.review().as_str()
     )
     .fetch_one(&mut *tx)
     .await
     .map_err(db_error)?;
 
-    sqlx::query!(
-        "UPDATE cabinet_items SET current_version_id = $2 WHERE id = $1",
-        item_id,
-        version_id
-    )
-    .execute(&mut *tx)
-    .await
-    .map_err(db_error)?;
+    if !pending {
+        sqlx::query!(
+            "UPDATE cabinet_items SET current_version_id = $2 WHERE id = $1",
+            item_id,
+            version_id
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(db_error)?;
+    }
 
     let mut sources = Vec::with_capacity(request.source_links.len());
     for link in &request.source_links {
@@ -619,7 +735,11 @@ pub async fn create_item(
         cabinet_ref,
         kind: request.kind,
         title: title.to_string(),
-        current_version: Some(version.version_ref().clone()),
+        current_version: if pending {
+            None
+        } else {
+            Some(version.version_ref().clone())
+        },
         collection_ref: None,
         mission_ref: None,
         created_by: request.scope,
@@ -630,6 +750,7 @@ pub async fn create_item(
         item,
         version,
         sources,
+        proposed_title: None,
     })
 }
 
@@ -651,6 +772,10 @@ pub async fn update_item(
     }
 
     let mut tx = pool.begin().await.map_err(db_error)?;
+    pages::lock(&mut tx).await?;
+    let page =
+        pages::authorize(pool, &request.scope, &request.cabinet_ref, Authority::Write).await?;
+    let pending = matches!(request.scope.actor, Actor::Bear { .. }) && page.review_required;
     let current = sqlx::query!(
         r#"SELECT i.id AS item_id, i.title, i.kind, i.lifecycle,
                   v.version_ref AS current_version_ref, v.revision AS current_revision
@@ -681,22 +806,33 @@ pub async fn update_item(
         return Err(CabinetError::Conflict { current_version });
     }
 
-    let revision = u32::try_from(current.current_revision)
+    let max_revision = sqlx::query_scalar!(
+        r#"SELECT COALESCE(max(revision),0) AS "max!" FROM cabinet_item_versions WHERE item_id=$1"#,
+        current.item_id
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(db_error)?;
+    let revision = u32::try_from(max_revision)
         .map_err(|_| CabinetError::Policy("revision overflow".to_string()))?
         .checked_add(1)
         .ok_or_else(|| CabinetError::Policy("revision overflow".to_string()))?;
     let now = OffsetDateTime::now_utc();
-    let version = ItemVersion::direct_edit(
+    let version = ItemVersion::with_review_state(
         CabinetVersionRef::mint(),
         request.cabinet_ref.clone(),
         revision,
         request.content,
         request.scope.clone(),
         now,
-        request.base_version.clone(),
+        Some(request.base_version.clone()),
+        if pending {
+            ReviewState::Pending
+        } else {
+            ReviewState::None
+        },
     )
     .map_err(violation)?;
-    version.ensure_phase1_direct_edit().map_err(violation)?;
     let (user_id, bear_id) = actor_denormalized(&request.scope);
     let revision_db = i32::try_from(revision)
         .map_err(|_| CabinetError::Policy("revision overflow".to_string()))?;
@@ -704,8 +840,8 @@ pub async fn update_item(
     let version_id = sqlx::query_scalar!(
         r#"INSERT INTO cabinet_item_versions
             (version_ref, item_id, revision, content, content_sha256, base_version_ref, review,
-             authored_by, authored_by_user_id, authored_by_bear_id, authored_at)
-           VALUES ($1, $2, $3, $4, $5, $6, 'none', $7, $8, $9, $10)
+             authored_by, authored_by_user_id, authored_by_bear_id, authored_at, proposed_title)
+           VALUES ($1, $2, $3, $4, $5, $6, $11, $7, $8, $9, $10, $12)
            RETURNING id"#,
         version.version_ref().as_str(),
         current.item_id,
@@ -717,6 +853,8 @@ pub async fn update_item(
         user_id,
         bear_id,
         now,
+        version.review().as_str(),
+        request.title.as_deref().map(str::trim)
     )
     .fetch_one(&mut *tx)
     .await
@@ -727,7 +865,8 @@ pub async fn update_item(
         .as_deref()
         .map(str::trim)
         .unwrap_or(current.title.as_str());
-    sqlx::query!(
+    if !pending {
+        sqlx::query!(
         "UPDATE cabinet_items SET current_version_id = $2, title = $3, updated_at = $4 WHERE id = $1",
         current.item_id,
         version_id,
@@ -737,6 +876,7 @@ pub async fn update_item(
     .execute(&mut *tx)
     .await
     .map_err(db_error)?;
+    }
     tx.commit().await.map_err(db_error)?;
 
     read(
@@ -744,7 +884,7 @@ pub async fn update_item(
         ReadRequest {
             scope: request.scope,
             cabinet_ref: request.cabinet_ref,
-            version_ref: None,
+            version_ref: Some(version.version_ref().clone()),
         },
     )
     .await
@@ -758,27 +898,43 @@ async fn set_lifecycle(
     to: Lifecycle,
 ) -> Result<(), CabinetError> {
     authorize(pool, scope).await?;
-    let row = load_item_row(pool, cabinet_ref)
+    let mut tx = pool.begin().await.map_err(db_error)?;
+    pages::lock(&mut tx).await?;
+    let page = pages::authorize(pool, scope, cabinet_ref, Authority::Write).await?;
+    let row = load_item_row(pool, scope, cabinet_ref)
         .await?
         .ok_or(CabinetError::NotFound)?;
-    if row.lifecycle == "deleted" {
-        return Err(CabinetError::NotFound);
-    }
     if !from.contains(&row.lifecycle.as_str()) {
-        return Err(CabinetError::Policy(format!(
-            "item is {}; cannot transition to {}",
-            row.lifecycle,
-            to.as_str()
-        )));
+        return Err(CabinetError::Policy(
+            "page lifecycle transition is not available".into(),
+        ));
     }
-    sqlx::query!(
-        "UPDATE cabinet_items SET lifecycle = $2, updated_at = NOW() WHERE id = $1",
-        row.id,
-        to.as_str()
-    )
-    .execute(pool)
-    .await
-    .map_err(db_error)?;
+    let (human, bear) = actor_denormalized(scope);
+    if to == Lifecycle::Deleted {
+        let children=sqlx::query_scalar!(r#"SELECT EXISTS(SELECT 1 FROM cabinet_items WHERE parent_item_id=$1 AND lifecycle<>'deleted') AS "children!""#,page.id).fetch_one(&mut *tx).await.map_err(db_error)?;
+        if children {
+            return Err(CabinetError::Policy(
+                "remove child pages deliberately before deleting this page".into(),
+            ));
+        }
+    }
+    if to == Lifecycle::Archived {
+        let denied=sqlx::query_scalar!(r#"WITH RECURSIVE subtree AS(SELECT id FROM cabinet_items WHERE id=$1 UNION ALL SELECT i.id FROM cabinet_items i JOIN subtree p ON i.parent_item_id=p.id) SELECT EXISTS(SELECT 1 FROM subtree s JOIN cabinet_items i ON i.id=s.id WHERE i.lifecycle <> 'deleted' AND NOT cabinet_can_access(i.id,$2,$3,true)) AS "denied!""#,page.id,human,bear).fetch_one(&mut *tx).await.map_err(db_error)?;
+        if denied {
+            return Err(CabinetError::NotAuthorized);
+        }
+        sqlx::query!("WITH RECURSIVE subtree AS(SELECT id FROM cabinet_items WHERE id=$1 UNION ALL SELECT i.id FROM cabinet_items i JOIN subtree p ON i.parent_item_id=p.id) UPDATE cabinet_items SET lifecycle='archived',updated_at=now() WHERE id IN(SELECT id FROM subtree) AND lifecycle <> 'deleted'",page.id).execute(&mut *tx).await.map_err(db_error)?;
+    } else {
+        sqlx::query!(
+            "UPDATE cabinet_items SET lifecycle=$2,updated_at=now() WHERE id=$1",
+            page.id,
+            to.as_str()
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(db_error)?;
+    }
+    tx.commit().await.map_err(db_error)?;
     Ok(())
 }
 
@@ -831,8 +987,11 @@ pub async fn link_source(
     request: LinkSourceRequest,
 ) -> Result<SourceLink, CabinetError> {
     authorize(pool, &request.scope).await?;
+    let mut tx = pool.begin().await.map_err(db_error)?;
+    pages::lock(&mut tx).await?;
+    pages::authorize(pool, &request.scope, &request.cabinet_ref, Authority::Write).await?;
     validate_source_locator(request.link.source_kind, &request.link.locator).map_err(violation)?;
-    let row = load_item_row(pool, &request.cabinet_ref)
+    let row = load_item_row(pool, &request.scope, &request.cabinet_ref)
         .await?
         .ok_or(CabinetError::NotFound)?;
     if row.lifecycle == "deleted" {
@@ -853,9 +1012,10 @@ pub async fn link_source(
         scope_json(&request.scope)?,
         now,
     )
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map_err(db_error)?;
+    tx.commit().await.map_err(db_error)?;
     Ok(SourceLink {
         source_ref,
         cabinet_ref: request.cabinet_ref,
@@ -873,7 +1033,10 @@ pub async fn unlink_source(
     request: UnlinkSourceRequest,
 ) -> Result<(), CabinetError> {
     authorize(pool, &request.scope).await?;
-    let row = load_item_row(pool, &request.cabinet_ref)
+    let mut tx = pool.begin().await.map_err(db_error)?;
+    pages::lock(&mut tx).await?;
+    pages::authorize(pool, &request.scope, &request.cabinet_ref, Authority::Write).await?;
+    let row = load_item_row(pool, &request.scope, &request.cabinet_ref)
         .await?
         .ok_or(CabinetError::NotFound)?;
     let deleted = sqlx::query!(
@@ -881,12 +1044,13 @@ pub async fn unlink_source(
         row.id,
         request.source_ref.as_str()
     )
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map_err(db_error)?;
     if deleted.rows_affected() == 0 {
         return Err(CabinetError::NotFound);
     }
+    tx.commit().await.map_err(db_error)?;
     Ok(())
 }
 

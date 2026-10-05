@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE cabinet_items SET page_policy=$2,user_members=$3,bear_members=$4,reviewer_user_ids=$5,updated_at=now() WHERE id=$1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Jsonb",
+        "Int4Array",
+        "UuidArray",
+        "Int4Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2c1d90f111e82492342774468ec6ab24cde366cf6926d7b5afef83ac4fa54320"
+}

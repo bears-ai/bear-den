@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE provider_connections SET revoked_at = now(), revision = revision + 1, updated_at = now() WHERE id = $1 AND owner_user_id = $2 AND revision = $3 AND revoked_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4c2b120d26be4f678b42298ead6e94c2dc6c9c8e9d9ef04eb5f5bb9cbd11830f"
+}

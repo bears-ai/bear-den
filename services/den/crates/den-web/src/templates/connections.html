@@ -3,6 +3,12 @@
 {% block breadcrumb %}<a href="/">Bears</a> / This Den{% endblock %}
 {% block content %}
 <main class="den-hub">
+  <section class="box"><h2>Your reusable accounts</h2>
+    {% if connection_catalog %}<ul class="den-record-list">{% for connection in connection_catalog %}<li><strong>{{ connection.name | e }}</strong><span>{{ connection.provider | e }} · {{ connection.repository_count }} linked repositories · {% if connection.revoked %}revoked{% else %}active{% endif %}</span>
+    {% if not connection.revoked %}<form method="post" action="/connections/{{ connection.id }}/revoke"><input type="hidden" name="revision" value="{{ connection.revision }}"><button type="submit">Revoke</button></form>
+    {% if repositories %}<form method="post" action="/connections/{{ connection.id }}/repositories"><label>Attach to repository <select name="surface_id" required>{% for repository in repositories %}<option value="{{ repository.id }}">{{ repository.name | e }}</option>{% endfor %}</select></label><button type="submit">Attach</button></form>{% endif %}{% endif %}</li>{% endfor %}</ul>{% else %}<p>No reusable accounts yet.</p>{% endif %}
+    <details><summary>Add a reusable account</summary><form method="post" action="/connections/create"><label>Name <input name="name" maxlength="120" required></label><label>Provider <select name="provider"><option value="git_https">Git HTTPS token</option><option value="git_ssh">Git SSH key</option><option value="github_app">GitHub App installation</option></select></label><label>Secret (HTTPS token or SSH key; never displayed) <textarea name="secret" rows="4" autocomplete="new-password"></textarea></label><label>GitHub installation ID <input name="installation" inputmode="numeric"></label><label><input type="checkbox" name="allow_write" value="true">GitHub App may write</label><button type="submit">Create account</button></form></details>
+  </section>
   <section class="box">
     <h2>Repository connections</h2>
     <p class="button-row"><a class="button-link" href="/work/surfaces/new">Connect a repository</a><a href="/work/surfaces">All permitted repositories</a></p>
@@ -10,8 +16,8 @@
     <ul class="den-record-list">
       {% for repository in repositories %}
       <li><a href="/work/surfaces/{{ repository.id }}">{{ repository.name | e }}</a>
-        <span class="form-hint">{% if repository.github_app_configured %}GitHub App configured{% elif repository.credential_configured %}Credential configured{% else %}No credential configured{% endif %}</span>
-        <a href="/work/surfaces/{{ repository.id }}#connection">Manage connection</a>
+        <span class="form-hint">{% if repository.reusable %}Reusable connection linked{% elif repository.github_app_configured %}GitHub App configured{% elif repository.credential_configured %}Credential configured{% else %}No credential configured{% endif %}</span>
+        <a href="/work/surfaces/{{ repository.id }}#connection">Manage connection</a>{% if repository.reusable %}<form method="post" action="/connections/repositories/{{ repository.id }}/detach"><button type="submit">Detach reusable account</button></form>{% endif %}
       </li>
       {% endfor %}
     </ul>
@@ -21,6 +27,6 @@
     <h2>Editors</h2>
     {% if bears %}<ul class="den-record-list">{% for bear in bears %}<li><a href="/bear/{{ bear.slug | urlencode }}/connections">{{ bear.name | e }}</a><span class="form-hint">{% if bear.can_manage %}Manage editor access{% else %}View editor setup{% endif %}</span></li>{% endfor %}</ul>{% else %}<p>No Bears assigned to you.</p>{% endif %}
   </section>
-  <details class="box"><summary>Other provider accounts</summary><p>Reusable GitHub, Google and SSH account catalogs are not available in this build. Repository credentials above are managed on their existing repository records; no separate account has been created.</p></details>
+  <details class="box"><summary>Other provider accounts</summary><p>Reusable Git HTTPS, SSH keys and GitHub App installations are supported. Other provider adapters are not available. Attaching an account clears the local credential copy; revocation denies future Work provisioning and live egress checks without falling back to stale credentials.</p></details>
 </main>
 {% endblock %}

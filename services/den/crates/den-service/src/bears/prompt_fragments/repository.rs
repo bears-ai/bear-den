@@ -5,6 +5,10 @@ use super::{PromptBundleRegistry, PromptFragmentRegistry};
 
 const REPOSITORY_PROMPT_SOURCES: &[(&str, &str)] = &[
     (
+        "fragments/base/bound_skills.md",
+        include_str!("../../../../../prompts/fragments/base/bound_skills.md"),
+    ),
+    (
         "fragments/base/den_baseline.md",
         include_str!("../../../../../prompts/fragments/base/den_baseline.md"),
     ),

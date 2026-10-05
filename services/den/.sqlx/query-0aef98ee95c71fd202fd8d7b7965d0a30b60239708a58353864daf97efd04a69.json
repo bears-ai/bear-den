@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE git_work_surface_details SET credential_kind = $2, credential_encrypted = $3 WHERE id = $1 AND connection_id IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0aef98ee95c71fd202fd8d7b7965d0a30b60239708a58353864daf97efd04a69"
+}

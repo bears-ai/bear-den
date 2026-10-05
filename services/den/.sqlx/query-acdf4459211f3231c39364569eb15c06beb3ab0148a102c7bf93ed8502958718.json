@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH RECURSIVE subtree AS(SELECT id FROM cabinet_items WHERE id=$1 UNION ALL SELECT i.id FROM cabinet_items i JOIN subtree p ON i.parent_item_id=p.id) UPDATE cabinet_items SET lifecycle='archived',updated_at=now() WHERE id IN(SELECT id FROM subtree) AND lifecycle <> 'deleted'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "acdf4459211f3231c39364569eb15c06beb3ab0148a102c7bf93ed8502958718"
+}

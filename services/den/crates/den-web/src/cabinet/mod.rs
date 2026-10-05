@@ -29,9 +29,11 @@ use den_cabinet::{
 };
 use den_core::ids::UserId;
 use den_service::cabinet as cabinet_service;
+mod pages;
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .merge(pages::router())
         .route("/cabinet", get(index))
         .route("/cabinet/new", get(new_form).post(create))
         .route("/cabinet/{cabinet_ref}", get(item))
@@ -93,22 +95,27 @@ async fn index(
 ) -> Result<Response, CustomError> {
     let scope = require_user_scope(&auth_session)?;
     let archived = query.lifecycle.as_deref() == Some("archived");
-    let items = cabinet_service::search(
-        state.sqlx_pool(),
-        SearchRequest {
-            scope,
-            query: query.q.clone().unwrap_or_default(),
-            filters: SearchFilters {
-                lifecycle: Some(if archived {
-                    Lifecycle::Archived
-                } else {
-                    Lifecycle::Active
-                }),
-                ..SearchFilters::default()
-            },
+    let review_items = cabinet_service::pages::pending_reviews(state.sqlx_pool(), &scope)
+        .await
+        .map_err(cabinet_error)?;
+    let roots_only = query.q.as_deref().is_none_or(|q| q.trim().is_empty());
+    let request = SearchRequest {
+        scope: scope.clone(),
+        query: query.q.clone().unwrap_or_default(),
+        filters: SearchFilters {
+            lifecycle: Some(if archived {
+                Lifecycle::Archived
+            } else {
+                Lifecycle::Active
+            }),
+            ..SearchFilters::default()
         },
-    )
-    .await
+    };
+    let items = if roots_only {
+        cabinet_service::search_roots(state.sqlx_pool(), request).await
+    } else {
+        cabinet_service::search(state.sqlx_pool(), request).await
+    }
     .map_err(cabinet_error)?;
     let items: Vec<serde_json::Value> = items
         .into_iter()
@@ -127,6 +134,8 @@ async fn index(
         context! {
             title => "Cabinet",
             items => items,
+            review_items,
+            roots_only,
             q => query.q,
             archived => archived,
             message => query.message,
@@ -135,16 +144,33 @@ async fn index(
     .await
 }
 
+#[derive(Default, Deserialize)]
+struct NewQuery {
+    parent: Option<String>,
+}
+
 async fn new_form(
+    Query(query): Query<NewQuery>,
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
-    require_user_scope(&auth_session)?;
+    let scope = require_user_scope(&auth_session)?;
+    if let Some(parent) = query.parent.as_deref() {
+        if !cabinet_service::pages::metadata(state.sqlx_pool(), &scope, &parse_item_ref(parent)?)
+            .await
+            .map_err(cabinet_error)?
+            .can_write
+        {
+            return Err(CustomError::Authorization(
+                "destination is read only".into(),
+            ));
+        }
+    }
     web::render_template(
         &state,
         "cabinet/new.html",
         auth_session,
-        context! { title => "New Cabinet item" },
+        context! { title => "New Cabinet page", parent => query.parent },
     )
     .await
 }
@@ -153,6 +179,8 @@ async fn new_form(
 struct CreateForm {
     title: String,
     content: String,
+    #[serde(default)]
+    parent: String,
 }
 
 async fn create(
@@ -161,19 +189,25 @@ async fn create(
     Form(form): Form<CreateForm>,
 ) -> Result<Response, CustomError> {
     let scope = require_user_scope(&auth_session)?;
-    let view = cabinet_service::create_item(
-        state.sqlx_pool(),
-        CreateItemRequest {
-            scope,
-            kind: ItemKind::Document,
-            title: form.title,
-            content: form.content,
-            collection_ref: None,
-            mission_ref: None,
-            source_links: Vec::new(),
-        },
-    )
-    .await
+    let parent = if form.parent.is_empty() {
+        None
+    } else {
+        Some(parse_item_ref(&form.parent)?)
+    };
+    let request = CreateItemRequest {
+        scope,
+        kind: ItemKind::Document,
+        title: form.title,
+        content: form.content,
+        collection_ref: None,
+        mission_ref: None,
+        source_links: Vec::new(),
+    };
+    let view = if let Some(parent) = parent {
+        cabinet_service::create_child(state.sqlx_pool(), request, &parent).await
+    } else {
+        cabinet_service::create_item(state.sqlx_pool(), request).await
+    }
     .map_err(cabinet_error)?;
     Ok(Redirect::to(&item_url(&view.item.cabinet_ref)).into_response())
 }
@@ -203,9 +237,29 @@ async fn item(
     let view = cabinet_service::read(
         state.sqlx_pool(),
         ReadRequest {
-            scope,
+            scope: scope.clone(),
             cabinet_ref: cabinet_ref.clone(),
             version_ref: version_ref.clone(),
+        },
+    )
+    .await
+    .map_err(cabinet_error)?;
+    let page = cabinet_service::pages::metadata(state.sqlx_pool(), &scope, &cabinet_ref)
+        .await
+        .map_err(cabinet_error)?;
+    let children = cabinet_service::pages::children(state.sqlx_pool(), &scope, &cabinet_ref)
+        .await
+        .map_err(cabinet_error)?;
+    let (people_names, bear_names, reviewer_names) =
+        cabinet_service::pages::member_names(state.sqlx_pool(), &page)
+            .await
+            .map_err(cabinet_error)?;
+    let destinations = cabinet_service::search(
+        state.sqlx_pool(),
+        SearchRequest {
+            scope: scope.clone(),
+            query: String::new(),
+            filters: SearchFilters::default(),
         },
     )
     .await
@@ -239,6 +293,15 @@ async fn item(
             authored_by => view.version.authored_by(),
             authored_at => view.version.authored_at(),
             sources => sources,
+            page,
+            children,
+            people_names,
+            bear_names,
+            reviewer_names,
+            destinations,
+            review => view.version.review(),
+            proposed_title => view.proposed_title,
+            has_published => view.item.current_version.is_some(),
             message => query.message,
         },
     )

@@ -1,6 +1,6 @@
 # Cabinet Contract
 
-**Status:** Adopted — Phase 0 types and contract checks live in `den-cabinet`; the Phase 1 facade (`den_service::cabinet`) implements the Phase 1 subset. (Phase 0 of the [Cabinet implementation plan](../roadmap/CABINET_IMPLEMENTATION_PLAN.md))
+**Status:** Adopted; branch implementation now enforces page hierarchy, inherited membership, Bear-write policy and human version review through the facade. Legacy Phase 0 structs still retain rejected collection/Mission fields at compatibility boundaries; page-only helpers own the new state. Docket Mission annotations, snapshot citations and Phase 3 attachments remain pending. See the [implementation plan](../roadmap/CABINET_IMPLEMENTATION_PLAN.md).
 **Related:** [Bear charter and Cabinet Missions](bear-charter-and-cabinet-missions.md), [ADR-0004 — Artifacts, Garage, and Cabinet separation](../decisions/adr-0004-artifacts-garage.md), [ADR-0008 — Research ingestion uses Cabinet](../decisions/adr-0008-cabinet-reading-pipeline.md), [Identity and membership](identity-and-membership.md)
 
 This document is the provider-neutral contract for Cabinet: the typed identities, minimum records, Den facade operations, and authorization inputs/outcomes that every Cabinet implementation and client must honor. The backing provider (Den Postgres first; anything later) is an implementation detail behind this contract and must not leak into it.
@@ -8,7 +8,7 @@ This document is the provider-neutral contract for Cabinet: the typed identities
 ## Summary
 
 - Cabinet is Den's **single** shared knowledge layer: one Cabinet per Den deployment. It has exactly one structural concept — a **page tree**. Items nest under items; there are no separate collection or Mission containers.
-- Humans and authorized Bears **edit directly** (true wiki). Every write produces an immutable version; revision history is the safety net. Review/approval is a policy hook reserved for Phase 2, not a Phase 1 gate.
+- Humans and authorized Bears **edit directly** (true wiki). Every write produces an immutable version; revision history is the safety net. Optional page/ancestor policy can gate Bear writes on human review; direct publication remains the default.
 - Den owns the facade, authorization, and policy. Agent tools and human UI both go through the facade; nothing reads or writes the backing store directly.
 - Every operation takes an **explicit actor scope** (user or Bear). The Phase 1 Bear provenance still records a compatibility stance; native tool admission and write eligibility use verified origin and governance rather than that label. No ambient identity.
 - Cabinet items are knowledge records. Artifact refs hold content payloads (ADR-0004). External sources stay external. Derived recall passages are rebuildable projections. These four never merge.

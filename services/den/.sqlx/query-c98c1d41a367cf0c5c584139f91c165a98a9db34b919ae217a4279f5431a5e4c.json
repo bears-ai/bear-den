@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id FROM skill_catalog_entries WHERE owner_user_id=$1 AND name=$2 AND version=$3 AND content_hash=$4",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c98c1d41a367cf0c5c584139f91c165a98a9db34b919ae217a4279f5431a5e4c"
+}
