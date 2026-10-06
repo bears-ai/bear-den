@@ -118,7 +118,7 @@ async fn storage_request(
     }
 }
 
-struct ByteStore {
+pub(super) struct ByteStore {
     state: Arc<Storage>,
     endpoint: String,
     task: tokio::task::JoinHandle<()>,
@@ -129,7 +129,7 @@ impl Drop for ByteStore {
     }
 }
 impl ByteStore {
-    async fn start() -> Self {
+    pub(super) async fn start() -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let state = Arc::new(Storage::default());
@@ -152,7 +152,20 @@ impl ByteStore {
         }
     }
 
-    async fn app(&self, pool: &sqlx::PgPool) -> Router {
+    pub(super) async fn restrict_page_on_read(
+        &self,
+        pool: sqlx::PgPool,
+        owner: i32,
+        page: CabinetItemRef,
+    ) {
+        *self.state.fault.lock().await = Fault::RestrictPageDuringRead { pool, owner, page };
+    }
+
+    pub(super) async fn corrupt_reads(&self) {
+        *self.state.fault.lock().await = Fault::CorruptRead;
+    }
+
+    pub(super) async fn app(&self, pool: &sqlx::PgPool) -> Router {
         let mut config = crate::config::Config::test_stub();
         config.templates_dir = format!("{}/src/templates", env!("CARGO_MANIFEST_DIR"));
         config.s3_endpoint = self.endpoint.clone();
@@ -174,18 +187,34 @@ impl ByteStore {
 }
 
 fn form(bear: Uuid, filename: &str, bytes: &[u8], share: bool, extra: &str) -> Vec<u8> {
+    file_form(bear, filename, "text/plain", bytes, share, extra)
+}
+
+pub(super) fn file_form(
+    bear: Uuid,
+    filename: &str,
+    content_type: &str,
+    bytes: &[u8],
+    share: bool,
+    extra: &str,
+) -> Vec<u8> {
     let sharing = if share {
         "--upload-fixture\r\nContent-Disposition: form-data; name=\"share_with_bear\"\r\n\r\ntrue\r\n"
     } else {
         ""
     };
-    let mut body = format!("--upload-fixture\r\nContent-Disposition: form-data; name=\"bear_id\"\r\n\r\n{bear}\r\n--upload-fixture\r\nContent-Disposition: form-data; name=\"role\"\r\n\r\ndata\r\n{sharing}{extra}--upload-fixture\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: text/plain\r\n\r\n").into_bytes();
+    let mut body = format!("--upload-fixture\r\nContent-Disposition: form-data; name=\"bear_id\"\r\n\r\n{bear}\r\n--upload-fixture\r\nContent-Disposition: form-data; name=\"role\"\r\n\r\ndata\r\n{sharing}{extra}--upload-fixture\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: {content_type}\r\n\r\n").into_bytes();
     body.extend_from_slice(bytes);
     body.extend_from_slice(b"\r\n--upload-fixture--\r\n");
     body
 }
 
-async fn send(app: &Router, cookie: &str, page: &CabinetItemRef, body: Vec<u8>) -> Response {
+pub(super) async fn send(
+    app: &Router,
+    cookie: &str,
+    page: &CabinetItemRef,
+    body: Vec<u8>,
+) -> Response {
     app.clone()
         .oneshot(
             Request::builder()

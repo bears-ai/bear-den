@@ -1139,3 +1139,25 @@ body.page-bears-health .bears-health-row-fail td:first-of-type {
 .bear-manage-note-preview {
     max-height: 5rem;
 }
+
+/* Cabinet attachment inspection. */
+.cabinet-attachment-preview .cabinet-attachment-text {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 70vh;
+    overflow: auto;
+    padding: var(--spacing-unit);
+    border: var(--thin-line-unit) solid var(--border-color);
+}
+.cabinet-attachment-preview .cabinet-attachment-image {
+    display: block;
+    max-width: 100%;
+    max-height: 70vh;
+    object-fit: contain;
+}
+.cabinet-attachment-preview .cabinet-attachment-pdf {
+    display: block;
+    width: 100%;
+    height: 70vh;
+    border: var(--thin-line-unit) solid var(--border-color);
+}

@@ -189,11 +189,13 @@ If loop-control lands before artifact refs, any temporary checkpoint table shoul
 
 ## Human UI affordances
 
+**Cabinet file inspection (local branch, 2026-10-06):** attachment names open a server-rendered content-first page with Details for selected audience/owner/creator/type/size/timestamp/ref metadata. Source text (including Markdown, diffs, HTML, scripts and SVG) is escaped; JSON is pretty-printed. A 256 KiB UTF-8-safe preview cap does not truncate downloads. Raster images/PDFs require both recognized MIME and matching signature, then use separately authorized full-byte responses with size/hash checks, no-store/nosniff/no-referrer and sandbox CSP; PDF frames are sandboxed too. Unsupported/invalid types have downloads, while missing storage/content or files over the 16 MiB transfer ceiling are explicitly unavailable. Raw provenance/metadata and storage keys/URLs remain hidden. `den-web/src/work/tests/previews.rs` covers private metadata, cross-page/detached refs, MIME confusion, revocation before/during byte requests and text bounds; all 130 web tests pass. No dependencies, SQL/migrations or cache entries change. Live Garage and native browser rendering are not verified; broader artifact consumers remain open.
+
 Build the small surfaces first:
 
 - [ ] Artifact chip/card rendering anywhere an artifact ref appears.
-- [ ] Metadata view: title, kind, content type, size, source, creator, lifecycle, visibility.
-- [ ] Preview for text, markdown, diff, JSON, images, and browser-supported PDFs; download fallback for everything else.
+- [ ] Metadata view: title, kind, content type, size, source, creator, lifecycle, visibility (Cabinet attachment details delivered; general artifact views remain open).
+- [ ] Preview for text, markdown, diff, JSON, images, and browser-supported PDFs; download fallback for everything else (Cabinet bounded source/raster/PDF slice delivered; native-rendering validation and other consumers remain open).
 - [ ] Provenance panel showing creating run/task/conversation/work surface when present.
 - [ ] Lifecycle actions where authorized: keep, archive, delete, attach to Cabinet, detach from Cabinet, promote to durable, copy/mount into work surface.
 - [ ] Permission-aware unavailable state that avoids metadata leakage when policy requires it.

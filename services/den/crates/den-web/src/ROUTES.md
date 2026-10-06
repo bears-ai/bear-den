@@ -130,7 +130,7 @@ All `/admin/*` routes use `permission_required!(…, "admin")`.
 
 ## Cabinet (`src/cabinet/mod.rs`)
 
-Shared-knowledge wiki over the `den_service::cabinet` facade (hierarchy/policy/review plus artifact attachments and bounded human uploads; recall and inline previews remain pending; contract in `docs/architecture/cabinet-contract.md`).
+Shared-knowledge wiki over the `den_service::cabinet` facade (hierarchy/policy/review plus artifact attachments and bounded human uploads; bounded attachment inspection/previews; recall remains pending; contract in `docs/architecture/cabinet-contract.md`).
 
 - `GET /cabinet` — list/search items (`q`, `lifecycle=archived`)
 - `GET /cabinet/new` / `POST /cabinet/new` — create an item (first published revision)
@@ -144,7 +144,9 @@ Shared-knowledge wiki over the `den_service::cabinet` facade (hierarchy/policy/r
 - `POST /cabinet/{cabinet_ref}/attachments` — link an existing finalized `artifact_ref` and typed role; page write plus independent artifact content access required
 - `POST /cabinet/{cabinet_ref}/attachments/upload` — server-rendered multipart upload (`file`, `bear_id`, typed `role`, optional `share_with_bear=true` acknowledgement), one non-empty file up to 16 MiB; configured storage, active-page write and selected Bear membership required. Private by default; internal signed PUT/read-back verification precedes atomic finalization/linking with fresh page/membership checks. Failed transfers attempt safe pending-row/blob cleanup; no signed URL or storage key reaches the browser.
 - `POST /cabinet/{cabinet_ref}/attachments/{attachment_ref}/remove` — detach the exact page/link; page write required
-- `GET /cabinet/{cabinet_ref}/attachments/{attachment_ref}/content` — permission-rechecking download; JSON or configured Garage content (16 MiB, size/hash checked), no-store/nosniff/attachment headers, no storage URL exposed
+- `GET /cabinet/{cabinet_ref}/attachments/{attachment_ref}` — content-first human inspection after page/link/artifact authorization; selected metadata behind Details, escaped text/pretty JSON with a 256 KiB UTF-8-safe visible cap, raster/PDF embeds or download/unavailable fallback; no raw provenance/metadata or storage fields
+- `GET /cabinet/{cabinet_ref}/attachments/{attachment_ref}/preview` — independently authorized, signature-checked raster/PDF bytes only; full bounded size/hash verification and post-transfer recheck, inline/no-store/nosniff/no-referrer and sandbox CSP; HTML/script/SVG/text are refused as inline documents
+- `GET /cabinet/{cabinet_ref}/attachments/{attachment_ref}/content` — permission-rechecking download; JSON or configured Garage content (16 MiB, size/hash checked), no-store/nosniff/no-referrer/attachment headers, no storage URL exposed
 
 All `/cabinet/*` routes use `login_required!(…)`; page/ancestor membership and policy are enforced by the shared facade. `GET /cabinet` without a query lists accessible roots; each page shows accessible children. `GET /cabinet/new?parent={cabinet_ref}` creates a child under current destination authority. `POST /{cabinet_ref}/policy`, `/organize`, `/review` apply named membership/policy, bounded move/order and human pending-version decisions. Policy administration is separate from review authority; audience changes require acknowledgement. Archive cascades only with subtree authority, restore is one-page, and deletion refuses non-deleted children.
 

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}{{ details.title | e }} · Cabinet{% endblock %}
+{% block breadcrumb %}<a href="/">Bears</a> / <a href="/cabinet">Cabinet</a> / <a href="{{ page_url }}">Page</a> / Attachment{% endblock %}
+{% block content %}
+<section class="cabinet-attachment-preview">
+    <p><a href="{{ page_url }}#attachments">← Back to page</a></p>
+    <h1>{{ details.title | e }}</h1>
+    {% if can_download %}<p class="button-row"><a class="button-link" href="{{ download_url }}">Download file</a></p>{% endif %}
+    {% if preview.kind == "text" %}
+    {% if preview.text.truncated %}<p role="status">Showing the first 256 KiB. Download the complete file.</p>{% endif %}
+    <pre class="cabinet-attachment-text">{{ preview.text.content | e }}</pre>
+    {% elif preview.kind == "image" %}
+    <img class="cabinet-attachment-image" src="{{ preview_url }}" alt="Preview of {{ details.title | e }}" referrerpolicy="no-referrer">
+    {% elif preview.kind == "pdf" %}
+    <iframe class="cabinet-attachment-pdf" src="{{ preview_url }}" title="PDF preview of {{ details.title | e }}" sandbox referrerpolicy="no-referrer"></iframe>
+    <p>PDF not showing? <a href="{{ download_url }}">Download the file</a>.</p>
+    {% elif preview.kind == "download_only" %}
+    <p>This format has no preview. Download the file to open it.</p>
+    {% elif preview.kind == "invalid_content" %}
+    <p>The file cannot be previewed as its recorded type. Download it to inspect the original.</p>
+    {% elif preview.kind == "storage_unavailable" %}
+    <p>File previews and downloads are unavailable: this Den has no file storage configured.</p>
+    {% elif preview.kind == "too_large" %}
+    <p>This file exceeds the 16 MiB preview and download limit.</p>
+    {% else %}
+    <p>No verified file content is available.</p>
+    {% endif %}
+    <details class="box">
+        <summary>Details</summary>
+        <dl>
+            <dt>Access</dt><dd>{{ details.visibility | e }}</dd>
+            <dt>Bear</dt><dd>{{ details.bear | e }}</dd>
+            <dt>Creator</dt><dd>{{ details.creator | e }}</dd>
+            <dt>Created</dt><dd><time datetime="{{ details.created_at }}">{{ details.created_at | timeago }}</time></dd>
+            {% if details.finalized_at %}<dt>Finalized</dt><dd><time datetime="{{ details.finalized_at }}">{{ details.finalized_at | timeago }}</time></dd>{% endif %}
+            <dt>Content type</dt><dd>{{ details.content_type | default("Not recorded", true) | e }}</dd>
+            <dt>Size</dt><dd>{{ details.content_bytes | default("Not recorded") }} bytes</dd>
+            <dt>Record type</dt><dd><code>{{ details.record_type | e }}</code></dd>
+            <dt>File reference</dt><dd><code>{{ details.reference | e }}</code></dd>
+        </dl>
+    </details>
+</section>
+{% endblock %}

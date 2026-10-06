@@ -4,6 +4,7 @@
 
 use super::*;
 mod knowledge;
+mod previews;
 mod uploads;
 use axum::{
     body::Body,

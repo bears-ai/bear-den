@@ -118,7 +118,7 @@
     <ul>
         {% for attachment in attachments %}
         <li>
-            <strong>{{ attachment.artifact.title | default(attachment.artifact.kind, true) | e }}</strong>
+            <strong><a href="/cabinet/{{ cabinet_ref }}/attachments/{{ attachment.reference }}">{{ attachment.artifact.title | default(attachment.artifact.kind, true) | e }}</a></strong>
             · {{ attachment.role | e }} · {{ attachment.artifact.content_bytes | default("unknown") }} bytes
             {% if attachment.json_download or byte_storage_enabled %}
             <a href="/cabinet/{{ cabinet_ref }}/attachments/{{ attachment.reference }}/content">Download</a>

@@ -31,12 +31,14 @@ use den_core::ids::UserId;
 use den_service::cabinet as cabinet_service;
 mod attachments;
 mod pages;
+mod previews;
 mod uploads;
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .merge(pages::router())
         .merge(attachments::router())
+        .merge(previews::router())
         .merge(uploads::router())
         .route("/cabinet", get(index))
         .route("/cabinet/new", get(new_form).post(create))
