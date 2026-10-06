@@ -3235,7 +3235,7 @@ async fn wait_for_focused_run_started(
     let mut last_state = None;
     for _ in 0..50 {
         let (started, terminal): (bool, bool) = sqlx::query_as(
-            r#"
+            r"
             SELECT EXISTS (
                 SELECT 1 FROM bearwire_events
                 WHERE session_id = $1 AND event_type = 'run.started'
@@ -3246,7 +3246,7 @@ async fn wait_for_focused_run_started(
                   AND event_type IN ('run.completed', 'run.failed', 'run.cancelled')
                   AND event_json->>'run_id' = $2
             )
-            "#,
+            ",
         )
         .bind(session_id)
         .bind(run_id)
@@ -8401,10 +8401,13 @@ async fn initialize_returns_bearwire_capabilities() {
             method: "initialize".to_string(),
             params: json!({}),
         }),
-    )
-    .await
-    .expect("initialize ok")
-    .into_response();
+    );
+    let future_size = std::mem::size_of_val(&response);
+    assert!(
+        future_size <= 16 * 1024,
+        "RPC future grew to {future_size} bytes"
+    );
+    let response = response.await.expect("initialize ok").into_response();
     assert_eq!(response.status(), StatusCode::OK);
 }
 

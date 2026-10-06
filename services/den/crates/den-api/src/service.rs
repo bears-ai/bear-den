@@ -123,7 +123,7 @@ pub async fn create_api_app(
 
     let router = main_router
         // Set main API state BEFORE adding middleware layers
-        .with_state(api_state.clone())
+        .with_state(api_state)
         // Add CORS middleware for cross-origin API requests
         .layer(create_api_cors_layer(config.as_ref()))
         // Add request tracing

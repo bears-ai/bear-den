@@ -22,7 +22,7 @@ fn portable_hats_require_unique_identity_and_names_and_a_real_default() {
     let hat = example();
     assert!(validate(std::slice::from_ref(&hat), Some(hat.original_id)).is_ok());
     assert!(validate(&[hat.clone(), hat.clone()], None).is_err());
-    assert!(validate(&[hat.clone()], Some(HatId::new(Uuid::new_v4()))).is_err());
+    assert!(validate(std::slice::from_ref(&hat), Some(HatId::new(Uuid::new_v4()))).is_err());
     let mut invalid = example();
     invalid.name = " ".into();
     assert!(validate(&[invalid], None).is_err());

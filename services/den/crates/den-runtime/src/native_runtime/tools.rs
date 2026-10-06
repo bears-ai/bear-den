@@ -59,8 +59,8 @@ fn den_tools_for_origin(
 
 pub(crate) fn omit_unbounded_cargo_helper(tools: &mut Vec<LlmToolDefinition>) {
     tools.retain(|tool| {
-        !builtin_den_tool_descriptor_for_provider_name(&tool.name)
-            .is_some_and(|descriptor| descriptor.name == DEN_WORK_PREPARE_RUST_DEPENDENCIES)
+        builtin_den_tool_descriptor_for_provider_name(&tool.name)
+            .is_none_or(|descriptor| descriptor.name != DEN_WORK_PREPARE_RUST_DEPENDENCIES)
     });
 }
 
@@ -152,6 +152,12 @@ fn compact_client_tool_description(description: Option<&str>) -> Option<String> 
     Some(compact)
 }
 
+pub(crate) struct ToolSurfacePolicy {
+    pub work_enabled: bool,
+    pub cabinet_enabled: bool,
+    pub may_define_task: bool,
+}
+
 pub fn merge_den_and_client_tools(
     config: &Config,
     origin: TurnExecutionOrigin,
@@ -164,9 +170,11 @@ pub fn merge_den_and_client_tools(
     merge_den_and_client_tools_with_search(
         config,
         origin,
-        work_enabled,
-        cabinet_enabled,
-        may_define_task,
+        ToolSurfacePolicy {
+            work_enabled,
+            cabinet_enabled,
+            may_define_task,
+        },
         client_tools,
         pair_turn_prompt,
         true,
@@ -176,9 +184,7 @@ pub fn merge_den_and_client_tools(
 pub(crate) fn merge_den_and_client_tools_with_search(
     _config: &Config,
     origin: TurnExecutionOrigin,
-    work_enabled: bool,
-    cabinet_enabled: bool,
-    may_define_task: bool,
+    policy: ToolSurfacePolicy,
     client_tools: Option<&Value>,
     _pair_turn_prompt: Option<&str>,
     search_available: bool,
@@ -189,17 +195,17 @@ pub(crate) fn merge_den_and_client_tools_with_search(
     let mut merged = den_tools_for_origin(origin, &effective_policy.capabilities);
     if !search_available {
         merged.retain(|tool| {
-            !builtin_den_tool_descriptor_for_provider_name(&tool.name)
-                .is_some_and(|descriptor| descriptor.name == DEN_WEB_SEARCH)
+            builtin_den_tool_descriptor_for_provider_name(&tool.name)
+                .is_none_or(|descriptor| descriptor.name != DEN_WEB_SEARCH)
         });
     }
-    if !work_enabled {
+    if !policy.work_enabled {
         merged.retain(|tool| !is_work_tool_provider_name(&tool.name));
     }
-    if !cabinet_enabled {
+    if !policy.cabinet_enabled {
         merged.retain(|tool| !is_cabinet_tool_provider_name(&tool.name));
     }
-    if !may_define_task {
+    if !policy.may_define_task {
         merged.retain(|tool| !is_task_definition_or_delegation_tool_provider_name(&tool.name));
     }
     // A client-supplied descriptor list cannot turn an internal curation or
@@ -409,9 +415,11 @@ mod tests {
         let denied = super::merge_den_and_client_tools_with_search(
             &config,
             origin,
-            true,
-            true,
-            true,
+            ToolSurfacePolicy {
+                work_enabled: true,
+                cabinet_enabled: true,
+                may_define_task: true,
+            },
             Some(&client),
             None,
             false,
@@ -428,9 +436,11 @@ mod tests {
         let permitted = super::merge_den_and_client_tools_with_search(
             &config,
             origin,
-            true,
-            true,
-            true,
+            ToolSurfacePolicy {
+                work_enabled: true,
+                cabinet_enabled: true,
+                may_define_task: true,
+            },
             Some(&client),
             None,
             true,

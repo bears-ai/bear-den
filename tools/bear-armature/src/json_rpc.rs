@@ -17,8 +17,10 @@ use uuid::Uuid;
 static JSON_WRITE_LOCK: OnceLock<TokioMutex<()>> = OnceLock::new();
 
 #[cfg(test)]
-static JSON_OUTPUT_CAPTURE: OnceLock<StdMutex<Option<Arc<TokioMutex<Vec<Value>>>>>> =
-    OnceLock::new();
+type CapturedJsonOutput = Arc<TokioMutex<Vec<Value>>>;
+
+#[cfg(test)]
+static JSON_OUTPUT_CAPTURE: OnceLock<StdMutex<Option<CapturedJsonOutput>>> = OnceLock::new();
 #[cfg(test)]
 static JSON_OUTPUT_CAPTURE_LOCK: OnceLock<TokioMutex<()>> = OnceLock::new();
 

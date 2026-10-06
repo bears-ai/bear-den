@@ -392,6 +392,10 @@ pub(crate) async fn handle_process_run(
     }))
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Keep command metadata and captured process output explicit at the reducer boundary."
+)]
 async fn reduce_process_output_with_rtk(
     reducer_mode: ReducerMode,
     executed_via_rtk: bool,

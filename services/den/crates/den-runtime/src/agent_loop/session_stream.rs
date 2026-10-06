@@ -1137,8 +1137,9 @@ impl SessionTrackingStream {
                     },
                 )
                 .await?;
-                session.cached_activity_plan_projection =
-                    task_context.cached_activity_plan_projection.clone();
+                session
+                    .cached_activity_plan_projection
+                    .clone_from(&task_context.cached_activity_plan_projection);
                 let focused_orientation = if focus_promotion && !observation.failed {
                     Some(task_context.focused_orientation().ok_or_else(|| {
                         DenError::ValidationError(
@@ -1156,8 +1157,9 @@ impl SessionTrackingStream {
                     session.checkpoint_state = Default::default();
                 }
                 store.update(&session_key, |stored_session| {
-                    stored_session.cached_activity_plan_projection =
-                        task_context.cached_activity_plan_projection.clone();
+                    stored_session
+                        .cached_activity_plan_projection
+                        .clone_from(&task_context.cached_activity_plan_projection);
                     if let Some(orientation) = focused_orientation {
                         stored_session.objective_orientation = orientation;
                         stored_session.step = 0;
@@ -4716,7 +4718,6 @@ mod tests {
             stream.effective_server_tool_policy(Governance::Interactive),
             Err(DenError::Authorization(_))
         ));
-        let mut session = session;
         session.origin = TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected);
         let store = AgentLoopSessionStore::default();
         store.insert(session.clone());

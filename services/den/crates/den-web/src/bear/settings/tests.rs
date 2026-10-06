@@ -190,14 +190,9 @@ fn test_state(pool: sqlx::PgPool) -> AppState {
             .add_template_owned(format!("bear/settings/{page}.html"), source)
             .expect("add settings template");
     }
-    for page in ["reflections"] {
-        template_env
-            .add_template_owned(
-                format!("bear/settings/{page}.html"),
-                format!("{page} admin page"),
-            )
-            .expect("add inspection test template");
-    }
+    template_env
+        .add_template("bear/settings/reflections.html", "reflections admin page")
+        .expect("add inspection test template");
     AppState::test_with_template_env(pool, template_env, config)
 }
 

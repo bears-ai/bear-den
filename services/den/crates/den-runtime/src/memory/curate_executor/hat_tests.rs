@@ -66,7 +66,7 @@ async fn retired_core_proposals_are_rejected_without_publication_or_human_queue(
                     source_paths: vec!["pair/private.md".into()],
                     source_refs: json!({}),
                     suggested_action: action,
-                    target_ref: Some("core/knowledge.md".into()),
+                    target_ref: Some("core/knowledge.md"),
                     title: "Potentially private candidate",
                     summary: "A summary long enough to trigger legacy automatic curation",
                     rationale: "not verified",

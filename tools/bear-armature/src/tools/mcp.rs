@@ -684,13 +684,11 @@ fn stdio_safe_command_args(command: &str, args: &[String], server_name: &str) ->
         }
     }
 
-    if changed {
-        if crate::bear_debug_verbose() {
-            eprintln!(
-                "bear-armature: acp_mcp_spawn_rewrite server={} reason=remove_docker_tty_for_stdio_mcp original_args={:?} rewritten_args={:?}",
-                server_name, args, rewritten
-            );
-        }
+    if changed && crate::bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: acp_mcp_spawn_rewrite server={} reason=remove_docker_tty_for_stdio_mcp original_args={:?} rewritten_args={:?}",
+            server_name, args, rewritten
+        );
     }
 
     rewritten

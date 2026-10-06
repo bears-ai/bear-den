@@ -295,10 +295,10 @@ fn tool_projection_visibility_matrix() {
                 let history = row.to_model_history_record().unwrap();
                 match message_type {
                     ConversationMessageType::ToolCall => {
-                        assert_eq!(history.arguments, row.content_json["args"])
+                        assert_eq!(history.arguments, row.content_json["args"]);
                     }
                     ConversationMessageType::ToolResult => {
-                        assert_eq!(history.raw_output, row.content_json["structured_content"])
+                        assert_eq!(history.raw_output, row.content_json["structured_content"]);
                     }
                     _ => unreachable!(),
                 }
@@ -324,10 +324,10 @@ fn tool_projection_visibility_matrix() {
                 let history = row.to_user_history_record().unwrap();
                 match message_type {
                     ConversationMessageType::ToolCall => {
-                        assert_eq!(history.arguments, row.content_json["args"])
+                        assert_eq!(history.arguments, row.content_json["args"]);
                     }
                     ConversationMessageType::ToolResult => {
-                        assert_eq!(history.raw_output, row.content_json["structured_content"])
+                        assert_eq!(history.raw_output, row.content_json["structured_content"]);
                     }
                     _ => unreachable!(),
                 }

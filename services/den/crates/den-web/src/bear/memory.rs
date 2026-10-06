@@ -2724,10 +2724,11 @@ async fn record_view(
         .unwrap_or(true);
 
     if !can_manage_bear {
-        let scope_label = member_scope_labels(&state, bear.id, &[record.memory_id.clone()])
-            .await?
-            .remove(&record.memory_id)
-            .ok_or_else(|| CustomError::NotFound("shared memory entry unavailable".into()))?;
+        let scope_label =
+            member_scope_labels(&state, bear.id, std::slice::from_ref(&record.memory_id))
+                .await?
+                .remove(&record.memory_id)
+                .ok_or_else(|| CustomError::NotFound("shared memory entry unavailable".into()))?;
         return web::render_template(
             &state,
             "bear/memory/member_record.html",

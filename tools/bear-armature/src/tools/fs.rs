@@ -2326,7 +2326,7 @@ mod tests {
             extensions: vec![".RS".to_string(), " md ".to_string()],
         };
         let filters = search_filters_from_typed_args(&args).expect("filters");
-        assert_eq!(filters.case_sensitive, false);
+        assert!(!filters.case_sensitive);
         assert_eq!(filters.pattern.as_deref(), Some("src/**/*.rs"));
         assert_eq!(filters.extensions, vec!["rs".to_string(), "md".to_string()]);
     }

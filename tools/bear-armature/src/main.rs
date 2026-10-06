@@ -5797,6 +5797,10 @@ async fn hat_report(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Keep optional Den connectivity and ACP command context explicit."
+)]
 async fn handle_local_slash_prompt(
     http: Option<&reqwest::Client>,
     config: Option<&Config>,
@@ -6108,7 +6112,7 @@ async fn handle_prompt_with_retry(
         turn_token,
     )
     .await?;
-    return Ok(());
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -8272,6 +8276,10 @@ fn parse_tool_execution_lease(response: &Value) -> Result<ToolExecutionLease> {
     })
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Keep cancellation identity and fenced tool lease identity explicit during the wait."
+)]
 async fn wait_for_leased_tool_future_or_matching_cancellation<F>(
     mut cancellation_rx: broadcast::Receiver<CancellationNotice>,
     session_id: &str,
@@ -8631,7 +8639,7 @@ pub(crate) fn spawn_tool_request_task(
                     .await;
                 return;
             }
-            LeasedToolTaskWaitOutcome::Cancelled(_notice) => {
+            LeasedToolTaskWaitOutcome::Cancelled(notice) => {
                 shared_state
                     .tool_tasks
                     .set_phase(
@@ -8667,6 +8675,7 @@ pub(crate) fn spawn_tool_request_task(
                     session_id = session_id.as_str(),
                     tool_call_id = tool_call_id.as_str(),
                     tool_name = tool_name.as_str(),
+                    cancellation_origin = ?notice.origin,
                     "local tool task cancelled"
                 );
                 let _ = shared_state
@@ -8856,6 +8865,10 @@ pub(crate) async fn project_den_owned_tool_request(
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Keep tool execution registries and per-turn request context explicit at dispatch."
+)]
 async fn handle_tool_request_event(
     config: &Config,
     adapter_state: &mut AdapterState,
@@ -9922,6 +9935,10 @@ fn markdown_fence_for_content(content: &str) -> String {
     "`".repeat(3.max(max_run + 1))
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Error settlement needs tool identity, turn context, and execution diagnostics."
+)]
 async fn post_local_tool_error_result(
     config: &Config,
     shared_state: &AdapterSharedState,
@@ -10424,6 +10441,10 @@ pub(crate) async fn handle_status_text_for_turn(
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Keep independent session metadata fields explicit at the projection boundary."
+)]
 pub(crate) async fn handle_session_info_projection(
     adapter_state: &mut AdapterState,
     shared_state: &AdapterSharedState,
@@ -11396,7 +11417,7 @@ fn fallback_tool_title(tool_name: &str) -> String {
         return "Tool call".to_string();
     }
     let words = trimmed
-        .split(|ch: char| matches!(ch, '_' | '-' | '.' | '/' | ':'))
+        .split(['_', '-', '.', '/', ':'])
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>();
     if words.is_empty() {
@@ -12715,10 +12736,9 @@ mod tests {
         Json, Router,
     };
     use std::net::SocketAddr;
-    use std::sync::Mutex as StdMutex;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    static ENV_LOCK: StdMutex<()> = StdMutex::new(());
+    static ENV_LOCK: TokioMutex<()> = TokioMutex::const_new(());
 
     #[test]
     fn terminal_tool_card_text_keeps_prior_summary_when_completion_is_a_bare_result_kind() {
@@ -13176,7 +13196,7 @@ mod tests {
 
     #[tokio::test]
     async fn validate_den_code_token_uses_bearwire() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().await;
         unsafe {
             std::env::remove_var("BEARS_LEGACY_ACP_HTTP");
             std::env::set_var("BEARS_BEARWIRE", "true");
@@ -13194,7 +13214,7 @@ mod tests {
 
     #[tokio::test]
     async fn den_get_session_uses_bearwire_session_state() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().await;
         unsafe {
             std::env::set_var("BEARS_BEARWIRE", "true");
         }
@@ -13215,7 +13235,7 @@ mod tests {
 
     #[tokio::test]
     async fn validate_den_code_token_does_not_fallback_to_acp_auth_check() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().await;
         unsafe {
             std::env::remove_var("BEARS_LEGACY_ACP_HTTP");
             std::env::set_var("BEARS_BEARWIRE", "true");
@@ -14507,7 +14527,7 @@ mod tests {
 
     #[tokio::test]
     async fn debug_mode_exposes_a_local_copyable_execution_bundle() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().await;
         let previous = bear_debug_mode();
         let shared_state = test_shared_state();
         shared_state
@@ -15880,9 +15900,7 @@ mod tests {
 
     #[tokio::test]
     async fn set_conversation_title_acp_prompt_roundtrip_emits_update_before_result() {
-        let _guard = ENV_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = ENV_LOCK.lock().await;
         unsafe {
             std::env::set_var("BEARS_BEARWIRE", "true");
         }
@@ -15987,9 +16005,7 @@ mod tests {
 
     #[tokio::test]
     async fn set_conversation_title_acp_roundtrip_title_sticks_for_later_update_output() {
-        let _guard = ENV_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = ENV_LOCK.lock().await;
         unsafe {
             std::env::set_var("BEARS_BEARWIRE", "true");
         }
@@ -16100,9 +16116,7 @@ mod tests {
 
     #[tokio::test]
     async fn set_conversation_title_lifecycle_surfaces_live_list_and_load() {
-        let _guard = ENV_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = ENV_LOCK.lock().await;
         unsafe {
             std::env::set_var("BEARS_BEARWIRE", "true");
         }
@@ -16258,9 +16272,7 @@ mod tests {
 
     #[tokio::test]
     async fn den_owned_tool_start_renders_without_local_result_post() {
-        let _guard = ENV_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = ENV_LOCK.lock().await;
         unsafe {
             std::env::set_var("BEARS_BEARWIRE", "true");
         }
@@ -16367,9 +16379,7 @@ mod tests {
 
     #[tokio::test]
     async fn reasoning_bearwire_delta_roundtrips_to_acp_thought_not_agent_message() {
-        let _guard = ENV_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = ENV_LOCK.lock().await;
         unsafe {
             std::env::set_var("BEARS_BEARWIRE", "true");
         }
@@ -16465,9 +16475,7 @@ mod tests {
 
     #[tokio::test]
     async fn session_load_sends_bearwire_assistant_message_as_acp_agent_chunk() {
-        let _guard = ENV_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = ENV_LOCK.lock().await;
         unsafe {
             std::env::set_var("BEARS_BEARWIRE", "true");
         }
@@ -16535,9 +16543,7 @@ mod tests {
 
     #[tokio::test]
     async fn session_load_replays_user_history_as_acp_user_chunks() {
-        let _guard = ENV_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = ENV_LOCK.lock().await;
         unsafe {
             std::env::set_var("BEARS_BEARWIRE", "true");
         }
@@ -16640,9 +16646,7 @@ mod tests {
 
     #[tokio::test]
     async fn session_load_replays_history_tool_records_as_acp_tool_updates_not_text() {
-        let _guard = ENV_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = ENV_LOCK.lock().await;
         unsafe {
             std::env::set_var("BEARS_BEARWIRE", "true");
         }
@@ -16747,9 +16751,7 @@ mod tests {
 
     #[tokio::test]
     async fn session_resume_does_not_replay_history_updates() {
-        let _guard = ENV_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = ENV_LOCK.lock().await;
         unsafe {
             std::env::set_var("BEARS_BEARWIRE", "true");
         }
@@ -16843,9 +16845,7 @@ mod tests {
 
     #[tokio::test]
     async fn session_load_replays_surface_reasoning_as_thought_not_agent_message() {
-        let _guard = ENV_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = ENV_LOCK.lock().await;
         unsafe {
             std::env::set_var("BEARS_BEARWIRE", "true");
         }
@@ -19959,15 +19959,17 @@ mod tests {
 
     #[test]
     fn browser_tool_source_summary_prefers_client_forwarded_then_host_bridge_then_local() {
-        let mut context = SessionContext::default();
-        context.raw = json!({
-            "mcp": {
-                "client_tools": [
-                    { "x_bears": { "source": "client_forwarded" } },
-                    { "x_bears": { "source": "host_browser_bridge" } }
-                ]
-            }
-        });
+        let mut context = SessionContext {
+            raw: json!({
+                "mcp": {
+                    "client_tools": [
+                        { "x_bears": { "source": "client_forwarded" } },
+                        { "x_bears": { "source": "host_browser_bridge" } }
+                    ]
+                }
+            }),
+            ..Default::default()
+        };
         let summary = browser_tool_source_summary(&context);
         assert_eq!(summary["active_source"], "client_forwarded_mcp");
         assert_eq!(summary["total_client_tools"], 2);
@@ -20025,8 +20027,10 @@ mod tests {
 
     #[tokio::test]
     async fn bear_environment_reports_session_and_mcp_state() {
-        let mut adapter_state = AdapterState::default();
-        adapter_state.client_capabilities = json!({ "client": "zed" });
+        let mut adapter_state = AdapterState {
+            client_capabilities: json!({ "client": "zed" }),
+            ..Default::default()
+        };
         adapter_state.session_contexts.insert(
             "session-1".to_string(),
             SessionContext {

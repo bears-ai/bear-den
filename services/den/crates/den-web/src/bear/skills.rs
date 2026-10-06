@@ -120,7 +120,7 @@ async fn action(
                 &form.content_hash,
                 form.confirm_public,
             )
-            .await?
+            .await?;
         }
         Operation::Attach => {
             skills::attach(
@@ -132,10 +132,10 @@ async fn action(
                 &form.profiles,
                 form.confirm_work,
             )
-            .await?
+            .await?;
         }
         Operation::Detach => {
-            skills::detach(state.sqlx_pool(), BearId::new(bear.id), actor, id).await?
+            skills::detach(state.sqlx_pool(), BearId::new(bear.id), actor, id).await?;
         }
         Operation::Disable => skills::disable(state.sqlx_pool(), actor, id).await?,
     }

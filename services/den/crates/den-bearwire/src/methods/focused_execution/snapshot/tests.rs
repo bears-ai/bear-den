@@ -112,7 +112,7 @@ fn reducer_covers_every_lifecycle_phase_and_invariant() {
         assert_eq!(reduced(facts), expected, "phase case {name}");
     }
 
-    let mut run_without_selection = unfocused.clone();
+    let mut run_without_selection = unfocused;
     run_without_selection.run = active_facts(TurnRunState::Running).run;
 
     let mut attempt_without_run = selected.clone();

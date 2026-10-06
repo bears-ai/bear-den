@@ -189,10 +189,10 @@ async fn auto_enqueue(pool: &PgPool) {
             {
                 match err {
                     DenError::Authorization(_) => {
-                        tracing::debug!(%bear_id, %job_id, error = %err, "work_dispatch: skipping ineligible automatic Job")
+                        tracing::debug!(%bear_id, %job_id, error = %err, "work_dispatch: skipping ineligible automatic Job");
                     }
                     _ => {
-                        tracing::warn!(%bear_id, %job_id, error = %err, "work_dispatch: failed to check automatic Job eligibility")
+                        tracing::warn!(%bear_id, %job_id, error = %err, "work_dispatch: failed to check automatic Job eligibility");
                     }
                 }
                 continue;
@@ -586,7 +586,7 @@ async fn monitor_owned_runs(
                         .await
                         .ok()
                         .flatten()
-                        .unwrap_or(run.clone());
+                        .unwrap_or_else(|| run.clone());
                     cancel_run(pool, config, client, &current).await;
                     continue;
                 }

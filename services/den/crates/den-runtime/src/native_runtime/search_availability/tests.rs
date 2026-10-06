@@ -1,4 +1,5 @@
 use super::*;
+use crate::native_runtime::tools::ToolSurfacePolicy;
 use den_core::{ids::UserId, ArmatureAvailability};
 use den_service::{
     bears::{
@@ -85,7 +86,16 @@ async fn search_roster_follows_current_owned_hat_tool_host_and_bear_block(pool: 
     };
     let roster_has_search = |authorized| {
         crate::native_runtime::tools::merge_den_and_client_tools_with_search(
-            &config, origin, true, true, true, None, None, authorized,
+            &config,
+            origin,
+            ToolSurfacePolicy {
+                work_enabled: true,
+                cabinet_enabled: true,
+                may_define_task: true,
+            },
+            None,
+            None,
+            authorized,
         )
         .unwrap()
         .iter()

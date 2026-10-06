@@ -1553,13 +1553,9 @@ async fn viewer_membership_role(
     pool: &PgPool,
     context: &DenToolInvocationContext,
 ) -> Result<Option<String>, CustomError> {
-    Ok(
-        membership_role_for_user(pool, context.user_id, context.bear_id)
-            .await?
-            .ok_or_else(|| {
-                CustomError::NotFound("Bear not found or token lacks access".to_string())
-            })?,
-    )
+    membership_role_for_user(pool, context.user_id, context.bear_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("Bear not found or token lacks access".to_string()))
 }
 
 async fn visible_jobs(

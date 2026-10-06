@@ -458,6 +458,10 @@ pub(crate) async fn post_session_open(
     .context("BearWire session.open failed")
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Keep prompt inputs explicit at the BearWire transport boundary."
+)]
 pub(crate) async fn handle_prompt(
     http: &reqwest::Client,
     config: &Config,
@@ -605,6 +609,10 @@ fn terminal_event_tool_card_reason(current_run_id: &str, event: &Value) -> Optio
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Forward the event projection context unchanged while adding terminal cleanup."
+)]
 async fn handle_bearwire_event_with_terminal_cleanup(
     config: &Config,
     adapter_state: &mut AdapterState,
@@ -699,6 +707,10 @@ struct DecodedRunStateResponse {
     lifecycle: RunStateProjection,
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Reconciliation needs the same projection context as live event delivery."
+)]
 async fn reconcile_run_state_projection(
     config: &Config,
     adapter_state: &mut AdapterState,
@@ -735,9 +747,11 @@ async fn reconcile_run_state_projection(
                     "BearWire protocol violation: terminal run state had no matching event. run_id={run_id}; {summary}"
                 ));
             }
-            let mut projected = SseFrameOutcome::default();
-            projected.saw_done = true;
-            projected.saw_visible_output = true;
+            let projected = SseFrameOutcome {
+                saw_done: true,
+                saw_visible_output: true,
+                ..Default::default()
+            };
             return Ok(Some(projected));
         }
         ReconciliationDecision::DeadlineExceeded => {
@@ -925,6 +939,10 @@ impl<'a> PromptDriver<'a> {
 /// Project an already-started Den run into the current ACP prompt until Den
 /// reaches a canonical prompt boundary. `/focus` uses this after the deep Den
 /// command has selected and launched Docket-owned execution.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Pass explicit run and prompt context into the existing PromptDriver."
+)]
 pub(crate) async fn follow_run(
     http: &reqwest::Client,
     config: &Config,
@@ -1676,7 +1694,7 @@ fn run_state_obligation_summary(state: &Value) -> Option<String> {
     ))
 }
 
-fn obligation_request_payload<'a>(obligation: &'a Value) -> &'a Value {
+fn obligation_request_payload(obligation: &Value) -> &Value {
     obligation
         .get("request_payload")
         .filter(|value| value.is_object())
@@ -2012,6 +2030,10 @@ pub(crate) async fn post_permission_result(
     .await
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Mirror handle_prompt inputs at the transport availability boundary."
+)]
 pub(crate) async fn try_handle_prompt(
     http: &reqwest::Client,
     config: &Config,
@@ -2492,6 +2514,10 @@ fn event_is_run_scoped(ty: &str) -> bool {
         )
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Keep per-frame data explicit alongside session, run, and turn projection context."
+)]
 async fn handle_bearwire_event(
     config: &Config,
     adapter_state: &mut AdapterState,

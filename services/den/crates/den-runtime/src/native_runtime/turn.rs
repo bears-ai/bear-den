@@ -76,7 +76,7 @@ use crate::{
         search_availability,
         tools::{
             is_work_tool_provider_name, merge_den_and_client_tools_with_search,
-            omit_unbounded_cargo_helper,
+            omit_unbounded_cargo_helper, ToolSurfacePolicy,
         },
     },
     reflection::briefing_source::{CurateBriefingText, ReflectionRunId},
@@ -93,7 +93,6 @@ use den_service::conversation::persistence::PersistedTranscriptRecord;
 static SESSION_STORE: LazyLock<AgentLoopSessionStore> =
     LazyLock::new(AgentLoopSessionStore::default);
 
-#[cfg(feature = "test-fixtures")]
 /// A deterministic source for one native-runtime invocation in downstream
 /// integration tests. `Pending` deliberately keeps the stream open after prior
 /// scripts have demonstrated continuation, so the test—not a synthetic EOF—
@@ -443,7 +442,9 @@ pub fn update_native_client_session_cached_activity_plan_projection(
     cached_activity_plan_projection: Option<TaskListProjection>,
 ) {
     SESSION_STORE.update_client_sessions(conversation_id, client_session_id, |session| {
-        session.cached_activity_plan_projection = cached_activity_plan_projection.clone();
+        session
+            .cached_activity_plan_projection
+            .clone_from(&cached_activity_plan_projection);
     });
 }
 
@@ -997,9 +998,11 @@ async fn build_session(
     let mut tools = merge_den_and_client_tools_with_search(
         deps.config,
         origin,
-        bear.work_enabled,
-        bear.cabinet_enabled,
-        may_define_task,
+        ToolSurfacePolicy {
+            work_enabled: bear.work_enabled,
+            cabinet_enabled: bear.cabinet_enabled,
+            may_define_task,
+        },
         client_tools,
         human_message,
         search_available,
@@ -1535,8 +1538,7 @@ pub async fn start_native_turn_event_stream(
     let llm = LlmClient::new(request.config);
     let config = Arc::new(request.config.clone());
     let overflow = overflow_context(request.sqlx_pool.clone(), config.clone(), role);
-    let stream = match scripted_runtime_stream(session.run_id.as_deref(), Some(&client_session_id))
-    {
+    let stream = match scripted_runtime_stream(session.run_id.as_deref(), Some(client_session_id)) {
         Some(stream) => stream,
         None => run_agent_step_stream(&llm, &session, Some(overflow)).await?,
     };
@@ -2441,8 +2443,7 @@ pub async fn continue_native_client_turn_event_stream(
     let llm = LlmClient::new(request.config);
     let config = Arc::new(request.config.clone());
     let overflow = overflow_context(request.sqlx_pool.clone(), config.clone(), profile);
-    let stream = match scripted_runtime_stream(session.run_id.as_deref(), Some(&client_session_id))
-    {
+    let stream = match scripted_runtime_stream(session.run_id.as_deref(), Some(client_session_id)) {
         Some(stream) => stream,
         None => run_agent_step_stream(&llm, &session, Some(overflow)).await?,
     };

@@ -358,27 +358,6 @@ fn checkout_attempt(checkout: &Value) -> Result<(Uuid, i64)> {
     Ok((attempt_id, fence_epoch))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::checkout_attempt;
-    use serde_json::json;
-    use uuid::Uuid;
-
-    #[test]
-    fn checkout_attempt_requires_canonical_attempt_and_fence() {
-        let attempt_id = Uuid::new_v4();
-        assert_eq!(
-            checkout_attempt(&json!({
-                "execution_attempt_id": attempt_id.to_string(),
-                "execution_attempt_fence_epoch": 4,
-            }))
-            .expect("canonical checkout attempt"),
-            (attempt_id, 4)
-        );
-        assert!(checkout_attempt(&json!({})).is_err());
-    }
-}
-
 /// Auto-resolve a permission request with no human present.
 ///
 /// The container is the primary enforcement boundary and workspace-root path
@@ -431,5 +410,26 @@ pub(crate) fn decide_permission_headless(
             remember: false,
             scope: ApprovalScope::Workspace,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::checkout_attempt;
+    use serde_json::json;
+    use uuid::Uuid;
+
+    #[test]
+    fn checkout_attempt_requires_canonical_attempt_and_fence() {
+        let attempt_id = Uuid::new_v4();
+        assert_eq!(
+            checkout_attempt(&json!({
+                "execution_attempt_id": attempt_id.to_string(),
+                "execution_attempt_fence_epoch": 4,
+            }))
+            .expect("canonical checkout attempt"),
+            (attempt_id, 4)
+        );
+        assert!(checkout_attempt(&json!({})).is_err());
     }
 }

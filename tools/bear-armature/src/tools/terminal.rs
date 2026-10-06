@@ -68,6 +68,10 @@ fn terminal_result_content(
     )
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Keep command metadata and captured terminal output explicit at the reducer boundary."
+)]
 async fn reduce_terminal_output_with_rtk(
     reducer_mode: ReducerMode,
     executed_via_rtk: bool,
@@ -94,6 +98,10 @@ async fn reduce_terminal_output_with_rtk(
     reduce_with_rtk_summary("BEARS_TERMINAL_RUN_RTK", raw).await
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Keep execution policy and tool-card presentation explicit at the ACP terminal boundary."
+)]
 pub(crate) async fn handle_terminal_run_command(
     adapter_state: &mut AdapterState,
     context: &SessionContext,

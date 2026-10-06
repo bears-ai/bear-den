@@ -85,21 +85,6 @@ fn tool_matrix_context() -> Vec<ToolMatrixRow> {
     rows
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn tool_matrix_uses_execution_contexts_for_local_tool_availability() {
-        let rows = tool_matrix_context();
-        let read = rows
-            .iter()
-            .find(|row| row.name == ClientToolName::ReadTextFile.descriptor().provider_name)
-            .expect("local read tool is listed");
-        assert_eq!(read.contexts, [false, true, true]);
-    }
-}
-
 pub fn router() -> Router<AppState> {
     Router::new()
         .route_with_tsr("/bear/{slug}/identity", get(identity_view))
@@ -224,4 +209,19 @@ async fn portability_view(
         },
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_matrix_uses_execution_contexts_for_local_tool_availability() {
+        let rows = tool_matrix_context();
+        let read = rows
+            .iter()
+            .find(|row| row.name == ClientToolName::ReadTextFile.descriptor().provider_name)
+            .expect("local read tool is listed");
+        assert_eq!(read.contexts, [false, true, true]);
+    }
 }

@@ -130,11 +130,12 @@ async fn explicitly_hat_bound_first_send_reloads_without_profile_registry(pool: 
             .any(|event| event["message_type"] == "text" || event["content"] == "saved answer"),
         "assistant SSE missing: {body}"
     );
-    let requests = runtime.requests.lock().unwrap();
-    assert_eq!(requests.len(), 1);
-    assert_eq!(requests[0].conversation_id, durable);
-    assert!(requests[0].session_id.ends_with(durable));
-    drop(requests);
+    {
+        let requests = runtime.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].conversation_id, durable);
+        assert!(requests[0].session_id.ends_with(durable));
+    }
 
     let saved = conversation_persistence::get_conversation_for_external_id(&pool, bear, durable)
         .await

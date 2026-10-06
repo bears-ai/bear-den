@@ -360,7 +360,7 @@ pub struct RunSnapshot {
     pub terminal_reason: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunStateEvent {
     event: Value,
 }
@@ -435,7 +435,7 @@ pub enum ObligationState {
     Cancelled,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RunObligation {
     #[serde(default)]
     pub id: Option<String>,
@@ -463,7 +463,7 @@ pub struct RunObligation {
     pub extensions: std::collections::BTreeMap<String, Value>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RunStateProjection {
     pub run: RunSnapshot,
     #[serde(default)]

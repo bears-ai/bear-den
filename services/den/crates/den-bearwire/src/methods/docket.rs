@@ -457,7 +457,7 @@ pub async fn docket_jobs_settle_task_result(
             den_runtime::native_runtime::remove_native_client_run(session_id, run_id);
         }
     }
-    if let (Some(session_id), Some(successor_task_id)) = (
+    if let (Some(session_id), SuccessorTaskSelection::Update(successor_task_id)) = (
         attempt_session_id.as_deref(),
         successor_task_selection(&outcome.control),
     ) {
@@ -817,24 +817,32 @@ fn execution_result_payload(
         },
         "status": status,
         "gate": gate,
-        "session_execution": session_execution.clone(),
+        "session_execution": session_execution,
         // Read-only compatibility projection for deployed clients.
         "pair_binding": session_execution,
         "outcome": outcome,
     }))
 }
 
-fn successor_task_selection(control: &DocketExecutionControl) -> Option<Option<Uuid>> {
+#[derive(Debug, PartialEq, Eq)]
+enum SuccessorTaskSelection {
+    Preserve,
+    Update(Option<Uuid>),
+}
+
+fn successor_task_selection(control: &DocketExecutionControl) -> SuccessorTaskSelection {
     match control.next_action {
         DocketExecutionNextAction::WorkCurrentTask => control
             .task
             .current_task_id
             .or(control.task.claimed_task_id)
             .or(control.task.selected_task_id)
-            .map(Some),
-        DocketExecutionNextAction::JobCompleted => Some(None),
+            .map_or(SuccessorTaskSelection::Preserve, |task_id| {
+                SuccessorTaskSelection::Update(Some(task_id))
+            }),
+        DocketExecutionNextAction::JobCompleted => SuccessorTaskSelection::Update(None),
         DocketExecutionNextAction::ReconcileExecution
-        | DocketExecutionNextAction::RecoverBlockedRun => None,
+        | DocketExecutionNextAction::RecoverBlockedRun => SuccessorTaskSelection::Preserve,
     }
 }
 
@@ -1002,11 +1010,33 @@ mod tests {
             reason: None,
         };
 
-        assert_eq!(successor_task_selection(&control), Some(Some(successor_id)));
+        assert_eq!(
+            successor_task_selection(&control),
+            SuccessorTaskSelection::Update(Some(successor_id))
+        );
         control.next_action = DocketExecutionNextAction::JobCompleted;
-        assert_eq!(successor_task_selection(&control), Some(None));
+        assert_eq!(
+            successor_task_selection(&control),
+            SuccessorTaskSelection::Update(None)
+        );
         control.next_action = DocketExecutionNextAction::ReconcileExecution;
-        assert_eq!(successor_task_selection(&control), None);
+        assert_eq!(
+            successor_task_selection(&control),
+            SuccessorTaskSelection::Preserve
+        );
+        control.next_action = DocketExecutionNextAction::RecoverBlockedRun;
+        assert_eq!(
+            successor_task_selection(&control),
+            SuccessorTaskSelection::Preserve
+        );
+        control.next_action = DocketExecutionNextAction::WorkCurrentTask;
+        control.task.current_task_id = None;
+        control.task.claimed_task_id = None;
+        control.task.selected_task_id = None;
+        assert_eq!(
+            successor_task_selection(&control),
+            SuccessorTaskSelection::Preserve
+        );
     }
 
     #[test]

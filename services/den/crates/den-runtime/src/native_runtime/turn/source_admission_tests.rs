@@ -135,7 +135,7 @@ async fn all_continuations_and_result_recording_recheck_membership_rebinding_and
     db::revoke_membership(&pool, session.user_id.unwrap(), session.bear_id)
         .await
         .unwrap();
-    assert_denied_before_effects(&pool, &session, &binding).await;
+    Box::pin(assert_denied_before_effects(&pool, &session, &binding)).await;
     db::grant_membership(
         &pool,
         session.user_id.unwrap(),
@@ -145,7 +145,7 @@ async fn all_continuations_and_result_recording_recheck_membership_rebinding_and
     .await
     .unwrap();
     bind_client(&pool, &session, "another-conversation").await;
-    assert_denied_before_effects(&pool, &session, &binding).await;
+    Box::pin(assert_denied_before_effects(&pool, &session, &binding)).await;
     bind_client(&pool, &session, &session.conversation_id).await;
     let client = client_sessions::find_for_user_bear_session_id(
         &pool,
@@ -159,7 +159,7 @@ async fn all_continuations_and_result_recording_recheck_membership_rebinding_and
     client_sessions::mark_closed(&pool, client.id)
         .await
         .unwrap();
-    assert_denied_before_effects(&pool, &session, &binding).await;
+    Box::pin(assert_denied_before_effects(&pool, &session, &binding)).await;
     bind_client(&pool, &session, &session.conversation_id).await;
     sqlx::query!(
         "UPDATE conversations SET status = 'archived' WHERE id = $1",
@@ -168,7 +168,7 @@ async fn all_continuations_and_result_recording_recheck_membership_rebinding_and
     .execute(&pool)
     .await
     .unwrap();
-    assert_denied_before_effects(&pool, &session, &binding).await;
+    Box::pin(assert_denied_before_effects(&pool, &session, &binding)).await;
     // Browser/channel loops have no editor row to check, but still check canonical closure.
     for origin in [
         den_core::TurnExecutionOrigin::ChannelConversation,
@@ -177,7 +177,7 @@ async fn all_continuations_and_result_recording_recheck_membership_rebinding_and
         session.origin = origin;
         session.profile =
             den_core::EffectivePolicy::compile_for_origin(origin, session.governance).context_label;
-        assert_denied_before_effects(&pool, &session, &binding).await;
+        Box::pin(assert_denied_before_effects(&pool, &session, &binding)).await;
     }
     assert!(persistence::list_messages_page(&pool, canonical, None, 100)
         .await
@@ -210,7 +210,7 @@ async fn zero_hat_replacement_source_cannot_replay_a_stored_turn(pool: PgPool) {
     .await
     .unwrap();
     assert_ne!(replacement.id, canonical);
-    assert_denied_before_effects(&pool, &session, &binding).await;
+    Box::pin(assert_denied_before_effects(&pool, &session, &binding)).await;
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -225,11 +225,11 @@ async fn revoked_work_hat_exact_run_and_cancel_are_checked_before_every_continua
     };
     let mut replay = session.clone();
     replay.work_run_id = Some(Uuid::new_v4());
-    assert_denied_before_effects(&pool, &replay, &binding).await;
+    Box::pin(assert_denied_before_effects(&pool, &replay, &binding)).await;
     den_service::bears::hats::manage::disable_work(&pool, session.bear_id.into(), hat)
         .await
         .unwrap();
-    assert_denied_before_effects(&pool, &session, &binding).await;
+    Box::pin(assert_denied_before_effects(&pool, &session, &binding)).await;
     sqlx::query!(
         "UPDATE bear_hats SET work_enabled = true WHERE id = $1",
         hat.as_uuid()
@@ -244,7 +244,7 @@ async fn revoked_work_hat_exact_run_and_cancel_are_checked_before_every_continua
     )
     .await
     .unwrap());
-    assert_denied_before_effects(&pool, &session, &binding).await;
+    Box::pin(assert_denied_before_effects(&pool, &session, &binding)).await;
 }
 
 #[sqlx::test(migrations = "../../migrations")]
