@@ -78,14 +78,25 @@ pub async fn link(
             .await
             .map_err(artifact_error)?;
     }
+    let reference = insert_link_in_tx(&mut tx, scope, page, metadata.id, role).await?;
+    tx.commit().await.map_err(db_error)?;
+    Ok(reference)
+}
+
+pub(super) async fn insert_link_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    scope: &ActorScope,
+    page: &CabinetItemRef,
+    artifact_id: Uuid,
+    role: AttachmentRole,
+) -> Result<CabinetAttachmentRef, CabinetError> {
     let actor =
         serde_json::to_value(scope).map_err(|error| CabinetError::Storage(error.to_string()))?;
     let user = match scope.actor {
         Actor::User { user_id } => Some(user_id.0),
         Actor::Bear { .. } => None,
     };
-    let id=sqlx::query_scalar!("INSERT INTO artifact_links(artifact_id,target_kind,target_id,role,metadata,created_by_user_id) VALUES($1,'cabinet_item',$2,$3,$4,$5) ON CONFLICT(artifact_id,target_kind,target_id,role) DO UPDATE SET artifact_id=artifact_links.artifact_id RETURNING id",metadata.id,page.as_str(),role.as_str(),serde_json::json!({"cabinet_actor":actor}),user).fetch_one(&mut *tx).await.map_err(db_error)?;
-    tx.commit().await.map_err(db_error)?;
+    let id=sqlx::query_scalar!("INSERT INTO artifact_links(artifact_id,target_kind,target_id,role,metadata,created_by_user_id) VALUES($1,'cabinet_item',$2,$3,$4,$5) ON CONFLICT(artifact_id,target_kind,target_id,role) DO UPDATE SET artifact_id=artifact_links.artifact_id RETURNING id",artifact_id,page.as_str(),role.as_str(),serde_json::json!({"cabinet_actor":actor}),user).fetch_one(&mut **tx).await.map_err(db_error)?;
     reference(id)
 }
 

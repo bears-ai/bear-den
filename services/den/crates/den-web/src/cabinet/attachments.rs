@@ -18,7 +18,6 @@ use den_service::{
 };
 use serde::Deserialize;
 
-const MAX_DOWNLOAD: u64 = 16 * 1024 * 1024;
 #[derive(Deserialize)]
 struct LinkForm {
     artifact_ref: ArtifactRef,
@@ -112,39 +111,10 @@ async fn content(
             let location =
                 artifacts::content_location_for_reader(state.sqlx_pool(), &reference, actor)
                     .await?;
-            if location.content_bytes < 0 || location.content_bytes as u64 > MAX_DOWNLOAD {
-                return Err(CustomError::ValidationError(
-                    "artifact exceeds the 16 MiB proxy limit".into(),
-                ));
-            }
-            let client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .map_err(|_| CustomError::System("artifact client unavailable".into()))?;
-            let mut response = client
-                .get(media.presign_internal_download(&location.storage_key))
-                .send()
-                .await
-                .map_err(|_| CustomError::System("artifact storage unavailable".into()))?;
-            if !response.status().is_success() {
-                return Err(CustomError::NotFound("artifact content unavailable".into()));
-            }
-            let mut bytes = Vec::new();
-            while let Some(chunk) = response
-                .chunk()
-                .await
-                .map_err(|_| CustomError::System("artifact transfer failed".into()))?
-            {
-                if bytes.len() + chunk.len() > MAX_DOWNLOAD as usize {
-                    return Err(CustomError::ValidationError(
-                        "artifact exceeds the proxy limit".into(),
-                    ));
-                }
-                bytes.extend_from_slice(&chunk);
-            }
-            artifacts::verify_content_bytes(&location, &bytes)?;
-            (bytes, "application/octet-stream")
+            (
+                media.read_artifact(&location).await?,
+                "application/octet-stream",
+            )
         }
         ArtifactStorageKind::ExternalGitCommit => {
             return Err(CustomError::NotFound("artifact has no file payload".into()))
@@ -153,11 +123,28 @@ async fn content(
     cabinet::attachments::artifact_for_link(state.sqlx_pool(), &scope, &page, &attachment)
         .await
         .map_err(cabinet_error)?;
+    let fallback = format!(
+        "{}.{}",
+        reference.as_str(),
+        if metadata.storage_kind == ArtifactStorageKind::DbText {
+            "json"
+        } else {
+            "bin"
+        }
+    );
+    let filename = if metadata.storage_kind == ArtifactStorageKind::GarageArtifacts {
+        metadata.title.as_deref().unwrap_or(&fallback)
+    } else {
+        &fallback
+    };
     Response::builder()
         .header(header::CONTENT_TYPE, content_type)
         .header(
             header::CONTENT_DISPOSITION,
-            format!("attachment; filename=\"{}.bin\"", reference.as_str()),
+            format!(
+                "attachment; filename=\"{fallback}\"; filename*=UTF-8''{}",
+                urlencoding::encode(filename)
+            ),
         )
         .header(header::CACHE_CONTROL, "no-store")
         .header("X-Content-Type-Options", "nosniff")

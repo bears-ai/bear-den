@@ -10,7 +10,7 @@ use registry::{
     ReserveArtifactInput,
 };
 
-async fn page(
+pub(super) async fn page(
     pool: &sqlx::PgPool,
     user: i32,
     title: &str,

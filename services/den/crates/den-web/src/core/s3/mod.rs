@@ -8,6 +8,8 @@ use uuid::Uuid;
 
 use crate::config::Config;
 
+mod artifacts;
+
 /// Presigned URL expiry for browser uploads (PUT).
 const UPLOAD_EXPIRY: Duration = Duration::from_mins(15);
 

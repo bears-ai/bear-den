@@ -133,7 +133,9 @@ Cabinet owns item/ACL policy for the link. The artifact registry owns payload id
 
 Registry links of kind `cabinet_item` or `cabinet_snapshot` retain payloads. Database triggers refuse artifact deletion or transition to deleted/expired while retained, and GC candidates exclude them. Page tombstones do not release retention; ordinary attachments can be detached, while snapshot retention release is operator-only. This can block Bear deletion via cascades as well. No separate writable retention status duplicates link state.
 
-Docket owns optional Job→page annotations. Capturing an exact published page version creates a private `cabinet_document_snapshot` artifact with page/version refs, captured title, content and hash, plus an immutable snapshot citation link; the web capture transaction also attaches Job source evidence. A captured private copy remains readable to its authorized creator after source-page access changes or deletion. It neither promotes audience nor changes Job state. Job download authorization checks Job visibility, its registry link and artifact access independently. New-file uploads and model-facing attachment/capture tools remain pending.
+Docket owns optional Job→page annotations. Capturing an exact published page version creates a private `cabinet_document_snapshot` artifact with page/version refs, captured title, content and hash, plus an immutable snapshot citation link; the web capture transaction also attaches Job source evidence. A captured private copy remains readable to its authorized creator after source-page access changes or deletion. It neither promotes audience nor changes Job state. Job download authorization checks Job visibility, its registry link and artifact access independently. Model-facing attachment/capture tools remain pending.
+
+Human file uploads use a two-phase web/facade workflow. An authenticated human with active-page write access selects a Bear with current membership; uploads are `same_user` unless explicitly acknowledged as Bear-visible. `den-service::cabinet::uploads` mints a non-deserializable admission receipt for a pending artifact with exact server-computed size/hash and page/user provenance. The web storage boundary performs bounded internal PUT/read-back verification without holding database locks. Publication rechecks active-page write access under the Cabinet fence and locks current Bear membership, then finalizes and inserts the existing registry link atomically. Pending, failed or corrupted uploads never become readable attachments. Cleanup changes only a still-pending row before deleting bytes, preventing destruction after an ambiguous successful commit. No blob key or signed URL is browser-facing. Uploads are capped at 16 MiB and preserve a sanitized filename; retained uploads ignore their 24-hour ephemeral deadline. Crash/orphan recovery, general agent upload tools and live Garage verification are not included.
 
 ### Review state
 
@@ -254,7 +256,7 @@ Phase 0 exits with an assertion-style check suite (Rust tests colocated with the
 | Page tree (`parent_item_ref`, `position`, `path`) | defined | rejected | implemented (2) |
 | Page policy + membership, ancestor resolution | defined | blanket capability check only | implemented (2) |
 | Organize (reparent/reorder), review ops + review states beyond `none` | defined | rejected | implemented (2) |
-| Attachment links | defined | rejected | finalized-artifact links/detach/download implemented locally (3); uploads pending |
+| Attachment links | defined | rejected | links/detach/download and bounded human uploads implemented locally (3); recall pending |
 | Recall passage handoff | distinction defined | — | planned (3), not implemented |
 
 ## Documentation obligations

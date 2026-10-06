@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE artifacts SET lifecycle='deleted',deleted_at=NOW(),updated_at=NOW() WHERE artifact_ref=$1 AND created_by_user_id=$2 AND lifecycle='pending'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fa74741cf8861d16dbd3dd06a8893ef01e4d5faa593adc1d80f285243fed10da"
+}

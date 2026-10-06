@@ -420,6 +420,16 @@ pub async fn reserve_artifact(
     pool: &PgPool,
     input: ReserveArtifactInput,
 ) -> Result<ArtifactMetadata, DenError> {
+    let mut tx = pool.begin().await?;
+    let artifact = reserve_artifact_in_tx(&mut tx, input).await?;
+    tx.commit().await?;
+    Ok(artifact)
+}
+
+pub async fn reserve_artifact_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    input: ReserveArtifactInput,
+) -> Result<ArtifactMetadata, DenError> {
     validate_non_empty("artifact kind", &input.kind)?;
     validate_json_object("provenance", &input.provenance)?;
     validate_json_object("metadata", &input.metadata)?;
@@ -452,7 +462,7 @@ pub async fn reserve_artifact(
         input.metadata,
         input.expires_at,
     )
-    .fetch_one(pool)
+    .fetch_one(&mut **tx)
     .await?;
 
     artifact_from_row(row)
@@ -636,6 +646,16 @@ pub async fn finalize_garage_artifact(
     pool: &PgPool,
     input: FinalizeGarageArtifactInput,
 ) -> Result<ArtifactMetadata, DenError> {
+    let mut tx = pool.begin().await?;
+    let artifact = finalize_garage_artifact_in_tx(&mut tx, input).await?;
+    tx.commit().await?;
+    Ok(artifact)
+}
+
+pub async fn finalize_garage_artifact_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    input: FinalizeGarageArtifactInput,
+) -> Result<ArtifactMetadata, DenError> {
     validate_non_empty("content type", &input.content_type)?;
     validate_json_object("metadata", &input.metadata)?;
     if input.content_bytes < 0 {
@@ -669,7 +689,7 @@ pub async fn finalize_garage_artifact(
         input.content_sha256,
         input.metadata,
     )
-    .fetch_optional(pool)
+    .fetch_optional(&mut **tx)
     .await?;
 
     match row {

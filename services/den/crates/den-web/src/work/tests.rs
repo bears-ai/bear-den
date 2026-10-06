@@ -4,6 +4,7 @@
 
 use super::*;
 mod knowledge;
+mod uploads;
 use axum::{
     body::Body,
     http::{header, Request, StatusCode},
@@ -153,6 +154,11 @@ async fn test_login(
 }
 
 async fn test_app(pool: sqlx::PgPool) -> axum::Router {
+    let state = test_state(pool.clone());
+    test_app_with_state(pool, state).await
+}
+
+async fn test_app_with_state(pool: sqlx::PgPool, state: AppState) -> axum::Router {
     let store = PostgresStore::new(pool.clone());
     store.migrate().await.expect("session store migration");
     Router::new()
@@ -160,7 +166,7 @@ async fn test_app(pool: sqlx::PgPool) -> axum::Router {
         .merge(crate::cabinet::router())
         .nest("/bear/{bear_slug}", docket_router())
         .route("/test-login/{user_id}", get(test_login))
-        .with_state(test_state(pool.clone()))
+        .with_state(state)
         .layer(
             axum_login::AuthManagerLayerBuilder::new(
                 Backend::new(pool),

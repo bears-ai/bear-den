@@ -19,6 +19,7 @@ use den_cabinet::{
 pub mod attachments;
 pub mod pages;
 pub mod snapshots;
+pub mod uploads;
 
 /// Serialize cross-domain edits against Cabinet policy/topology changes.
 pub async fn write_fence(

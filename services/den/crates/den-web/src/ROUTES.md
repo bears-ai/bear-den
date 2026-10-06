@@ -130,7 +130,7 @@ All `/admin/*` routes use `permission_required!(…, "admin")`.
 
 ## Cabinet (`src/cabinet/mod.rs`)
 
-Shared-knowledge wiki over the `den_service::cabinet` facade (hierarchy/policy/review plus finalized-artifact attachment slice; recall and new-file upload remain pending; contract in `docs/architecture/cabinet-contract.md`).
+Shared-knowledge wiki over the `den_service::cabinet` facade (hierarchy/policy/review plus artifact attachments and bounded human uploads; recall and inline previews remain pending; contract in `docs/architecture/cabinet-contract.md`).
 
 - `GET /cabinet` — list/search items (`q`, `lifecycle=archived`)
 - `GET /cabinet/new` / `POST /cabinet/new` — create an item (first published revision)
@@ -142,6 +142,7 @@ Shared-knowledge wiki over the `den_service::cabinet` facade (hierarchy/policy/r
 - `POST /cabinet/{cabinet_ref}/sources` — link provenance (kind, locator, role)
 - `POST /cabinet/{cabinet_ref}/sources/{source_ref}/remove` — unlink provenance
 - `POST /cabinet/{cabinet_ref}/attachments` — link an existing finalized `artifact_ref` and typed role; page write plus independent artifact content access required
+- `POST /cabinet/{cabinet_ref}/attachments/upload` — server-rendered multipart upload (`file`, `bear_id`, typed `role`, optional `share_with_bear=true` acknowledgement), one non-empty file up to 16 MiB; configured storage, active-page write and selected Bear membership required. Private by default; internal signed PUT/read-back verification precedes atomic finalization/linking with fresh page/membership checks. Failed transfers attempt safe pending-row/blob cleanup; no signed URL or storage key reaches the browser.
 - `POST /cabinet/{cabinet_ref}/attachments/{attachment_ref}/remove` — detach the exact page/link; page write required
 - `GET /cabinet/{cabinet_ref}/attachments/{attachment_ref}/content` — permission-rechecking download; JSON or configured Garage content (16 MiB, size/hash checked), no-store/nosniff/attachment headers, no storage URL exposed
 
