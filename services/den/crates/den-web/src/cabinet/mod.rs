@@ -30,6 +30,7 @@ use den_cabinet::{
 use den_core::ids::UserId;
 use den_service::cabinet as cabinet_service;
 mod attachments;
+pub(crate) mod cleanup;
 mod pages;
 mod previews;
 mod uploads;
@@ -38,6 +39,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .merge(pages::router())
         .merge(attachments::router())
+        .merge(cleanup::router())
         .merge(previews::router())
         .merge(uploads::router())
         .route("/cabinet", get(index))

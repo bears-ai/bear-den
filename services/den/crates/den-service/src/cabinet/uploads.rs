@@ -176,6 +176,27 @@ pub async fn prepare(
     })
 }
 
+/// Revalidate the canonical pending lease before minting any storage write URL.
+pub async fn authorize_write(
+    pool: &PgPool,
+    pending: &PendingUpload,
+) -> Result<OffsetDateTime, CabinetError> {
+    let row = sqlx::query!(
+        r#"SELECT expires_at AS "deadline!" FROM artifacts
+        WHERE artifact_ref=$1 AND bear_id=$2 AND created_by_user_id=$3
+          AND lifecycle='pending' AND expires_at>$4 AND content_removed_at IS NULL"#,
+        pending.location.artifact_ref,
+        pending.bear.as_uuid(),
+        pending.actor.get(),
+        OffsetDateTime::now_utc()
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(db_error)?
+    .ok_or_else(|| CabinetError::Policy("upload lease is closed or expired".into()))?;
+    Ok(row.deadline)
+}
+
 /// Caller must verify the stored bytes against the receipt before publication.
 pub async fn publish(
     pool: &PgPool,
@@ -193,6 +214,23 @@ pub async fn publish(
     pages::lock(&mut tx).await?;
     authorize_active_page(&mut tx, pool, scope, &pending.page).await?;
     lock_membership(&mut tx, pending.actor, pending.bear).await?;
+    let lease = sqlx::query!(
+        r#"SELECT expires_at AS "deadline!" FROM artifacts
+        WHERE artifact_ref=$1 AND bear_id=$2 AND created_by_user_id=$3
+          AND lifecycle='pending' AND expires_at>$4 AND content_removed_at IS NULL FOR UPDATE"#,
+        pending.location.artifact_ref,
+        pending.bear.as_uuid(),
+        pending.actor.get(),
+        OffsetDateTime::now_utc()
+    )
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(db_error)?;
+    if lease.is_none() {
+        return Err(CabinetError::Policy(
+            "upload lease is closed or expired".into(),
+        ));
+    }
     let artifact = artifacts::finalize_garage_artifact_in_tx(
         &mut tx,
         FinalizeGarageArtifactInput {

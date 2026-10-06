@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Your uploads · Cabinet{% endblock %}
+{% block breadcrumb %}<a href="/">Bears</a> / <a href="/cabinet">Cabinet</a> / Your uploads{% endblock %}
+{% block content %}
+<p><a href="/cabinet">← Cabinet</a></p>
+<h1>Your uploads</h1>
+{% if not storage_enabled %}<p role="status">Automatic cleanup and retry are unavailable: this Den has no file storage configured.</p>{% endif %}
+{% if uploads %}
+<table>
+    <thead><tr><th>File</th><th>Bear</th><th>State</th><th>Action</th></tr></thead>
+    <tbody>
+    {% for upload in uploads %}
+    <tr>
+        <td>{{ upload.title | e }}<details><summary>Details</summary><p>Created {{ upload.created_at | timeago }}</p>{% if upload.eligible_at %}<p>Earliest cleanup: <time datetime="{{ upload.eligible_at }}">{{ upload.eligible_at }}</time></p>{% endif %}<code>{{ upload.reference }}</code></details></td>
+        <td>{{ upload.bear | e }}</td><td>{{ upload.state | e }}</td>
+        <td>{% if upload.page_ref %}<a href="/cabinet/{{ upload.page_ref }}">{{ upload.page_title | e }}</a>{% endif %}
+        {% if upload.can_retry %}<form method="post" action="/cabinet/uploads/{{ upload.reference }}/cleanup"><button type="submit">Retry cleanup</button></form>{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}<p>No uploads available to you.</p>{% endif %}
+<details class="box"><summary>Recovery and retention</summary><p>Only your latest 64 uploads under current Bear membership appear here. Interrupted uploads are retired after their write lease and a safety grace period. Cleanup retries automatically; Cabinet-retained files and snapshots are never candidates. Removed file records remain for inspection, but their content is not readable.</p></details>
+{% endblock %}

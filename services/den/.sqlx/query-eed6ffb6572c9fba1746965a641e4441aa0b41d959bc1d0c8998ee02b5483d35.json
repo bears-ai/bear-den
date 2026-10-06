@@ -1,0 +1,39 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH due AS (\n            SELECT a.id FROM artifacts a\n            WHERE a.kind='cabinet_file' AND a.storage_kind='garage_artifacts'\n              AND a.content_removed_at IS NULL AND a.expires_at <= $1\n              AND a.lifecycle IN ('pending','finalized','expired','deleted')\n              AND ($3::text IS NULL OR a.artifact_ref=$3)\n              AND ($4::int IS NULL OR (a.created_by_user_id=$4 AND EXISTS (\n                  SELECT 1 FROM user_bear ub WHERE ub.user_id=$4 AND ub.bear_id=a.bear_id)))\n              AND ($3::text IS NOT NULL OR a.updated_at <= $2)\n              AND NOT EXISTS (SELECT 1 FROM artifact_links l WHERE l.artifact_id=a.id\n                  AND l.target_kind IN ('cabinet_item','cabinet_snapshot'))\n            ORDER BY a.updated_at,a.id LIMIT $5 FOR UPDATE OF a SKIP LOCKED\n        )\n        UPDATE artifacts a SET lifecycle=CASE WHEN a.lifecycle='deleted' THEN 'deleted' ELSE 'expired' END,\n            updated_at=$6\n        FROM due WHERE a.id=due.id\n          AND NOT EXISTS (SELECT 1 FROM artifact_links l WHERE l.artifact_id=a.id\n              AND l.target_kind IN ('cabinet_item','cabinet_snapshot'))\n        RETURNING a.id,a.artifact_ref,a.storage_key\n    ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "artifact_ref",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "storage_key",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Timestamptz",
+        "Text",
+        "Int4",
+        "Int8",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "eed6ffb6572c9fba1746965a641e4441aa0b41d959bc1d0c8998ee02b5483d35"
+}

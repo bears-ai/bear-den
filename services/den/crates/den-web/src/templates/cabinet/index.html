@@ -7,10 +7,10 @@
 <h2>{% if roots_only %}Cabinet page tree{% else %}Matching pages{% endif %}</h2>
 {% if message %}<p role="status">{{ message | e }}</p>{% endif %}
 <form method="get" action="/cabinet" class="den-management-form-row"><label for="cabinet-search">Search pages</label><input id="cabinet-search" type="text" name="q" value="{{ q | default("", true) | e }}" placeholder="Titles and content"><button type="submit">Search</button></form>
-<p class="button-row"><a class="button-link" href="/cabinet/new">New page</a>{% if archived %}<a href="/cabinet">Active pages</a>{% else %}<a href="/cabinet?lifecycle=archived">Archived pages</a>{% endif %}</p>
+<p class="button-row"><a class="button-link" href="/cabinet/new">New page</a> <a href="/cabinet/uploads">Your uploads</a>{% if archived %}<a href="/cabinet">Active pages</a>{% else %}<a href="/cabinet?lifecycle=archived">Archived pages</a>{% endif %}</p>
 {% if items %}<table><thead><tr><th>Page</th><th>Updated</th></tr></thead><tbody>{% for item in items %}<tr><td><a href="/cabinet/{{ item.cabinet_ref }}">{{ item.title | e }}</a></td><td>{{ item.updated_at | timeago }}</td></tr>{% endfor %}</tbody></table>{% else %}<p>{% if q %}No pages match that search.{% else %}No pages yet.{% endif %}</p>{% endif %}
 </section>
-<details class="box"><summary>Access &amp; organization</summary><p>Open-wiki access applies only where no page or ancestor narrows membership. Child pages inherit restrictions; page owners manage access and Bear-write review. A Mission is an ordinary page with children. Artifact attachments are a separate, not-yet-delivered phase.</p></details>
+<details class="box"><summary>Access &amp; organization</summary><p>Open-wiki access applies only where no page or ancestor narrows membership. Child pages inherit restrictions; page owners manage access and Bear-write review. A Mission is an ordinary page with children. Attachments keep their own file access; page access does not share private files.</p></details>
 {% if review_items %}<section class="box"><h2>Versions awaiting your review</h2><ul>{% for entry in review_items %}<li><a href="/cabinet/{{ entry.cabinet_ref }}?version={{ entry.version_ref }}">{{ entry.title | e }} · revision {{ entry.revision }}</a></li>{% endfor %}</ul></section>{% endif %}
 </main>
 {% endblock %}

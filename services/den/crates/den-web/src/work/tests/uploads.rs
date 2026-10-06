@@ -38,6 +38,8 @@ enum Fault {
     #[default]
     None,
     WriteDenied,
+    DeleteDenied,
+    DeleteMissingBucket,
     CorruptRead,
     ArchiveDuringRead {
         pool: sqlx::PgPool,
@@ -111,6 +113,12 @@ async fn storage_request(
             )
         }
         Method::DELETE => {
+            if matches!(fault, Fault::DeleteMissingBucket) {
+                return StatusCode::NOT_FOUND.into_response();
+            }
+            if matches!(fault, Fault::DeleteDenied) {
+                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            }
             storage.objects.lock().await.remove(&key);
             StatusCode::NO_CONTENT.into_response()
         }
@@ -165,7 +173,23 @@ impl ByteStore {
         *self.state.fault.lock().await = Fault::CorruptRead;
     }
 
-    pub(super) async fn app(&self, pool: &sqlx::PgPool) -> Router {
+    pub(super) async fn fail_deletes(&self, fail: bool) {
+        *self.state.fault.lock().await = if fail {
+            Fault::DeleteDenied
+        } else {
+            Fault::None
+        };
+    }
+
+    pub(super) async fn missing_bucket_deletes(&self) {
+        *self.state.fault.lock().await = Fault::DeleteMissingBucket;
+    }
+
+    pub(super) async fn contains(&self, key: &str) -> bool {
+        self.state.objects.lock().await.contains_key(key)
+    }
+
+    pub(super) fn app_state(&self, pool: &sqlx::PgPool) -> crate::AppState {
         let mut config = crate::config::Config::test_stub();
         config.templates_dir = format!("{}/src/templates", env!("CARGO_MANIFEST_DIR"));
         config.s3_endpoint = self.endpoint.clone();
@@ -182,7 +206,11 @@ impl ByteStore {
             config,
         );
         state.media = media;
-        test_app_with_state(pool.clone(), state).await
+        state
+    }
+
+    pub(super) async fn app(&self, pool: &sqlx::PgPool) -> Router {
+        test_app_with_state(pool.clone(), self.app_state(pool)).await
     }
 }
 
@@ -585,10 +613,7 @@ async fn cabinet_pending_uploads_cannot_be_read_or_linked_and_cleanup_never_dele
     config.s3_bucket = "cabinet-fixture".into();
     config.s3_force_path_style = true;
     let media = crate::core::s3::MediaStore::new(&config).unwrap();
-    media
-        .write_artifact(pending.location(), bytes)
-        .await
-        .unwrap();
+    media.write_artifact(&pool, &pending, bytes).await.unwrap();
     cabinet::uploads::publish(&pool, &scope, &pending)
         .await
         .unwrap();

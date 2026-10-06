@@ -20,6 +20,7 @@ use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+pub mod cleanup;
 mod scoped_access;
 pub use scoped_access::{
     authorize_for_reader, content_location_for_reader, json_content_for_reader,
@@ -1123,6 +1124,7 @@ pub async fn list_expired_artifact_gc_candidates(
             AND expires_at IS NOT NULL
             AND expires_at <= $2
             AND lifecycle IN ('finalized', 'expired')
+            AND content_removed_at IS NULL
             AND NOT EXISTS (SELECT 1 FROM artifact_links l WHERE l.artifact_id = artifacts.id AND l.target_kind IN ('cabinet_item','cabinet_snapshot'))
          ORDER BY expires_at ASC, created_at ASC
          LIMIT $3",

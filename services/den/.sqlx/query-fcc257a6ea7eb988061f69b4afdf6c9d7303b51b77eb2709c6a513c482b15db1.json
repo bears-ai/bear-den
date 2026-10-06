@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE artifacts SET expires_at=$2,updated_at=$3 WHERE artifact_ref=$1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fcc257a6ea7eb988061f69b4afdf6c9d7303b51b77eb2709c6a513c482b15db1"
+}

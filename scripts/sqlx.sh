@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="/workspace"
-DATABASE_URL="postgres://bears:bears@bears-postgres:5432/den?sslmode=disable"
+DATABASE_URL="${SQLX_DATABASE_URL:-postgres://bears:bears@bears-postgres:5432/den?sslmode=disable}"
 DEN="${ROOT}/services/den"
 
 # Deletions tolerated by `prepare-all` before it stops and asks for review.
@@ -16,6 +16,8 @@ Usage: ./scripts/sqlx.sh <sqlx-command> [arguments...]
 
 Start bundled Postgres if needed, then run `cargo sqlx` from the Den workspace
 with a database URL reachable from this workspace container.
+Set SQLX_DATABASE_URL for an isolated validation database; the default is
+bundled Den Postgres. prepare-all uses the same override for every pass.
 
 Examples:
   ./scripts/sqlx.sh migrate run

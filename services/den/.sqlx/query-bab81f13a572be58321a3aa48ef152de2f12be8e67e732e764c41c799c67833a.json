@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE artifacts a SET content_removed_at=COALESCE(content_removed_at,$3),updated_at=$3\n        WHERE a.id=$1 AND a.artifact_ref=$2 AND a.kind='cabinet_file'\n          AND a.storage_kind='garage_artifacts' AND a.lifecycle IN ('expired','deleted')\n          AND NOT EXISTS (SELECT 1 FROM artifact_links l WHERE l.artifact_id=a.id\n              AND l.target_kind IN ('cabinet_item','cabinet_snapshot'))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bab81f13a572be58321a3aa48ef152de2f12be8e67e732e764c41c799c67833a"
+}

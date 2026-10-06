@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT expires_at AS \"deadline!\" FROM artifacts\n        WHERE artifact_ref=$1 AND bear_id=$2 AND created_by_user_id=$3\n          AND lifecycle='pending' AND expires_at>$4 AND content_removed_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "deadline!",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid",
+        "Int4",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "99b91fa9cb227ebef8db828b5ed72b7124c4e750970342fc6700bb01fcf0eadc"
+}

@@ -55,9 +55,11 @@ impl MediaStore {
 
     pub(crate) async fn write_artifact(
         &self,
-        location: &ArtifactContentLocation,
+        pool: &sqlx::PgPool,
+        pending: &den_service::cabinet::uploads::PendingUpload,
         bytes: &[u8],
     ) -> Result<(), CustomError> {
+        let location = pending.location();
         if bytes.len() > MAX_FILE_BYTES {
             return Err(CustomError::ValidationError(
                 "file exceeds the 16 MiB limit".into(),
@@ -68,9 +70,23 @@ impl MediaStore {
             .content_type
             .as_deref()
             .unwrap_or("application/octet-stream");
-        let signed = self.presign_upload(&location.storage_key, content_type);
+        let deadline = den_service::cabinet::uploads::authorize_write(pool, pending)
+            .await
+            .map_err(|error| CustomError::from(den_core::DenError::from(error)))?;
+        let seconds = (deadline - time::OffsetDateTime::now_utc()).whole_seconds();
+        if seconds <= 0 {
+            return Err(CustomError::ValidationError("upload lease expired".into()));
+        }
+        let expiry =
+            std::time::Duration::from_secs(u64::try_from(seconds).expect("positive lease"))
+                .min(super::UPLOAD_EXPIRY);
+        let mut action = self
+            .bucket
+            .put_object(Some(&self.credentials), &location.storage_key);
+        action.headers_mut().insert("content-type", content_type);
+        let signed = action.sign(expiry);
         let response = client()?
-            .put(signed.upload_url)
+            .put(signed)
             .header(reqwest::header::CONTENT_TYPE, content_type)
             .body(bytes.to_vec())
             .send()
@@ -89,16 +105,27 @@ impl MediaStore {
         &self,
         location: &ArtifactContentLocation,
     ) -> Result<(), CustomError> {
+        self.remove_artifact_key(&location.storage_key).await
+    }
+
+    pub(crate) async fn remove_retired_artifact(
+        &self,
+        ticket: &den_service::artifacts::cleanup::CleanupTicket,
+    ) -> Result<(), CustomError> {
+        self.remove_artifact_key(ticket.storage_key()).await
+    }
+
+    async fn remove_artifact_key(&self, key: &str) -> Result<(), CustomError> {
         let signed = self
             .bucket
-            .delete_object(Some(&self.credentials), &location.storage_key)
+            .delete_object(Some(&self.credentials), key)
             .sign(std::time::Duration::from_secs(60));
         let response = client()?
             .delete(signed)
             .send()
             .await
             .map_err(|_| CustomError::System("unfinished upload cleanup unavailable".into()))?;
-        if !response.status().is_success() && response.status() != reqwest::StatusCode::NOT_FOUND {
+        if !response.status().is_success() {
             return Err(CustomError::System(
                 "unfinished upload cleanup refused".into(),
             ));

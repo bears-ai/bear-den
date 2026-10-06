@@ -133,6 +133,8 @@ All `/admin/*` routes use `permission_required!(…, "admin")`.
 Shared-knowledge wiki over the `den_service::cabinet` facade (hierarchy/policy/review plus artifact attachments and bounded human uploads; bounded attachment inspection/previews; recall remains pending; contract in `docs/architecture/cabinet-contract.md`).
 
 - `GET /cabinet` — list/search items (`q`, `lifecycle=archived`)
+- `GET /cabinet/uploads` — latest 64 owner-only historical upload records under current Bear membership; readable source-page links only, retired/retained/recovery states and no-store headers; does not grant retired content access
+- `POST /cabinet/uploads/{artifact_ref}/cleanup` — owner-only manual retry after lease/grace expiry, with fresh membership/retention checks; canonical-key DELETE then durable acknowledgement; cannot force cleanup of live/retained records
 - `GET /cabinet/new` / `POST /cabinet/new` — create an item (first published revision)
 - `GET /cabinet/{cabinet_ref}` — rendered item (`?version=` for an older immutable revision)
 - `GET /cabinet/{cabinet_ref}/edit` / `POST /cabinet/{cabinet_ref}/edit` — publish a new revision; a stale base re-renders the form with the conflict and the editor's draft

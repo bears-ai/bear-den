@@ -20,6 +20,14 @@ Production deploys now run Den schema changes in a dedicated one-off migration j
 
 Reversible does **not** mean operators should blindly run all downs in production. It means each migration must have an intentional rollback story that can be rehearsed and reasoned about.
 
+#### Cabinet upload cleanup acknowledgement
+
+`20261006102750_add_artifact_content_removal_tracking` is an additive migration: it adds nullable `artifacts.content_removed_at` (existing/new rows default to NULL), restricts non-NULL acknowledgements to `deleted`/`expired` lifecycle states, and adds a partial queue index for registered Cabinet file uploads. It does not expire files, delete payloads or rewrite existing artifact data during migration.
+
+Validation rehearses up → down → up on a populated isolated database, checks the valid partial index and NULL default, and confirms PostgreSQL rejects acknowledgement of pending/finalized content with the named check constraint. Recovery tests cover terminal acknowledgements, retention and retry.
+
+Rollback drops the index, check and new acknowledgement column, so it loses removal acknowledgements but preserves the pre-existing artifact fields/audit rows. Reapplying starts those acknowledgements at NULL; already-retired keys can be deleted again idempotently, but removed content is not restored. Stop the new cleanup worker/use the matching older binary before dropping the column. Do not restart an older binary after applying this migration while its embedded migrator is behind the database.
+
 #### Existing client-session ID collisions
 
 `20260928101801_guard_client_session_id_ownership` adds a database trigger that serializes claims for the same opaque client-session ID and rejects any new cross-user or cross-Bear reuse. It deliberately does **not** delete, rename, or automatically deduplicate older bindings: event and Work records still refer to those IDs as text, and their ownership cannot be reconstructed by renaming only `client_sessions`. The down migration removes the guard without modifying historical data. BearWire preflight continues to fail closed on ambiguous IDs. Review a historical collision with its event/run provenance before a separate, explicit repair; never promote a NULL-owner conversation from a client-session match alone.

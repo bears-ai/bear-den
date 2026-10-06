@@ -183,7 +183,7 @@ async fn upload(
     .map_err(cabinet_error)?;
     let result = async {
         media
-            .write_artifact(pending.location(), &form.file.bytes)
+            .write_artifact(state.sqlx_pool(), &pending, &form.file.bytes)
             .await?;
         cabinet::uploads::publish(state.sqlx_pool(), &scope, &pending)
             .await

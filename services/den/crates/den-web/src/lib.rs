@@ -283,6 +283,7 @@ pub async fn server(
     state: AppState,
     session_store: PostgresStore,
 ) -> Result<Router, Box<dyn std::error::Error>> {
+    crate::cabinet::cleanup::spawn(state.clone());
     let mut session_layer = SessionManagerLayer::new(session_store)
         .with_same_site(SameSite::Lax)
         .with_expiry(Expiry::OnInactivity(Duration::days(1)));
@@ -349,7 +350,7 @@ pub async fn server(
                 .merge(bear::management::router())
                 .merge(bear::memory::router())
                 .merge(bear::manage::router())
-                                .merge(bear::skills::router())
+                .merge(bear::skills::router())
                 .merge(onboarding::router())
                 .merge(management_hub::router())
                 .merge(connections::router())
