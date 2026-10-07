@@ -99,7 +99,7 @@ body.bear_chat .den-wrap {
     display: flex;
     flex-direction: column;
     min-height: 0;
-    max-width: min(var(--chat-shell-max-width), var(--medium-width));
+    max-width: none;
     margin: 0 auto;
     padding: calc(var(--spacing-unit) * 2);
     width: 100%;
@@ -239,7 +239,7 @@ body.bear_chat .den-conv-button-container:hover {
     min-height: calc(100vh - 6rem);
     display: flex;
     flex-direction: column;
-    max-width: min(var(--chat-shell-max-width), var(--medium-width));
+    max-width: none;
     width: 100%;
     margin: 0 auto;
     padding: calc(var(--spacing-unit) * 2);
@@ -1036,19 +1036,7 @@ body.page-bears-health .bears-health-row-fail td:first-of-type {
     border-left: solid calc(var(--thin-line-unit) * 3) var(--text-color);
 }
 
-/* Bear management shell (/bear/{slug}/… management pages).
-   Two-column on wide viewports, stacked on narrow. No JS required. */
-.bear-manage {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: calc(var(--spacing-unit) * 2);
-    align-items: start;
-}
-@media (min-width: 52rem) {
-    .bear-manage {
-        grid-template-columns: 13rem minmax(0, 1fr);
-    }
-}
+/* Shared management navigation; layout lives in management.css. */
 .bear-manage-nav ul {
     list-style: none;
     margin: 0 0 var(--spacing-unit);
@@ -1081,7 +1069,8 @@ body.page-bears-health .bears-health-row-fail td:first-of-type {
     cursor: pointer;
     color: var(--meta-color);
 }
-.bear-manage-main > .box:first-child {
+.bear-manage-main > .box:first-child,
+.bear-manage-main > main > .box:first-child {
     margin-top: 0;
 }
 

@@ -219,14 +219,14 @@ section.two-columns {
     justify-content: center;
     align-items: stretch;
     flex-wrap: wrap;
-    column-gap: var(--spacing-unit);
+    column-gap: var(--panel-gap);
     padding: 0;
 
     >* {
         display: flex;
         flex-direction: column;
-        width: calc(50% - (var(--spacing-unit)/2)); /* account for gap */
-        min-width: calc(var(--narrow-width)/2);
+        flex: 1 1 calc(var(--narrow-width) / 2);
+        min-width: 0;
         /* margin-bottom: var(--spacing-unit); */
         margin: 0;
         padding: 0;

@@ -1,10 +1,24 @@
-/* Ownership-led navigation and state/action-first management surfaces. */
+/* One persistent left rail for Bear and Den management, including narrow screens. */
+.bear-manage {
+    display: grid;
+    grid-template-columns: clamp(7rem, 26vw, 13rem) minmax(0, 1fr);
+    gap: var(--panel-gap);
+    align-items: start;
+}
 .bear-manage-main {
     min-width: 0;
 }
 .bear-manage-nav {
+    position: sticky;
+    top: var(--spacing-unit);
+    align-self: start;
+    max-height: calc(100vh - var(--spacing-unit) * 2);
+    max-height: calc(100dvh - var(--spacing-unit) * 2);
+    overflow-y: auto;
+    overflow-wrap: anywhere;
+    scrollbar-gutter: stable;
     border-inline-end: var(--thin-line-unit) solid var(--border-color);
-    padding-inline-end: calc(var(--spacing-unit) * 2);
+    padding-inline-end: var(--spacing-unit);
 }
 .bear-manage-nav a {
     display: inline-block;
@@ -45,8 +59,9 @@
     border-bottom: var(--thin-line-unit) solid var(--border-color);
 }
 .den-hub {
-    max-width: var(--medium-width);
-    margin-inline: auto;
+    width: 100%;
+    max-width: none;
+    margin-inline: 0;
 }
 .den-management-form-row {
     display: flex;
@@ -64,27 +79,13 @@ body.bear_chat .bear-manage {
     flex: 1;
     min-height: 0;
 }
-body.bear_chat .bear-manage-main {
+body.bear_chat .bear-manage-main,
+body.bear_chat #bear-content {
     display: flex;
     flex-direction: column;
     min-height: 30rem;
 }
-@media (max-width: 51.99rem) {
-    .bear-manage-nav {
-        border-inline-end: none;
-        border-bottom: var(--thin-line-unit) solid var(--border-color);
-        padding-inline-end: 0;
-        padding-bottom: var(--spacing-unit);
-    }
-    .bear-manage-nav ul {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0 var(--spacing-unit);
-    }
-    .bear-manage-nav-group {
-        margin-top: var(--spacing-unit);
-    }
-}
+
 @media (max-width: 699px) {
     body > header {
         flex-wrap: wrap;

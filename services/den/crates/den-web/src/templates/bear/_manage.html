@@ -1,9 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ bear.name }} · {{ manage_title | default("Manage") }}{% endblock %}
 {% block breadcrumb %}<a href="/">Bears</a> / <a href="/bear/{{ bear.slug | urlencode }}/overview">{{ bear.name | e }}</a>{% endblock %}
+{% block sidebar %}{% include "bear/settings/_bear_nav.html" %}{% endblock %}
 {% block content %}
-<div class="bear-manage">
-    {% include "bear/settings/_bear_nav.html" %}
-    <main class="bear-manage-main" id="bear-content">{% block manage %}{% endblock %}</main>
-</div>
+<main id="bear-content">{% block manage %}{% endblock %}</main>
 {% endblock %}

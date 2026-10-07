@@ -36,6 +36,7 @@
     --box-border-width: var(--chunky-line-unit);
     --box-border-radius: calc(var(--spacing-unit) * 0.75);
     --shadow-offset: calc(var(--spacing-unit) * 1.25);
+    --panel-gap: calc(var(--shadow-offset) + var(--thin-line-unit) * 4);
     --shadow-border-radius: var(--box-border-radius);
     --shadow-pattern-size: 6px;
     --shadow-pattern-line-width: var(--thin-line-unit);
@@ -86,8 +87,7 @@
     --chat-input-pad-left: calc(var(--spacing-unit) * 1.5);
     --chat-input-pad-right: calc(var(--spacing-unit) * 4.8);
     --chat-scrollbar-size: calc(var(--thin-line-unit) * 6);
-    /* Standalone bear chat column width */
-    --chat-shell-max-width: 56rem;
+
     /* Deep Chat send / stop control alignment */
     --chat-submit-button-scale: 1.21;
     --chat-submit-nudge-y: calc(var(--thin-line-unit) * -3);

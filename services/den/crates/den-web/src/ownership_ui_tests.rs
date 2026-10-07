@@ -99,6 +99,92 @@ fn den_header_has_shared_destinations_only_when_signed_in() {
 }
 
 #[test]
+fn shared_pages_keep_one_den_sidebar_without_inventing_a_selected_bear() {
+    for (template, tag, active) in [
+        ("dashboard.html", "dashboard", "/"),
+        ("connections.html", "connections", "/connections"),
+        ("reviews.html", "reviews", "/reviews"),
+        ("cabinet/index.html", "cabinet-index", "/cabinet"),
+        ("cabinet/history.html", "cabinet-history", "/cabinet"),
+        ("work/surfaces.html", "work-surfaces", "/work/surfaces"),
+    ] {
+        let html = render(
+            template,
+            context! {
+                session => context! { username => "Casey", is_admin => false },
+                template_tag => tag,
+                bears => Vec::<Value>::new(),
+                items => Vec::<Value>::new(),
+            },
+        );
+        assert_eq!(
+            html.matches("class=\"bear-manage-nav\"").count(),
+            1,
+            "{template}"
+        );
+        assert!(html.contains("aria-label=\"Den management\""), "{template}");
+        assert!(
+            html.contains(&format!("href=\"{active}\" aria-current=\"page\"")),
+            "{template}"
+        );
+        assert!(
+            !html.contains("aria-label=\"Bear management\""),
+            "{template}"
+        );
+        assert!(!html.contains("href=\"/admin\""), "{template}");
+    }
+}
+
+#[test]
+fn bear_pages_override_the_den_sidebar_without_duplicating_navigation() {
+    for template in [
+        "bear/settings/overview.html",
+        "bear/manage/identity.html",
+        "design/chat.html",
+    ] {
+        let html = render(
+            template,
+            context! {
+                session => context! { username => "Casey", is_admin => false },
+
+                can_manage_bear => false,
+                overview_summary => context! { hats => Vec::<Value>::new(), jobs => Vec::<Value>::new() },
+            },
+        );
+        assert_eq!(
+            html.matches("class=\"bear-manage-nav\"").count(),
+            1,
+            "{template}"
+        );
+        assert!(
+            html.contains("aria-label=\"Bear management\""),
+            "{template}"
+        );
+        assert!(
+            !html.contains("aria-label=\"Den management\""),
+            "{template}"
+        );
+        assert!(
+            !html.contains("&lt;nav"),
+            "sidebar must remain HTML, not escaped text"
+        );
+    }
+}
+
+#[test]
+fn public_pages_do_not_render_an_authenticated_management_sidebar() {
+    let html = render("base.html", context! {});
+    assert!(!html.contains("class=\"bear-manage-nav\""));
+    assert!(!html.contains("class=\"bear-manage\""));
+    let admin = render(
+        "dashboard.html",
+        context! { session => context! { username => "Casey", is_admin => true } },
+    );
+    assert!(admin.contains("aria-label=\"Den management\""));
+    assert!(admin.contains("href=\"/admin\""));
+}
+
+#[test]
 fn overview_keeps_core_paths_and_omits_private_admin_summaries_for_members() {
     let html = render(
         "bear/settings/overview.html",

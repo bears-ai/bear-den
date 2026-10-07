@@ -110,6 +110,7 @@
                     });
                 </script>
             </header>
+            {% set management_sidebar %}{% block sidebar %}{% if session is defined and session.username is defined %}{% include "_den_nav.html" %}{% endif %}{% endblock %}{% endset %}
             <section id="content">
                 {% if self.title() %}
                 <header>
@@ -132,7 +133,17 @@
                 <p class="form-hint">
                     UI fixture profile active: <code>{{ ui_fixture_profile | e }}</code>
                 </p>
-                {% endif %} {% block content %}{% endblock %}
+                {% endif %}
+                {% if management_sidebar | trim %}
+                <div class="bear-manage">
+                    {{ management_sidebar }}
+                    <div class="bear-manage-main">
+                {% endif %}
+                {% block content %}{% endblock %}
+                {% if management_sidebar | trim %}
+                    </div>
+                </div>
+                {% endif %}
             </section>
         </body>
     </html>

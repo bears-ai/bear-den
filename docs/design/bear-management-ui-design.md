@@ -31,6 +31,8 @@ A person should be able to **see, understand, and change** what their Bear is, k
 
 The Bear has a single visible navigation list, softly grouped under **Yours** and **This Den**. Yours contains Purpose, Hats, Memory and Skills; This Den contains Tools, Connections, What it can use, Jobs, Cabinet, Activity and People. Overview, Chat and Backup & move remain outside those groups. The Den header gives direct access to Bears, the one shared Cabinet, reusable Connections and Reviews. Bear links to Cabinet and Connections open those **same** Den-wide web destinations, not copies. See the [navigation model](bear-management-model.md#navigation-and-destinations) for the exact map.
 
+The shared shell keeps a **persistent left navigation rail** on authenticated pages: Bear destinations while managing a Bear, Den destinations on Cabinet, Connections, Reviews and other shared screens. The rail stays left on narrow viewports, is sticky during page scrolling and scrolls independently when its links exceed viewport height. Content boxes fill the available column, with a small clear gap beyond their offset shadows. Shared screens do not invent or retain a hidden selected Bear.
+
 The labels themselves do most of the explaining. “Jobs” is work to direct; “Activity” is a record to inspect. “Memory” is what the Bear knows; “Cabinet” is shared pages that humans and authorized Bears edit together. “What it can use” shows concrete repositories, documents, designs and servers rather than asking people to learn “work surfaces” or “resources.” The grouping suggests what can travel with the Bear; a short what-moves preview provides precision when it matters.
 
 ## Design rules

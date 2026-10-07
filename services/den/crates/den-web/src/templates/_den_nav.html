@@ -1,0 +1,13 @@
+{% set page = template_tag | default("") %}
+<nav class="bear-manage-nav" aria-label="Den management">
+  <p class="bear-manage-nav-title"><strong>This Den</strong></p>
+  <ul>
+    <li><a href="/"{% if page == "dashboard" %} aria-current="page"{% endif %}>Bears</a></li>
+    <li><a href="/cabinet"{% if page in ["cabinet-index", "cabinet-item", "cabinet-new", "cabinet-edit", "cabinet-history", "cabinet-attachment", "cabinet-uploads"] %} aria-current="page"{% endif %}>Cabinet</a></li>
+    <li><a href="/connections"{% if page == "connections" %} aria-current="page"{% endif %}>Connections</a></li>
+    <li><a href="/reviews"{% if page == "reviews" %} aria-current="page"{% endif %}>Reviews</a></li>
+    <li><a href="/work/surfaces"{% if page in ["work-surfaces", "work-surface", "work-surface_new", "work-diff"] %} aria-current="page"{% endif %}>Repositories</a></li>
+    <li><a href="/settings"{% if page in ["settings-view", "settings-theme"] %} aria-current="page"{% endif %}>Settings</a></li>
+    {% if session.is_admin %}<li><a href="/admin">Admin</a></li>{% endif %}
+  </ul>
+</nav>
