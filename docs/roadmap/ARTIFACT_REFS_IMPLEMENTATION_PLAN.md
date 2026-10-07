@@ -205,6 +205,8 @@ Build the small surfaces first:
 
 ## Model experience affordances
 
+**Cabinet attachment reads (code only):** the existing `cabinet_read` descriptor now accepts a typed page/attachment target and bounded character range. Page reads expose safe current attachment summaries only for explicitly shared same-Bear finalized files; private creator files/foreign Bear files are omitted. Attachment reads independently check page/enablement/link/file access before/after I/O, verify full bounded bytes, then produce a UTF-8-safe slice with total/next offsets; native source authority is rechecked before delivery. JSON and declared UTF-8 text are supported, not PDF/image extraction. The existing signed byte reader implements an injectable `ArtifactByteReader` without new dependencies, schema, query metadata or a new provider tool. Descriptions and source-data handling instructions live in Markdown. General artifact readers/producers remain separate work, and this does not complete hat grant coverage. Cleanup tests now use fresh SQLx-managed migrated databases because global queue assertions cannot share aged fixtures; no production cleanup behavior was changed.
+
 Models should work with typed refs and summaries, not storage details.
 
 - [ ] Expose artifact metadata as a compact model-facing shape:
@@ -217,7 +219,7 @@ Models should work with typed refs and summaries, not storage details.
   - `lifecycle`
 - [ ] Add/read model-facing operations only as needed:
   - [ ] `get_artifact_metadata`
-  - [ ] `read_artifact_text` or equivalent ranged text read
+  - [x] Cabinet-linked equivalent ranged text read through existing `cabinet_read` (general artifact read remains separate)
   - [ ] `preview_artifact` for non-text/large content
   - [ ] `create_artifact` / reserve+finalize wrapper where appropriate
   - [ ] `attach_artifact`

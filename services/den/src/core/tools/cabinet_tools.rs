@@ -7,8 +7,8 @@
 
 use den_cabinet::{
     ActorScope, CabinetItemRef, CabinetSourceRef, CabinetVersionRef, CreateItemRequest,
-    HistoryRequest, ItemKind, Lifecycle, LinkSourceRequest, NewSourceLink, ReadRequest,
-    SearchFilters, SearchRequest, SourceKind, SourceRole, UnlinkSourceRequest, UpdateItemRequest,
+    HistoryRequest, ItemKind, Lifecycle, LinkSourceRequest, NewSourceLink, SearchFilters,
+    SearchRequest, SourceKind, SourceRole, UnlinkSourceRequest, UpdateItemRequest,
 };
 use den_core::ids::{BearId, ConversationId};
 use den_core::tools::constants::{
@@ -23,6 +23,8 @@ use den_http::errors::CustomError;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::PgPool;
+
+mod read;
 
 #[cfg(test)]
 #[path = "cabinet_tools/authority_tests.rs"]
@@ -95,6 +97,7 @@ pub(crate) async fn invoke_cabinet_tool(
     arguments: Value,
     context: &DenToolInvocationContext,
     authority: CabinetToolAuthority,
+    byte_reader: Option<&dyn den_service::artifacts::bytes::ArtifactByteReader>,
 ) -> Result<Value, CustomError> {
     let descriptor = builtin_den_tool_descriptor_for_provider_name(tool_name)
         .ok_or_else(|| CustomError::NotFound(format!("unknown Cabinet tool: {tool_name}")))?;
@@ -108,7 +111,7 @@ pub(crate) async fn invoke_cabinet_tool(
             .context_label;
     match tool_name {
         DEN_CABINET_SEARCH => cabinet_search(pool, context, role, arguments).await,
-        DEN_CABINET_READ => cabinet_read(pool, context, role, arguments).await,
+        DEN_CABINET_READ => read::invoke(pool, context, role, arguments, byte_reader).await,
         DEN_CABINET_CREATE => cabinet_create(pool, context, role, authority, arguments).await,
         DEN_CABINET_UPDATE => cabinet_update(pool, context, role, authority, arguments).await,
         DEN_CABINET_HISTORY => cabinet_history(pool, context, role, arguments).await,
@@ -150,40 +153,6 @@ async fn cabinet_search(
     .await
     .map_err(cabinet_error)?;
     Ok(json!({ "domain": "cabinet", "items": items }))
-}
-
-#[derive(Debug, Deserialize)]
-struct CabinetReadArguments {
-    cabinet_ref: String,
-    #[serde(default)]
-    version_ref: Option<String>,
-}
-
-async fn cabinet_read(
-    pool: &PgPool,
-    context: &DenToolInvocationContext,
-    role: RuntimeContextLabel,
-    arguments: Value,
-) -> Result<Value, CustomError> {
-    let args: CabinetReadArguments = parse_arguments(arguments)?;
-    let view = den_service::cabinet::read(
-        pool,
-        ReadRequest {
-            scope: actor_scope(context, role),
-            cabinet_ref: parse_item_ref(&args.cabinet_ref)?,
-            version_ref: args
-                .version_ref
-                .as_deref()
-                .map(CabinetVersionRef::parse)
-                .transpose()
-                .map_err(|error| CustomError::ValidationError(error.to_string()))?,
-        },
-    )
-    .await
-    .map_err(cabinet_error)?;
-    Ok(
-        json!({ "domain": "cabinet", "item": view.item, "version": view.version, "sources": view.sources }),
-    )
 }
 
 #[derive(Debug, Deserialize)]

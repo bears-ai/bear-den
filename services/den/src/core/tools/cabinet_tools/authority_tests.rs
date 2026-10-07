@@ -62,6 +62,7 @@ async fn work_origin_cannot_write_cabinet_with_a_claimed_pair_profile() {
             origin: TurnExecutionOrigin::AuthorizedWorkRun(ArmatureAvailability::Absent),
             governance: Governance::Interactive,
         },
+        None,
     )
     .await;
     assert!(matches!(result, Err(CustomError::Authorization(_))));

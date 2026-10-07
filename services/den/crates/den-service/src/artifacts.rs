@@ -20,6 +20,7 @@ use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+pub mod bytes;
 pub mod cleanup;
 mod scoped_access;
 pub use scoped_access::{

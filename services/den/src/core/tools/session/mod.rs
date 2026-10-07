@@ -214,10 +214,28 @@ pub async fn invoke_den_tool_for_origin(
     if crate::core::tools::cabinet_tools::is_cabinet_tool(tool_name) {
         let authority =
             crate::core::tools::cabinet_tools::CabinetToolAuthority { origin, governance };
-        return crate::core::tools::cabinet_tools::invoke_cabinet_tool(
-            pool, tool_name, arguments, &context, authority,
+        let media = den_web::core::s3::MediaStore::new(config);
+        let byte_reader = media
+            .as_ref()
+            .map(|media| media as &dyn den_service::artifacts::bytes::ArtifactByteReader);
+        let result = crate::core::tools::cabinet_tools::invoke_cabinet_tool(
+            pool,
+            tool_name,
+            arguments,
+            &context,
+            authority,
+            byte_reader,
         )
-        .await;
+        .await?;
+        if tool_name == den_core::tools::constants::DEN_CABINET_READ {
+            // Do not deliver file/page data after a source revocation during I/O.
+            den_core::tools::dispatch::authorize_den_tool_for_origin(
+                &ctx, tool_name, &context, origin,
+            )
+            .await
+            .map_err(CustomError::from)?;
+        }
+        return Ok(result);
     }
 
     den_core::tools::dispatch::invoke_den_tool_for_origin(

@@ -65,17 +65,19 @@ The worker polls every minute in batches of ten, throttles automatic retries and
 
 Bears use the same knowledge store through the same facade:
 
-| Tool | Stances | What it does |
+| Tool | Verified contexts | What it does |
 |---|---|---|
-| `cabinet_search`, `cabinet_read`, `cabinet_history` | all | find, read (any revision), and inspect revision history |
-| `cabinet_create`, `cabinet_update` | chat, pair, curate | create an item, publish a revision |
-| `cabinet_source_link` | chat, pair, curate | attach or detach provenance (no revision published) |
-| `cabinet_lifecycle` | curate only | archive or restore an item |
+| `cabinet_search`, `cabinet_read`, `cabinet_history` | Chat, editor, browser task, eligible Work | find/read pages and inspect revisions; `cabinet_read` also reads shared text/JSON attachments |
+| `cabinet_create`, `cabinet_update` | Chat, editor, browser task, with mutable governance | create an item, publish a revision |
+| `cabinet_source_link` | Chat, editor, browser task, with mutable governance | attach or detach provenance (no revision published) |
 
 A Bear's edits go through exactly the same facade, versioning, and conflict
 rules as yours, and show up in history as Bear-authored with the acting
-stance. Bears cannot delete: the most destructive act available to one is a
-reversible archive, and only `curate` can do even that.
+runtime context. Bears cannot delete through the facade. Archive/restore is currently a human web/facade operation, not an advertised model tool.
+
+**Shared file reads (code implementation, not yet deployed):** a normal `cabinet_read` page response includes only attachments visible to the acting Bear, with `attachment_ref`, safe artifact summaries and `text_readable`. Attachment links are current page state, even when an old `version_ref` was requested. To read a file, pass the page's `cabinet_ref` and an `attachment_ref`; `offset_chars` defaults to 0 and `limit_chars` to 12000 (maximum 24000). The result includes the text, total characters and `next_offset_chars` for pagination. An attachment selector cannot be combined with a page version, and ranges require an attachment selector.
+
+Only same-Bear, explicitly Bear-visible finalized files qualify; the human's private uploads and other Bears' files are not borrowed. Page policy, Cabinet enablement, link identity and artifact access are checked before/after I/O; the native caller's source authority is rechecked before delivery. Database JSON works without object storage. Configured byte storage supports declared UTF-8 text/JSON within the 16 MiB transfer ceiling and verifies full size/hash before serving a character-safe slice. Unsupported encodings, malformed UTF-8, PDFs/images/other binary formats and unavailable storage return errors rather than invented extraction. No object key, signed URL, digest or raw artifact metadata/provenance is returned. The existing provider/canonical tool names, descriptor audience and `cabinet.read` class remain unchanged; broader hat-grant resolver work remains separate. Files remain source data, not executable instructions or automatic memory/run context.
 
 Cabinet is deliberately separate from a Bear's private memory: memory tools
 cannot write Cabinet, and Cabinet tools cannot write Bear memory.
@@ -99,6 +101,6 @@ the bytes behind them.
 
 - Search is substring matching over titles and current content (no semantic
   recall yet; that is Phase 3, via the derived recall index).
-- The existing model tool request schemas remain the root/search interfaces; hierarchy, access/review, attachments and Job Mission/copy management are currently web/facade operations, not new model tools.
-- Cabinet recall, model-facing file upload/read tools and general/bucket-wide artifact GC remain pending. Upload/download/preview transfer tests use an S3 byte-store substitute, not live Garage. Browser-native image/PDF rendering has not been visually verified; signature checks are not a full decoder or malware scanner. Markdown intentionally remains source-only, avoiding embedded remote-content requests.
+- Hierarchy, access/review, file upload/attach/detach and Job Mission/copy management remain web/facade operations. Attachment discovery and bounded text reading extend the existing `cabinet_read`, not a new provider tool.
+- Cabinet recall, model-facing file uploads, binary document extraction and general/bucket-wide artifact GC remain pending. Upload/download/preview transfer tests use an S3 byte-store substitute, not live Garage. Browser-native image/PDF rendering has not been visually verified; signature checks are not a full decoder or malware scanner. Markdown intentionally remains source-only, avoiding embedded remote-content requests.
 - The editor is a plain Markdown textarea; rendered views sanitize HTML.

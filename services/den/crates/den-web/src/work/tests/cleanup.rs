@@ -1,9 +1,8 @@
 //! Recovery safety, durable retry and owner-only upload-history route checks.
+//! Global-queue assertions need fresh databases, not a reused fixture corpus.
 
 use super::uploads::ByteStore;
-use super::{
-    get_page, login_cookie, post_form, seed_member, test_app_with_state, test_pool, TEST_DB_LOCK,
-};
+use super::{get_page, login_cookie, post_form, seed_member, test_app_with_state};
 use axum::http::StatusCode;
 use den_cabinet::{ActorScope, AttachmentRole, CabinetItemRef, CabinetPolicy};
 use den_core::ids::{BearId, UserId};
@@ -79,12 +78,8 @@ async fn removed(pool: &sqlx::PgPool, pending: &PendingUpload) -> bool {
     .is_some()
 }
 
-#[tokio::test]
-async fn cleanup_migration_defaults_and_terminal_constraint_are_valid() {
-    let _guard = TEST_DB_LOCK.lock().await;
-    let Some(pool) = test_pool().await else {
-        return;
-    };
+#[sqlx::test(migrations = "../../migrations")]
+async fn cleanup_migration_defaults_and_terminal_constraint_are_valid(pool: sqlx::PgPool) {
     let item = fixture(&pool).await;
     assert!(
         !removed(&pool, &item.pending).await,
@@ -131,12 +126,8 @@ async fn cleanup_migration_defaults_and_terminal_constraint_are_valid() {
     }
 }
 
-#[tokio::test]
-async fn cleanup_recovers_interrupted_uploads_only_after_the_write_grace() {
-    let _guard = TEST_DB_LOCK.lock().await;
-    let Some(pool) = test_pool().await else {
-        return;
-    };
+#[sqlx::test(migrations = "../../migrations")]
+async fn cleanup_recovers_interrupted_uploads_only_after_the_write_grace(pool: sqlx::PgPool) {
     let item = fixture(&pool).await;
     let store = ByteStore::start().await;
     let state = store.app_state(&pool);
@@ -201,12 +192,10 @@ async fn cleanup_recovers_interrupted_uploads_only_after_the_write_grace() {
     .is_err());
 }
 
-#[tokio::test]
-async fn cleanup_protects_page_and_snapshot_retention_and_published_replay_is_refused() {
-    let _guard = TEST_DB_LOCK.lock().await;
-    let Some(pool) = test_pool().await else {
-        return;
-    };
+#[sqlx::test(migrations = "../../migrations")]
+async fn cleanup_protects_page_and_snapshot_retention_and_published_replay_is_refused(
+    pool: sqlx::PgPool,
+) {
     let item = fixture(&pool).await;
     let store = ByteStore::start().await;
     let state = store.app_state(&pool);
@@ -273,12 +262,8 @@ async fn cleanup_protects_page_and_snapshot_retention_and_published_replay_is_re
     assert!(removed(&pool, &item.pending).await);
 }
 
-#[tokio::test]
-async fn cleanup_retries_failed_deletes_and_crash_after_delete_before_ack() {
-    let _guard = TEST_DB_LOCK.lock().await;
-    let Some(pool) = test_pool().await else {
-        return;
-    };
+#[sqlx::test(migrations = "../../migrations")]
+async fn cleanup_retries_failed_deletes_and_crash_after_delete_before_ack(pool: sqlx::PgPool) {
     let item = fixture(&pool).await;
     let store = ByteStore::start().await;
     let state = store.app_state(&pool);
@@ -351,12 +336,8 @@ async fn cleanup_retries_failed_deletes_and_crash_after_delete_before_ack() {
     registry::acknowledge(&pool, &ticket, now).await.unwrap();
 }
 
-#[tokio::test]
-async fn cleanup_history_and_manual_retry_are_owner_and_membership_scoped() {
-    let _guard = TEST_DB_LOCK.lock().await;
-    let Some(pool) = test_pool().await else {
-        return;
-    };
+#[sqlx::test(migrations = "../../migrations")]
+async fn cleanup_history_and_manual_retry_are_owner_and_membership_scoped(pool: sqlx::PgPool) {
     let item = fixture(&pool).await;
     let (peer, _, _, _) = seed_member(&pool).await;
     bears_db::grant_membership(&pool, peer, item.bear, Some("admin"))
@@ -437,12 +418,8 @@ async fn cleanup_history_and_manual_retry_are_owner_and_membership_scoped() {
     assert!(!html.contains("PRIVATE RECOVERY FILE"));
 }
 
-#[tokio::test]
-async fn cleanup_never_trusts_noncanonical_keys_or_starts_without_storage() {
-    let _guard = TEST_DB_LOCK.lock().await;
-    let Some(pool) = test_pool().await else {
-        return;
-    };
+#[sqlx::test(migrations = "../../migrations")]
+async fn cleanup_never_trusts_noncanonical_keys_or_starts_without_storage(pool: sqlx::PgPool) {
     let item = fixture(&pool).await;
     let now = OffsetDateTime::now_utc();
     deadline(
@@ -469,8 +446,8 @@ async fn cleanup_never_trusts_noncanonical_keys_or_starts_without_storage() {
     .unwrap();
     assert!(registry::claim_due(&pool, now, 10).await.is_err());
     assert!(!removed(&pool, &item.pending).await);
-    // No bytes were written for this fixture; repair its pointer and retire it
-    // so repeated suite runs do not leave a deliberately malformed queue row.
+    // No bytes were written for this fixture; verify a repaired pointer can
+    // be retried after the noncanonical key was safely refused.
     sqlx::query!(
         "UPDATE artifacts SET storage_key=$2 WHERE artifact_ref=$1",
         item.pending.location().artifact_ref,

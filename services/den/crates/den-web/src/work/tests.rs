@@ -3,6 +3,7 @@
 //! route, same pattern as `bear::settings::tests`.
 
 use super::*;
+mod attachment_read;
 mod cleanup;
 mod knowledge;
 mod previews;

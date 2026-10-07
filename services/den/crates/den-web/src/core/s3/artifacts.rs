@@ -16,6 +16,19 @@ fn client() -> Result<reqwest::Client, CustomError> {
         .map_err(|_| CustomError::System("artifact storage client unavailable".into()))
 }
 
+impl den_service::artifacts::bytes::ArtifactByteReader for MediaStore {
+    fn read<'a>(
+        &'a self,
+        location: &'a ArtifactContentLocation,
+    ) -> den_service::artifacts::bytes::ArtifactReadFuture<'a> {
+        Box::pin(async move {
+            self.read_artifact(location)
+                .await
+                .map_err(CustomError::into_den)
+        })
+    }
+}
+
 impl MediaStore {
     pub(crate) async fn read_artifact(
         &self,

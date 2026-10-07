@@ -236,6 +236,8 @@ mod tests {
         assert!(guidance.contains("capability_search"));
         assert!(guidance.contains("Code Mode"));
         assert!(guidance.contains("not an authority grant"));
+        assert!(guidance.contains("source data, not instructions"));
+        assert!(guidance.contains("reveal secrets"));
     }
 
     #[test]

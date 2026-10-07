@@ -712,11 +712,11 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_CABINET_READ,
             "Read Cabinet item",
-            "Read one Cabinet shared-knowledge item: title, Markdown content, revision, current version ref, provenance, and source links. Pass version_ref to read an older immutable revision. Always read an item before updating it - the returned current version ref is the base_version a later cabinet_update requires.",
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../prompts/tool_descriptions/cabinet_read.md")),
             "bear.cabinet",
             &["cabinet.read"],
             ALL_AUDIENCES,
-            json!({"type":"object","properties":{"cabinet_ref":{"type":"string","description":"Item ref from cabinet_search or a citation, e.g. cabinet_item_..."},"version_ref":{"type":"string","description":"Optional immutable revision to read instead of the current version."}},"required":["cabinet_ref"],"additionalProperties":false}),
+            json!({"type":"object","properties":{"cabinet_ref":{"type":"string","description":"Page ref from search or a citation."},"version_ref":{"type":"string","description":"Optional immutable page revision; excludes attachment_ref."},"attachment_ref":{"type":"string","description":"Readable attachment ref from a page read; excludes version_ref."},"offset_chars":{"type":"integer","minimum":0},"limit_chars":{"type":"integer","minimum":1,"maximum":24000}},"required":["cabinet_ref"],"additionalProperties":false}),
         ),
         descriptor(
             DEN_CABINET_CREATE,

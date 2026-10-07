@@ -16,6 +16,7 @@ use den_cabinet::{
     SearchRequest, SourceKind, SourceLink, SourceRole, UnlinkSourceRequest, UpdateItemRequest,
     VersionSummary,
 };
+pub mod attachment_read;
 pub mod attachments;
 pub mod pages;
 pub mod snapshots;

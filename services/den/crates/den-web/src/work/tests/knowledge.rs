@@ -33,7 +33,7 @@ pub(super) async fn page(
     .item
     .cabinet_ref
 }
-async fn document(
+pub(super) async fn document(
     pool: &sqlx::PgPool,
     bear: Uuid,
     user: i32,
