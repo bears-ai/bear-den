@@ -117,6 +117,8 @@ pub struct ResourceUpdateRequest {
 pub struct RunStartRequest {
     #[serde(deserialize_with = "deserialize_required_string")]
     pub session_id: String,
+    #[serde(default)]
+    pub expected_work_source: Option<crate::session::ExpectedWorkSource>,
     #[serde(deserialize_with = "deserialize_required_string")]
     pub prompt: String,
     /// Intentionally raw: prompt context is a typed outer field carrying extensible structured payloads.
@@ -175,6 +177,8 @@ pub struct RunCancelRequest {
 pub struct SessionOpenRequest {
     #[serde(deserialize_with = "deserialize_required_string")]
     pub session_id: String,
+    #[serde(default)]
+    pub expected_work_source: Option<crate::session::ExpectedWorkSource>,
     #[serde(default, deserialize_with = "deserialize_optional_string")]
     pub client: Option<String>,
     #[serde(default, deserialize_with = "deserialize_optional_string")]

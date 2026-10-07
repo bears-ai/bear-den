@@ -10,6 +10,7 @@ use uuid::Uuid;
 use bearwire_protocol::{
     lifecycle::{FocusedExecutionTransitionReason, RunRecoveryHandoff},
     methods::{RunCancelRequest, RunRecoverRequest, RunStartRequest, RunStateRequest},
+    session::ExpectedWorkSource,
     wire::BearWireEvent,
 };
 use den_core::ids::{BearId, UserId};
@@ -50,14 +51,23 @@ use den_service::{
 
 use crate::auth::authenticated_bear;
 use crate::methods::{
-    conversation::{
-        authorize_existing_conversation, conversation_viewer, require_conversation_access,
-    },
+    conversation::{conversation_viewer, require_conversation_access},
     parse_params, DEFAULT_CLIENT,
 };
 
 #[path = "run_source_preflight.rs"]
-mod source_preflight;
+pub(super) mod source_preflight;
+
+// The session handler shares this read-only guard before making session.open writes.
+pub(super) async fn require_expected_work_source(
+    pool: &sqlx::PgPool,
+    bear: BearId,
+    user: UserId,
+    session_id: &str,
+    expected: ExpectedWorkSource,
+) -> Result<(), CustomError> {
+    source_preflight::require_expected_work_source(pool, bear, user, session_id, expected).await
+}
 
 // A focused Docket task must reach the native turn stream before `/focus` claims
 // that autonomous work has started. This is intentionally bounded so an unavailable
@@ -76,6 +86,8 @@ struct TechnicalBudgetRecoveryStartPayload {
     prompt_context: Option<Value>,
     client_context: Option<Value>,
     requested_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expected_work_source: Option<ExpectedWorkSource>,
 }
 
 /// Sanitized replayable request fields. Recovery runs these through the normal
@@ -88,6 +100,7 @@ fn technical_budget_recovery_start_payload(
     prompt_context: Option<&Value>,
     client_context: Option<&Value>,
     requested_mode: Option<&str>,
+    expected_work_source: Option<ExpectedWorkSource>,
 ) -> Value {
     json!(TechnicalBudgetRecoveryStartPayload {
         client: client.to_string(),
@@ -97,6 +110,7 @@ fn technical_budget_recovery_start_payload(
         prompt_context: prompt_context.cloned(),
         client_context: client_context.cloned(),
         requested_mode: requested_mode.map(str::to_string),
+        expected_work_source,
     })
 }
 
@@ -2066,8 +2080,15 @@ pub(crate) async fn run_recover_result(
     .ok_or_else(|| CustomError::NotFound("client session not found".to_string()))?;
     super::session::require_session_conversation_access(state, &session).await?;
     let viewer = conversation_viewer(state, bear.id, user_id).await?;
-    authorize_existing_conversation(&viewer, &state.sqlx_pool, bear.id, &payload.conversation_id)
-        .await?;
+    source_preflight::require_existing_session(
+        &state.sqlx_pool,
+        &viewer,
+        BearId::new(bear.id),
+        UserId::new(user_id),
+        &session,
+        Some(&payload.conversation_id),
+    )
+    .await?;
     let task_id = snapshot.selected_task_id.ok_or_else(|| {
         CustomError::ValidationError(
             "technical-budget recovery requires a selected session task".to_string(),
@@ -2086,6 +2107,16 @@ pub(crate) async fn run_recover_result(
         task_id,
     )
     .await?;
+    if let Some(expected) = payload.expected_work_source {
+        require_expected_work_source(
+            &state.sqlx_pool,
+            BearId::new(bear.id),
+            UserId::new(user_id),
+            &snapshot.session_id,
+            expected,
+        )
+        .await?;
+    }
     let recovery_lease_id = Uuid::new_v4();
     let leased = turn_runs::lease_technical_budget_recovery(
         &state.sqlx_pool,
@@ -2108,6 +2139,8 @@ pub(crate) async fn run_recover_result(
         requested_mode: payload.requested_mode,
         supersede_active_run: true,
         client_context: payload.client_context,
+        // Replay only the original expectation; recovery must not mint or infer a fence.
+        expected_work_source: payload.expected_work_source,
     };
     let launch = run_start_with_recovery_source(
         state,
@@ -2274,6 +2307,17 @@ async fn run_start_with_recovery_source(
         BearId::new(bear.id),
     )
     .await?;
+    let expected_work_source = request.expected_work_source;
+    if let Some(expected) = expected_work_source {
+        require_expected_work_source(
+            &state.sqlx_pool,
+            BearId::new(bear.id),
+            UserId::new(user_id),
+            &session_id,
+            expected,
+        )
+        .await?;
+    }
     let prompt = request.prompt;
     let prompt_context = request.prompt_context;
     let client = request.client.unwrap_or_else(|| DEFAULT_CLIENT.to_string());
@@ -2285,23 +2329,46 @@ async fn run_start_with_recovery_source(
         &session_id,
     )
     .await?;
-    let conversation_id = request
-        .conversation_id
-        .or_else(|| {
-            existing
-                .as_ref()
-                .map(|session| session.conversation_id.clone())
-        })
+    let viewer = conversation_viewer(state, bear.id, user_id).await?;
+    if let Some(session) = existing.as_ref() {
+        source_preflight::require_existing_session(
+            &state.sqlx_pool,
+            &viewer,
+            BearId::new(bear.id),
+            UserId::new(user_id),
+            session,
+            request.conversation_id.as_deref(),
+        )
+        .await?;
+    }
+    // A reconnect may name the resolved alias, but cannot replace the stored selection.
+    let conversation_id = existing
+        .as_ref()
+        .map(|session| session.conversation_id.clone())
+        .or(request.conversation_id)
         .unwrap_or_else(|| format!("new-acp-{client}-{}", Uuid::new_v4().simple()));
     let resolved_conversation_id = existing
         .as_ref()
         .and_then(|session| session.resolved_conversation_id.clone());
     let upstream_target =
         runtime_upstream_target(&conversation_id, resolved_conversation_id.as_deref());
-    let viewer = conversation_viewer(state, bear.id, user_id).await?;
-    // A client-supplied selection and an older resolved runtime target are both
-    // canonical conversation references; neither may point at another owner.
-    authorize_existing_conversation(&viewer, &state.sqlx_pool, bear.id, &conversation_id).await?;
+    // Turn rows do not persist an exact startup source/fence. A current checkout
+    // cannot prove what an already-active turn originally admitted.
+    if expected_work_source.is_some()
+        && !supersede_active_run
+        && turn_runs::active_run_for_session(&state.sqlx_pool, &session_id)
+            .await?
+            .is_some()
+    {
+        return Err(source_preflight::unproven_active_work_turn());
+    }
+    source_preflight::require_live_owned_transcript(
+        &state.sqlx_pool,
+        &viewer,
+        BearId::new(bear.id),
+        &conversation_id,
+    )
+    .await?;
     let cwd = request.cwd;
     let client_context = request.client_context;
     let workspace_roots = normalized_workspace_roots(client_context.as_ref(), cwd.as_deref())?;
@@ -2316,6 +2383,7 @@ async fn run_start_with_recovery_source(
         UserId::new(user_id),
         &session_id,
         &upstream_target,
+        expected_work_source,
     )
     .await?;
     let upstream_target = conversation
@@ -2350,6 +2418,43 @@ async fn run_start_with_recovery_source(
     };
     let resolved_model =
         preflight_pair_run_model(state, &bear, &session_id, &upstream_target).await?;
+    if let Some(expected) = expected_work_source {
+        require_expected_work_source(
+            &state.sqlx_pool,
+            BearId::new(bear.id),
+            UserId::new(user_id),
+            &session_id,
+            expected,
+        )
+        .await?;
+    }
+    source_preflight::require_live_owned_transcript(
+        &state.sqlx_pool,
+        &viewer,
+        BearId::new(bear.id),
+        &upstream_target,
+    )
+    .await?
+    .ok_or_else(|| CustomError::Authorization("admitted transcript disappeared".into()))?;
+    source_preflight::publication::publish_run_metadata(
+        &state.sqlx_pool,
+        client_sessions::UpsertClientSession {
+            user_id,
+            bear_id: bear.id,
+            bear_slug: bear.slug.clone(),
+            client_session_id: session_id.clone(),
+            runtime_session_id: existing
+                .as_ref()
+                .map(|session| session.runtime_session_id.clone())
+                .unwrap_or_else(|| format!("bearwire:{}:{}", bear.id, session_id)),
+            conversation_id: conversation_id.clone(),
+            resolved_conversation_id: resolved_conversation_id.clone(),
+            client: client.clone(),
+            cwd: cwd.clone(),
+            current_mode: None,
+        },
+    )
+    .await?;
     if resolved_model.source.is_default() {
         require_conversation_access(&viewer, &state.sqlx_pool, conversation.id).await?;
         let established =
@@ -2371,25 +2476,42 @@ async fn run_start_with_recovery_source(
         }
     }
     require_conversation_access(&viewer, &state.sqlx_pool, conversation.id).await?;
-    client_sessions::upsert_session(
+    if let Some(expected) = expected_work_source {
+        require_expected_work_source(
+            &state.sqlx_pool,
+            BearId::new(bear.id),
+            UserId::new(user_id),
+            &session_id,
+            expected,
+        )
+        .await?;
+    }
+    if let Some(session) = client_sessions::find_for_user_bear_session_id(
         &state.sqlx_pool,
-        client_sessions::UpsertClientSession {
-            user_id,
-            bear_id: bear.id,
-            bear_slug: bear.slug.clone(),
-            client_session_id: session_id.clone(),
-            runtime_session_id: existing
-                .as_ref()
-                .map(|session| session.runtime_session_id.clone())
-                .unwrap_or_else(|| format!("bearwire:{}:{}", bear.id, session_id)),
-            conversation_id: conversation_id.clone(),
-            resolved_conversation_id: resolved_conversation_id.clone(),
-            client: client.clone(),
-            cwd: cwd.clone(),
-            current_mode: None,
-        },
+        user_id,
+        bear.id,
+        &session_id,
     )
-    .await?;
+    .await?
+    {
+        source_preflight::require_existing_session(
+            &state.sqlx_pool,
+            &viewer,
+            BearId::new(bear.id),
+            UserId::new(user_id),
+            &session,
+            Some(&conversation_id),
+        )
+        .await?;
+    }
+    source_preflight::require_live_owned_transcript(
+        &state.sqlx_pool,
+        &viewer,
+        BearId::new(bear.id),
+        &upstream_target,
+    )
+    .await?
+    .ok_or_else(|| CustomError::Authorization("admitted transcript disappeared".into()))?;
     super::session::require_exclusive_client_session_id(
         &state.sqlx_pool,
         &validated_session_id,
@@ -2423,6 +2545,16 @@ async fn run_start_with_recovery_source(
     let session_id_string = session_id.to_string();
     // `run.start` only replaces an active turn when the caller explicitly
     // identifies this as a new user action, not a retry or reconnect.
+    if let Some(expected) = expected_work_source {
+        require_expected_work_source(
+            &state.sqlx_pool,
+            BearId::new(bear.id),
+            UserId::new(user_id),
+            session_id.as_str(),
+            expected,
+        )
+        .await?;
+    }
     let superseded = if supersede_active_run {
         settle_active_run_for_session(
             state,
@@ -2466,6 +2598,16 @@ async fn run_start_with_recovery_source(
         recovery_source_run_id,
         "BearWire creating or attaching Pair run"
     );
+    if let Some(expected) = expected_work_source {
+        require_expected_work_source(
+            &state.sqlx_pool,
+            BearId::new(bear.id),
+            UserId::new(user_id),
+            session_id.as_str(),
+            expected,
+        )
+        .await?;
+    }
     let run = if supersede_active_run {
         turn_runs::create_run_with_ids(&state.sqlx_pool, &run_id, &session_id, bear.id, user_id)
             .await?
@@ -2481,6 +2623,10 @@ async fn run_start_with_recovery_source(
         {
             turn_runs::CreateOrAttachRun::Created(run) => run,
             turn_runs::CreateOrAttachRun::Attached(active_run) => {
+                // Also deny an active turn that raced the initial read-side check.
+                if expected_work_source.is_some() {
+                    return Err(source_preflight::unproven_active_work_turn());
+                }
                 return Ok(json!({
                     "ok": true,
                     "accepted": true,
@@ -2648,66 +2794,102 @@ async fn run_start_with_recovery_source(
         )
         .await;
         let native_start = Instant::now();
-        let checkpoint_audit_context =
-            match den_docket::work_runs::get_live_work_run_by_session(&pool, &session_for_task)
-                .await
-            {
-                Ok(work_run) => work_run.map(|work_run| den_protocol::CheckpointAuditContext {
+        let stream_result = async {
+            let viewer = den_service::conversation::viewer::ConversationViewer::resolve(
+                &pool,
+                BearId::new(bear_id),
+                UserId::new(user_id),
+            )
+            .await?
+            .ok_or_else(|| {
+                CustomError::Authorization("transcript owner lost Bear access".into())
+            })?;
+            source_preflight::require_live_owned_transcript(
+                &pool,
+                &viewer,
+                BearId::new(bear_id),
+                &upstream_target_for_task,
+            )
+            .await?
+            .ok_or_else(|| CustomError::Authorization("admitted transcript disappeared".into()))?;
+            let checkpoint_audit_context = if let Some(expected) = expected_work_source {
+                let work_run = source_preflight::load_expected_work_source(
+                    &pool,
+                    BearId::new(bear_id),
+                    UserId::new(user_id),
+                    &session_for_task,
+                    expected,
+                )
+                .await?;
+                Some(den_protocol::CheckpointAuditContext {
                     work_run_id: work_run.id,
                     docket_job_id: work_run.job_id,
-                }),
-                Err(err) => {
-                    tracing::warn!(
-                        error = %err,
-                        session_id = %session_for_task,
-                        "failed to resolve checkpoint audit context; continuing without it"
-                    );
-                    None
+                })
+            } else {
+                match den_docket::work_runs::get_live_work_run_by_session(&pool, &session_for_task)
+                    .await
+                {
+                    Ok(work_run) => work_run.map(|work_run| den_protocol::CheckpointAuditContext {
+                        work_run_id: work_run.id,
+                        docket_job_id: work_run.job_id,
+                    }),
+                    Err(err) => {
+                        tracing::warn!(
+                            error = %err,
+                            session_id = %session_for_task,
+                            "failed to resolve checkpoint audit context; continuing without it"
+                        );
+                        None
+                    }
                 }
             };
-        let stream_result = start_native_turn_event_stream(
-            TurnStartRequest {
-                sqlx_pool: &pool,
-                config: config.as_ref(),
-                memory_stores: &memory_stores,
-                request_id,
-                run_id: Some(&run_id_for_task),
-                checkpoint_audit_context,
-                user_id,
-                session_id: &session_for_task,
-                bear_id,
-                bear_slug: &bear_slug,
-                client: &client,
-                cwd: cwd.as_deref(),
-                workspace_roots: Some(&workspace_roots),
-                binding: &binding,
-                conversation_selection: &conversation_for_task,
-                upstream_target: &upstream_target_for_task,
-                prompt: &prompt_for_task,
-                prompt_context: prompt_context.clone(),
-                client_tools: Some(client_tools_for_task.clone()),
-                runtime_context: read_only_runtime_context_for_task.as_deref(),
-                runtime_context_len: read_only_runtime_context_for_task
-                    .as_deref()
-                    .map(str::len)
-                    .unwrap_or(0),
-                technical_budget_recovery_start_payload: Some(
-                    technical_budget_recovery_start_payload(
-                        &client,
-                        cwd.as_deref(),
-                        &conversation_id,
-                        &prompt,
-                        prompt_context.as_ref(),
-                        client_context.as_ref(),
-                        requested_mode.as_deref(),
+            start_native_turn_event_stream(
+                TurnStartRequest {
+                    sqlx_pool: &pool,
+                    config: config.as_ref(),
+                    memory_stores: &memory_stores,
+                    request_id,
+                    run_id: Some(&run_id_for_task),
+                    checkpoint_audit_context,
+                    user_id,
+                    session_id: &session_for_task,
+                    bear_id,
+                    bear_slug: &bear_slug,
+                    client: &client,
+                    cwd: cwd.as_deref(),
+                    workspace_roots: Some(&workspace_roots),
+                    binding: &binding,
+                    conversation_selection: &conversation_for_task,
+                    upstream_target: &upstream_target_for_task,
+                    prompt: &prompt_for_task,
+                    prompt_context: prompt_context.clone(),
+                    client_tools: Some(client_tools_for_task.clone()),
+                    runtime_context: read_only_runtime_context_for_task.as_deref(),
+                    runtime_context_len: read_only_runtime_context_for_task
+                        .as_deref()
+                        .map(str::len)
+                        .unwrap_or(0),
+                    technical_budget_recovery_start_payload: Some(
+                        technical_budget_recovery_start_payload(
+                            &client,
+                            cwd.as_deref(),
+                            &conversation_id,
+                            &prompt,
+                            prompt_context.as_ref(),
+                            client_context.as_ref(),
+                            requested_mode.as_deref(),
+                            expected_work_source,
+                        ),
                     ),
-                ),
-                stream_tokens: true,
-                api_style: Some(api_style_for_task),
-                supports_reasoning_effort: supports_reasoning_effort_for_task,
-            },
-            origin,
-        )
+                    stream_tokens: true,
+                    api_style: Some(api_style_for_task),
+                    supports_reasoning_effort: supports_reasoning_effort_for_task,
+                },
+                origin,
+            )
+            .await
+            .map_err(CustomError::from)
+        }
         .await;
 
         match stream_result {
@@ -3545,6 +3727,7 @@ mod tests {
             Some(&json!({"source": "user"})),
             Some(&json!({"mcp": {"client_tools": []}})),
             Some("ask"),
+            None,
         );
 
         assert_eq!(payload["client"], "test-client");

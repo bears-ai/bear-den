@@ -295,8 +295,7 @@ pub(super) async fn require_conversation_access(
     Ok(())
 }
 
-/// Check the canonical record before creating anything. The ensure call must not
-/// update a competing owner's row if another request claims the external ID first.
+/// Authorize canonical history without materializing or changing its source.
 pub(super) async fn authorize_existing_conversation(
     viewer: &ConversationViewer,
     pool: &sqlx::PgPool,
@@ -308,31 +307,6 @@ pub(super) async fn authorize_existing_conversation(
     if let Some(conversation) = &conversation {
         require_conversation_access(viewer, pool, conversation.id).await?;
     }
-    Ok(conversation)
-}
-
-pub(super) async fn authorize_or_create_conversation(
-    viewer: &ConversationViewer,
-    pool: &sqlx::PgPool,
-    bear_id: Uuid,
-    user_id: i32,
-    external_id: &str,
-) -> Result<persistence::ConversationRecord, CustomError> {
-    if let Some(conversation) =
-        authorize_existing_conversation(viewer, pool, bear_id, external_id).await?
-    {
-        return Ok(conversation);
-    }
-    let conversation = persistence::ensure_conversation_for_external_id(
-        pool,
-        bear_id,
-        Some(user_id),
-        external_id,
-        None,
-        None,
-    )
-    .await?;
-    require_conversation_access(viewer, pool, conversation.id).await?;
     Ok(conversation)
 }
 

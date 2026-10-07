@@ -44,10 +44,29 @@ use den_service::{
 
 use crate::auth::{authenticate_for_bear_slug, authenticated_bear};
 use crate::methods::{
-    conversation::{
-        authorize_existing_conversation, authorize_or_create_conversation, conversation_viewer,
-    },
+    conversation::{authorize_existing_conversation, conversation_viewer},
     parse_params, DEFAULT_CLIENT,
+};
+
+mod access;
+mod admission;
+mod model;
+mod open;
+mod projection;
+mod reflection;
+mod tasks;
+
+pub(crate) use model::{session_model_get_result, session_model_set_result};
+pub(crate) use open::session_open_result;
+use projection::session_state_payload;
+#[cfg(test)]
+use projection::{active_activity_plan_projection, session_current_task_projection};
+pub use reflection::reflect_open_sessions_once;
+use reflection::reflect_pair_session;
+pub(crate) use tasks::{
+    session_current_task_clear_result, session_current_task_select_result,
+    session_current_task_selection_request_result, session_current_task_start_result,
+    start_session_task_execution,
 };
 
 /// Client session IDs are used as unscoped keys by Work bindings and turn runs.
@@ -87,178 +106,6 @@ pub(super) fn interactive_session_policy() -> den_core::EffectivePolicy {
     )
 }
 
-pub async fn reflect_open_sessions_once(state: &DenState) -> Result<usize, CustomError> {
-    let candidates = client_sessions::list_open_reflection_candidates(
-        &state.sqlx_pool,
-        client_sessions::OpenReflectionCandidatesParams {
-            stale_after_minutes: 30,
-            activity_threshold: 20,
-            limit: 25,
-        },
-    )
-    .await?;
-    let mut processed = 0;
-    for candidate in candidates {
-        let session = candidate.session();
-        match reflect_pair_session(
-            &state.sqlx_pool,
-            state,
-            &session,
-            &candidate.reflection_trigger,
-        )
-        .await
-        {
-            Ok(reflection_payload) => {
-                processed += 1;
-                let mut event = BearWireEvent::ephemeral(
-                    "session.reflected",
-                    json!({
-                        "session_id": session.client_session_id,
-                        "bear_slug": session.bear_slug,
-                        "trigger": candidate.reflection_trigger,
-                        "event_count": candidate.event_count,
-                        "latest_compaction_source_end_seq": candidate.latest_compaction_source_end_seq,
-                        "last_reflected_source_end_seq": candidate.last_reflected_source_end_seq,
-                        "pair_reflection": reflection_payload,
-                    }),
-                );
-                event.bear_id = Some(session.bear_id.to_string());
-                event.human_id = Some(session.user_id.to_string());
-                event.session_id = Some(session.client_session_id.clone());
-                if let Err(error) = bearwire_events::append_bearwire_event(
-                    &state.sqlx_pool,
-                    &session.client_session_id,
-                    Some(session.bear_id),
-                    Some(session.user_id),
-                    event,
-                )
-                .await
-                {
-                    tracing::warn!(session_id = %session.client_session_id, error = %error, "failed to record open-session reflection event");
-                }
-            }
-            Err(error) => {
-                tracing::warn!(session_id = %session.client_session_id, error = %error, "open-session pair reflection failed");
-            }
-        }
-    }
-    Ok(processed)
-}
-
-async fn reflect_pair_session(
-    pool: &PgPool,
-    state: &DenState,
-    session: &client_sessions::ClientSessionRow,
-    trigger: &str,
-) -> Result<Value, CustomError> {
-    let conversation_id = session
-        .resolved_conversation_id
-        .as_deref()
-        .unwrap_or(&session.conversation_id)
-        .to_string();
-    let compaction_state = prepare_turn_compaction(
-        pool,
-        &state.config,
-        session.bear_id,
-        &conversation_id,
-        CompactionSource::ContextMaintenance,
-        TurnCompactionTrigger::ConversationReview,
-    )
-    .await?;
-    let output = create_pair_reflection_proposals_from_latest_summary(
-        pool,
-        &state.config,
-        &state.memory_stores,
-        session.bear_id,
-        &conversation_id,
-        &session.client_session_id,
-    )
-    .await
-    .map_err(CustomError::from)?;
-    let review = build_pair_conversation_review(
-        conversation_id.clone(),
-        session.client_session_id.clone(),
-        trigger,
-        compaction_state.as_ref(),
-        output.candidate_count,
-        output.source_message_start_seq,
-        output.source_message_end_seq,
-    );
-    Ok(json!({
-        "status": if output.skipped_reason.is_some() { "skipped" } else { "processed" },
-        "trigger": trigger,
-        "conversation_review": review,
-        "skipped_reason": output.skipped_reason,
-        "candidate_count": output.candidate_count,
-        "discarded_count": output.discarded_count,
-        "discarded_reasons": output.discarded_reasons,
-        "dropped_followup_count": output.dropped_followup_count,
-        "proposal_ids": output.created_proposal_ids,
-        "source_message_start_seq": output.source_message_start_seq,
-        "source_message_end_seq": output.source_message_end_seq,
-    }))
-}
-
-fn build_pair_conversation_review(
-    conversation_id: String,
-    client_session_id: String,
-    trigger: &str,
-    compaction_state: Option<&TurnCompactionState>,
-    memory_candidate_count: usize,
-    source_message_start_seq: Option<i64>,
-    source_message_end_seq: Option<i64>,
-) -> ConversationReview {
-    let refs = source_seq_refs(source_message_start_seq, source_message_end_seq);
-    let mut findings = Vec::new();
-
-    if let Some(state) = compaction_state {
-        if state.decision.is_some() {
-            findings.push(ConversationReviewFinding {
-                source: FindingSource::runtime(refs.clone()),
-                detail: ConversationReviewFindingDetail::CompactionNeeded {
-                    reason: "Conversation review produced a compaction artifact.".to_string(),
-                },
-            });
-        }
-    }
-
-    if memory_candidate_count > 0 {
-        findings.push(ConversationReviewFinding {
-            source: FindingSource::runtime(refs),
-            detail: ConversationReviewFindingDetail::MemoryReflectionCandidate {
-                reason: format!(
-                    "Pair reflection found {memory_candidate_count} memory candidate(s)."
-                ),
-            },
-        });
-    }
-
-    ConversationReview::new(
-        conversation_id,
-        Some(client_session_id),
-        None,
-        conversation_review_trigger_from_reflection_trigger(trigger),
-        findings,
-    )
-}
-
-fn conversation_review_trigger_from_reflection_trigger(trigger: &str) -> ConversationReviewTrigger {
-    match trigger {
-        "session_close" => ConversationReviewTrigger::SessionClose,
-        "manual" => ConversationReviewTrigger::Manual,
-        _ => ConversationReviewTrigger::OpenSessionSweep,
-    }
-}
-
-fn source_seq_refs(start_seq: Option<i64>, end_seq: Option<i64>) -> Vec<String> {
-    match (start_seq, end_seq) {
-        (Some(start), Some(end)) => vec![format!("conversation_seq:{start}-{end}")],
-        (Some(start), None) => vec![format!("conversation_seq:{start}-")],
-        (None, Some(end)) => vec![format!("conversation_seq:-{end}")],
-        (None, None) => Vec::new(),
-    }
-}
-
 fn resolved_or_stored_conversation_id(session: &client_sessions::ClientSessionRow) -> &str {
     session
         .resolved_conversation_id
@@ -271,390 +118,8 @@ pub(super) async fn require_session_conversation_access(
     state: &DenState,
     session: &client_sessions::ClientSessionRow,
 ) -> Result<(), CustomError> {
-    let session_id = ClientSessionId::new(session.client_session_id.clone())?;
-    require_exclusive_client_session_id(
-        &state.sqlx_pool,
-        &session_id,
-        UserId::new(session.user_id),
-        BearId::new(session.bear_id),
-    )
-    .await?;
-    let viewer = conversation_viewer(state, session.bear_id, session.user_id).await?;
-    authorize_existing_conversation(
-        &viewer,
-        &state.sqlx_pool,
-        session.bear_id,
-        &session.conversation_id,
-    )
-    .await?;
-    if let Some(resolved) = session.resolved_conversation_id.as_deref() {
-        authorize_existing_conversation(&viewer, &state.sqlx_pool, session.bear_id, resolved)
-            .await?;
-    }
+    access::readable_source(state, session).await?;
     Ok(())
-}
-
-async fn session_state_payload(
-    state: &DenState,
-    session: client_sessions::ClientSessionRow,
-    work_enabled: bool,
-) -> Result<Value, CustomError> {
-    let conversation_external_id = resolved_or_stored_conversation_id(&session);
-    let conversation_runtime_id = conversation_external_id.to_string();
-    require_session_conversation_access(state, &session).await?;
-    let viewer = conversation_viewer(state, session.bear_id, session.user_id).await?;
-    let latest_context_budget = authorize_existing_conversation(
-        &viewer,
-        &state.sqlx_pool,
-        session.bear_id,
-        conversation_external_id,
-    )
-    .await?
-    .and_then(|conversation| conversation.latest_context_budget);
-    let trusted_workspace = session.trusted_workspace_context();
-
-    let runtime_task_context = if work_enabled {
-        let context = resolve_runtime_task_context(
-            &state.sqlx_pool,
-            RuntimeTaskResolveRequest {
-                bear_id: session.bear_id,
-                // An authorized session read is not a live armature-tool turn.
-                policy: den_core::EffectivePolicy::compile_for_origin(
-                    den_core::TurnExecutionOrigin::ArmatureConversation(
-                        den_core::ArmatureAvailability::Absent,
-                    ),
-                    den_core::Governance::Interactive,
-                ),
-                user_id: Some(session.user_id),
-                conversation_id: conversation_runtime_id.clone(),
-                client_session_id: session.client_session_id.clone(),
-                cached_activity_plan_projection: None,
-            },
-        )
-        .await
-        .map_err(|error| match error {
-            DenError::Database(message) => CustomError::Database(format!(
-                "resolve session runtime task context for BearWire session.state: bear_id={}, client_session_id={}, conversation_id={}: {message}",
-                session.bear_id, session.client_session_id, conversation_runtime_id
-            )),
-            DenError::DatabaseUnavailable(message) => CustomError::DatabaseUnavailable(format!(
-                "resolve session runtime task context for BearWire session.state: bear_id={}, client_session_id={}, conversation_id={}: {message}",
-                session.bear_id, session.client_session_id, conversation_runtime_id
-            )),
-            error => error.into(),
-        })?;
-        Some(context)
-    } else {
-        None
-    };
-    let current_task = runtime_task_context
-        .as_ref()
-        .and_then(session_current_task_projection);
-    let active_activity_plan = runtime_task_context.as_ref().and_then(|focus| {
-        focus.active_activity_plan().cloned().map(|plan| {
-            active_activity_plan_projection(plan, focus.source.as_str(), current_task.clone())
-        })
-    });
-    let focused_execution = if work_enabled {
-        Some(
-            super::focused_execution::load_focused_execution_snapshot(
-                state,
-                session.user_id,
-                session.bear_id,
-                &session.client_session_id,
-                super::focused_execution::FocusedExecutionLaunchState::AlreadyRunning,
-            )
-            .await?
-            .to_wire(),
-        )
-    } else {
-        None
-    };
-
-    Ok(json!({
-        "id": session.id,
-        "user_id": session.user_id,
-        "bear_id": session.bear_id,
-        "bear_slug": session.bear_slug,
-        "client_session_id": session.client_session_id,
-        "runtime_session_id": session.runtime_session_id,
-        "conversation_id": session.conversation_id,
-        "resolved_conversation_id": session.resolved_conversation_id,
-        // The armature must use this field for user-visible history replay. It
-        // is the external ID of the canonical persisted conversation, not the
-        // client-supplied pending identifier.
-        "history_conversation_id": conversation_external_id,
-        "client": session.client,
-        "cwd": session.cwd,
-        "adapter_environment": session.adapter_environment,
-        "current_mode": session.current_mode,
-        "conversation_title": session.conversation_title,
-        "conversation_title_updated_at": session.conversation_title_updated_at,
-        "conversation_title_synced_at": session.conversation_title_synced_at,
-        "closed_at": session.closed_at,
-        "archived_at": session.archived_at,
-        "created_at": session.created_at,
-        "updated_at": session.updated_at,
-        "context_budget": latest_context_budget,
-        "current_task": current_task,
-        "diagnostics": {
-            "trusted_workspace": trusted_workspace,
-            "runtime_conversation_id": conversation_runtime_id,
-            "active_activity_plan": active_activity_plan,
-            "focused_execution": focused_execution,
-        }
-    }))
-}
-
-fn session_current_task_projection(
-    context: &den_runtime::runtime::task_context::RuntimeTaskContext,
-) -> Option<Value> {
-    let task_id = context.current_task_id?;
-    if context.source != den_runtime::runtime::task_context::RuntimeTaskSource::SessionCurrentTask {
-        return None;
-    }
-    let item = context
-        .active_activity_plan()?
-        .current_item
-        .as_ref()
-        .filter(|item| item.id == task_id.to_string())?;
-    Some(json!({
-        "id": item.id,
-        "title": item.title,
-        "summary": item.summary,
-        "status": item.status,
-        "source_ref": item.source_ref,
-    }))
-}
-
-fn active_activity_plan_projection(
-    plan: den_docket::TaskListProjection,
-    source: &str,
-    current_task: Option<Value>,
-) -> Value {
-    let current_item_id = plan.current_item.as_ref().map(|item| item.id.clone());
-    json!({
-        "schema": "den.acp_plan_projection.v1",
-        "source": source,
-        "projection": "flat_current_level",
-        "id": plan.id,
-        "title": plan.title,
-        "status": plan.status,
-        "version": plan.version,
-        "current_item_id": current_item_id,
-        "current_task": current_task,
-        "items": plan.items.into_iter().map(|item| {
-            let selection = (current_item_id.as_deref() == Some(item.id.as_str()))
-                .then_some("current");
-            json!({
-                "id": item.id,
-                "title": item.title,
-                "summary": item.summary,
-                "status": item.status,
-                "selection": selection,
-                "blocked_reason": item.blocked_reason,
-                "source_ref": item.source_ref,
-                "sync_state": item.sync_state,
-            })
-        }).collect::<Vec<_>>(),
-    })
-}
-
-pub(crate) async fn session_open_result(
-    state: &DenState,
-    headers: &HeaderMap,
-    params: &Value,
-) -> Result<Value, CustomError> {
-    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
-    let request: SessionOpenRequest = parse_params(params)?;
-    let session_id = request.session_id;
-    require_exclusive_client_session_id(
-        &state.sqlx_pool,
-        &ClientSessionId::new(session_id.clone())?,
-        UserId::new(user_id),
-        BearId::new(bear.id),
-    )
-    .await?;
-    let existing = client_sessions::find_for_user_bear_session(
-        &state.sqlx_pool,
-        user_id,
-        &bear.slug,
-        &session_id,
-    )
-    .await?;
-    let client = request.client.unwrap_or_else(|| DEFAULT_CLIENT.to_string());
-    let requested_conversation_id = request.conversation_id;
-    let is_new = existing.is_none()
-        && requested_conversation_id
-            .as_deref()
-            .is_none_or(|id| id.starts_with("new-"));
-    // Allocate one canonical conversation before the first IDE interaction. A
-    // later runtime materialization must not strand the selected hat on a
-    // provisional new-acp-* row.
-    let new_canonical_id = is_new.then(|| format!("den-conv-{}", uuid::Uuid::new_v4().simple()));
-    let conversation_id = requested_conversation_id
-        .or_else(|| {
-            existing
-                .as_ref()
-                .map(|session| session.conversation_id.clone())
-        })
-        .or_else(|| new_canonical_id.clone())
-        .unwrap_or_else(|| format!("new-acp-{client}-{}", uuid::Uuid::new_v4().simple()));
-    let resolved_conversation_id = new_canonical_id.clone().or_else(|| {
-        existing
-            .as_ref()
-            .and_then(|session| session.resolved_conversation_id.clone())
-    });
-    let current_mode = request
-        .mode
-        .as_deref()
-        .map(client_sessions::ClientSessionMode::try_from_storage)
-        .transpose()?;
-    let viewer = conversation_viewer(state, bear.id, user_id).await?;
-    // Check both IDs: an existing session can retain a resolved canonical target
-    // even when the client supplies a different selection on reconnect.
-    if let Some(resolved) = resolved_conversation_id.as_deref() {
-        authorize_existing_conversation(&viewer, &state.sqlx_pool, bear.id, resolved).await?;
-    }
-    authorize_existing_conversation(&viewer, &state.sqlx_pool, bear.id, &conversation_id).await?;
-    if let Some(resolved) = resolved_conversation_id.as_deref() {
-        authorize_or_create_conversation(&viewer, &state.sqlx_pool, bear.id, user_id, resolved)
-            .await?;
-    }
-    let selected_conversation = authorize_or_create_conversation(
-        &viewer,
-        &state.sqlx_pool,
-        bear.id,
-        user_id,
-        &conversation_id,
-    )
-    .await?;
-    if is_new
-        && den_docket::work_runs::get_live_work_run_by_session(&state.sqlx_pool, &session_id)
-            .await?
-            .is_none()
-    {
-        if let Some(default_hat) =
-            hats::ide_default_hat(&state.sqlx_pool, BearId::new(bear.id)).await?
-        {
-            let durable_id = resolved_conversation_id
-                .as_deref()
-                .unwrap_or(&conversation_id);
-            let canonical = if durable_id == conversation_id {
-                selected_conversation
-            } else {
-                authorize_or_create_conversation(
-                    &viewer,
-                    &state.sqlx_pool,
-                    bear.id,
-                    user_id,
-                    durable_id,
-                )
-                .await?
-            };
-            hats::bindings::bind_conversation_hat(
-                &state.sqlx_pool,
-                BearId::new(bear.id),
-                canonical.id,
-                default_hat,
-            )
-            .await?;
-        }
-    }
-    let runtime_session_id = request
-        .runtime_session_id
-        .or_else(|| {
-            existing
-                .as_ref()
-                .map(|session| session.runtime_session_id.clone())
-        })
-        .unwrap_or_else(|| format!("bearwire:{}:{}", bear.id, session_id));
-    let cwd = request.cwd;
-    let client_context = request.client_context;
-    client_sessions::upsert_session(
-        &state.sqlx_pool,
-        client_sessions::UpsertClientSession {
-            user_id,
-            bear_id: bear.id,
-            bear_slug: bear.slug.clone(),
-            client_session_id: session_id.clone(),
-            runtime_session_id,
-            conversation_id,
-            resolved_conversation_id,
-            client,
-            cwd,
-            current_mode,
-        },
-    )
-    .await?;
-    require_exclusive_client_session_id(
-        &state.sqlx_pool,
-        &ClientSessionId::new(session_id.clone())?,
-        UserId::new(user_id),
-        BearId::new(bear.id),
-    )
-    .await?;
-    let reconnected =
-        den_docket::work_runs::reconnect_attached_work_run(&state.sqlx_pool, &session_id)
-            .await?
-            .is_some();
-    match den_docket::work_runs::get_live_work_run_by_session(&state.sqlx_pool, &session_id).await?
-    {
-        Some(work_run) => tracing::info!(
-            work_run_id = %work_run.id,
-            job_id = %work_run.job_id,
-            task_id = ?work_run.executing_task_id,
-            session_id = %session_id,
-            reconnected,
-            "session.open preserved live Work-run binding"
-        ),
-        None => tracing::debug!(
-            session_id = %session_id,
-            reconnected,
-            "session.open has no live Work-run binding"
-        ),
-    }
-    if let Some(client_context) = client_context.as_ref() {
-        client_sessions::update_adapter_environment(
-            &state.sqlx_pool,
-            user_id,
-            bear.id,
-            &session_id,
-            client_context,
-        )
-        .await?;
-    }
-    let session = client_sessions::find_for_user_bear_session(
-        &state.sqlx_pool,
-        user_id,
-        &bear.slug,
-        &session_id,
-    )
-    .await?;
-    let mut event = BearWireEvent::ephemeral(
-        "session.opened",
-        json!({
-            "session_id": session_id,
-            "bear_slug": bear.slug,
-        }),
-    );
-    event.bear_id = Some(bear.id.to_string());
-    event.human_id = Some(user_id.to_string());
-    event.session_id = Some(session_id.clone());
-    let persisted = bearwire_events::append_bearwire_event(
-        &state.sqlx_pool,
-        &session_id,
-        Some(bear.id),
-        Some(user_id),
-        event,
-    )
-    .await?;
-    Ok(json!({
-        "ok": true,
-        "session": session,
-        "event_sequence": persisted.sequence_no,
-        "attached_work_reconnected": reconnected,
-    }))
 }
 
 pub(crate) async fn hats_list_result(
@@ -682,13 +147,19 @@ pub(crate) async fn hats_list_result(
         )
         .await?
         .ok_or_else(|| CustomError::NotFound("IDE session not found".into()))?;
-        let viewer = conversation_viewer(state, bear.id, user_id).await?;
-        let conversation_id = resolved_or_stored_conversation_id(&session);
-        let conversation =
-            authorize_existing_conversation(&viewer, &state.sqlx_pool, bear.id, conversation_id)
-                .await?
-                .ok_or_else(|| CustomError::NotFound("conversation not found".into()))?;
-        hats::bindings::conversation_hat(&state.sqlx_pool, bear_id, conversation.id).await?
+        let source = access::project_source(state, &session).await?;
+        if let Some(conversation) = source.conversation {
+            if let Some(work) =
+                den_docket::work_runs::get_live_work_run_by_session(&state.sqlx_pool, session_id)
+                    .await?
+            {
+                hats::bindings::job_hat(&state.sqlx_pool, bear_id, work.job_id).await?
+            } else {
+                hats::bindings::conversation_hat(&state.sqlx_pool, bear_id, conversation.id).await?
+            }
+        } else {
+            None
+        }
     } else {
         None
     };
@@ -804,30 +275,43 @@ pub(crate) async fn session_hat_select_result(
     )
     .await?
     .ok_or_else(|| CustomError::NotFound("IDE session not found".into()))?;
-    let viewer = conversation_viewer(state, bear.id, user_id).await?;
-    let conversation = authorize_existing_conversation(
-        &viewer,
-        &state.sqlx_pool,
-        bear.id,
-        resolved_or_stored_conversation_id(&session),
-    )
-    .await?
-    .ok_or_else(|| CustomError::NotFound("conversation not found".into()))?;
     let requested = uuid::Uuid::parse_str(&request.hat_id)
         .map_err(|_| CustomError::ValidationError("hat_id must be a UUID".into()))?;
     let hat_id = HatId::new(requested);
-    hats::bindings::select_initial_conversation_hat(
+    hats::manage::get_hat(&state.sqlx_pool, bear_id, hat_id).await?;
+    let source = access::project_source(state, &session).await?;
+    if !source.access.may_select_hat {
+        return Err(CustomError::Authorization(
+            "a hat can only be selected for your live IDE source before its first turn".into(),
+        ));
+    }
+    if let Some(conversation) = source.conversation {
+        access::require_live_source(state, &session).await?;
+        hats::bindings::select_initial_conversation_hat(
+            &state.sqlx_pool,
+            bear_id,
+            conversation.id,
+            UserId::new(user_id),
+            session_id.as_str(),
+            hat_id,
+        )
+        .await?;
+    } else {
+        admission::materialize_pending(&state.sqlx_pool, &session, hat_id).await?;
+    }
+    let session = client_sessions::find_for_user_bear_session_id(
         &state.sqlx_pool,
-        bear_id,
-        conversation.id,
-        UserId::new(user_id),
+        user_id,
+        bear.id,
         session_id.as_str(),
-        hat_id,
     )
-    .await?;
-    Ok(
-        json!({ "ok": true, "hat_id": hat_id, "conversation_id": conversation.external_conversation_id }),
-    )
+    .await?
+    .ok_or_else(|| CustomError::NotFound("IDE session not found".into()))?;
+    let conversation_id = resolved_or_stored_conversation_id(&session).to_string();
+    Ok(json!({
+        "ok": true, "hat_id": hat_id, "conversation_id": conversation_id,
+        "session": session_state_payload(state, session, bear.work_enabled).await?,
+    }))
 }
 
 pub(crate) async fn session_compact_result(
@@ -847,15 +331,26 @@ pub(crate) async fn session_compact_result(
     .await?
     .ok_or_else(|| CustomError::NotFound("BearWire session not found".to_string()))?;
     let conversation_id = resolved_or_stored_conversation_id(&session);
-    require_session_conversation_access(state, &session).await?;
+    access::require_live_source(state, &session).await?;
+    let origin =
+        if den_docket::work_runs::get_live_work_run_by_session(&state.sqlx_pool, &session_id)
+            .await?
+            .is_some()
+        {
+            den_core::TurnExecutionOrigin::AuthorizedWorkRun(
+                den_core::ArmatureAvailability::Connected,
+            )
+        } else {
+            den_core::TurnExecutionOrigin::ArmatureConversation(
+                den_core::ArmatureAvailability::Connected,
+            )
+        };
     let state_result = prepare_turn_compaction(
         &state.sqlx_pool,
         &state.config,
         bear.id,
         conversation_id,
-        CompactionSource::Turn(den_core::TurnExecutionOrigin::ArmatureConversation(
-            den_core::ArmatureAvailability::Connected,
-        )),
+        CompactionSource::Turn(origin),
         TurnCompactionTrigger::Manual,
     )
     .await?;
@@ -902,7 +397,11 @@ pub(crate) async fn session_close_result(
         return Ok(json!({ "ok": true, "closed": false, "session_id": session_id }));
     };
     require_session_conversation_access(state, &session).await?;
-    let reflection_payload =
+    let reflection_payload = if access::project_source(state, &session).await?.access.state
+        != bearwire_protocol::session::SessionAccessState::Executable
+    {
+        json!({"status": "skipped"})
+    } else {
         match reflect_pair_session(&state.sqlx_pool, state, &session, "session_close").await {
             Ok(payload) => payload,
             Err(error) => {
@@ -917,7 +416,8 @@ pub(crate) async fn session_close_result(
                     "error": error.to_string(),
                 })
             }
-        };
+        }
+    };
     client_sessions::mark_closed(&state.sqlx_pool, session.id).await?;
     let disconnected = den_docket::work_runs::disconnect_attached_work_run(
         &state.sqlx_pool,
@@ -1042,7 +542,7 @@ pub(crate) async fn session_execution_diagnostics_result(
     .await?
     .ok_or_else(|| CustomError::NotFound("client session not found".to_string()))?;
     require_session_conversation_access(state, &session).await?;
-    let diagnostics = super::focused_execution::focused_execution_diagnostics(
+    let diagnostics = crate::methods::focused_execution::focused_execution_diagnostics(
         state,
         user_id,
         bear.id,
@@ -1058,513 +558,5 @@ pub(crate) async fn session_execution_diagnostics_result(
     }))
 }
 
-pub(crate) async fn session_current_task_selection_request_result(
-    state: &DenState,
-    headers: &HeaderMap,
-    params: &Value,
-) -> Result<Value, CustomError> {
-    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
-    let request: SessionCurrentTaskSelectionRequest = parse_params(params)?;
-    let task_id = uuid::Uuid::parse_str(&request.task_id)
-        .map_err(|_| CustomError::ValidationError("task_id must be a UUID".to_string()))?;
-    require_exclusive_client_session_id(
-        &state.sqlx_pool,
-        &ClientSessionId::new(request.session_id.clone())?,
-        UserId::new(user_id),
-        BearId::new(bear.id),
-    )
-    .await?;
-    let title = preview_session_current_task_selection(
-        &state.sqlx_pool,
-        user_id,
-        bear.id,
-        &request.session_id,
-        task_id,
-    )
-    .await?;
-    Ok(
-        json!({"ok": true, "confirmation_required": true, "session_id": request.session_id, "task_id": task_id, "title": title}),
-    )
-}
-
-pub(crate) async fn session_current_task_select_result(
-    state: &DenState,
-    headers: &HeaderMap,
-    params: &Value,
-) -> Result<Value, CustomError> {
-    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
-    let request: SessionCurrentTaskSelectionRequest = parse_params(params)?;
-    let task_id = uuid::Uuid::parse_str(&request.task_id)
-        .map_err(|_| CustomError::ValidationError("task_id must be a UUID".to_string()))?;
-    if !bear.work_enabled {
-        return Err(CustomError::ValidationError(
-            "focused task controls are disabled".to_string(),
-        ));
-    }
-    require_exclusive_client_session_id(
-        &state.sqlx_pool,
-        &ClientSessionId::new(request.session_id.clone())?,
-        UserId::new(user_id),
-        BearId::new(bear.id),
-    )
-    .await?;
-    let policy = interactive_session_policy();
-    let result = select_session_current_task(
-        &state.sqlx_pool,
-        user_id,
-        bear.id,
-        &request.session_id,
-        Some(task_id),
-        &policy.capabilities,
-    )
-    .await?;
-    Ok(
-        json!({"ok": true, "session_id": request.session_id, "current_task_id": task_id, "title": result.title, "task_list": result.task_list}),
-    )
-}
-
-pub(crate) async fn session_current_task_start_result(
-    state: &DenState,
-    headers: &HeaderMap,
-    params: &Value,
-) -> Result<Value, CustomError> {
-    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
-    let request: SessionCurrentTaskStartRequest = parse_params(params)?;
-    if !bear.work_enabled {
-        return Err(CustomError::ValidationError(
-            "focused task controls are disabled".to_string(),
-        ));
-    }
-    require_exclusive_client_session_id(
-        &state.sqlx_pool,
-        &ClientSessionId::new(request.session_id.clone())?,
-        UserId::new(user_id),
-        BearId::new(bear.id),
-    )
-    .await?;
-    if let Some(session) = client_sessions::find_for_user_bear_session_id(
-        &state.sqlx_pool,
-        user_id,
-        bear.id,
-        &request.session_id,
-    )
-    .await?
-    {
-        require_session_conversation_access(state, &session).await?;
-    }
-    if let Some(run) =
-        den_runtime::turn_runs::active_run_for_session(&state.sqlx_pool, &request.session_id)
-            .await?
-            .filter(|run| run.bear_id == bear.id && run.user_id == user_id)
-    {
-        if den_runtime::turn_runs::technical_budget_recovery_snapshot(&state.sqlx_pool, &run.run_id)
-            .await?
-            .is_some()
-        {
-            let mut recovered = super::run::run_recover_result(
-                state,
-                headers,
-                &json!({ "bear_slug": bear.slug, "run_id": run.run_id }),
-            )
-            .await?;
-            recovered["recovered"] = json!(true);
-            return Ok(recovered);
-        }
-    }
-    let policy = interactive_session_policy();
-    let execution = super::focused_execution::start_selected_session_task_execution(
-        state,
-        user_id,
-        bear,
-        &request.session_id,
-        &policy.capabilities,
-    )
-    .await?;
-    let run = execution.run.as_ref().ok_or_else(|| {
-        CustomError::System("focused execution start returned no run authority".to_string())
-    })?;
-    let attempt = execution.attempt.as_ref().ok_or_else(|| {
-        CustomError::System("focused execution start returned no attempt authority".to_string())
-    })?;
-    let task = execution.task.as_ref().ok_or_else(|| {
-        CustomError::System("focused execution start returned no selected task".to_string())
-    })?;
-    Ok(json!({
-        "ok": true,
-        "queued": execution.launch_state
-            == super::focused_execution::FocusedExecutionLaunchState::Queued,
-        "claimed": execution.launch_state
-            == super::focused_execution::FocusedExecutionLaunchState::Claimed,
-        "started": execution.launch_state
-            == super::focused_execution::FocusedExecutionLaunchState::Started,
-        "reused": execution.launch_state
-            == super::focused_execution::FocusedExecutionLaunchState::AlreadyRunning,
-        "run_id": run.id,
-        "session_id": execution.session_id,
-        "task_id": task.id,
-        "state": run.state,
-        "execution_attempt_id": attempt.id,
-        "execution_attempt_state": attempt.state,
-        "launch_state": execution.launch_state,
-        "fence_epoch": attempt.fence_epoch,
-        "focused_execution": execution.to_wire(),
-    }))
-}
-
-/// Starts focused execution for the session's selected task. Docket `/focus` uses
-/// this after selecting its task so task assignment cannot leave loop control
-/// inactive.
-pub(crate) async fn start_session_task_execution(
-    state: &DenState,
-    user_id: i32,
-    bear: den_service::bears::Bear,
-    session_id: &str,
-) -> Result<super::focused_execution::FocusedExecutionLaunchState, CustomError> {
-    let session = client_sessions::find_for_user_bear_session_id(
-        &state.sqlx_pool,
-        user_id,
-        bear.id,
-        session_id,
-    )
-    .await?
-    .ok_or_else(|| CustomError::NotFound("client session not found".to_string()))?;
-    require_session_conversation_access(state, &session).await?;
-    let task_id = session.current_task_id.ok_or_else(|| {
-        CustomError::ValidationError(
-            "no current session task is selected for this session".to_string(),
-        )
-    })?;
-    let recovered_run_id = match super::focused_execution::reconcile_before_start(
-        state, user_id, bear.id, task_id, session_id,
-    )
-    .await?
-    {
-        super::focused_execution::StartReconciliation::AlreadyRunning => {
-            return Ok(super::focused_execution::FocusedExecutionLaunchState::AlreadyRunning)
-        }
-        super::focused_execution::StartReconciliation::Launch { recovered_run_id } => {
-            recovered_run_id
-        }
-    };
-
-    let title = preview_session_current_task_selection(
-        &state.sqlx_pool,
-        user_id,
-        bear.id,
-        session_id,
-        task_id,
-    )
-    .await?;
-
-    // ponytail: this delegates to the established run.start lifecycle so task-start
-    // cannot drift from Pair stream/event behavior.
-    let mut start_params = serde_json::Map::new();
-    start_params.insert("bear_slug".to_string(), json!(bear.slug));
-    start_params.insert("session_id".to_string(), json!(session_id));
-    start_params.insert(
-        "prompt".to_string(),
-        json!(format!("Start working on the selected task: {title}")),
-    );
-    start_params.insert("client".to_string(), json!(session.client));
-    // Docket control is an explicit execution handoff. Its synthetic turn must receive
-    // the same mutation/execution tool surface as an interactive Write turn.
-    start_params.insert("requested_mode".to_string(), json!("write"));
-    // Task starts are a deliberate Docket control handoff, not reconnect retries.
-    start_params.insert("supersede_active_run".to_string(), json!(true));
-    start_params.insert(
-        "conversation_id".to_string(),
-        json!(session.conversation_id),
-    );
-    if let Some(cwd) = session.cwd {
-        start_params.insert("cwd".to_string(), json!(cwd));
-    }
-    if let Some(client_context) = session.adapter_environment {
-        start_params.insert("client_context".to_string(), client_context);
-    }
-    let request: RunStartRequest = serde_json::from_value(Value::Object(start_params))
-        .map_err(|err| CustomError::ValidationError(format!("invalid task start params: {err}")))?;
-    let task_session_id = request.session_id.clone();
-    let result =
-        super::run::run_start_for_focused_task(state, request, user_id, bear.clone(), task_id)
-            .await?;
-    let run_id = result["run_id"]
-        .as_str()
-        .ok_or_else(|| {
-            CustomError::ValidationError("run.start returned a non-string run_id".to_string())
-        })?
-        .to_string();
-    let launch_state = match result["launch_state"].as_str() {
-        Some("queued") => super::focused_execution::FocusedExecutionLaunchState::Queued,
-        Some("claimed") => super::focused_execution::FocusedExecutionLaunchState::Claimed,
-        Some("started") => super::focused_execution::FocusedExecutionLaunchState::Started,
-        Some("already_running") => {
-            super::focused_execution::FocusedExecutionLaunchState::AlreadyRunning
-        }
-        _ => {
-            return Err(CustomError::System(
-                "run.start returned an invalid launch_state".to_string(),
-            ))
-        }
-    };
-
-    if let Some(recovered_run_id) = recovered_run_id {
-        super::focused_execution::project_recovery_handoff(
-            state,
-            user_id,
-            bear.id,
-            &task_session_id,
-            &recovered_run_id,
-            &run_id,
-            task_id,
-            launch_state,
-        )
-        .await?;
-    }
-    Ok(launch_state)
-}
-
-pub(crate) async fn session_current_task_clear_result(
-    state: &DenState,
-    headers: &HeaderMap,
-    params: &Value,
-) -> Result<Value, CustomError> {
-    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
-    let request: SessionCurrentTaskClearRequest = parse_params(params)?;
-    if !bear.work_enabled {
-        return Err(CustomError::ValidationError(
-            "focused task controls are disabled".to_string(),
-        ));
-    }
-    require_exclusive_client_session_id(
-        &state.sqlx_pool,
-        &ClientSessionId::new(request.session_id.clone())?,
-        UserId::new(user_id),
-        BearId::new(bear.id),
-    )
-    .await?;
-    let policy = interactive_session_policy();
-    let result = select_session_current_task(
-        &state.sqlx_pool,
-        user_id,
-        bear.id,
-        &request.session_id,
-        None,
-        &policy.capabilities,
-    )
-    .await?;
-    Ok(
-        json!({"ok": true, "session_id": request.session_id, "current_task_id": Value::Null, "task_list": result.task_list}),
-    )
-}
-
-async fn session_model_payload(
-    state: &DenState,
-    user_id: i32,
-    bear: &den_service::bears::Bear,
-    session_id: &str,
-) -> Result<Value, CustomError> {
-    let session = client_sessions::find_for_user_bear_session(
-        &state.sqlx_pool,
-        user_id,
-        &bear.slug,
-        session_id,
-    )
-    .await?
-    .ok_or_else(|| CustomError::NotFound("BearWire session not found".to_string()))?;
-    let conversation_id = session
-        .resolved_conversation_id
-        .as_deref()
-        .unwrap_or(&session.conversation_id);
-    require_session_conversation_access(state, &session).await?;
-    let viewer = conversation_viewer(state, bear.id, user_id).await?;
-    // The model view's loader also ensures the canonical row. Claim and recheck
-    // missing IDs first, rather than letting that loader attach an unverified ID.
-    authorize_or_create_conversation(&viewer, &state.sqlx_pool, bear.id, user_id, conversation_id)
-        .await?;
-    let view = den_service::model_selection::load_conversation_model_selection_view(
-        &state.sqlx_pool,
-        bear,
-        user_id,
-        state.config.default_llm_model.as_str(),
-        conversation_id,
-        Some(&session.client_session_id),
-        true,
-    )
-    .await?;
-    Ok(json!({
-        "ok": true,
-        "session_id": session_id,
-        "conversation_id": conversation_id,
-        "selection_mode": view.selection_mode,
-        "requested_model": view.requested_model,
-        "selected_model": view.selected_model,
-        "effective_model": view.effective_model,
-        "model_options": view.model_options,
-    }))
-}
-
-pub(crate) async fn session_model_get_result(
-    state: &DenState,
-    headers: &HeaderMap,
-    params: &Value,
-) -> Result<Value, CustomError> {
-    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
-    let request: SessionIdRequest = parse_params(params)?;
-    let session_id = request.session_id;
-    session_model_payload(state, user_id, &bear, &session_id).await
-}
-
-pub(crate) async fn session_model_set_result(
-    state: &DenState,
-    headers: &HeaderMap,
-    params: &Value,
-) -> Result<Value, CustomError> {
-    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
-    let request: SessionModelSetRequest = parse_params(params)?;
-    let session_id = request.session_id;
-    let mode = request.selection_mode.unwrap_or_else(|| "auto".to_string());
-    let requested_model = request.model;
-    let session = client_sessions::find_for_user_bear_session(
-        &state.sqlx_pool,
-        user_id,
-        &bear.slug,
-        &session_id,
-    )
-    .await?
-    .ok_or_else(|| CustomError::NotFound("BearWire session not found".to_string()))?;
-    let conversation_id = session
-        .resolved_conversation_id
-        .as_deref()
-        .unwrap_or(&session.conversation_id);
-    require_session_conversation_access(state, &session).await?;
-    let viewer = conversation_viewer(state, bear.id, user_id).await?;
-    let conversation = authorize_or_create_conversation(
-        &viewer,
-        &state.sqlx_pool,
-        bear.id,
-        user_id,
-        conversation_id,
-    )
-    .await?;
-    let model_state = den_service::model_selection::apply_conversation_model_selection(
-        &state.sqlx_pool,
-        conversation.id,
-        &mode,
-        requested_model.as_deref(),
-        "acp_selected",
-        "inherit_stance_or_bear_default",
-    )
-    .await
-    .map_err(CustomError::from)?;
-
-    let mut event = BearWireEvent::ephemeral(
-        "model.selection.changed",
-        json!({
-            "session_id": session_id,
-            "conversation_id": conversation_id,
-            "selection_mode": model_state.selection_mode,
-            "selected_model": model_state.selected_model.or(model_state.requested_model),
-        }),
-    );
-    event.bear_id = Some(bear.id.to_string());
-    event.human_id = Some(user_id.to_string());
-    event.session_id = Some(session_id.clone());
-    let persisted = bearwire_events::append_bearwire_event(
-        &state.sqlx_pool,
-        &session_id,
-        Some(bear.id),
-        Some(user_id),
-        event,
-    )
-    .await?;
-
-    let mut payload = session_model_payload(state, user_id, &bear, &session_id).await?;
-    if let Some(object) = payload.as_object_mut() {
-        object.insert("event_sequence".to_string(), json!(persisted.sequence_no));
-    }
-    Ok(payload)
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use den_docket::{
-        TaskListItem, TaskListItemStatus, TaskListProjection, TaskListSourceRef, TaskListSyncState,
-    };
-    use den_runtime::runtime::task_context::{RuntimeTaskContext, RuntimeTaskSource};
-    use sqlx::types::time::OffsetDateTime;
-    use uuid::Uuid;
-
-    fn session_current_task_context(task_id: Uuid) -> RuntimeTaskContext {
-        let item = TaskListItem {
-            id: task_id.to_string(),
-            title: "Selected task".to_string(),
-            summary: Some("Current session task".to_string()),
-            status: TaskListItemStatus::Pending,
-            blocked_reason: None,
-            source_ref: TaskListSourceRef::local(vec![]),
-            sync_state: TaskListSyncState::CheckedOut,
-        };
-        RuntimeTaskContext {
-            source: RuntimeTaskSource::SessionCurrentTask,
-            current_task_id: Some(task_id),
-            cached_activity_plan_projection: Some(TaskListProjection {
-                id: Uuid::new_v4(),
-                bear_id: Uuid::new_v4(),
-                title: "Session tasks".to_string(),
-                summary: String::new(),
-                owner_profile: "pair".to_string(),
-                visibility: "private_to_profile".to_string(),
-                status: "active".to_string(),
-                version: 1,
-                source_ref: TaskListSourceRef::local(vec![]),
-                items: vec![item.clone()],
-                current_item: Some(item),
-                source_conversation_id: None,
-                source_client_session_id: None,
-                handoff_intent_path: None,
-                handoff_task_id: None,
-                created_at: OffsetDateTime::UNIX_EPOCH,
-                updated_at: OffsetDateTime::UNIX_EPOCH,
-            }),
-        }
-    }
-
-    #[test]
-    fn current_task_projects_session_focus_only() {
-        let task_id = Uuid::new_v4();
-        let projected = session_current_task_projection(&session_current_task_context(task_id))
-            .expect("session-selected task should project");
-        assert_eq!(projected["id"], task_id.to_string());
-        assert_eq!(projected["title"], "Selected task");
-
-        let plan = session_current_task_context(task_id)
-            .active_activity_plan()
-            .cloned()
-            .expect("session task plan");
-        let acp_projection = active_activity_plan_projection(
-            plan,
-            RuntimeTaskSource::SessionCurrentTask.as_str(),
-            Some(projected),
-        );
-        assert_eq!(acp_projection["current_task"]["id"], task_id.to_string());
-        assert_eq!(acp_projection["status"], "active");
-        assert_eq!(acp_projection["items"][0]["status"], "pending");
-        assert_eq!(acp_projection["items"][0]["selection"], "current");
-
-        let mut no_selection = session_current_task_context(task_id);
-        no_selection.current_task_id = None;
-        assert!(session_current_task_projection(&no_selection).is_none());
-
-        let no_selection_plan = no_selection
-            .active_activity_plan()
-            .cloned()
-            .expect("session task plan");
-        let acp_without_selection = active_activity_plan_projection(
-            no_selection_plan,
-            RuntimeTaskSource::SessionCurrentTask.as_str(),
-            None,
-        );
-        assert!(acp_without_selection["current_task"].is_null());
-    }
-}
+mod tests;

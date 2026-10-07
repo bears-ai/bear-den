@@ -1,12 +1,12 @@
 # ACP Troubleshooting Runbook
 
-This runbook covers the Bear Den ACP direct path:
+This runbook covers the ACP armature path:
 
 ```text
-Editor ⇄ bear-armature ⇄ Den ACP gateway ⇄ Den native agent loop ⇄ Bifrost
+Editor ⇄ ACP stdio ⇄ bear-armature ⇄ BearWire v1 ⇄ Den native agent loop ⇄ Bifrost
 ```
 
-ACP `pair` profile traffic runs in-process when `AGENT_RUNTIME=native` (default). It does not route through an external harness.
+The armature uses BearWire, not the retired `/acp/**` HTTP gateway or an external harness. Lifecycle/startup guidance below was checked against the **local branch on 2026-10-06**, not a shipped/live build or provider exchange. Start with the maintained [BearWire and ACP topic](../topics/bearwire-acp.md).
 
 ---
 
@@ -24,7 +24,12 @@ Check adapter startup in the editor logs:
 bear-armature: starting version=... build_git_sha=... local_head_sha=...
 ```
 
-If Den and adapter are not both current, fix that first. Many ACP failures are version skew.
+Build metadata identifies what you reached; it is not a compatibility gate. The [local production-image validation](../topics/bearwire-acp.md#den-production-image-validation-build-only) built the separate tag `bears-den-armature-validation:local` without restart/deployment or real-model/provider smoke; it does not identify the running service build. The change adds no migrations or dependencies, but the shared typed protocol requires compatible Den/armature upgrades. Check the [BearWire compatibility guide](../../services/den/docs/guides/bearwire-compatibility.md) for the semantic boundary:
+
+- The token needs `armature:chat` scope and access to the configured Bear. `DEN_API_URL` must be the API origin exposing `/bearwire/v1/rpc`.
+- Leave `BEARS_BEARWIRE` unset or set it to `auto`/`true`. `off` disables required transport, not a fallback. `BEARS_LEGACY_ACP_HTTP` and `BEARS_BEARWIRE_REQUIRED` are not recovery switches.
+- Ordinary token preflight can succeed against an older BearWire v1 Den, but session creation/load/resume/prompt still requires the typed session access projection. A missing or invalid projection fails closed; upgrade Den rather than deriving access from a conversation ID.
+- Headless startup additionally requires `initialize.capabilities.expected_work_source: true` before checkout. Upgrade Den and armature together; never bypass the capability or checkout gate/fence checks.
 
 ## 1a. Inspect bear environment and status
 
@@ -54,6 +59,28 @@ For host browser bridge debugging, the most relevant fields are:
 - `diagnostics.warnings`
 - `diagnostics.errors`
 
+### Check session admission before a model turn
+
+Use `/status` or `/conversation` and inspect `_meta.bears.access` in ACP lifecycle replies:
+
+| Access | Diagnosis and action |
+|---|---|
+| `awaiting_hat` | The client session exists but has no durable conversation/history yet. Run `/hat`, then `/hat <name or UUID>` if `may_select_hat` is true. A valid IDE default admits a fresh session; adding one later does not admit an existing pending session on reconnect. |
+| `executable` | Den currently verifies a canonical source. Continue the chat diagnostic; individual effects still recheck authority. |
+| `read_only` | This is authorized history inspection, not execution as the source's owner. Replay is expected, but productive prompts, `/hat` selection, `/focus`, compaction, and mode/model changes are blocked. Start a new owned conversation to work. |
+
+`/hat` listing, diagnostics, an invalid hat, or rejected admission do not themselves consume selection eligibility. An initial prompt/selection in flight reserves the opportunity; wait for it to finish before retrying. Failure releases the reservation, but retry only if Den still permits selection. A successfully selected hat or admitted productive interaction closes the armature's initial selection opportunity even if later delivery fails. Successful restore refreshes it from Den; stale local state is not authority. Load/resume rejects while an initial prompt/selection reservation is held and does not clear it. Restore fences new productive/configuration/selection requests; a session-generation change rejects delayed stale state/history before projection or cache replacement. For a busy restore, wait for the reserved interaction to finish. For “Session changed while history was being restored”, retry against Den's current state rather than forcing the stale response.
+
+A failed `session/load` or `session/resume` is an error, never a synthetic new session. Check the ACP `sessionId` from `session/list` (Den's actual `client_session_id`), Bear/token ownership, and connectivity. Do not substitute a database row ID or rewrite the conversation ID. The known local binding is not replaced by a fabricated pending one after failure. Unknown explicitly requested history also fails instead of becoming a fresh session. Direct `run.start`, just like reconnect, cannot swap an owned or fresh transcript into a read-only session; start a genuinely new session rather than editing its binding.
+
+“Admitted canonical session conversation changed” indicates that a competing publication won or stale metadata no longer matches the latest canonical source. Den publishes the source atomically under a short publication transaction/lock; reload its canonical state rather than overwriting the binding or replaying a stale pending alias. This publication lock is not an inference lease.
+
+For headless Work, collect the `work.checkout` gate, requested/returned Work-run IDs, execution-attempt ID, and fence epoch. Missing, mismatched, denied, or malformed checkout state must stop before `session.open`/`run.start`. An “expected checked-out Work source is unavailable or changed” error means Den could not verify that exact live source; inspect the canonical Work/attempt state, not the IDE default. Do not synthesize a new fence or retry as ordinary Pair work.
+
+A valid Work checkout is not permission to use any transcript: startup independently requires an existing transcript to be actor-owned, active, and not archive-marked. “Cannot prove the active turn admitted this exact Work source and fence” means Den rejected unproven reuse of an already-active turn; a currently valid Work association does not establish that turn's original admission. Inspect the canonical turn/source before retrying.
+
+Exact Work validation is **startup preflight with rechecks**, not an atomic inference lease. It does not guarantee instantaneous attempt/hat revocation or hold that authority throughout inference. Do not infer a continuous revocation guarantee from a successful checkout or `run.start`.
+
 ---
 
 ## 2. Basic chat diagnostic
@@ -64,19 +91,14 @@ Prompt:
 Reply with exactly: hello from bear
 ```
 
-Expected adapter log:
+Enable `/debug verbose` for adapter diagnostics, then look for a matching accepted run and terminal event:
 
 ```text
-bear-armature: Den stream summary ... event_types={"assistant_text_delta": ..., "turn_complete": 1} ... saw_assistant_output=true
+bear-armature: BearWire run.start accepted session_id=... run_id=... after=...
+bear-armature: BearWire run terminal event received session_id=... run_id=... diagnostics=...
 ```
 
-Expected Den log:
-
-```text
-ACP Letta stream summary ... mapped_events>0 ... adapter_event_types={"assistant_text_delta": ...}
-```
-
-(Log line name is historical; with native runtime the upstream is the in-process agent loop, not Letta HTTP.)
+Correlate Den logs using that session/run ID. A terminal event can describe failure or cancellation, not only success; check the event outcome and visible ACP response. Do not expect the retired adapter-SSE `assistant_text_delta`/`turn_complete` or `ACP Letta stream summary` log shape.
 
 If basic chat fails, do not debug file tools yet.
 
@@ -92,15 +114,13 @@ Read /absolute/path/to/small-file.txt and summarize it.
 
 Expected file-read flow during a prompt turn:
 
-1. Native loop emits a tool request mapped to adapter event `tool_request`.
-2. Adapter logs `requesting permission` if approval is required.
-3. Adapter resolves the requested path through the typed workspace target boundary.
-4. Adapter reads/searches/stat's disk-backed workspace paths locally in `bear-armature` by default.
-5. Read-only FS tools (`fs_read_text_file`, `fs_list_directory`, `fs_find_paths`, `fs_search_files`, `fs_stat`) should not enter a permission wait; sensitive paths are denied or filtered by adapter policy instead.
-6. Adapter delegates to ACP client `fs/read_text_file` only for explicit editor-buffer/client-surface semantics, then verifies the client response against local file metadata.
-7. Adapter posts result to Den and logs the BearWire tool-result response when verbose, or always when Den reports a stalled/ignored continuation.
-8. Den continues the same in-process turn with the tool result.
-9. Den streams assistant text deltas to the adapter.
+1. Den emits a BearWire tool event/obligation with descriptor-owned execution target. Den-hosted tool cards remain display-only; they must not trigger armature execution or `client.tool.result`.
+2. For a client-owned read, the armature checks the descriptor's target/permission policy and resolves the path through the typed workspace boundary.
+3. It reads/searches/stat's disk-backed workspace paths locally by default. Sensitive or escaping paths are denied or filtered. A read-only tool name alone is not a grant: approval follows the current descriptor/session policy; an eligible Den-owned exact-root hat grant is rechecked before local execution.
+4. If approval is required, the adapter logs `requesting permission`. A Den permission obligation is settled with `client.permission.result`, not a fabricated tool result.
+5. The adapter delegates to ACP client `fs/read_text_file` only for explicit editor-buffer/client-surface semantics, then verifies the client response against local file metadata.
+6. The armature claims the local tool obligation and posts `client.tool.result` against the exact run/tool call. It logs the response when verbose, or when Den reports a stalled/ignored continuation.
+7. Den continues the same native turn and emits BearWire message/terminal events, projected as ACP updates.
 
 Useful adapter log snippets:
 
@@ -108,20 +128,14 @@ Useful adapter log snippets:
 bear-armature: requesting permission session_id=... tool_call_id=... tool_name=... path=...
 bear-armature: read_text_file session_id=... path=... line=... limit=... bytes=... returned_lines=... truncated=... duration_ms=...
 bear-armature: BearWire tool result response debug class=continued session_id=... run_id=... tool_call_id=... response={"ok":true,"continuation":"started",...}
-bear-armature: Den stream summary ...
+bear-armature: BearWire run terminal event received session_id=... run_id=... diagnostics=...
 ```
 
-Useful Den log snippets:
-
-```text
-ACP tool request registered ... tool_call_id=... tool_name=...
-ACP tool result received ... body_tool_call_id=... body_approval_request_id=...
-ACP Letta stream summary ... native_message_types=... adapter_event_types=...
-```
+Correlate Den's run and obligation state by `session_id`, `run_id`, `tool_call_id`, and, for a permission wait, the permission/obligation IDs. Legacy `/acp/**` tool-return logs are not the current boundary.
 
 Session lifecycle replay expectations:
 
-- `session/load` replays the visible conversation transcript to the ACP client before responding, including historical `user_message_chunk` updates and `agent_message_chunk` updates.
+- `session/load` replays only Den's explicit `history_conversation_id` before responding, including historical `user_message_chunk` and `agent_message_chunk` updates where persisted. A pending session has no history; authorized read-only inspection preserves the exact source, including when an admin inspects another owner's history.
 - `session/resume` restores the session without replaying history, per ACP resume semantics.
 - ACP replay is client-side rendering. Den/model context replay remains owned by canonical conversation storage and next-turn request construction.
 
@@ -131,7 +145,7 @@ Expected user-visible tool UX:
 - Permission prompts should include the concrete target and risk, such as the path, URL host, command/cwd, memory scope, or plan id.
 - Raw `args` may be attached as diagnostic/raw input, but visible content should prefer Den `display.title`, `display.subtitle`, `display.approval_summary`, and bounded summaries.
 - If a new tool renders generically, verify that its Den/ACP descriptor includes display metadata and that the adapter is consuming `event.display`.
-- For file reads and searches, disk-backed workspace paths execute in `bear-armature` by default without a permission wait. This behavior is descriptor-owned in `den-core` via typed `approval_policy`, `target_policy`, and `sensitive_path_policy`; ACP client read delegation is reserved for explicit editor-buffer/client-surface semantics.
+- For file reads and searches, disk-backed workspace paths execute in `bear-armature` by default, subject to descriptor-owned `approval_policy`, `target_policy`, and `sensitive_path_policy` plus current session/hat checks. Do not diagnose a permission wait as a bug solely because the tool is read-only. ACP client read delegation is reserved for explicit editor-buffer/client-surface semantics.
 - If an ACP client returns `{ "content": "" }` for a missing or non-empty file, treat it as a client bug; the adapter verifies delegated client responses and converts invalid success into a failed tool result so the model turn can continue with the error.
 - Canonical source paths are listed in `docs/architecture/repository-shape.md`; use `tools/bear-armature/` for source references and reserve `bears-acp-adapter` for legacy binary/package compatibility.
 
@@ -173,19 +187,14 @@ completed the turn without producing displayable ACP output
 mapped_events=0
 ```
 
-Cause: Den did not map native runtime tool events to adapter `tool_request` events.
+Check whether Den accepted `run.start`, whether BearWire emitted a required client obligation, and whether the armature claimed/settled it. Do not infer the failing layer from a legacy `mapped_events` counter.
 
 Actions:
 
-1. Set Den env var:
-
-```bash
-ACP_DEBUG_EVENT_SAMPLE_CHARS=8000
-```
-
-2. Restart Den.
-3. Reproduce once.
-4. Copy one full unmapped event sample from Den logs, keeping `tool_call_id`, `tool_name`, and argument fields intact.
+1. Enable `/debug verbose` and reproduce once in an executable session.
+2. Collect the matching run ID, BearWire event type/sequence, execution target, obligation/tool-call IDs, and any RPC error.
+3. Compare required obligations with the adapter's advertised surface. Unsupported obligations or missing terminal delivery should produce an explicit error, not a fabricated successful turn.
+4. Use the safe collection guidance below before sharing logs.
 
 ### Tool return while turn still active
 
@@ -221,7 +230,7 @@ Unable to extract tag using discriminator 'type'
 
 Cause: Den sent an approval return without the expected structured approval payload.
 
-Verify the adapter posts tool results in the shape Den's ACP gateway expects (see gateway tests under `services/den/src/api/acp/`).
+Verify the BearWire boundary: permission obligations use typed `client.permission.result` decisions; client-tool obligations use `client.tool.result` with the original run/tool-call/obligation identity. See the tests in `services/den/crates/den-bearwire/src/methods/`, not the retired ACP gateway.
 
 ### Missing file path
 
@@ -239,26 +248,16 @@ If debug samples show argument fragments, Den should accumulate until valid JSON
 
 ## 5. Safe raw sample collection
 
-Set:
+Enable `/debug verbose` for one reproduction (or set `BEAR_DEBUG=verbose` in the adapter environment before starting it), then return to `/debug off`. Collect matching adapter/Den logs and the ACP error data; `/debug` also exposes a focused-execution diagnostic bundle.
 
-```bash
-ACP_DEBUG_EVENT_SAMPLE_CHARS=8000
-```
+Redact tokens, credentials, private content, and local usernames before sharing. Preserve the identifiers needed to correlate state:
 
-Then find in Den logs:
-
-```text
-ACP Letta stream summary
-unmapped_event_samples=[...]
-```
-
-Redact secrets and local usernames if desired, but preserve:
-
-- event/message type
-- `id`
-- `tool_call_id`
-- `tool_name`
-- `arguments` / `input` / `args`
+- BearWire event type and sequence
+- client session ID and canonical conversation ID (opaque, not inferred from prefixes)
+- run, obligation, permission, and tool-call IDs
+- tool name and execution target
+- Work-run/execution-attempt IDs and fence epoch for headless startup
+- relevant argument shape and structured RPC error, with secret values removed
 
 ---
 
@@ -268,19 +267,22 @@ Do not confuse these layers:
 
 ```text
 Editor ⇄ adapter: ACP JSON-RPC over stdio
-Adapter ⇄ Den: Den-private HTTPS/SSE transport
+Adapter ⇄ Den: BearWire v1 JSON-RPC + ordered event pages
 Den: in-process native agent loop + Bifrost /v1 streaming
 ```
 
-Den ⇄ adapter event names include:
+Current BearWire event names include:
 
 ```text
-assistant_text_delta
-status_text
-tool_request
-conversation_resolved
-turn_complete
-error
+message.delta
+tool_call.requested
+tool_call.completed
+tool_call.failed
+client.waiting
+run.completed
+run.failed
+run.cancelled
+run.interrupted
 ```
 
-These are not raw ACP messages; the adapter translates them into ACP `session/update` and client requests.
+These are not raw ACP messages; the armature translates them into ACP `session/update` and client requests. Den session access is an explicit typed projection, and headless Work identity is an explicit `expected_work_source` field—not control text embedded in a transcript. The [JSON design specification](../architecture/bearwire-json-spec.md) remains a draft; check implemented shapes against the protocol crate and [compatibility guide](../../services/den/docs/guides/bearwire-compatibility.md).

@@ -31,8 +31,14 @@ use std::time::Duration;
 use tokio::sync::{broadcast, Mutex as TokioMutex};
 use uuid::Uuid;
 
+mod checkout;
+#[cfg(test)]
+mod tests;
+
+use checkout::WorkCheckout;
+
 pub(crate) struct HeadlessEnv {
-    pub work_order_id: String,
+    pub work_order_id: Uuid,
     pub workspace: String,
     pub deadline: Duration,
 }
@@ -46,6 +52,7 @@ impl HeadlessEnv {
             .ok_or_else(|| {
                 anyhow!("headless mode requires DEN_WORK_ORDER_ID (the Den work run to execute)")
             })?;
+        let work_order_id = parse_work_order_id(&work_order_id)?;
         let workspace = std::env::var("DEN_WORKSPACE")
             .ok()
             .map(|value| value.trim().to_string())
@@ -69,7 +76,22 @@ pub(crate) async fn run_headless(http: &reqwest::Client, runtime: &RuntimeConfig
     };
     let env = HeadlessEnv::from_env()?;
     crate::set_headless_mode();
+    run_headless_turn(http, &config, &env).await
+}
 
+fn parse_work_order_id(value: &str) -> Result<Uuid> {
+    let id = Uuid::parse_str(value).context("DEN_WORK_ORDER_ID must be a Work run UUID")?;
+    if id.is_nil() {
+        return Err(anyhow!("DEN_WORK_ORDER_ID must not be a nil UUID"));
+    }
+    Ok(id)
+}
+
+async fn run_headless_turn(
+    http: &reqwest::Client,
+    config: &Config,
+    env: &HeadlessEnv,
+) -> Result<()> {
     eprintln!(
         "bear-armature: headless mode work_order_id={} workspace={} deadline_secs={}",
         env.work_order_id,
@@ -77,13 +99,24 @@ pub(crate) async fn run_headless(http: &reqwest::Client, runtime: &RuntimeConfig
         env.deadline.as_secs()
     );
 
-    bearwire::validate_code_token(http, &config)
+    bearwire::validate_headless_work_startup(http, config)
         .await
         .context("headless: Den BearWire preflight failed")?;
 
-    let session_id = format!("headless-{}", Uuid::new_v4().simple());
+    let session_id = Uuid::new_v4().to_string();
+
+    tracing::info!(
+        work_order_id = %env.work_order_id,
+        session_id = %session_id,
+        "headless requesting work checkout"
+    );
+    let checkout = checkout_work_order(http, config, &session_id, env).await?;
+    let expected_source = checkout.source;
+    let prompt = checkout.prompt;
+    let deadline = checkout.deadline;
+
     let (mut adapter_state, shared_state) = headless_adapter_state(http.clone());
-    let context = headless_session_context(&env);
+    let context = headless_session_context(env);
     adapter_state
         .session_contexts
         .insert(session_id.clone(), context.clone());
@@ -92,26 +125,6 @@ pub(crate) async fn run_headless(http: &reqwest::Client, runtime: &RuntimeConfig
         .lock()
         .await
         .insert(session_id.clone(), context.clone());
-
-    tracing::info!(
-        work_order_id = %env.work_order_id,
-        session_id = %session_id,
-        "headless requesting work checkout"
-    );
-    let checkout = checkout_work_order(http, &config, &session_id, &env).await?;
-    let (execution_attempt_id, execution_attempt_fence_epoch) = checkout_attempt(&checkout)?;
-    let prompt = checkout
-        .get("prompt")
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| anyhow!("work.checkout returned no prompt"))?
-        .to_string();
-    let deadline = checkout
-        .get("deadline_secs")
-        .and_then(Value::as_u64)
-        .map(|secs| Duration::from_secs(secs.max(30)))
-        .unwrap_or(env.deadline)
-        .min(env.deadline);
 
     eprintln!(
         "bear-armature: headless checkout ok session_id={} prompt_chars={} deadline_secs={}",
@@ -123,8 +136,8 @@ pub(crate) async fn run_headless(http: &reqwest::Client, runtime: &RuntimeConfig
     tracing::info!(
         work_order_id = %env.work_order_id,
         session_id = %session_id,
-        execution_attempt_id = %execution_attempt_id,
-        fence_epoch = execution_attempt_fence_epoch,
+        execution_attempt_id = %expected_source.execution_attempt_id,
+        fence_epoch = expected_source.fence_epoch,
         "headless checkout received canonical Work attempt"
     );
 
@@ -146,9 +159,9 @@ pub(crate) async fn run_headless(http: &reqwest::Client, runtime: &RuntimeConfig
     // stricter headless checkout boundary and checkpoint trigger.
     let turn = tokio::time::timeout(
         deadline,
-        bearwire::handle_prompt(
+        bearwire::handle_prompt_with_source(
             http,
-            &config,
+            config,
             &mut adapter_state,
             &shared_state,
             response,
@@ -159,6 +172,7 @@ pub(crate) async fn run_headless(http: &reqwest::Client, runtime: &RuntimeConfig
             None,
             MODE_WRITE,
             turn_token,
+            bearwire::PromptSource::Work(expected_source),
         ),
     )
     .await;
@@ -181,9 +195,9 @@ pub(crate) async fn run_headless(http: &reqwest::Client, runtime: &RuntimeConfig
             );
             request_work_checkpoint(
                 http,
-                &config,
-                execution_attempt_id,
-                execution_attempt_fence_epoch,
+                config,
+                expected_source.execution_attempt_id,
+                expected_source.fence_epoch,
                 "near_ko",
                 &summary,
             )
@@ -196,12 +210,12 @@ pub(crate) async fn run_headless(http: &reqwest::Client, runtime: &RuntimeConfig
         }
     };
 
-    report_work_order(http, &config, &session_id, &env, status_hint, &summary).await;
+    report_work_order(http, config, &session_id, env, status_hint, &summary).await;
     eprintln!("bear-armature: headless finished status={status_hint}");
     outcome
 }
 
-fn headless_adapter_state(http: reqwest::Client) -> (AdapterState, AdapterSharedState) {
+pub(crate) fn headless_adapter_state(http: reqwest::Client) -> (AdapterState, AdapterSharedState) {
     let adapter_state = AdapterState::default();
     let (cancellation_tx, _) = broadcast::channel(64);
     let shared_state = AdapterSharedState {
@@ -238,11 +252,8 @@ fn headless_session_context(env: &HeadlessEnv) -> SessionContext {
         cwd: env.workspace.clone(),
         roots: vec![env.workspace.clone()],
         raw,
-        mcp_sources: Vec::new(),
-        conversation_id: None,
-        resolved_conversation_id: None,
-        thread_title: None,
         current_mode: Some(MODE_WRITE.to_string()),
+        ..Default::default()
     }
 }
 
@@ -251,8 +262,8 @@ async fn checkout_work_order(
     config: &Config,
     session_id: &str,
     env: &HeadlessEnv,
-) -> Result<Value> {
-    bearwire::rpc_call(
+) -> Result<WorkCheckout> {
+    let result = bearwire::rpc_call(
         http,
         config,
         "work.checkout",
@@ -265,7 +276,8 @@ async fn checkout_work_order(
         }),
     )
     .await
-    .context("BearWire work.checkout failed")
+    .context("BearWire work.checkout failed")?;
+    checkout::decode(result, env.work_order_id, env.deadline)
 }
 
 /// Advisory report; the authoritative outcome is the Den-side run hook plus
@@ -344,20 +356,6 @@ async fn request_work_checkpoint(
     }
 }
 
-fn checkout_attempt(checkout: &Value) -> Result<(Uuid, i64)> {
-    let attempt_id = checkout
-        .get("execution_attempt_id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("work.checkout returned no execution attempt id"))?
-        .parse()
-        .context("work.checkout returned invalid execution attempt id")?;
-    let fence_epoch = checkout
-        .get("execution_attempt_fence_epoch")
-        .and_then(Value::as_i64)
-        .ok_or_else(|| anyhow!("work.checkout returned no execution attempt fence epoch"))?;
-    Ok((attempt_id, fence_epoch))
-}
-
 /// Auto-resolve a permission request with no human present.
 ///
 /// The container is the primary enforcement boundary and workspace-root path
@@ -410,26 +408,5 @@ pub(crate) fn decide_permission_headless(
             remember: false,
             scope: ApprovalScope::Workspace,
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::checkout_attempt;
-    use serde_json::json;
-    use uuid::Uuid;
-
-    #[test]
-    fn checkout_attempt_requires_canonical_attempt_and_fence() {
-        let attempt_id = Uuid::new_v4();
-        assert_eq!(
-            checkout_attempt(&json!({
-                "execution_attempt_id": attempt_id.to_string(),
-                "execution_attempt_fence_epoch": 4,
-            }))
-            .expect("canonical checkout attempt"),
-            (attempt_id, 4)
-        );
-        assert!(checkout_attempt(&json!({})).is_err());
     }
 }

@@ -17,7 +17,35 @@ use uuid::Uuid;
 static JSON_WRITE_LOCK: OnceLock<TokioMutex<()>> = OnceLock::new();
 
 #[cfg(test)]
-type CapturedJsonOutput = Arc<TokioMutex<Vec<Value>>>;
+#[derive(Default)]
+struct JsonOutputCapture {
+    messages: TokioMutex<Vec<Value>>,
+    changed: tokio::sync::Notify,
+}
+
+#[cfg(test)]
+type CapturedJsonOutput = Arc<JsonOutputCapture>;
+
+#[cfg(test)]
+struct JsonOutputCaptureGuard {
+    buffer: CapturedJsonOutput,
+}
+
+#[cfg(test)]
+impl Drop for JsonOutputCaptureGuard {
+    fn drop(&mut self) {
+        let mut capture = JSON_OUTPUT_CAPTURE
+            .get_or_init(|| StdMutex::new(None))
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if capture
+            .as_ref()
+            .is_some_and(|active| Arc::ptr_eq(active, &self.buffer))
+        {
+            *capture = None;
+        }
+    }
+}
 
 #[cfg(test)]
 static JSON_OUTPUT_CAPTURE: OnceLock<StdMutex<Option<CapturedJsonOutput>>> = OnceLock::new();
@@ -193,7 +221,8 @@ pub(crate) async fn write_json(value: Value) -> Result<()> {
             .expect("json output capture lock")
             .clone();
         if let Some(buffer) = captured {
-            buffer.lock().await.push(value);
+            buffer.messages.lock().await.push(value);
+            buffer.changed.notify_waiters();
             return Ok(());
         }
     }
@@ -220,7 +249,7 @@ where
         .get_or_init(|| TokioMutex::new(()))
         .lock()
         .await;
-    let buffer = Arc::new(TokioMutex::new(Vec::new()));
+    let buffer = Arc::new(JsonOutputCapture::default());
     {
         let mut capture = JSON_OUTPUT_CAPTURE
             .get_or_init(|| StdMutex::new(None))
@@ -233,17 +262,58 @@ where
         *capture = Some(buffer.clone());
     }
 
+    let capture_guard = JsonOutputCaptureGuard {
+        buffer: buffer.clone(),
+    };
     let result = f().await;
-
-    {
-        let mut capture = JSON_OUTPUT_CAPTURE
-            .get_or_init(|| StdMutex::new(None))
-            .lock()
-            .expect("json output capture lock");
-        *capture = None;
-    }
-    let output = buffer.lock().await.clone();
+    drop(capture_guard);
+    let output = buffer.messages.lock().await.clone();
     (result, output)
+}
+
+#[cfg(test)]
+pub(crate) async fn wait_for_json_response_for_test(
+    id: &Value,
+    deadline: Duration,
+) -> Result<Value> {
+    let buffer = JSON_OUTPUT_CAPTURE
+        .get_or_init(|| StdMutex::new(None))
+        .lock()
+        .expect("json output capture lock")
+        .clone()
+        .ok_or_else(|| anyhow!("response wait requires an active JSON output capture"))?;
+    let wait = async {
+        loop {
+            // Register before inspecting the buffer so a write between inspection
+            // and awaiting cannot lose its wakeup. Notifications also wake us,
+            // but only a matching response (not a client request) completes this wait.
+            let changed = buffer.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if let Some(response) = buffer
+                .messages
+                .lock()
+                .await
+                .iter()
+                .find(|frame| {
+                    frame.get("id") == Some(id)
+                        && frame.get("method").is_none()
+                        && (frame.get("result").is_some() || frame.get("error").is_some())
+                })
+                .cloned()
+            {
+                return response;
+            }
+            changed.await;
+        }
+    };
+    match tokio::time::timeout(deadline, wait).await {
+        Ok(response) => Ok(response),
+        Err(_) => {
+            let messages = buffer.messages.lock().await;
+            Err(anyhow!("timed out after {deadline:?} waiting for JSON-RPC response {id}; captured {} frames, IDs: {:?}", messages.len(), messages.iter().filter_map(|frame| frame.get("id")).collect::<Vec<_>>()))
+        }
+    }
 }
 
 #[cfg(test)]

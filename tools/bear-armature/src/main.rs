@@ -3,8 +3,13 @@ mod bearwire;
 mod execution_diagnostics;
 mod headless;
 mod json_rpc;
+#[cfg(test)]
+mod json_rpc_capture_tests;
 mod paths;
 mod projection_dispatcher;
+mod session_lifecycle;
+#[cfg(test)]
+mod session_lifecycle_tests;
 mod tool_tasks;
 mod tools;
 mod update;
@@ -114,7 +119,19 @@ use agent_client_protocol::schema::{
     ToolKind, WaitForTerminalExitRequest, WaitForTerminalExitResponse,
 };
 use anyhow::{anyhow, bail, Context, Result};
-use bearwire_protocol::surface::SurfaceHistoryEvent;
+use bearwire_protocol::{
+    session::{SessionAccess, SessionAccessState},
+    surface::SurfaceHistoryEvent,
+};
+use session_lifecycle::{
+    advance_session_generation, handle_session_load, require_session_interaction,
+    reserve_session_interaction, restore_session_from_den, session_access_status,
+    validated_conversation_id, with_session_access_metadata, DenSessionProjection,
+    InteractionReservationState, SessionInteractionKind, SessionRestoreGuard,
+};
+pub(crate) use session_lifecycle::{
+    apply_den_session_projection, mark_session_productive_interaction,
+};
 
 use approvals::{
     approval_url_host_scope, parse_permission_decision, permission_class_for_tool,
@@ -438,6 +455,8 @@ struct SessionContext {
     resolved_conversation_id: Option<String>,
     thread_title: Option<String>,
     current_mode: Option<String>,
+    access: Option<SessionAccess>,
+    interaction_reservation: InteractionReservationState,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -654,6 +673,9 @@ async fn remember_session_mode(
         .await
         .get_mut(session_id)
     {
+        if let Err(error) = advance_session_generation(context) {
+            tracing::warn!(session_id, %error, "could not advance session generation after mode update");
+        }
         set_context_mode(context, mode, source, pending_den_sync);
     }
     mode
@@ -1127,6 +1149,9 @@ async fn remember_session_model(
         .await
         .get_mut(session_id)
     {
+        if let Err(error) = advance_session_generation(context) {
+            tracing::warn!(session_id, %error, "could not advance session generation after model update");
+        }
         context.raw["model_selection"] = model_state;
     }
 }
@@ -2538,7 +2563,7 @@ async fn handle_request(
                 let conversation_id = prompt_conversation_id_from_params(&request.params);
                 if let Some(config) = runtime.config.as_ref() {
                     if bearwire::enabled() {
-                        if let Err(err) = bearwire::post_session_open(
+                        let opened = bearwire::post_session_open(
                             http,
                             config,
                             &session_id,
@@ -2547,18 +2572,43 @@ async fn handle_request(
                             mode,
                         )
                         .await
-                        {
-                            write_response(
-                                id,
-                                Err(json_rpc_error(
-                                    -32003,
-                                    "BEARS session creation failed",
-                                    Some(json!({ "message": format!("{err:#}") })),
-                                )),
-                            )
-                            .await?;
-                            return Ok(());
-                        }
+                        .and_then(|result| {
+                            let session = result
+                                .get("session")
+                                .context("session.open omitted session")?;
+                            DenSessionProjection::parse(&session_id, session)?;
+                            Ok(session.clone())
+                        });
+                        let session = match opened {
+                            Ok(session) => session,
+                            Err(err) => {
+                                write_response(
+                                    id,
+                                    Err(json_rpc_error(
+                                        -32003,
+                                        "BEARS session creation failed",
+                                        Some(json!({ "message": format!("{err:#}") })),
+                                    )),
+                                )
+                                .await?;
+                                return Ok(());
+                            }
+                        };
+                        adapter_state
+                            .session_contexts
+                            .insert(session_id.clone(), context);
+                        apply_den_session_projection(
+                            adapter_state,
+                            shared_state,
+                            &session_id,
+                            &session,
+                        )
+                        .await?;
+                        context = adapter_state
+                            .session_contexts
+                            .get(&session_id)
+                            .cloned()
+                            .context("projected new session missing")?;
                     }
                 }
                 shared_state
@@ -2568,7 +2618,7 @@ async fn handle_request(
                     .insert(session_id.clone(), context.clone());
                 adapter_state
                     .session_contexts
-                    .insert(session_id.clone(), context);
+                    .insert(session_id.clone(), context.clone());
                 if let Some(config) = runtime.config.as_ref() {
                     spawn_adapter_environment_publish(
                         config.clone(),
@@ -2588,7 +2638,14 @@ async fn handle_request(
                             "note": "New ACP sessions default to Ask until Den session policy says otherwise."
                         }),
                     )])));
-                write_response(id, Ok(serde_json::to_value(response)?)).await?;
+                write_response(
+                    id,
+                    Ok(with_session_access_metadata(
+                        serde_json::to_value(response)?,
+                        &context,
+                    )),
+                )
+                .await?;
             }
         }
         "session/set_config_option" => {
@@ -2625,6 +2682,25 @@ async fn handle_request(
                         return Ok(());
                     }
                 };
+                if let Err(err) = require_session_interaction(
+                    adapter_state,
+                    shared_state,
+                    session_id,
+                    SessionInteractionKind::Configure,
+                )
+                .await
+                {
+                    write_response(
+                        id,
+                        Err(json_rpc_error(
+                            -32003,
+                            "BEARS session configuration denied",
+                            Some(json!({"message": format!("{err:#}")})),
+                        )),
+                    )
+                    .await?;
+                    return Ok(());
+                }
                 if config_id == "model" {
                     let requested_model = match config_value_from_params(&request.params) {
                         Ok(value) => value,
@@ -2828,6 +2904,25 @@ async fn handle_request(
                     .await?;
                     return Ok(());
                 }
+                if let Err(err) = require_session_interaction(
+                    adapter_state,
+                    shared_state,
+                    session_id,
+                    SessionInteractionKind::Configure,
+                )
+                .await
+                {
+                    write_response(
+                        id,
+                        Err(json_rpc_error(
+                            -32003,
+                            "BEARS session configuration denied",
+                            Some(json!({"message": format!("{err:#}")})),
+                        )),
+                    )
+                    .await?;
+                    return Ok(());
+                }
                 let requested_mode = mode;
                 let (mode, den_response) = request_den_session_mode(
                     http,
@@ -2988,7 +3083,19 @@ async fn handle_request(
                         let response = ResumeSessionResponse::new()
                             .config_options(session_config_options_for_mode(mode))
                             .modes(session_modes_for_mode(mode));
-                        write_response(id, Ok(serde_json::to_value(response)?)).await?;
+                        let session_id = session_id_from_config_params(&request.params)?;
+                        let context = adapter_state
+                            .session_contexts
+                            .get(session_id)
+                            .context("restored session missing")?;
+                        write_response(
+                            id,
+                            Ok(with_session_access_metadata(
+                                serde_json::to_value(response)?,
+                                context,
+                            )),
+                        )
+                        .await?;
                         let session_id = request
                             .params
                             .get("sessionId")
@@ -3056,24 +3163,6 @@ async fn handle_request(
         }
         "session/prompt" => {
             if let Some(id) = request.id {
-                // A bare /hat only lists options. Claim the first productive ACP
-                // interaction before spawning a selection or Den turn, so a
-                // concurrent ordinary prompt cannot race the switch.
-                let first_interaction = if let Some(session_id) = request
-                    .params
-                    .get("sessionId")
-                    .and_then(Value::as_str)
-                    .filter(|id| !id.is_empty())
-                {
-                    let mut seen = shared_state.prompted_sessions.lock().await;
-                    reserve_first_acp_interaction(
-                        &mut seen,
-                        session_id,
-                        prompt_text_from_params(&request.params).ok().as_deref(),
-                    )
-                } else {
-                    false
-                };
                 if let Some(command) = prompt_text_from_params(&request.params)
                     .ok()
                     .and_then(|prompt| parse_local_slash_command(&prompt))
@@ -3095,7 +3184,6 @@ async fn handle_request(
                             id.clone(),
                             request.params,
                             command,
-                            first_interaction,
                         )
                         .await
                         {
@@ -3125,6 +3213,29 @@ async fn handle_request(
                     return Ok(());
                 };
 
+                let session_id = session_id_from_config_params(&request.params)?.to_string();
+                let reservation = match reserve_session_interaction(
+                    adapter_state,
+                    shared_state,
+                    &session_id,
+                    SessionInteractionKind::Productive,
+                )
+                .await
+                {
+                    Ok(reservation) => reservation,
+                    Err(err) => {
+                        write_response(
+                            id,
+                            Err(json_rpc_error(
+                                -32003,
+                                "BEARS session prompt denied",
+                                Some(json!({"message": format!("{err:#}")})),
+                            )),
+                        )
+                        .await?;
+                        return Ok(());
+                    }
+                };
                 if let Err(err) = validate_den_code_token(http, config).await {
                     if let Some(session_id) =
                         request.params.get("sessionId").and_then(Value::as_str)
@@ -3206,6 +3317,7 @@ async fn handle_request(
                     transport: shared_state.transport.clone(),
                 };
                 tokio::spawn(async move {
+                    let _reservation = reservation;
                     match handle_prompt(
                         &http,
                         &config,
@@ -3606,6 +3718,7 @@ fn session_context_from_params(params: &Value) -> Result<SessionContext> {
         resolved_conversation_id: None,
         thread_title: None,
         current_mode: Some(MODE_ASK.to_string()),
+        ..Default::default()
     };
     set_context_mode(
         &mut context,
@@ -4365,7 +4478,7 @@ fn map_den_sessions_list_to_acp(den: &Value) -> Result<Value> {
     let mut sessions_out = Vec::new();
     for s in sessions_in {
         let session_id = s
-            .get("acp_session_id")
+            .get("client_session_id")
             .and_then(Value::as_str)
             .unwrap_or("");
         let updated_at = s.get("updated_at").and_then(Value::as_str).unwrap_or("");
@@ -4410,71 +4523,6 @@ fn history_conversation_id(den_session: &Value) -> Option<String> {
         .map(str::trim)
         .filter(|id| !id.is_empty())
         .map(str::to_string)
-}
-
-fn local_session_context_from_params(params: &Value) -> Result<SessionContext> {
-    match session_context_from_params(params) {
-        Ok(context) => Ok(context),
-        Err(err) if session_params_have_cwd_hint(params) => Err(err),
-        Err(err) => {
-            let cwd = env::current_dir()
-                .context("resolve adapter current directory for local ACP session fallback")?
-                .display()
-                .to_string();
-            if !is_absolute_local_path(&cwd) {
-                return Err(err).with_context(|| {
-                    format!("adapter current directory fallback is not absolute: {cwd:?}")
-                });
-            }
-            eprintln!(
-                "bear-armature: using adapter current directory as local session fallback cwd={} reason={err:#}",
-                cwd
-            );
-            let mut mcp_sources = parse_acp_mcp_servers(params)?;
-            if let Some(host_browser_bridge) = host_browser_bridge_config_from_env() {
-                mcp_sources.push(host_browser_bridge);
-            }
-            let mut context = SessionContext {
-                cwd: cwd.clone(),
-                roots: vec![cwd.clone()],
-                raw: json!({
-                    "cwd": cwd,
-                    "workspace_roots": [cwd],
-                    "adapter_version": adapter_version(),
-                    "adapter": adapter_capabilities_context(),
-                    "direct_tools": direct_tools_context(),
-                    "mcp_servers": mcp_sources
-                        .iter()
-                        .map(McpSourceConfig::safe_summary_for_session_context)
-                        .collect::<Vec<_>>(),
-                    "host_browser_bridge": host_browser_bridge_env_summary(),
-                    "local_fallback": {
-                        "reason": format!("{err:#}"),
-                        "source": "adapter.current_dir"
-                    }
-                }),
-                mcp_sources,
-                conversation_id: None,
-                resolved_conversation_id: None,
-                thread_title: None,
-                current_mode: Some(MODE_ASK.to_string()),
-            };
-            set_context_mode(
-                &mut context,
-                MODE_ASK,
-                "adapter.local_fallback_default",
-                false,
-            );
-            ensure_session_context_capabilities(&mut context);
-            Ok(context)
-        }
-    }
-}
-
-fn session_params_have_cwd_hint(params: &Value) -> bool {
-    explicit_cwd_from_params(params).is_some()
-        || fallback_cwd_from_params(params).is_some()
-        || !workspace_roots_from_params(params).is_empty()
 }
 
 fn session_context_from_den_session(params: &Value, den_session: &Value) -> Result<SessionContext> {
@@ -4523,6 +4571,7 @@ fn session_context_from_den_session(params: &Value, den_session: &Value) -> Resu
             .map(str::to_string),
         thread_title: den_session_display_title(den_session),
         current_mode: Some(infer_mode_from_den_session(den_session).to_string()),
+        ..Default::default()
     };
     ctx.raw = json!({
         "cwd": ctx.cwd.clone(),
@@ -4585,19 +4634,6 @@ impl std::fmt::Display for DenHttpError {
 }
 
 impl std::error::Error for DenHttpError {}
-
-fn den_session_error_allows_local_fallback(err: &anyhow::Error) -> bool {
-    if let Some(http) = err.downcast_ref::<DenHttpError>() {
-        return http.status == reqwest::StatusCode::NOT_FOUND
-            || http.status == reqwest::StatusCode::REQUEST_TIMEOUT
-            || http.status == reqwest::StatusCode::BAD_GATEWAY
-            || http.status == reqwest::StatusCode::SERVICE_UNAVAILABLE
-            || http.status == reqwest::StatusCode::GATEWAY_TIMEOUT
-            || http.status.is_server_error();
-    }
-    err.chain().any(|cause| cause.is::<reqwest::Error>())
-        || format!("{err:#}").contains("timed out after")
-}
 
 async fn request_den_session_mode(
     _http: &reqwest::Client,
@@ -4989,16 +5025,20 @@ async fn replay_history_for_den_session(
     session_id: &str,
     den: &Value,
     lifecycle_method: &str,
+    shared_state: &AdapterSharedState,
+    restore: &SessionRestoreGuard,
 ) -> Result<()> {
     if let Some(conv) = history_conversation_id(den) {
         let messages =
             fetch_conversation_surface_history_chronological(http, config, &conv).await?;
+        restore.check_current(shared_state).await?;
         let fetched = messages.len();
         let mut counts = std::collections::BTreeMap::<&str, usize>::new();
         // Tool results intentionally do not duplicate request arguments in canonical history.
         // Keep them only for this replay pass so terminal ACP updates preserve the request card.
         let mut tool_requests = std::collections::HashMap::<String, ToolRequestPresentation>::new();
         for message in history_replay_chunks_with_boundaries(messages) {
+            restore.check_current(shared_state).await?;
             match message.kind.as_str() {
                 "tool_call" | "tool_result" => {
                     let category = if message.kind == "tool_call" {
@@ -5103,161 +5143,6 @@ async fn replay_history_for_den_session(
             lifecycle_method, session_id
         );
     }
-    Ok(())
-}
-
-async fn restore_session_from_den(
-    http: &reqwest::Client,
-    config: &Config,
-    adapter_state: &mut AdapterState,
-    shared_state: &AdapterSharedState,
-    params: &Value,
-) -> Result<(&'static str, Option<Value>, Option<Value>)> {
-    let session_id = params
-        .get("sessionId")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("session params missing sessionId"))?;
-    let den = match den_get_acp_session_for_lifecycle(http, config, session_id).await {
-        Ok(den) => Some(den),
-        Err(err) if den_session_error_allows_local_fallback(&err) => {
-            eprintln!(
-                "bear-armature: session/resume session_id={} could not load Den session ({}); restoring as local pending session",
-                session_id,
-                truncate_for_log(&format!("{err:#}"), 240)
-            );
-            None
-        }
-        Err(err) => return Err(err),
-    };
-    let context = if let Some(den) = den.as_ref() {
-        session_context_from_den_session(params, den)?
-    } else {
-        local_session_context_from_params(params)?
-    };
-    let mcp_context = shared_state
-        .mcp_registry
-        .configure_session(session_id, context.mcp_sources.clone())
-        .await?;
-    let mut context = context;
-    context.raw["mcp"] = mcp_context;
-    ensure_session_context_capabilities(&mut context);
-    if bear_debug_verbose() {
-        eprintln!(
-            "bear-armature: session/resume session_id={} cwd={} roots={} direct_tools={} mcp={}",
-            session_id,
-            context.cwd,
-            context.roots.join(","),
-            context
-                .raw
-                .get("direct_tools")
-                .cloned()
-                .unwrap_or(Value::Null),
-            summarize_mcp_for_log(context.raw.get("mcp"))
-        );
-    }
-    shared_state
-        .session_contexts
-        .lock()
-        .await
-        .insert(session_id.to_string(), context.clone());
-    adapter_state
-        .session_contexts
-        .insert(session_id.to_string(), context);
-    spawn_adapter_environment_publish(
-        config.clone(),
-        session_id.to_string(),
-        adapter_state.clone(),
-        None,
-    );
-    Ok((
-        den.as_ref()
-            .map(infer_mode_from_den_session)
-            .unwrap_or(MODE_ASK),
-        den.as_ref()
-            .and_then(|session| session.get("context_budget").cloned()),
-        den,
-    ))
-}
-
-async fn handle_session_load(
-    http: &reqwest::Client,
-    config: &Config,
-    adapter_state: &mut AdapterState,
-    shared_state: &AdapterSharedState,
-    response_id: Value,
-    params: &Value,
-) -> Result<()> {
-    let session_id = params
-        .get("sessionId")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("session/load params missing sessionId"))?;
-    let den = match den_get_acp_session_for_lifecycle(http, config, session_id).await {
-        Ok(den) => Some(den),
-        Err(err) if den_session_error_allows_local_fallback(&err) => {
-            eprintln!(
-                "bear-armature: session/load session_id={} could not load Den session ({}); loading as local pending session",
-                session_id,
-                truncate_for_log(&format!("{err:#}"), 240)
-            );
-            None
-        }
-        Err(err) => return Err(err),
-    };
-    let context = if let Some(den) = den.as_ref() {
-        session_context_from_den_session(params, den)?
-    } else {
-        local_session_context_from_params(params)?
-    };
-    let mcp_context = shared_state
-        .mcp_registry
-        .configure_session(session_id, context.mcp_sources.clone())
-        .await?;
-    let mut context = context;
-    context.raw["mcp"] = mcp_context;
-    ensure_session_context_capabilities(&mut context);
-    if bear_debug_verbose() {
-        eprintln!(
-            "bear-armature: session/load session_id={} cwd={} roots={} direct_tools={} mcp={}",
-            session_id,
-            context.cwd,
-            context.roots.join(","),
-            context
-                .raw
-                .get("direct_tools")
-                .cloned()
-                .unwrap_or(Value::Null),
-            summarize_mcp_for_log(context.raw.get("mcp"))
-        );
-    }
-    shared_state
-        .session_contexts
-        .lock()
-        .await
-        .insert(session_id.to_string(), context.clone());
-    adapter_state
-        .session_contexts
-        .insert(session_id.to_string(), context);
-    spawn_adapter_environment_publish(
-        config.clone(),
-        session_id.to_string(),
-        adapter_state.clone(),
-        None,
-    );
-    let mode = den
-        .as_ref()
-        .map(infer_mode_from_den_session)
-        .unwrap_or(MODE_ASK);
-    // ACP session/load is a streaming lifecycle request: replay historical
-    // session/update notifications before completing the request.
-    if let Some(den) = den.as_ref() {
-        replay_history_for_den_session(http, config, session_id, den, "session/load").await?;
-        surface_submitted_plan_fallback(session_id, den).await?;
-    }
-    send_available_commands_update(session_id).await?;
-    if let Some(context_budget) = den.and_then(|session| session.get("context_budget").cloned()) {
-        send_context_budget_usage_update(session_id, context_budget).await?;
-    }
-    write_response(response_id, Ok(session_lifecycle_result(mode)?)).await?;
     Ok(())
 }
 
@@ -5714,10 +5599,27 @@ fn hat_web_fetch_permission_option(
 async fn hat_report(
     http: &reqwest::Client,
     config: &Config,
+    adapter_state: &mut AdapterState,
+    shared_state: &AdapterSharedState,
     session_id: &str,
     prompt: &str,
-    first_interaction: bool,
 ) -> String {
+    let target = prompt.trim().strip_prefix("/hat").unwrap_or("").trim();
+    let _reservation = if target.is_empty() {
+        None
+    } else {
+        match reserve_session_interaction(
+            adapter_state,
+            shared_state,
+            session_id,
+            SessionInteractionKind::SelectHat,
+        )
+        .await
+        {
+            Ok(reservation) => reservation,
+            Err(err) => return format!("Could not choose that hat: {err:#}"),
+        }
+    };
     let listing = match bearwire::rpc_call(
         http,
         config,
@@ -5766,15 +5668,12 @@ async fn hat_report(
             choices.join("\n")
         }
     );
-    let target = prompt.trim().strip_prefix("/hat").unwrap_or("").trim();
     if target.is_empty() {
         return format!(
             "{list}\nUse /hat <name or id> before the first turn to choose a different hat."
         );
     }
-    if !first_interaction {
-        return format!("{list}\nThe hat can only be changed as this IDE conversation's first interaction. Start a new conversation to wear another hat.");
-    }
+
     let matched = hats.iter().find(|hat| {
         hat.get("id").and_then(Value::as_str) == Some(target)
             || hat
@@ -5783,7 +5682,7 @@ async fn hat_report(
                 .is_some_and(|name| name.eq_ignore_ascii_case(target))
     });
     let Some(hat) = matched else {
-        return format!("No hat named {target:?}.\n{list}\nStart a new IDE conversation to retry the first-interaction selection.");
+        return format!("No hat named {target:?}.\n{list}\nUse /hat <name or id> to retry before a productive turn.");
     };
     let Some(hat_id) = hat.get("id").and_then(Value::as_str) else {
         return "Den returned a hat without an ID.".to_string();
@@ -5791,8 +5690,24 @@ async fn hat_report(
     match bearwire::rpc_call(http, config, "session.hat.select", json!({
         "bear_slug": config.bear, "session_id": session_id, "hat_id": hat_id,
     })).await {
-        Ok(_) => format!("Wearing {} for this conversation. This choice cannot change after the first turn.",
-            hat.get("name").and_then(Value::as_str).unwrap_or(hat_id)),
+        Ok(result) => {
+            let projected = async {
+                let session = result.get("session").context("session.hat.select omitted session")?;
+                let projection = DenSessionProjection::parse(session_id, session)?;
+                let canonical = result.get("conversation_id").and_then(Value::as_str).context("session.hat.select omitted canonical conversation_id")?;
+                validated_conversation_id(canonical)?;
+                if projection.access.state != SessionAccessState::Executable || projection.canonical_id() != Some(canonical) {
+                    bail!("hat selection returned an inconsistent canonical binding");
+                }
+                apply_den_session_projection(adapter_state, shared_state, session_id, session).await?;
+                mark_session_productive_interaction(shared_state, session_id).await;
+                Ok::<(), anyhow::Error>(())
+            }.await;
+            match projected {
+                Ok(()) => format!("Wearing {} for this conversation. Start a new conversation to choose another hat.", hat.get("name").and_then(Value::as_str).unwrap_or(hat_id)),
+                Err(err) => format!("Could not verify the selected hat: {err:#}. Reload this session to recover Den's canonical state."),
+            }
+        }
         Err(err) => format!("Could not choose that hat: {err:#}. Start a new IDE conversation if this one has already begun."),
     }
 }
@@ -5809,13 +5724,26 @@ async fn handle_local_slash_prompt(
     response_id: Value,
     params: Value,
     command: LocalSlashCommand,
-    first_interaction: bool,
 ) -> Result<()> {
     let session_id = params
         .get("sessionId")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("session/prompt params missing sessionId"))?;
     let prompt = prompt_text_from_params(&params)?;
+    let _reservation = if matches!(
+        command,
+        LocalSlashCommand::Compact | LocalSlashCommand::Focus
+    ) {
+        reserve_session_interaction(
+            adapter_state,
+            shared_state,
+            session_id,
+            SessionInteractionKind::Productive,
+        )
+        .await?
+    } else {
+        None
+    };
     let display_prompt = prompt_display_text_from_params(&params).unwrap_or_else(|| prompt.clone());
     send_user_message_chunk(session_id, &display_prompt).await?;
     let mut launched = None;
@@ -5829,7 +5757,15 @@ async fn handle_local_slash_prompt(
     } else if command == LocalSlashCommand::Hat {
         match (http, config) {
             (Some(http), Some(config)) if bearwire::enabled() => {
-                hat_report(http, config, session_id, &prompt, first_interaction).await
+                hat_report(
+                    http,
+                    config,
+                    adapter_state,
+                    shared_state,
+                    session_id,
+                    &prompt,
+                )
+                .await
             }
             _ => den_required_slash_command_unavailable(command),
         }
@@ -5857,6 +5793,7 @@ async fn handle_local_slash_prompt(
     };
     send_agent_message_chunk(session_id, &report).await?;
     if let (Some(http), Some(config), Some(run_result)) = (http, config, launched) {
+        mark_session_productive_interaction(shared_state, session_id).await;
         let response = PromptResponseGuard::new(response_id);
         let turn_token = Uuid::new_v4();
         let conversation_id_for_turn = prompt_conversation_id_from_params(&params);
@@ -6012,27 +5949,13 @@ async fn handle_prompt_with_retry(
         }
         return Ok(());
     }
-    let mut client_context = shared_state
-        .session_contexts
-        .lock()
-        .await
-        .get(session_id)
-        .cloned()
-        .or_else(|| adapter_state.session_contexts.get(session_id).cloned())
-        .unwrap_or_else(|| {
-            eprintln!(
-                "bear-armature: session/prompt session_id={} had no cached session context; using fallback direct tool context",
-                session_id
-            );
-            SessionContext {
-                raw: json!({
-                    "adapter_version": adapter_version(),
-                    "adapter": adapter_capabilities_context(),
-                    "direct_tools": direct_tools_context(),
-                }),
-                ..Default::default()
-            }
-        });
+    let mut client_context = require_session_interaction(
+        adapter_state,
+        shared_state,
+        session_id,
+        SessionInteractionKind::Productive,
+    )
+    .await?;
     ensure_session_context_capabilities(&mut client_context);
     let conversation_id = client_context
         .resolved_conversation_id
@@ -6237,17 +6160,6 @@ fn local_slash_descriptor_for_command(
         .find(|descriptor| descriptor.command == command)
 }
 
-fn reserve_first_acp_interaction(
-    prompted_sessions: &mut HashSet<String>,
-    session_id: &str,
-    prompt: Option<&str>,
-) -> bool {
-    if prompt.is_some_and(|text| text.trim() == "/hat") {
-        return !prompted_sessions.contains(session_id);
-    }
-    prompted_sessions.insert(session_id.to_string())
-}
-
 fn parse_local_slash_command(prompt: &str) -> Option<LocalSlashCommand> {
     let token = prompt.split_whitespace().next()?;
     let name = token.strip_prefix('/')?;
@@ -6273,6 +6185,16 @@ async fn handle_local_slash_command(
             .await
         }
         LocalSlashCommand::Compact => {
+            if let Err(err) = require_session_interaction(
+                adapter_state,
+                shared_state,
+                session_id,
+                SessionInteractionKind::Productive,
+            )
+            .await
+            {
+                return format!("Compaction is unavailable: {err:#}");
+            }
             let (Some(http), Some(config)) = (http, config) else {
                 return den_required_slash_command_unavailable(command);
             };
@@ -6299,7 +6221,18 @@ async fn handle_local_slash_command(
             runtime_report(http, config, adapter_state, shared_state, session_id).await
         }
         LocalSlashCommand::Status => {
-            status_report(http, config, adapter_state, shared_state, session_id).await
+            let report = status_report(http, config, adapter_state, shared_state, session_id).await;
+            let context = shared_state
+                .session_contexts
+                .lock()
+                .await
+                .get(session_id)
+                .cloned()
+                .unwrap_or_else(|| client_context_for_doctor(adapter_state, session_id));
+            format!(
+                "{report}\n\nSession access: {}",
+                session_access_status(&context)
+            )
         }
         LocalSlashCommand::Focus => "Den ACP /focus usage: /focus [job_id]".to_string(),
         LocalSlashCommand::Hat => {
@@ -6827,7 +6760,7 @@ fn client_context_for_doctor(adapter_state: &AdapterState, session_id: &str) -> 
 fn conversation_report(adapter_state: &AdapterState, session_id: &str) -> String {
     let context = client_context_for_doctor(adapter_state, session_id);
     format!(
-        "BEARS ACP conversation\n\n- ACP session: {session_id}\n- cwd: {}\n- roots: {}\n- conversation_id: {}\n- resolved_conversation_id: {}",
+        "BEARS ACP conversation\n\n- ACP session: {session_id}\n- cwd: {}\n- roots: {}\n- conversation_id: {}\n- resolved_conversation_id: {}\n- access: {}",
         context.cwd,
         if context.roots.is_empty() {
             "<none>".to_string()
@@ -6839,6 +6772,7 @@ fn conversation_report(adapter_state: &AdapterState, session_id: &str) -> String
             .resolved_conversation_id
             .as_deref()
             .unwrap_or("<none>"),
+        session_access_status(&context),
     )
 }
 
@@ -8027,6 +7961,9 @@ pub(crate) async fn bind_prompt_turn_run(
         return false;
     }
     turn.run_id = Some(run_id.to_string());
+    drop(active);
+    // Binding a validated launch is admission success, even if later delivery fails.
+    mark_session_productive_interaction(shared_state, session_id).await;
     true
 }
 
@@ -10492,6 +10429,9 @@ async fn apply_session_title_projection_state(
         .await
         .get_mut(session_id)
     {
+        if let Err(error) = advance_session_generation(context) {
+            tracing::warn!(session_id, %error, "could not advance session generation after title update");
+        }
         context.thread_title = title;
     }
 }
@@ -10537,34 +10477,30 @@ pub(crate) async fn handle_conversation_resolved_projection(
     turn_token: Uuid,
     conversation_id: &str,
 ) -> Result<()> {
-    if !is_current_prompt_turn(
-        shared_state,
-        session_id,
-        turn_token,
-        "conversation_resolved_projection",
-    )
-    .await
-    {
-        return Ok(());
-    }
-    let conversation_id = conversation_id.trim();
-    if !conversation_id.starts_with("conv-") {
-        return Ok(());
-    }
-    let context = adapter_state
-        .session_contexts
-        .entry(session_id.to_string())
-        .or_default();
-    context.resolved_conversation_id = Some(conversation_id.to_string());
-    let thread_title = context.thread_title.clone();
-    {
-        let mut shared_contexts = shared_state.session_contexts.lock().await;
-        let shared = shared_contexts.entry(session_id.to_string()).or_default();
-        shared.resolved_conversation_id = Some(conversation_id.to_string());
-        if thread_title.is_some() {
-            shared.thread_title = thread_title.clone();
+    let thread_title = {
+        let active = shared_state.active_prompts.lock().await;
+        if active
+            .get(session_id)
+            .is_none_or(|turn| turn.token != turn_token)
+        {
+            return Ok(());
         }
-    }
+        let conversation_id = validated_conversation_id(conversation_id)?;
+        let mut shared_contexts = shared_state.session_contexts.lock().await;
+        let mut context = shared_contexts
+            .get(session_id)
+            .or_else(|| adapter_state.session_contexts.get(session_id))
+            .cloned()
+            .context("cannot bind an unknown local session")?;
+        advance_session_generation(&context)?;
+        context.resolved_conversation_id = Some(conversation_id.to_string());
+        let thread_title = context.thread_title.clone();
+        shared_contexts.insert(session_id.to_string(), context.clone());
+        adapter_state
+            .session_contexts
+            .insert(session_id.to_string(), context);
+        thread_title
+    };
     if let Some(title) = thread_title.as_deref() {
         if let Ok(snapshot) = collect_bear_environment(
             adapter_state,
@@ -12738,7 +12674,7 @@ mod tests {
     use std::net::SocketAddr;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    static ENV_LOCK: TokioMutex<()> = TokioMutex::const_new(());
+    pub(super) static ENV_LOCK: TokioMutex<()> = TokioMutex::const_new(());
 
     #[test]
     fn terminal_tool_card_text_keeps_prior_summary_when_completion_is_a_bare_result_kind() {
@@ -12870,7 +12806,7 @@ mod tests {
             Some("initialize") => json!({
                 "jsonrpc": "2.0",
                 "id": id,
-                "result": { "protocol": "bearwire", "version": 1 }
+                "result": { "protocol": "bearwire", "version": 1, "capabilities": { "session_access": true, "expected_work_source": true } }
             }),
             Some("session.open") => json!({
                 "jsonrpc": "2.0",
@@ -12880,7 +12816,9 @@ mod tests {
                     "session": {
                         "client_session_id": value.pointer("/params/session_id").and_then(Value::as_str).unwrap_or("acp-test-session"),
                         "conversation_id": value.pointer("/params/conversation_id").and_then(Value::as_str).unwrap_or("default"),
-                        "resolved_conversation_id": null,
+                        "resolved_conversation_id": "den-conv-test",
+                        "history_conversation_id": "den-conv-test",
+                        "access": {"state": "executable", "may_select_hat": true},
                         "cwd": value.pointer("/params/cwd").and_then(Value::as_str).unwrap_or("/workspace"),
                         "current_mode": value.pointer("/params/mode").and_then(Value::as_str).unwrap_or("ask")
                     }
@@ -12899,7 +12837,17 @@ mod tests {
             }),
             Some("session.hat.select") => json!({
                 "jsonrpc": "2.0", "id": id,
-                "result": {"ok": true, "hat_id": value.pointer("/params/hat_id")}
+                "result": {
+                    "ok": true, "hat_id": value.pointer("/params/hat_id"),
+                    "conversation_id": "den-conv-test",
+                    "session": {
+                        "client_session_id": value.pointer("/params/session_id"),
+                        "conversation_id": "den-conv-test",
+                        "resolved_conversation_id": "den-conv-test",
+                        "history_conversation_id": "den-conv-test",
+                        "access": {"state": "executable", "may_select_hat": true}
+                    }
+                }
             }),
             Some("hats.workspace_tool.check") => json!({
                 "jsonrpc": "2.0", "id": id,
@@ -12916,6 +12864,7 @@ mod tests {
                             "kind": "single",
                             "session": {
                                 "client_session_id": session_id,
+                                "access": {"state": "executable", "may_select_hat": false},
                                 "conversation_id": "default",
                                 "resolved_conversation_id": "den-conv-test",
                                 "history_conversation_id": "den-conv-test",
@@ -12943,9 +12892,10 @@ mod tests {
                         "jsonrpc": "2.0",
                         "id": id,
                         "result": {
-                            "kind": "session_state",
+                            "kind": "list",
                             "sessions": [{
-                                "acp_session_id": "session-1",
+                                "client_session_id": "session-1",
+                                "access": {"state": "executable", "may_select_hat": false},
                                 "conversation_id": "default",
                                 "resolved_conversation_id": "den-conv-test",
                                 "history_conversation_id": "den-conv-test",
@@ -13134,20 +13084,25 @@ mod tests {
         path
     }
 
-    fn test_adapter_state(session_id: &str, root: &Path) -> AdapterState {
+    pub(super) fn test_adapter_state(session_id: &str, root: &Path) -> AdapterState {
         let mut state = AdapterState::default();
         state.session_contexts.insert(
             session_id.to_string(),
             SessionContext {
                 cwd: root.to_string_lossy().to_string(),
                 roots: vec![root.to_string_lossy().to_string()],
+                conversation_id: Some("den-conv-test".to_string()),
+                access: Some(SessionAccess {
+                    state: SessionAccessState::Executable,
+                    may_select_hat: true,
+                }),
                 ..Default::default()
             },
         );
         state
     }
 
-    fn test_runtime_config(api_url: String) -> RuntimeConfig {
+    pub(super) fn test_runtime_config(api_url: String) -> RuntimeConfig {
         RuntimeConfig {
             config: Some(test_config(api_url.clone())),
             diagnostics: Vec::new(),
@@ -13163,18 +13118,51 @@ mod tests {
         }
     }
 
-    async fn run_acp_request_for_test(
+    pub(super) async fn run_acp_request_for_test(
         http: &reqwest::Client,
         runtime: &mut RuntimeConfig,
         adapter_state: &mut AdapterState,
         shared_state: &AdapterSharedState,
         value: Value,
     ) -> Result<()> {
+        {
+            let mut contexts = shared_state.session_contexts.lock().await;
+            for (id, context) in &adapter_state.session_contexts {
+                contexts
+                    .entry(id.clone())
+                    .or_insert_with(|| context.clone());
+            }
+        }
         let request = request_from_value(value)?;
         handle_request(http, runtime, adapter_state, shared_state, request).await
     }
 
-    fn test_shared_state() -> AdapterSharedState {
+    async fn wait_for_acp_prompt_completion_for_test(
+        shared_state: &AdapterSharedState,
+        session_id: &str,
+        response_id: &Value,
+    ) -> Result<()> {
+        let deadline = Duration::from_secs(10);
+        timeout(deadline, async {
+            let response = json_rpc::wait_for_json_response_for_test(response_id, deadline).await?;
+            // The terminal frame is written just before handle_prompt clears its
+            // registration. Drain that matching prompt before releasing capture.
+            loop {
+                let still_active = shared_state.active_prompts.lock().await.get(session_id)
+                    .is_some_and(|turn| &turn.response.id == response_id);
+                if !still_active {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+            if let Some(error) = response.get("error") {
+                bail!("ACP test prompt {response_id} failed: {error}");
+            }
+            Ok(())
+        }).await.map_err(|_| anyhow!("timed out after {deadline:?} waiting for ACP prompt {response_id} to finish in session {session_id}"))?
+    }
+
+    pub(super) fn test_shared_state() -> AdapterSharedState {
         let (cancellation_tx, _) = broadcast::channel(8);
         AdapterSharedState {
             transport: JsonRpcTransport::default(),
@@ -14373,47 +14361,6 @@ mod tests {
         assert_eq!(decision.scope, ApprovalScope::HatWorkspaceRead);
     }
 
-    #[test]
-    fn hat_slash_reserves_the_first_productive_interaction() {
-        assert_eq!(
-            parse_local_slash_command("/hat Security review"),
-            Some(LocalSlashCommand::Hat)
-        );
-        assert!(local_slash_available_commands()
-            .iter()
-            .any(|command| command.name == "hat"));
-        let mut prompted = HashSet::new();
-        assert!(reserve_first_acp_interaction(
-            &mut prompted,
-            "session-one",
-            Some("/hat")
-        ));
-        assert!(
-            prompted.is_empty(),
-            "listing must not use the one selection opportunity"
-        );
-        assert!(reserve_first_acp_interaction(
-            &mut prompted,
-            "session-one",
-            Some("/hat Security review")
-        ));
-        assert!(!reserve_first_acp_interaction(
-            &mut prompted,
-            "session-one",
-            Some("/hat General IDE")
-        ));
-        assert!(reserve_first_acp_interaction(
-            &mut prompted,
-            "session-two",
-            Some("ordinary prompt")
-        ));
-        assert!(!reserve_first_acp_interaction(
-            &mut prompted,
-            "session-two",
-            Some("/hat Security review")
-        ));
-    }
-
     #[tokio::test]
     async fn configured_hat_approvals_never_reuse_the_legacy_client_cache() {
         let (api_url, _paths, methods) =
@@ -14505,24 +14452,6 @@ mod tests {
             ["hats.workspace_tool.check"]
         );
         fs::remove_dir_all(root).unwrap();
-    }
-
-    #[tokio::test]
-    async fn hat_slash_selects_by_name_through_bearwire_once() {
-        let (api_url, _paths, methods) =
-            start_bearwire_test_server_with_events_and_methods(false, vec![]).await;
-        let config = test_config(api_url);
-        let http = reqwest::Client::new();
-        let listed = hat_report(&http, &config, "ide-test", "/hat", true).await;
-        assert!(listed.contains("Security review"));
-        let selected = hat_report(&http, &config, "ide-test", "/hat Security review", true).await;
-        assert!(selected.contains("Wearing Security review"), "{selected}");
-        let rejected = hat_report(&http, &config, "ide-test", "/hat General IDE", false).await;
-        assert!(rejected.contains("first interaction"));
-        assert_eq!(
-            methods.lock().await.as_slice(),
-            ["hats.list", "hats.list", "session.hat.select", "hats.list"]
-        );
     }
 
     #[tokio::test]
@@ -15941,7 +15870,8 @@ mod tests {
                 }),
             )
             .await?;
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            wait_for_acp_prompt_completion_for_test(&shared_state, "session-1", &json!("prompt-1"))
+                .await?;
             Ok::<(), anyhow::Error>(())
         })
         .await;
@@ -16049,7 +15979,7 @@ mod tests {
                 }),
             )
             .await?;
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            wait_for_acp_prompt_completion_for_test(&shared_state, "session-1", &json!("prompt-1")).await?;
             let sticky_title = shared_state
                 .session_contexts
                 .lock()
@@ -16193,7 +16123,12 @@ mod tests {
                 }),
             )
             .await?;
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            wait_for_acp_prompt_completion_for_test(
+                &shared_state,
+                "session-1",
+                &json!("prompt-title-lifecycle"),
+            )
+            .await?;
             run_acp_request_for_test(
                 &http,
                 &mut runtime,
@@ -16340,7 +16275,12 @@ mod tests {
                 }),
             )
             .await?;
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            wait_for_acp_prompt_completion_for_test(
+                &shared_state,
+                "session-1",
+                &json!("prompt-den-owned"),
+            )
+            .await?;
             Ok::<(), anyhow::Error>(())
         })
         .await;
@@ -16427,7 +16367,8 @@ mod tests {
                 }),
             )
             .await?;
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            wait_for_acp_prompt_completion_for_test(&shared_state, "session-1", &json!("prompt-1"))
+                .await?;
             Ok::<(), anyhow::Error>(())
         })
         .await;
@@ -19592,7 +19533,7 @@ mod tests {
     fn map_den_sessions_list_maps_next_cursor() {
         let den = json!({
             "sessions": [{
-                "acp_session_id": "s1",
+                "client_session_id": "s1",
                 "updated_at": "2026-01-01T00:00:00Z",
                 "conversation_id": "conv-x",
                 "resolved_conversation_id": Value::Null,
@@ -19611,7 +19552,7 @@ mod tests {
     fn map_den_sessions_list_prefers_conversation_title_over_legacy_title() {
         let den = json!({
             "sessions": [{
-                "acp_session_id": "s1",
+                "client_session_id": "s1",
                 "updated_at": "2026-01-01T00:00:00Z",
                 "conversation_id": "conv-x",
                 "resolved_conversation_id": "den-conv-x",
@@ -19643,7 +19584,7 @@ mod tests {
     fn session_title_mapping_falls_back_to_legacy_title() {
         let den = json!({
             "sessions": [{
-                "acp_session_id": "s1",
+                "client_session_id": "s1",
                 "updated_at": "2026-01-01T00:00:00Z",
                 "conversation_id": "conv-x",
                 "resolved_conversation_id": Value::Null,

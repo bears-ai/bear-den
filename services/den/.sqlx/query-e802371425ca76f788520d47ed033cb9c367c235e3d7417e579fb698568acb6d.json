@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO client_sessions (\n             user_id, bear_id, bear_slug, client_session_id, runtime_session_id,\n             conversation_id, resolved_conversation_id, client, cwd, current_mode)\n           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, 'ask'))\n           ON CONFLICT (user_id, bear_id, client_session_id) DO UPDATE\n           SET bear_slug = EXCLUDED.bear_slug, runtime_session_id = EXCLUDED.runtime_session_id, client = EXCLUDED.client,\n               cwd = COALESCE(EXCLUDED.cwd, client_sessions.cwd), updated_at = NOW(),\n               closed_at = NULL, archived_at = NULL\n           WHERE client_sessions.conversation_id = EXCLUDED.conversation_id\n             AND (EXCLUDED.resolved_conversation_id IS NULL\n                  OR client_sessions.resolved_conversation_id = EXCLUDED.resolved_conversation_id)\n           RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "e802371425ca76f788520d47ed033cb9c367c235e3d7417e579fb698568acb6d"
+}

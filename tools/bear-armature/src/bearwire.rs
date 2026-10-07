@@ -10,6 +10,15 @@ use serde_json::{json, Value};
 use tokio::time::{sleep, Duration, Instant};
 use uuid::Uuid;
 
+mod prompt_source;
+#[cfg(test)]
+mod startup_tests;
+#[cfg(test)]
+pub(crate) mod test_support;
+
+pub(crate) use prompt_source::PromptSource;
+use prompt_source::StartupSafety;
+
 use crate::{
     adapter_contract_context, classify_completed_turn_without_text, den_request_context, env_bool,
     handle_conversation_resolved_projection, handle_permission_request_event,
@@ -396,6 +405,21 @@ pub(crate) async fn protocol_status(http: &reqwest::Client, config: &Config) -> 
 }
 
 pub(crate) async fn validate_code_token(http: &reqwest::Client, config: &Config) -> Result<()> {
+    validate_startup(http, config, StartupSafety::Ordinary).await
+}
+
+pub(crate) async fn validate_headless_work_startup(
+    http: &reqwest::Client,
+    config: &Config,
+) -> Result<()> {
+    validate_startup(http, config, StartupSafety::ExactWorkSource).await
+}
+
+async fn validate_startup(
+    http: &reqwest::Client,
+    config: &Config,
+    safety: StartupSafety,
+) -> Result<()> {
     let initialize = rpc_call(http, config, "initialize", json!({})).await?;
     if initialize.get("protocol").and_then(Value::as_str) != Some("bearwire")
         || initialize.get("version").and_then(Value::as_i64) != Some(1)
@@ -403,6 +427,10 @@ pub(crate) async fn validate_code_token(http: &reqwest::Client, config: &Config)
         return Err(anyhow!(
             "Den did not advertise BearWire v1 support: {initialize}"
         ));
+    }
+
+    if matches!(safety, StartupSafety::ExactWorkSource) {
+        prompt_source::require_expected_work_support(initialize)?;
     }
 
     let result = rpc_call(
@@ -432,6 +460,27 @@ pub(crate) async fn post_session_open(
     conversation_id: Option<&str>,
     requested_mode: &str,
 ) -> Result<Value> {
+    post_session_open_with_source(
+        http,
+        config,
+        session_id,
+        client_context,
+        conversation_id,
+        requested_mode,
+        PromptSource::Conversation,
+    )
+    .await
+}
+
+async fn post_session_open_with_source(
+    http: &reqwest::Client,
+    config: &Config,
+    session_id: &str,
+    client_context: Value,
+    conversation_id: Option<&str>,
+    requested_mode: &str,
+    source: PromptSource,
+) -> Result<Value> {
     let cwd = client_context
         .get("cwd")
         .and_then(Value::as_str)
@@ -439,23 +488,20 @@ pub(crate) async fn post_session_open(
         .filter(|value| !value.is_empty())
         .map(str::to_string);
 
-    rpc_call(
-        http,
-        config,
-        "session.open",
-        json!({
-            "bear_slug": config.bear,
-            "session_id": session_id,
-            "conversation_id": conversation_id,
-            "client": config.client,
-            "cwd": cwd,
-            "mode": requested_mode,
-            "adapter_contract": adapter_contract_context(),
-            "client_context": client_context,
-        }),
-    )
-    .await
-    .context("BearWire session.open failed")
+    let mut params = json!({
+        "bear_slug": config.bear,
+        "session_id": session_id,
+        "conversation_id": conversation_id,
+        "client": config.client,
+        "cwd": cwd,
+        "mode": requested_mode,
+        "adapter_contract": adapter_contract_context(),
+        "client_context": client_context,
+    });
+    source.add_to_params(&mut params)?;
+    rpc_call(http, config, "session.open", params)
+        .await
+        .context("BearWire session.open failed")
 }
 
 #[allow(
@@ -476,15 +522,73 @@ pub(crate) async fn handle_prompt(
     requested_mode: &str,
     turn_token: Uuid,
 ) -> Result<()> {
-    let session_result = post_session_open(
+    handle_prompt_with_source(
+        http,
+        config,
+        adapter_state,
+        shared_state,
+        response,
+        session_id,
+        prompt,
+        prompt_context,
+        client_context,
+        conversation_id,
+        requested_mode,
+        turn_token,
+        PromptSource::Conversation,
+    )
+    .await
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Keep the typed startup source explicit without changing ordinary prompt callers."
+)]
+pub(crate) async fn handle_prompt_with_source(
+    http: &reqwest::Client,
+    config: &Config,
+    adapter_state: &mut AdapterState,
+    shared_state: &AdapterSharedState,
+    response: crate::PromptResponseGuard,
+    session_id: &str,
+    prompt: &str,
+    prompt_context: Value,
+    client_context: Value,
+    conversation_id: Option<&str>,
+    requested_mode: &str,
+    turn_token: Uuid,
+    source: PromptSource,
+) -> Result<()> {
+    if !crate::is_current_prompt_turn(shared_state, session_id, turn_token, "session.open").await {
+        return Ok(());
+    }
+    let session_result = post_session_open_with_source(
         http,
         config,
         session_id,
         client_context.clone(),
         conversation_id,
         requested_mode,
+        source,
     )
     .await?;
+
+    {
+        // Keep turn registration fenced while applying the shared binding. A
+        // late session.open response must not overwrite a newer turn's state.
+        let active = shared_state.active_prompts.lock().await;
+        if active
+            .get(session_id)
+            .is_none_or(|turn| turn.token != turn_token)
+        {
+            return Ok(());
+        }
+        let session = session_result
+            .get("session")
+            .ok_or_else(|| anyhow!("BearWire session.open omitted the Den session projection"))?;
+        crate::apply_den_session_projection(adapter_state, shared_state, session_id, session)
+            .await?;
+    }
 
     if crate::bear_debug_verbose() {
         eprintln!(
@@ -515,25 +619,41 @@ pub(crate) async fn handle_prompt(
         .filter(|value| !value.is_empty())
         .map(str::to_string);
 
-    let run_result = rpc_call(
-        http,
-        config,
-        "run.start",
-        json!({
-            "bear_slug": config.bear,
-            "session_id": session_id,
-            "conversation_id": conversation_id,
-            "client": config.client,
-            "cwd": cwd,
-            "prompt": prompt,
-            "prompt_context": prompt_context,
-            "requested_mode": requested_mode,
-            "adapter_contract": adapter_contract_context(),
-            "client_context": client_context,
-        }),
-    )
-    .await
-    .context("BearWire run.start failed")?;
+    if !crate::is_current_prompt_turn(shared_state, session_id, turn_token, "run.start").await {
+        return Ok(());
+    }
+    let (conversation_id, client_context) = shared_state
+        .session_contexts
+        .lock()
+        .await
+        .get(session_id)
+        .map(|context| {
+            (
+                context
+                    .resolved_conversation_id
+                    .as_ref()
+                    .or(context.conversation_id.as_ref())
+                    .cloned(),
+                context.raw.clone(),
+            )
+        })
+        .ok_or_else(|| anyhow!("Den session projection has no local session context"))?;
+    let mut params = json!({
+        "bear_slug": config.bear,
+        "session_id": session_id,
+        "conversation_id": conversation_id,
+        "client": config.client,
+        "cwd": cwd,
+        "prompt": prompt,
+        "prompt_context": prompt_context,
+        "requested_mode": requested_mode,
+        "adapter_contract": adapter_contract_context(),
+        "client_context": client_context,
+    });
+    source.add_to_params(&mut params)?;
+    let run_result = rpc_call(http, config, "run.start", params)
+        .await
+        .context("BearWire run.start failed")?;
 
     follow_run(
         http,

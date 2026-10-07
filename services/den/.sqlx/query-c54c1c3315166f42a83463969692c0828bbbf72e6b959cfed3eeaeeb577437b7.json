@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT NOT EXISTS (SELECT 1 FROM turn_runs r WHERE r.session_id = $1)\n          AND NOT EXISTS (SELECT 1 FROM bear_work_runs r\n              WHERE r.bearwire_session_id = $1 OR r.attached_client_session_id = $1)\n          AS \"allowed!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "allowed!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "c54c1c3315166f42a83463969692c0828bbbf72e6b959cfed3eeaeeb577437b7"
+}

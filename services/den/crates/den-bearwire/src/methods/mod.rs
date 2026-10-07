@@ -26,6 +26,10 @@ pub(crate) fn initialize_result(_state: &DenState) -> Value {
     json!({
         "protocol": "bearwire",
         "version": 1,
+        "capabilities": {
+            "session_access": true,
+            "expected_work_source": true,
+        },
         "server": {
             "name": "den",
             "version": den_http::build_info::snapshot().version,

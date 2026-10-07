@@ -16,6 +16,14 @@
 - Source admission precedes every production inference, including all continuations; client tool-result recording, compacted-output reads, and direct Den tools also recheck the live canonical actor, immutable source, hat, and exact Work run where applicable. Cached labels, a session ID, caller-supplied origin, or an admin-visible transcript cannot substitute for admission. Source checks do not imply every effect has complete hat-action/resource filtering.
 - Conversations/transcripts, client sessions, Docket tasks/Jobs, and memory have distinct canonical owners. Model replay and human history are separate projections; human history excludes diagnostic/model-only records. Historical session-ID collisions and ownerless records remain quarantined, not inferred into ownership. Same-creator cross-conversation generic artifact isolation and remaining session-only joins still need audit.
 
+### ACP source-publication follow-on (2026-10-06)
+
+**Current branch only:** pending-to-canonical conversation/owner/hat publication now shares the client-session row lock and transaction. Direct starts without a row use an independent short publication lock; metadata compare-and-set guards preserve the latest resolved source. [Deterministic publication races](../../services/den/crates/den-bearwire/src/methods/session/publication_race_tests.rs) verify one canonical binding, the winning hat identity, local mock-provider call counts, and exactly-once next-turn replay; [metadata tests](../../services/den/crates/den-bearwire/src/methods/run_source_preflight/publication_tests.rs) cover stale-source writes.
+
+Reported final local evidence: **189 BearWire / 369 armature / 11 protocol tests** passed; armature passed both parallel and single-threaded harnesses. The [Den production/musl validation image](bearwire-acp.md#den-production-image-validation-build-only) `bears-den-armature-validation:local` built successfully, without service restart or deployment. This docs review did not rerun those validations; no real-model/provider smoke was run. No migrations or dependencies were added, but compatible Den/armature upgrades remain required by the shared typed protocol.
+
+Source-publication atomicity is not an atomic inference lease or instantaneous attempt/hat revocation. The [BearWire topic](bearwire-acp.md#exact-headless-work-startup-and-compatibility) retains those startup-preflight limits. Permission rollout remains incomplete; this follow-on makes no public deployment or live-provider validation claim.
+
 ### Identity, settings, and runtime context
 
 - Bear-admin stance detail/configuration/provisioning is retired. `/bear/{slug}/models` configures Bear-wide model, budget, loop control, and Bifrost key settings, not per-stance rows. Admin per-profile model and profile-registration routes are gone. Native initialization opens memory, ensures the runtime plan, and compiles managed configuration; it never creates or refreshes a stance/profile registry.

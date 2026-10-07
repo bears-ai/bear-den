@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (\n            SELECT 1 FROM conversations c\n            WHERE c.id = $1 AND c.bear_id = $2 AND c.created_by_user_id = $3\n              AND c.status = 'active' AND c.hat_id IS NOT NULL\n              AND NOT EXISTS (SELECT 1 FROM conversation_messages m WHERE m.conversation_id = c.id)\n              AND NOT EXISTS (SELECT 1 FROM turn_runs r WHERE r.session_id = $4)\n              AND NOT EXISTS (\n                  SELECT 1 FROM client_sessions s JOIN turn_runs r ON r.session_id = s.client_session_id\n                  WHERE s.bear_id = c.bear_id\n                    AND (s.conversation_id = c.external_conversation_id\n                         OR s.resolved_conversation_id = c.external_conversation_id)\n              )\n              AND NOT EXISTS (\n                  SELECT 1 FROM bear_work_runs r WHERE r.bear_id = c.bear_id\n                    AND (r.bearwire_session_id = $4 OR r.attached_client_session_id = $4)\n              )\n        ) AS \"allowed!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "allowed!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int4",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "859ea57a0107e76b5856a47c03f420718e98c68f6cc62abcced6270d44c8773c"
+}

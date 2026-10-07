@@ -1,3 +1,6 @@
+#[path = "session/lifecycle_tests.rs"]
+mod session_lifecycle;
+
 use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
@@ -910,20 +913,17 @@ async fn ide_default_and_first_interaction_hat_selection_bind_one_canonical_conv
     )
     .await;
     assert_eq!(unbound["result"]["ok"], true, "{unbound}");
-    let unbound_id = unbound["result"]["session"]["resolved_conversation_id"]
-        .as_str()
-        .unwrap();
-    let unbound_record = den_service::conversation::persistence::get_conversation_for_external_id(
-        &pool, other_bear, unbound_id,
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    assert!(unbound["result"]["session"]["resolved_conversation_id"].is_null());
+    assert!(unbound["result"]["session"]["history_conversation_id"].is_null());
     assert_eq!(
-        bindings::conversation_hat(&pool, BearId::new(other_bear), unbound_record.id)
+        unbound["result"]["session"]["access"]["state"],
+        "awaiting_hat"
+    );
+    assert!(
+        den_service::conversation::persistence::list_conversations_for_bear(&pool, other_bear, 100)
             .await
-            .unwrap(),
-        None
+            .unwrap()
+            .is_empty()
     );
     let chosen = rpc_value(
         state,
@@ -935,6 +935,15 @@ async fn ide_default_and_first_interaction_hat_selection_bind_one_canonical_conv
     )
     .await;
     assert_eq!(chosen["result"]["ok"], true, "{chosen}");
+    let unbound_record = den_service::conversation::persistence::get_conversation_for_external_id(
+        &pool,
+        other_bear,
+        chosen["result"]["conversation_id"].as_str().unwrap(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(chosen["result"]["session"]["access"]["state"], "executable");
     assert_eq!(
         bindings::conversation_hat(&pool, BearId::new(other_bear), unbound_record.id)
             .await
@@ -948,7 +957,7 @@ async fn configured_hats_reject_unbound_ide_turn_before_persisting_a_run_or_mess
     pool: sqlx::PgPool,
 ) {
     use den_core::ids::{BearId, UserId};
-    use den_service::bears::hats::{self, memory_binding};
+    use den_service::bears::hats;
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear_without_hats(&pool).await;
     let token = create_token_for_bear(&pool, user_id, bear_id).await;
@@ -966,19 +975,17 @@ async fn configured_hats_reject_unbound_ide_turn_before_persisting_a_run_or_mess
     )
     .await;
     assert_eq!(opened["result"]["ok"], true, "{opened}");
-    let external = opened["result"]["session"]["resolved_conversation_id"]
-        .as_str()
-        .unwrap();
-    let canonical = den_service::conversation::persistence::get_conversation_for_external_id(
-        &pool, bear_id, external,
-    )
-    .await
-    .unwrap()
-    .unwrap();
-    assert!(matches!(
-        memory_binding::for_conversation(&pool, owner, canonical.id).await,
-        Err(den_core::DenError::Authorization(_))
-    ));
+    assert!(opened["result"]["session"]["resolved_conversation_id"].is_null());
+    assert_eq!(
+        opened["result"]["session"]["access"]["state"],
+        "awaiting_hat"
+    );
+    assert!(
+        den_service::conversation::persistence::list_conversations_for_bear(&pool, bear_id, 100)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     let denied = rpc_value(
         state.clone(),
         &token,
@@ -987,14 +994,12 @@ async fn configured_hats_reject_unbound_ide_turn_before_persisting_a_run_or_mess
     )
     .await;
     assert!(denied.get("error").is_some(), "{denied}");
-    let messages = sqlx::query_scalar!(
-        "SELECT count(*) AS \"count!\" FROM conversation_messages WHERE conversation_id = $1",
-        canonical.id,
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(messages, 0);
+    assert!(
+        den_service::conversation::persistence::list_conversations_for_bear(&pool, bear_id, 100)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     let runs = sqlx::query_scalar!(
         "SELECT count(*) AS \"count!\" FROM turn_runs WHERE session_id = $1",
         session_id,
@@ -1522,6 +1527,25 @@ async fn wait_for_resolved_conversation_id(
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     panic!("run.start did not resolve conversation within one second");
+}
+
+async fn wait_for_completed_run(pool: &sqlx::PgPool, run_id: &str) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let run = turn_runs::get_run(pool, run_id)
+            .await
+            .expect("load run")
+            .expect("accepted run exists");
+        let state = run.state_value().expect("typed run state");
+        if state == turn_runs::TurnRunState::Completed {
+            return;
+        }
+        assert!(
+            !state.is_terminal() && tokio::time::Instant::now() < deadline,
+            "run did not complete: {run:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 }
 
 async fn wait_for_user_message(
@@ -2879,7 +2903,6 @@ async fn session_open_persists_event_and_events_replay(pool: sqlx::PgPool) {
             params: json!({
                 "bear_slug": bear_slug,
                 "session_id": session_id,
-                "conversation_id": "conv-bearwire-test",
                 "client": "bearwire-test"
             }),
         }),
@@ -3067,13 +3090,85 @@ async fn session_open_preserves_sandbox_work_session_binding(pool: sqlx::PgPool)
     .await
     .unwrap()
     .expect("canonical conversation");
-    let pair_binding =
-        super::client::continuation_binding_id(&pool, bear_id, user_id, &unbound_session)
+    use den_service::bears::hats::{bindings, memory_binding};
+    let bear = BearId::new(bear_id);
+    let job_hat = bindings::job_hat(&pool, bear, live.job_id)
+        .await
+        .unwrap()
+        .expect("Work Job has a real hat");
+    let memory_binding::ResolvedMemoryBinding::Bound(grant) =
+        memory_binding::for_work_run(&pool, bear, work_run_id)
             .await
-            .expect("armature conversation continuation binding");
+            .expect("exact Work run may use its eligible Job hat");
+    assert_eq!(grant.hat_id(), Some(job_hat));
     assert_eq!(
-        pair_binding,
-        NativeTurnSource::Conversation(canonical.id).binding_id(BearId::new(bear_id))
+        grant.source(),
+        den_memory::MemorySource::WorkRun(work_run_id)
+    );
+    assert_eq!(
+        bindings::conversation_hat(&pool, bear, canonical.id)
+            .await
+            .unwrap(),
+        None,
+        "Work checkout must not bind its transcript as an ordinary conversation"
+    );
+    assert!(matches!(
+        super::client::continuation_binding_id(&pool, bear_id, user_id, &unbound_session).await,
+        Err(den_http::errors::CustomError::Authorization(_))
+    ));
+    let denied = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "run.start",
+        json!({
+            "bear_slug": bear_slug,
+            "session_id": unbound_session.client_session_id,
+            "conversation_id": conversation_id,
+            "prompt": "must not promote a Work transcript to an ordinary source",
+        }),
+    )
+    .await;
+    assert!(denied.get("error").is_some(), "{denied}");
+    assert!(client_sessions::find_for_user_bear_session_id(
+        &pool,
+        user_id,
+        bear_id,
+        &unbound_session.client_session_id,
+    )
+    .await
+    .unwrap()
+    .is_none());
+    assert_eq!(
+        sqlx::query_scalar!(
+            "SELECT count(*) AS \"count!\" FROM turn_runs WHERE session_id = $1",
+            unbound_session.client_session_id,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
+    assert!(den_service::conversation::persistence::list_messages_page(
+        &pool,
+        canonical.id,
+        None,
+        100
+    )
+    .await
+    .unwrap()
+    .is_empty());
+    assert_eq!(
+        bindings::conversation_hat(&pool, bear, canonical.id)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        super::client::continuation_binding_id(&pool, bear_id, user_id, &session)
+            .await
+            .unwrap(),
+        binding,
+        "the original session retains its exact Work-run binding after denial"
     );
 }
 
@@ -4027,6 +4122,24 @@ async fn run_start_uses_resolved_conversation_history_for_existing_session(pool:
     let pending_conversation_id = format!("new-acp-zed-{}", Uuid::new_v4().simple());
     let resolved_conversation_id = format!("den-conv-{}", Uuid::new_v4().simple());
     let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let canonical = ensure_conversation_for_external_id(
+        &pool,
+        bear_id,
+        Some(user_id),
+        &resolved_conversation_id,
+        Some(&session_id),
+        None,
+    )
+    .await
+    .expect("ensure resolved conversation");
+    let bear = BearId::new(bear_id);
+    let hat = den_service::bears::hats::ide_default_hat(&pool, bear)
+        .await
+        .unwrap()
+        .expect("real fixture hat");
+    den_service::bears::hats::bindings::bind_conversation_hat(&pool, bear, canonical.id, hat)
+        .await
+        .expect("bind canonical owner source before session creation or history writes");
     client_sessions::upsert_session(
         &pool,
         client_sessions::UpsertClientSession {
@@ -4044,16 +4157,6 @@ async fn run_start_uses_resolved_conversation_history_for_existing_session(pool:
     )
     .await
     .expect("upsert resolved BearWire session");
-    let canonical = ensure_conversation_for_external_id(
-        &pool,
-        bear_id,
-        Some(user_id),
-        &resolved_conversation_id,
-        Some(&session_id),
-        None,
-    )
-    .await
-    .expect("ensure resolved conversation");
     append_message(
         &pool,
         canonical.id,
@@ -4089,11 +4192,18 @@ async fn run_start_uses_resolved_conversation_history_for_existing_session(pool:
 
     let mut config = den_core::config::Config::test_stub();
     config.den_secret_encryption_key = "bearwire-test-secret-key".to_string();
-    config.llm_api_url = start_mock_openai_sse_server_asserting_body(vec![
-        "Earlier user asked about cached history".to_string(),
-        "Earlier assistant reply from persisted history".to_string(),
-        "Current turn should see history".to_string(),
-    ]);
+    config.llm_api_url =
+        start_mock_openai_sse_server_asserting_requests(vec![MockLlmRequestAssertion {
+            required_body_substrings: Vec::new(),
+            exact_body_counts: vec![
+                ("Earlier user asked about cached history".to_string(), 1),
+                (
+                    "Earlier assistant reply from persisted history".to_string(),
+                    1,
+                ),
+                ("Current turn should see history".to_string(), 1),
+            ],
+        }]);
     config.default_llm_model = "openai/bearwire-test-model".to_string();
     seed_test_bifrost_virtual_key(&pool, bear_id, &config).await;
     let state = test_state_with_config(pool.clone(), config);
@@ -4120,6 +4230,58 @@ async fn run_start_uses_resolved_conversation_history_for_existing_session(pool:
         .unwrap();
     let value: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(value["result"]["ok"], true, "{value}");
+    wait_for_completed_run(&pool, value["result"]["run_id"].as_str().unwrap()).await;
+    let messages = list_projected_messages_page(
+        &pool,
+        canonical.id,
+        None,
+        100,
+        ConversationHistoryProjection::ModelTranscript,
+    )
+    .await
+    .unwrap();
+    for text in [
+        "Earlier user asked about cached history",
+        "Earlier assistant reply from persisted history",
+        "Current turn should see history",
+        "hello from bearwire",
+    ] {
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| message.content_text == text)
+                .count(),
+            1,
+            "canonical history must contain {text:?} exactly once: {messages:?}"
+        );
+    }
+    assert_eq!(
+        den_service::bears::hats::bindings::conversation_hat(&pool, bear, canonical.id)
+            .await
+            .unwrap(),
+        Some(hat)
+    );
+    let session =
+        client_sessions::find_for_user_bear_session_id(&pool, user_id, bear_id, &session_id)
+            .await
+            .unwrap()
+            .unwrap();
+    assert_eq!(session.conversation_id, pending_conversation_id);
+    assert_eq!(
+        session.resolved_conversation_id,
+        Some(resolved_conversation_id)
+    );
+    assert!(
+        den_service::conversation::persistence::get_conversation_for_external_id(
+            &pool,
+            bear_id,
+            &pending_conversation_id,
+        )
+        .await
+        .unwrap()
+        .is_none(),
+        "the pending selection must not become a second transcript source"
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -7866,6 +8028,14 @@ async fn current_task_start_recovers_an_abandoned_continuation(pool: sqlx::PgPoo
     let session_id = format!("session-{}", Uuid::new_v4().simple());
     let run_id = format!("run_{}", Uuid::new_v4().simple());
     upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    let session =
+        client_sessions::find_for_user_bear_session_id(&pool, user_id, bear_id, &session_id)
+            .await
+            .expect("load canonical recovery source")
+            .expect("fixture session");
+    let conversation_id = session
+        .resolved_conversation_id
+        .unwrap_or(session.conversation_id);
     let task_id =
         create_session_task(&pool, user_id, bear_id, &session_id, "Recover Pair task").await;
     client_sessions::set_current_task(&pool, user_id, bear_id, &session_id, Some(task_id))
@@ -7883,7 +8053,7 @@ async fn current_task_start_recovers_an_abandoned_continuation(pool: sqlx::PgPoo
         user_id,
         Some(task_id),
         json!({
-            "client": "test-client", "cwd": null, "conversation_id": "conversation-1",
+            "client": "test-client", "cwd": null, "conversation_id": conversation_id,
             "prompt": "Continue.", "prompt_context": null, "client_context": null,
             "requested_mode": null,
         }),
@@ -7946,6 +8116,14 @@ async fn run_recover_refuses_when_selected_pair_task_changed(pool: sqlx::PgPool)
     let session_id = format!("session-{}", Uuid::new_v4().simple());
     let run_id = format!("run_{}", Uuid::new_v4().simple());
     upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    let session =
+        client_sessions::find_for_user_bear_session_id(&pool, user_id, bear_id, &session_id)
+            .await
+            .expect("load canonical recovery source")
+            .expect("fixture session");
+    let conversation_id = session
+        .resolved_conversation_id
+        .unwrap_or(session.conversation_id);
     let task_id =
         create_session_task(&pool, user_id, bear_id, &session_id, "Recover Pair task").await;
     client_sessions::set_current_task(&pool, user_id, bear_id, &session_id, Some(task_id))
@@ -7965,7 +8143,7 @@ async fn run_recover_refuses_when_selected_pair_task_changed(pool: sqlx::PgPool)
         json!({
             "client": "test-client",
             "cwd": null,
-            "conversation_id": "conversation-1",
+            "conversation_id": conversation_id,
             "prompt": "Continue.",
             "prompt_context": null,
             "client_context": null,
@@ -8017,6 +8195,14 @@ async fn run_recovery_launches_claimed_successor_and_preserves_selected_task(poo
     let session_id = format!("session-{}", Uuid::new_v4().simple());
     let run_id = format!("run_{}", Uuid::new_v4().simple());
     upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    let session =
+        client_sessions::find_for_user_bear_session_id(&pool, user_id, bear_id, &session_id)
+            .await
+            .expect("load canonical recovery source")
+            .expect("fixture session");
+    let conversation_id = session
+        .resolved_conversation_id
+        .unwrap_or(session.conversation_id);
     let task_id =
         create_session_task(&pool, user_id, bear_id, &session_id, "Recover Pair task").await;
     client_sessions::set_current_task(&pool, user_id, bear_id, &session_id, Some(task_id))
@@ -8036,7 +8222,7 @@ async fn run_recovery_launches_claimed_successor_and_preserves_selected_task(poo
         json!({
             "client": "test-client",
             "cwd": null,
-            "conversation_id": "conversation-1",
+            "conversation_id": conversation_id,
             "prompt": "Continue.",
             "prompt_context": null,
             "client_context": null,
@@ -8782,16 +8968,18 @@ async fn bearwire_open_model_and_start_reject_other_owners_before_side_effects(p
     for method in ["session.open", "run.start"] {
         let params = json!({"bear_slug": slug, "session_id": session_id, "conversation_id": owned_id, "prompt": "must not run"});
         let denied = rpc_value(state.clone(), &other_token, method, params.clone()).await;
-        assert!(
-            denied["error"]["data"]["error"]
-                .as_str()
-                .unwrap_or("")
-                .contains("Not Found"),
+        let expected = if method == "session.open" {
+            "Not Found: conversation not found"
+        } else {
+            "Authorization Error: run startup requires a live owned transcript"
+        };
+        assert_eq!(
+            denied["error"]["data"]["error"], expected,
             "{method}: {denied}"
         );
         let null_denied = rpc_value(state.clone(), &other_token, method, json!({"bear_slug": slug, "session_id": session_id, "conversation_id": null_id, "prompt": "must not run"})).await;
-        assert!(
-            null_denied.get("error").is_some(),
+        assert_eq!(
+            null_denied["error"]["data"]["error"], expected,
             "NULL owner {method}: {null_denied}"
         );
     }
@@ -8927,41 +9115,113 @@ async fn bearwire_open_model_and_start_reject_other_owners_before_side_effects(p
         json!({"bear_slug": slug, "session_id": session_id, "selection_mode": "auto"}),
     )
     .await;
-    assert_eq!(
-        own_model["result"]["ok"], true,
-        "same-owner model set: {own_model}"
+    assert!(
+        own_model.get("error").is_some(),
+        "even an owner cannot configure unbound history: {own_model}"
     );
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn bearwire_owner_and_admin_can_continue_canonical_conversations(pool: sqlx::PgPool) {
+async fn bearwire_owner_can_continue_but_admin_can_only_inspect_others_conversations(
+    pool: sqlx::PgPool,
+) {
+    use den_service::{
+        bears::hats::{bindings, ide_default_hat},
+        conversation::viewer::ConversationViewer,
+    };
     let owner = create_test_user(&pool).await;
     let admin = create_test_user(&pool).await;
     let (bear_id, slug) = create_test_bear(&pool).await;
+    let bear = BearId::new(bear_id);
     let owner_token = create_member_token(&pool, owner, bear_id).await;
     let admin_token = create_token_for_bear(&pool, admin, bear_id).await;
-    let owned_id = format!("den-conv-{}", Uuid::new_v4().simple());
-    let null_id = format!("den-conv-{}", Uuid::new_v4().simple());
-    ensure_conversation_for_external_id(&pool, bear_id, Some(owner), &owned_id, None, None)
+    let hat = ide_default_hat(&pool, bear)
         .await
-        .expect("create owned conversation");
-    // NativeRuntimeConversationBackend::create_conversation can create NULL-owner
-    // rows. BearWire must not claim them for a non-admin on reconnect.
-    ensure_conversation_for_external_id(&pool, bear_id, None, &null_id, None, None)
+        .unwrap()
+        .expect("real fixture hat");
+    let owned_id = format!("den-conv-{}", Uuid::new_v4().simple());
+    let admin_owned_id = format!("den-conv-{}", Uuid::new_v4().simple());
+    let null_id = format!("den-conv-{}", Uuid::new_v4().simple());
+    let owned =
+        ensure_conversation_for_external_id(&pool, bear_id, Some(owner), &owned_id, None, None)
+            .await
+            .expect("create owned conversation");
+    let admin_owned = ensure_conversation_for_external_id(
+        &pool,
+        bear_id,
+        Some(admin),
+        &admin_owned_id,
+        None,
+        None,
+    )
+    .await
+    .expect("create admin's own conversation");
+    for conversation in [&owned, &admin_owned] {
+        bindings::bind_conversation_hat(&pool, bear, conversation.id, hat)
+            .await
+            .expect("bind canonical owner source before any session or messages");
+    }
+    // NULL-owner history remains inspectable, but no human may claim it to execute.
+    let unowned = ensure_conversation_for_external_id(&pool, bear_id, None, &null_id, None, None)
         .await
         .expect("create NULL-owner runtime conversation");
     let mut config = den_core::config::Config::test_stub();
     config.den_secret_encryption_key = "bearwire-test-secret-key".to_string();
     config.llm_api_url = start_mock_openai_sse_server_asserting_requests(vec![
-        MockLlmRequestAssertion::requiring(Vec::new()),
-        MockLlmRequestAssertion::requiring(Vec::new()),
+        MockLlmRequestAssertion::requiring(vec!["owner continuation".to_string()]),
+        MockLlmRequestAssertion::requiring(vec!["admin's own continuation".to_string()]),
     ]);
     config.default_llm_model = "openai/bearwire-test-model".to_string();
     seed_test_bifrost_virtual_key(&pool, bear_id, &config).await;
     let state = test_state_with_config(pool.clone(), config);
+    for (token, user, conversation_id, canonical_id) in [
+        (&admin_token, admin, &owned_id, owned.id),
+        (&admin_token, admin, &null_id, unowned.id),
+        (&owner_token, owner, &null_id, unowned.id),
+    ] {
+        let session_id = format!("denied-{}", Uuid::new_v4().simple());
+        let denied = rpc_value(
+            state.clone(),
+            token,
+            "run.start",
+            json!({
+                "bear_slug": slug,
+                "session_id": session_id,
+                "conversation_id": conversation_id,
+                "prompt": "inspection must not grant execution",
+            }),
+        )
+        .await;
+        assert!(denied.get("error").is_some(), "{denied}");
+        assert!(
+            client_sessions::find_for_user_bear_session_id(&pool, user, bear_id, &session_id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            sqlx::query_scalar!(
+                "SELECT count(*) AS \"count!\" FROM turn_runs WHERE session_id = $1",
+                session_id,
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            0
+        );
+        assert!(den_service::conversation::persistence::list_messages_page(
+            &pool,
+            canonical_id,
+            None,
+            100,
+        )
+        .await
+        .unwrap()
+        .is_empty());
+    }
     for (token, conversation_id, prompt) in [
         (&owner_token, &owned_id, "owner continuation"),
-        (&admin_token, &null_id, "admin NULL-owner continuation"),
+        (&admin_token, &admin_owned_id, "admin's own continuation"),
     ] {
         let session_id = format!("session-{}", Uuid::new_v4().simple());
         let start = rpc_value(
@@ -8977,14 +9237,54 @@ async fn bearwire_owner_and_admin_can_continue_canonical_conversations(pool: sql
         )
         .await;
         assert_eq!(start["result"]["accepted"], true, "{start}");
+        wait_for_completed_run(&pool, start["result"]["run_id"].as_str().unwrap()).await;
         wait_for_user_message(&pool, bear_id, conversation_id, prompt).await;
     }
-    let owner_after: Option<i32> = sqlx::query_scalar(
-        "SELECT created_by_user_id FROM conversations WHERE bear_id = $1 AND external_conversation_id = $2",
-    ).bind(bear_id).bind(&null_id).fetch_one(&pool).await.expect("read NULL owner");
+    for conversation_id in [&owned_id, &null_id] {
+        let inspected = rpc_value(
+            state.clone(),
+            &admin_token,
+            "conversation.history",
+            json!({"bear_slug": slug, "conversation_id": conversation_id}),
+        )
+        .await;
+        assert!(inspected.get("error").is_none(), "{inspected}");
+        if conversation_id == &owned_id {
+            assert!(
+                inspected["result"]["messages"]
+                    .to_string()
+                    .contains("owner continuation"),
+                "{inspected}"
+            );
+        }
+    }
+    let admin_viewer = ConversationViewer::resolve(&pool, bear, UserId::new(admin))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        !admin_viewer
+            .may_read_own_source(&pool, unowned.id)
+            .await
+            .unwrap(),
+        "denied admin execution must not claim NULL ownership"
+    );
+    assert!(!admin_viewer
+        .may_read_own_source(&pool, owned.id)
+        .await
+        .unwrap());
     assert_eq!(
-        owner_after, None,
-        "admin continuation must not reassign NULL owner"
+        bindings::conversation_hat(&pool, bear, unowned.id)
+            .await
+            .unwrap(),
+        None,
+        "readable unbound history must not acquire the IDE default hat"
+    );
+    assert_eq!(
+        bindings::conversation_hat(&pool, bear, owned.id)
+            .await
+            .unwrap(),
+        Some(hat)
     );
 }
 

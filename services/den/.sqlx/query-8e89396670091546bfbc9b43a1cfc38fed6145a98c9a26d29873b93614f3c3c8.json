@@ -1,0 +1,48 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, conversation_id, resolved_conversation_id, closed_at, archived_at\n         FROM client_sessions WHERE bear_id = $1 AND user_id = $2 AND client_session_id = $3 FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "conversation_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "resolved_conversation_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "closed_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 4,
+        "name": "archived_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "8e89396670091546bfbc9b43a1cfc38fed6145a98c9a26d29873b93614f3c3c8"
+}
