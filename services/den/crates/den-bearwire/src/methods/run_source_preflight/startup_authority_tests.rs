@@ -253,9 +253,15 @@ async fn work_start_requires_independent_live_owned_transcript(pool: PgPool) {
         .await
         .unwrap()
         .unwrap();
-    super::super::preflight_pair_run_model(&state, &bear, &fixture.session, &owned)
-        .await
-        .unwrap();
+    super::super::preflight_pair_run_model(
+        &state,
+        &bear,
+        &fixture.session,
+        &owned,
+        source.turn_source,
+    )
+    .await
+    .unwrap();
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -470,9 +476,15 @@ async fn exact_work_start_never_attaches_pair_old_work_or_old_fence_with_valid_m
             .await
             .unwrap()
             .unwrap();
-        super::super::preflight_pair_run_model(&state, &bear, &fixture.session, &stored)
-            .await
-            .unwrap();
+        super::super::preflight_pair_run_model(
+            &state,
+            &bear,
+            &fixture.session,
+            &stored,
+            hats::turn_binding::NativeTurnSource::WorkRun(fixture.expected.work_run_id),
+        )
+        .await
+        .unwrap();
         let error = denied_unchanged(
             &pool,
             &fixture,

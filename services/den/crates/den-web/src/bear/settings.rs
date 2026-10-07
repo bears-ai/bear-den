@@ -55,16 +55,13 @@ use crate::web::admin::bears::{
     membership_role_label, AddWebApprovalForm, AddWebSourceForm, BearMemberAdminRow,
     BearPlanModeRow, BearWebApprovalRow, BearWebFetchRow, BearWebSourceRow,
 };
-use crate::web::bear::create_support::{
-    all_model_catalog_options_context_for_bear, bear_slug_base, canonical_default_model_handle,
-    provision_bifrost_virtual_key_for_bear,
-};
-use den_llm::ModelOption;
+use crate::web::bear::create_support::{bear_slug_base, provision_bifrost_virtual_key_for_bear};
 
 use super::member::{email_verify_redirect, load_bear_member, viewer_can_manage_bear};
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .merge(model_configurations::router())
         .route_with_tsr("/bear/{slug}/overview", get(overview_view))
         .route_with_tsr("/bear/{slug}/people", get(access_view))
         .route_with_tsr("/bear/{slug}/persona", get(persona_view))
@@ -130,10 +127,6 @@ struct DomainQuery {
 
 #[derive(Debug, Deserialize)]
 struct BearModelsForm {
-    #[serde(default)]
-    bear_default_model: String,
-    #[serde(default)]
-    bear_default_model_custom: String,
     #[serde(default)]
     bear_tool_budget_multiplier: String,
     #[serde(default)]
@@ -233,8 +226,10 @@ const MODELS_FLASH_MESSAGE_KEY: &str = "bear_models_flash_message";
 const MODELS_FLASH_ERROR_KEY: &str = "bear_models_flash_error";
 
 const BEAR_BUNDLE_FORMAT: &str = "bear";
-const BEAR_BUNDLE_VERSION: u32 = 2;
+const BEAR_BUNDLE_VERSION: u32 = 3;
+pub(crate) mod model_configurations;
 pub(crate) mod portable_hats;
+mod portable_models;
 const BEAR_BUNDLE_MAX_UPLOAD_BYTES: usize = 256 * 1024 * 1024;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -251,6 +246,12 @@ struct BearBundleManifest {
     ide_default_hat: Option<den_core::ids::HatId>,
     #[serde(default)]
     skills: Vec<den_service::skills::PortableSkill>,
+    // Absence identifies legacy raw-default bundles; an empty list explicitly
+    // preserves deployment inheritance without invoking the compatibility bridge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    model_configurations: Option<Vec<portable_models::PortableModelConfiguration>>,
+    #[serde(default)]
+    default_model_configuration_id: Option<den_core::ids::ModelConfigurationId>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1039,7 +1040,7 @@ fn manifest_for_bear(bear: &den_service::bears::Bear) -> Result<BearBundleManife
             name: bear.name.clone(),
             description: bear.description.clone(),
             birthdate: exported_birthdate,
-            default_model: bear.default_model.clone(),
+            default_model: None,
             tools_enabled: bear.tools_enabled.as_ref().map(|v| v.0.clone()),
         },
         prompts: BearBundlePrompts {
@@ -1050,6 +1051,8 @@ fn manifest_for_bear(bear: &den_service::bears::Bear) -> Result<BearBundleManife
         hats: Vec::new(),
         ide_default_hat: None,
         skills: Vec::new(),
+        model_configurations: Some(Vec::new()),
+        default_model_configuration_id: None,
     })
 }
 
@@ -1170,6 +1173,11 @@ fn read_bear_bundle(bytes: &[u8]) -> Result<(BearBundleManifest, Vec<u8>), Custo
         )));
     }
     portable_hats::validate(&manifest.hats, manifest.ide_default_hat)?;
+    portable_models::validate(
+        manifest.model_configurations.as_deref(),
+        manifest.default_model_configuration_id,
+        &manifest.hats,
+    )?;
     den_service::skills::validate_portable(&manifest.skills)?;
     if memory_sqlite.is_empty() {
         return Err(CustomError::ValidationError(
@@ -1229,9 +1237,22 @@ async fn export_bear_bundle(
     };
     let mut manifest = manifest_for_bear(&bear)?;
     manifest.hats = portable_hats::export(&state, BearId::new(bear.id)).await?;
+    manifest.model_configurations =
+        Some(portable_models::export(state.sqlx_pool(), BearId::new(bear.id)).await?);
+    manifest.default_model_configuration_id =
+        den_service::bears::model_configurations::default_configuration_id(
+            state.sqlx_pool(),
+            BearId::new(bear.id),
+        )
+        .await?;
     manifest.skills = den_service::skills::export(state.sqlx_pool(), BearId::new(bear.id)).await?;
     manifest.ide_default_hat =
         hats::ide_default_hat(state.sqlx_pool(), BearId::new(bear.id)).await?;
+    portable_models::validate(
+        manifest.model_configurations.as_deref(),
+        manifest.default_model_configuration_id,
+        &manifest.hats,
+    )?;
     let manifest_yaml = serde_yml::to_string(&manifest)
         .map_err(|err| CustomError::System(format!("serialize bear.yaml failed: {err}")))?;
     let memory_sqlite = snapshot_memory_sqlite(&state, bear.id).await?;
@@ -1303,6 +1324,14 @@ async fn import_bear_bundle(
             "acknowledge the imported hat knowledge audience before importing".into(),
         ));
     }
+    portable_models::validate_catalog(
+        state.sqlx_pool(),
+        manifest.model_configurations.as_deref(),
+        manifest.bear.default_model.as_deref(),
+    )
+    .await?;
+    let portable_models = manifest.model_configurations.clone();
+    let imported_model_default = manifest.default_model_configuration_id;
     let portable_skills = manifest.skills.clone();
     let portable = manifest.hats.clone();
     let imported_default = manifest.ide_default_hat;
@@ -1332,7 +1361,11 @@ async fn import_bear_bundle(
             name: &name,
             description: &description,
             system_prompt: &system_prompt,
-            default_model: default_model.as_deref(),
+            default_model: if portable_models.is_none() {
+                default_model.as_deref()
+            } else {
+                None
+            },
             tools_enabled: tools_enabled.map(sqlx::types::Json),
             context_profile: context_profile.map(sqlx::types::Json),
         },
@@ -1370,6 +1403,9 @@ async fn import_bear_bundle(
         imported_default,
     )
     .await?;
+    if let Some(configurations) = portable_models.as_deref() {
+        portable_models::import(state.sqlx_pool(), BearId::new(bear_id), configurations, imported_model_default, &portable, &mapping).await?;
+    }
     let intent = portable.iter().map(|hat| portable_hats::ReconnectionIntent { imported_hat_id: mapping[&hat.original_id], intent: hat.clone() }).collect::<Vec<_>>();
     sqlx::query!("INSERT INTO bear_import_receipts(bear_id,imported_by_user_id,hat_intent) VALUES($1,$2,$3)", bear_id, user.id, sqlx::types::Json(&intent) as _).execute(state.sqlx_pool()).await?;
     let store = state.memory_stores.store_for_bear(bear_id).await?;
@@ -1692,79 +1728,6 @@ fn parse_loop_control_form_value(raw: &str) -> Result<Option<AgentLoopControlLev
     }
 }
 
-fn selected_or_custom_model<'a>(selected: &'a str, custom: &'a str) -> &'a str {
-    if custom.trim().is_empty() {
-        selected
-    } else {
-        custom
-    }
-}
-
-fn is_inherit_model_value(raw: &str) -> bool {
-    raw.trim().eq_ignore_ascii_case("inherit")
-}
-
-fn configured_model_from_form(raw: &str) -> Option<String> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() || is_inherit_model_value(trimmed) {
-        None
-    } else {
-        canonical_default_model_handle(trimmed)
-    }
-}
-
-fn merge_model_options(primary: &[ModelOption], secondary: &[ModelOption]) -> Vec<ModelOption> {
-    let mut merged = primary.to_vec();
-    for option in secondary {
-        if !merged
-            .iter()
-            .any(|existing| existing.handle == option.handle)
-        {
-            merged.push(option.clone());
-        }
-    }
-    merged.sort_by(|a, b| a.label.cmp(&b.label));
-    merged
-}
-
-fn model_available(options: &[ModelOption], raw: &str) -> bool {
-    let requested = raw.trim();
-    if requested.is_empty() {
-        return false;
-    }
-    let requested_resolved = den_llm::model_registry::resolve_model_handle(requested);
-    options.iter().any(|model| {
-        if model.handle == requested {
-            return true;
-        }
-        let Some(resolved) = requested_resolved else {
-            return false;
-        };
-        resolved == model.handle
-            || den_llm::model_registry::resolve_model_handle(&model.handle) == Some(resolved)
-    })
-}
-
-fn model_availability_status(options: &[ModelOption], raw: &str) -> &'static str {
-    if raw.trim().is_empty() {
-        "unset"
-    } else if model_available(options, raw) {
-        "available"
-    } else {
-        "unavailable"
-    }
-}
-
-fn model_metadata_status(raw: &str) -> &'static str {
-    if raw.trim().is_empty() {
-        "unknown"
-    } else if den_llm::model_registry::entry_for_handle(raw).is_some() {
-        "known"
-    } else {
-        "unknown"
-    }
-}
-
 fn display_number(value: Option<f64>) -> String {
     value
         .map(|value| {
@@ -2081,15 +2044,40 @@ async fn render_models_page(
     can_manage_bear: bool,
     message: Option<String>,
     error: Option<String>,
+    pending: model_configurations::PendingModelsForm,
 ) -> Result<Response, CustomError> {
-    let model_options =
-        den_service::model_selection::list_selectable_model_options(state.sqlx_pool())
-            .await
-            .unwrap_or_else(|_| den_llm::model_registry::selectable_model_options());
-    let (model_catalog_configured, live_model_options, models_fetch_error) =
-        all_model_catalog_options_context_for_bear(&state, bear.id).await;
-    let all_model_options = merge_model_options(&model_options, &live_model_options);
-    let bear_default_model = bear.default_model.as_deref().unwrap_or("");
+    let model_options = model_configurations::catalog_options(state.sqlx_pool()).await?;
+    let bear_id = BearId::new(bear.id);
+    let configurations = model_configurations::configuration_views(
+        state.sqlx_pool(),
+        bear_id,
+        pending.configuration.as_ref(),
+    )
+    .await?;
+    let default_configuration_id =
+        den_service::bears::model_configurations::default_configuration_id(
+            state.sqlx_pool(),
+            bear_id,
+        )
+        .await?;
+    let default_selection = pending
+        .default_selection
+        .selected_id(default_configuration_id)
+        .map(|id| id.to_string())
+        .unwrap_or_default();
+    let new_configuration = pending
+        .configuration
+        .as_ref()
+        .filter(|(id, _)| id.is_none())
+        .map(|(_, form)| form.clone())
+        .unwrap_or_default();
+    let effective_model = model_configurations::effective_model(
+        state.sqlx_pool(),
+        bear_id,
+        None,
+        &state.config.default_llm_model,
+    )
+    .await?;
     let bear_loop_control = bears_db::bear_agent_loop_control_setting(state.sqlx_pool(), bear.id)
         .await?
         .map(AgentLoopControlLevel::as_str)
@@ -2098,9 +2086,7 @@ async fn render_models_page(
         .default_tool_budget_multiplier
         .map(|value| value.to_string())
         .unwrap_or_default();
-    let bear_default_availability_status =
-        model_availability_status(&live_model_options, bear_default_model);
-    let bear_default_metadata_status = model_metadata_status(bear_default_model);
+
     let bifrost_virtual_key =
         bears_db::get_bear_bifrost_virtual_key(state.sqlx_pool(), bear.id).await?;
     let bifrost_usage = bifrost_usage_view_for_bear(&state, bear.id).await;
@@ -2109,15 +2095,13 @@ async fn render_models_page(
         "bear/settings/models.html",
         auth_session,
         context! {
-            model_catalog_configured,
             model_options,
-            all_model_options,
-            models_fetch_error,
-            bear_default_custom_model => if !bear_default_model.is_empty() && !model_available(&model_options, bear_default_model) { bear_default_model } else { "" },
+            configurations,
+            default_selection,
+            new_configuration,
+            effective_model,
             bear_loop_control,
             bear_tool_budget_multiplier,
-            bear_default_availability_status,
-            bear_default_metadata_status,
             bifrost_virtual_key_id => bifrost_virtual_key.as_ref().and_then(|row| row.virtual_key_id.as_deref()).unwrap_or(""),
             bifrost_virtual_key_name => bifrost_virtual_key.as_ref().and_then(|row| row.virtual_key_name.as_deref()).unwrap_or(""),
             bifrost_virtual_key_configured => bifrost_virtual_key.as_ref().map(|row| {
@@ -2154,6 +2138,7 @@ async fn models_view(
         can_manage_bear,
         flash_message.or(query.message),
         flash_error.or(query.error),
+        model_configurations::PendingModelsForm::default(),
     )
     .await
 }
@@ -2168,54 +2153,10 @@ async fn models_post(
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
-    let model_options =
-        den_service::model_selection::list_selectable_model_options(state.sqlx_pool())
-            .await
-            .unwrap_or_else(|_| den_llm::model_registry::selectable_model_options());
-    let (_, live_model_options, fetch_error) =
-        all_model_catalog_options_context_for_bear(&state, bear.id).await;
-    let validation_options = merge_model_options(&model_options, &live_model_options);
-    if validation_options.is_empty() {
-        let message = fetch_error
-            .unwrap_or_else(|| "No Den model selection options are configured.".to_string());
-        return Ok(Redirect::to(&format!(
-            "/bear/{}/models?error={}",
-            bear.slug,
-            urlencoding::encode(&message)
-        ))
-        .into_response());
-    }
 
-    let default_trim =
-        selected_or_custom_model(&form.bear_default_model, &form.bear_default_model_custom).trim();
-    if !is_inherit_model_value(default_trim) && !model_available(&validation_options, default_trim)
-    {
-        return Ok(Redirect::to(&format!(
-            "/bear/{}/models?error={}",
-            bear.slug,
-            urlencoding::encode("Choose inherit or a configured Den model selection option.")
-        ))
-        .into_response());
-    }
-    let default_model = configured_model_from_form(default_trim);
     let bear_loop_control = parse_loop_control_form_value(&form.bear_loop_control)?;
     let bear_tool_budget_multiplier =
         parse_tool_budget_multiplier_form_value(&form.bear_tool_budget_multiplier)?;
-
-    bears_db::update_bear(
-        state.sqlx_pool(),
-        bear.id,
-        bears_db::BearParams {
-            slug: bear.slug.as_str(),
-            name: bear.name.as_str(),
-            description: bear.description.as_str(),
-            system_prompt: bear.system_prompt.as_str(),
-            default_model: default_model.as_deref(),
-            tools_enabled: bear.tools_enabled.clone(),
-            context_profile: bear.context_profile.clone(),
-        },
-    )
-    .await?;
 
     bears_db::set_bear_agent_loop_control_setting(state.sqlx_pool(), bear.id, bear_loop_control)
         .await?;
@@ -2268,7 +2209,7 @@ async fn models_post(
     Ok(Redirect::to(&format!(
         "/bear/{}/models?message={}",
         bear.slug,
-        urlencoding::encode("Model, loop-control, and tool-budget settings saved.")
+        urlencoding::encode("Loop-control, tool-budget, and Bifrost settings saved.")
     ))
     .into_response())
 }

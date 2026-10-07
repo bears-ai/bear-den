@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE model_selection_options SET metadata_json = '{\"supports_reasoning_effort\":\"yes\"}'::jsonb\n           WHERE handle = 'vendor/approved'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "df658030c3c91003dc891ed42717eeeccb979b7abf015fca67fa636985fd6671"
+}

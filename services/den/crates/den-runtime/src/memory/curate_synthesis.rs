@@ -96,6 +96,7 @@ struct CurateRequestInput<'a> {
     bear_name: &'a str,
     hat_name: &'a str,
     model: String,
+    thinking_effort: Option<den_core::ThinkingEffort>,
     bifrost_virtual_key: String,
     source_content: &'a str,
     proposal_summary: &'a str,
@@ -126,7 +127,7 @@ fn curate_request(input: CurateRequestInput<'_>) -> Result<ChatCompletionRequest
         tool_choice: None,
         temperature: None,
         max_tokens: Some(800),
-        thinking_effort: None,
+        thinking_effort: input.thinking_effort,
         telemetry: Some(LlmRequestTelemetry {
             bear_id: Some(input.bear_id.to_string()),
             stance: Some(RuntimeContextLabel::Curation.as_str().to_string()),
@@ -162,17 +163,52 @@ pub async fn synthesize_verified_hat_note(
     let bear = db::get_bear(pool, bear_id)
         .await?
         .ok_or_else(|| DenError::NotFound("Bear for Curate synthesis not found".into()))?;
-    let model = db::resolve_model_for_bear(&bear, llm.default_model());
+    // The candidate's destination hat is not Curate's execution identity.
+    let primary = den_service::bears::model_configurations::resolve_primary(
+        pool,
+        bear.id.into(),
+        None,
+        None,
+        llm.default_model(),
+    )
+    .await?;
     let request = curate_request(CurateRequestInput {
         bear_id,
         proposal_id,
         bear_name: &bear.name,
         hat_name: &hat.name,
-        model: llm.resolve_model(Some(&model)),
+        model: primary.model_handle.clone(),
+        thinking_effort: primary.thinking_effort,
         bifrost_virtual_key: key,
         source_content,
         proposal_summary,
     })?;
+    let capabilities = den_service::bears::model_configurations::validate_model_configuration(
+        pool,
+        &primary.model_handle,
+        primary.thinking_effort,
+    )
+    .await?;
+    let profile = den_core::ModelRequestProfile {
+        approved_model_ref: primary.model_handle.clone(),
+        supports_reasoning_effort: capabilities.supports_reasoning_effort,
+        thinking_effort: primary.thinking_effort,
+        ..Default::default()
+    };
+    crate::primary_model::persist_progress(
+        pool,
+        bear.id.into(),
+        None,
+        &format!("hat-curate-{proposal_id}"),
+        None,
+        crate::primary_model::configuration_progress_event(
+            &primary,
+            &profile,
+            request.thinking_effort,
+            den_llm::LlmApiStyle::ChatCompletionsStream,
+        ),
+    )
+    .await?;
     let response = llm.chat_completions_stream(&request).await?;
     let completion: Completion = response
         .json()
@@ -209,6 +245,7 @@ mod tests {
             bear_name: "Lumen",
             hat_name: "Security",
             model: "openai/test-model".into(),
+            thinking_effort: None,
             bifrost_virtual_key: "test-virtual-key".into(),
             source_content: "private token is untrusted data",
             proposal_summary: "Review without sharing private identifiers",

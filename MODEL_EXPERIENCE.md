@@ -31,6 +31,14 @@ tools:    merged Den-hosted + client descriptors
 | **Transcript** | The model-replay projection of canonical conversation storage — a distinct projection from user-visible history. | Den conversation persistence |
 | **Tool/action descriptors** | The model-facing action surface and schemas for this stance and surface. Descriptors also carry runtime semantics: blocking tool, client obligation, non-blocking structured update, or ephemeral progress. | Descriptor registry + client capabilities |
 
+## Primary model configurations
+
+In the current branch, named Bear-owned configurations select a catalog model and optional Low/Medium/High reasoning effort; Model default leaves ordinary effort unset. Conversation pins override the entire configuration (no inherited effort), otherwise the current canonical hat override wins over the Bear configuration and deployment default. Work uses its eligible Job hat, not a transcript's model pin. Automatic historical model rows do not freeze inheritance.
+
+Explicit effort reaches ordinary and continuation requests and takes precedence over checkpoint effort; with Model default, existing loop-control checkpoint behavior remains. Unknown or unsupported catalog capabilities reject explicit effort. An incompatible Chat Completions function-tool bridge omits effort and records that disposition instead of claiming it was sent. Persistent model-request diagnostics include configuration identity/name, selection source, model, configured and effective request effort, and transport. Browser turns without a run ID retain session-scoped diagnostics.
+
+New turns reload current settings. Before further inference, a changed in-flight model/effort requires a fresh turn; revoked model/capability choices fail closed. Configuration does not confer routing, permissions or delegation authority. Helper/subagent execution, fallback chains and advanced request-limit controls are not implemented by this slice. Live provider acceptance and deployment are deferred; see [the maintained topic](docs/topics/bear-memory-hats.md#primary-model-configurations).
+
 ## Reviewed instruction-only Skills
 
 For verified hat-bound browser/editor/Work turns, Den selects enabled attachments whose catalog version remains approved and whose pinned content hash still matches. The `bound_skills` Markdown fragment renders those procedures through the context compiler; attached uses are explicit. Drafts, disabled catalog versions and detached procedures are absent from subsequent bound prompts. Skills do not install binaries, add tools or grant credentials/resources; existing descriptors and live policy still determine execution. This initial implementation is human-authored catalog review, not model-facing skill proposal/installation tools or internal Curate/Watch procedure configuration.

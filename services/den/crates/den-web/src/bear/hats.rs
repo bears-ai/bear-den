@@ -18,7 +18,10 @@ use minijinja::context;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::settings::{bear_nav_context, load_session_bear_manage, session_user};
+use super::settings::{
+    bear_nav_context, load_session_bear_manage,
+    model_configurations::PendingConfigurationSelection, session_user,
+};
 use crate::{
     auth_backend::AuthSession,
     errors::CustomError,
@@ -29,6 +32,7 @@ mod access;
 mod core_review;
 mod legacy_instructions;
 mod legacy_review;
+mod primary_model;
 mod review;
 mod work_review;
 
@@ -42,6 +46,7 @@ pub fn router() -> Router<AppState> {
         .merge(core_review::router())
         .merge(legacy_review::router())
         .merge(work_review::router())
+        .merge(primary_model::router())
         .route_with_tsr("/bear/{slug}/hats", get(index).post(create))
         .route_with_tsr("/bear/{slug}/hats/{hat_id}", get(detail).post(update))
         .route_with_tsr(
@@ -223,9 +228,52 @@ async fn detail(
         Ok(bear) => bear,
         Err(redirect) => return Ok(redirect.into_response()),
     };
+    render_detail(
+        state,
+        auth,
+        bear,
+        HatId::new(hat_id),
+        query.message,
+        None,
+        PendingConfigurationSelection::Unchanged,
+    )
+    .await
+}
+
+async fn render_detail(
+    state: AppState,
+    auth: AuthSession,
+    bear: den_service::bears::Bear,
+    hat_id: HatId,
+    message: Option<String>,
+    model_error: Option<String>,
+    pending_selection: PendingConfigurationSelection,
+) -> Result<Response, CustomError> {
     let bear_id = BearId::new(bear.id);
-    let hat_id = HatId::new(hat_id);
     let hat = manage::get_hat(state.sqlx_pool(), bear_id, hat_id).await?;
+    let configurations = super::settings::model_configurations::configuration_views(
+        state.sqlx_pool(),
+        bear_id,
+        None,
+    )
+    .await?;
+    let model_configuration_id = den_service::bears::model_configurations::hat_configuration_id(
+        state.sqlx_pool(),
+        bear_id,
+        hat_id,
+    )
+    .await?;
+    let model_selection = pending_selection
+        .selected_id(model_configuration_id)
+        .map(|id| id.to_string())
+        .unwrap_or_default();
+    let effective_model = super::settings::model_configurations::effective_model(
+        state.sqlx_pool(),
+        bear_id,
+        Some(hat_id),
+        &state.config.default_llm_model,
+    )
+    .await?;
     let available_hats = hats::list_hats(state.sqlx_pool(), bear_id).await?;
     let identity_preview =
         hats::identity::render_hat_identity_component(&bear, &hat, &available_hats)?;
@@ -269,7 +317,7 @@ async fn detail(
         "bear/manage/hat.jinja",
         auth,
         context! {
-            hat, identity_preview, identity_sha256, previous_instructions, is_ide_default, ide_default_hat_name, choices, grant_count => granted.len(), web_grants, workspace_read_grants, workspace_read_choices, historical_hat_records, work_reviews, message => query.message,
+            hat, identity_preview, identity_sha256, previous_instructions, is_ide_default, ide_default_hat_name, choices, grant_count => granted.len(), web_grants, workspace_read_grants, workspace_read_choices, historical_hat_records, work_reviews, message, configurations, model_selection, effective_model, model_error,
             can_manage_bear => true, native_runtime => true,
             ..bear_nav_context(&bear, "hats"),
         },

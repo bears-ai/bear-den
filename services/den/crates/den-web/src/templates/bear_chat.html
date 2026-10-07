@@ -33,7 +33,7 @@ block head %} {{ super() }}
             class="den-model-select"
             aria-label="Conversation model"
         >
-            <option value="auto">Auto / stance default</option>
+            <option value="auto">Inherit default</option>
         </select>
         <button id="den-current-task" type="button" class="button-link">
             Current task
@@ -48,6 +48,7 @@ block head %} {{ super() }}
             >Overview</a
         >
     </div>
+    <p id="den-model-error" class="form-errors" role="status" hidden></p>
     <p id="err" class="den-err" hidden></p>
     <p id="den-legacy-conversation-notice" role="status" hidden>
         Legacy conversation — read-only now that this Bear uses hats. You can review its history here; choose a hat under “+ New conversation” to continue chatting.
@@ -202,6 +203,13 @@ block head %} {{ super() }}
         return document.getElementById("den-model-select");
     }
 
+    function showModelError(message) {
+        var error = document.getElementById("den-model-error");
+        if (!error) return;
+        error.textContent = message || "";
+        error.hidden = !message;
+    }
+
     function renderModelSelector(data) {
         var select = currentModelSelect();
         if (!select || !data) return;
@@ -211,30 +219,49 @@ block head %} {{ super() }}
             mode === "explicit"
                 ? data.selected_model || data.requested_model || ""
                 : "auto";
-        var html = [
-            '<option value="auto">Auto / stance default (' +
-                escapeHtml(data.effective_model || "default") +
-                ")</option>",
-        ];
+        var sourceLabels = {
+            conversation_explicit: "Conversation pin",
+            hat_override: "Hat override",
+            bear_default: "Bear default",
+            deployment_default: "Deployment default",
+        };
+        var source = sourceLabels[data.source] || "Inherited default";
+        var unavailable = !data.effective_model;
+        var effective = unavailable ? "unavailable" :
+            (data.configuration_name ? data.configuration_name + " · " : "") +
+            data.effective_model +
+            " · reasoning " + (data.thinking_effort || "model default");
+        var inheritedLabel = "Inherit default";
+        if (mode === "auto") inheritedLabel += unavailable ? " · unavailable" : " · " + source + ": " + effective;
+        var html = ['<option value="auto">' + escapeHtml(inheritedLabel) + "</option>"];
+        var listedPin = false;
         for (var i = 0; i < DEN_MODEL_OPTIONS.length; i++) {
             var m = DEN_MODEL_OPTIONS[i];
             if (!m || !m.handle) continue;
+            if (m.handle === selected) listedPin = true;
             html.push(
                 '<option value="' +
                     escapeHtml(m.handle) +
                     '">' +
-                    escapeHtml(m.label || m.handle) +
+                    "Pin · " + escapeHtml(m.label || m.handle) +
                     "</option>",
             );
         }
+        if (mode === "explicit" && !listedPin) {
+            html.push('<option value="' + escapeHtml(selected) + '"' +
+                (unavailable ? " disabled" : "") + '>Pin · ' +
+                escapeHtml(selected || "missing model") +
+                (unavailable ? " · unavailable" : "") + "</option>");
+        }
         select.innerHTML = html.join("");
         select.value = selected;
-        if (select.value !== selected) select.value = "auto";
         select.title =
             mode === "explicit"
-                ? "Conversation model: " + selected
-                : "Using stance/Bear default: " + (data.effective_model || "");
+                ? "Conversation pin: " + (selected || "missing model") +
+                    (unavailable ? " · unavailable" : " · reasoning model default")
+                : unavailable ? "Inherited default · unavailable" : "Inherited · " + source + ": " + effective;
         select.disabled = String(CONVERSATION_ID || "").indexOf("new-") === 0;
+        showModelError(data.error || "");
     }
 
     function loadConversationModel() {
@@ -254,6 +281,12 @@ block head %} {{ super() }}
             })
             .then(renderModelSelector)
             .catch(function (err) {
+                var select = currentModelSelect();
+                if (select) {
+                    select.innerHTML = '<option value="" disabled selected>Model unavailable</option>';
+                    select.disabled = true;
+                    select.title = String(err.message || err);
+                }
                 showErr(String(err.message || err));
             });
     }

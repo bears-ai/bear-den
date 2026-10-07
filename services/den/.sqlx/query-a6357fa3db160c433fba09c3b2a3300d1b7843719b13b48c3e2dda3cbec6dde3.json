@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO model_selection_options (handle, display_name) VALUES ('vendor/*', 'Routing wildcard')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "a6357fa3db160c433fba09c3b2a3300d1b7843719b13b48c3e2dda3cbec6dde3"
+}

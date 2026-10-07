@@ -574,7 +574,7 @@ fn model_config_option(model_state: &Value) -> Option<SessionConfigOption> {
     let effective = model_state
         .get("effective_model")
         .and_then(Value::as_str)
-        .unwrap_or("default");
+        .unwrap_or("unavailable");
     let selected = if model_state.get("selection_mode").and_then(Value::as_str) == Some("explicit")
     {
         model_state
@@ -586,13 +586,11 @@ fn model_config_option(model_state: &Value) -> Option<SessionConfigOption> {
     } else {
         "auto".to_string()
     };
-    let mut options = vec![SessionConfigSelectOption::new(
-        "auto",
-        "Default",
-    )
-    .description(format!(
-        "Use the current stance/Bear default model for this ACP conversation. Current effective model: {effective}."
-    ))];
+    let mut options = vec![
+        SessionConfigSelectOption::new("auto", "Default").description(format!(
+        "Inherit the current hat/Bear model configuration. Current effective model: {effective}."
+    )),
+    ];
     if let Some(items) = model_state.get("model_options").and_then(Value::as_array) {
         for item in items {
             let Some(handle) = item.get("handle").and_then(Value::as_str) else {
@@ -608,7 +606,7 @@ fn model_config_option(model_state: &Value) -> Option<SessionConfigOption> {
     Some(
         SessionConfigOption::select("model", "Model", selected, options)
             .description(
-                "Conversation-scoped model selection. Auto inherits the stance/Bear default.",
+                "Explicit model choices pin this conversation and use model-default reasoning; Default restores hat/Bear configuration inheritance.",
             )
             .category(SessionConfigOptionCategory::Mode),
     )

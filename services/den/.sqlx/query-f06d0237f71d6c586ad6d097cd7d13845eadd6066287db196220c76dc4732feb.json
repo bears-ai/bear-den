@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE model_selection_options SET selectable = false WHERE handle = 'openai/gpt-4.1'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "f06d0237f71d6c586ad6d097cd7d13845eadd6066287db196220c76dc4732feb"
+}

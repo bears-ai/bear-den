@@ -221,6 +221,7 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
             Arc::new(den_service::bifrost::BifrostClient::new(config.as_ref())),
             memory_stores.clone(),
         );
+        den_runtime::set_bifrost_client(den_state.bifrost.clone());
         den_service::bifrost::spawn_managed_catalog_refresh(
             den_state.bifrost.clone(),
             den_state.bifrost_catalog.clone(),

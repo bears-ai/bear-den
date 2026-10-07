@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO model_selection_options (handle, display_name, metadata_json)\n           VALUES ('vendor/approved', 'Approved', '{\"supports_reasoning_effort\":true}'::jsonb)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "37a4a9bfcf6ec78e08d9f4c8bcacff5ec274f849992647bbbc52c41e700f252c"
+}

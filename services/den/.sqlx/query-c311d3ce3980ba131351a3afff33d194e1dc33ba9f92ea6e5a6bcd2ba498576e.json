@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE model_selection_options\n           SET metadata_json = metadata_json || '{\"supports_reasoning_effort\":true}'::jsonb\n           WHERE handle = 'openai/gpt-4o'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "c311d3ce3980ba131351a3afff33d194e1dc33ba9f92ea6e5a6bcd2ba498576e"
+}

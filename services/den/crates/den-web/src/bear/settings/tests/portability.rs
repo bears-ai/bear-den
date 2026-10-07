@@ -1,12 +1,16 @@
 use super::*;
-use den_core::ids::{BearId, UserId};
+use den_core::{
+    ids::{BearId, UserId},
+    ThinkingEffort,
+};
 use den_memory::{
     access::AccessContext,
     scoped::{self, MemoryReadGrant},
     LogicalMemoryPath, MemorySource,
 };
+use den_service::bears::model_configurations as models;
 
-fn upload(bytes: &[u8], acknowledged: bool) -> Vec<u8> {
+pub(super) fn upload(bytes: &[u8], acknowledged: bool) -> Vec<u8> {
     let mut body = Vec::new();
     if acknowledged {
         body.extend_from_slice(b"--portable\r\nContent-Disposition: form-data; name=\"confirm_imported_knowledge\"\r\n\r\ntrue\r\n");
@@ -50,6 +54,30 @@ async fn bundle_roundtrip_remints_hats_and_memory_without_restoring_authority() 
     hats::set_ide_default_hat(&pool, BearId::new(bear_id), original.id)
         .await
         .unwrap();
+    let model = super::model_configurations::seed_model(&pool, Some(true)).await;
+    let default_configuration = models::create(
+        &pool,
+        BearId::new(bear_id),
+        "Deep",
+        &model,
+        Some(ThinkingEffort::High),
+    )
+    .await
+    .unwrap();
+    let hat_configuration = models::create(&pool, BearId::new(bear_id), "Quick", &model, None)
+        .await
+        .unwrap();
+    models::set_default(&pool, BearId::new(bear_id), Some(default_configuration.id))
+        .await
+        .unwrap();
+    models::set_hat_override(
+        &pool,
+        BearId::new(bear_id),
+        original.id,
+        Some(hat_configuration.id),
+    )
+    .await
+    .unwrap();
     let state = test_state(pool.clone());
     let store = state.memory_stores.store_for_bear(bear_id).await.unwrap();
     let path = LogicalMemoryPath::hat(original.id, "entry");
@@ -81,7 +109,17 @@ async fn bundle_roundtrip_remints_hats_and_memory_without_restoring_authority() 
     assert_eq!(exported.status(), StatusCode::OK);
     let bytes = exported.into_body().collect().await.unwrap().to_bytes();
     let (mut manifest, memory) = read_bear_bundle(&bytes).unwrap();
-    assert_eq!(manifest.version, 2);
+    assert_eq!(manifest.version, BEAR_BUNDLE_VERSION);
+    assert!(manifest.bear.default_model.is_none());
+    assert_eq!(
+        manifest.default_model_configuration_id,
+        Some(default_configuration.id)
+    );
+    assert_eq!(manifest.model_configurations.as_ref().unwrap().len(), 2);
+    assert_eq!(
+        manifest.hats[0].model_configuration_id,
+        Some(hat_configuration.id)
+    );
     assert_eq!(manifest.hats[0].original_id, original.id);
     assert_eq!(manifest.ide_default_hat, Some(original.id));
     manifest.hats[0].work_requested = true;
@@ -148,6 +186,35 @@ async fn bundle_roundtrip_remints_hats_and_memory_without_restoring_authority() 
     assert_eq!(imported_hats.len(), 1);
     let restored = &imported_hats[0];
     assert_ne!(restored.id, original.id);
+    let restored_configurations = models::list(&pool, BearId::new(imported_bear.id))
+        .await
+        .unwrap();
+    assert_eq!(restored_configurations.len(), 2);
+    let restored_default = restored_configurations
+        .iter()
+        .find(|config| config.name == "Deep")
+        .unwrap();
+    let restored_override = restored_configurations
+        .iter()
+        .find(|config| config.name == "Quick")
+        .unwrap();
+    assert_ne!(restored_default.id, default_configuration.id);
+    assert_ne!(restored_override.id, hat_configuration.id);
+    assert_eq!(restored_default.model_handle.as_str(), model);
+    assert_eq!(restored_default.thinking_effort, Some(ThinkingEffort::High));
+    assert_eq!(restored_override.thinking_effort, None);
+    assert_eq!(
+        models::default_configuration_id(&pool, BearId::new(imported_bear.id))
+            .await
+            .unwrap(),
+        Some(restored_default.id)
+    );
+    assert_eq!(
+        models::hat_configuration_id(&pool, BearId::new(imported_bear.id), restored.id)
+            .await
+            .unwrap(),
+        Some(restored_override.id)
+    );
     assert_eq!(restored.identity_prompt, "Use the house care procedure");
     assert!(!restored.work_enabled);
     assert!(!restored.auto_curate_enabled);
@@ -197,4 +264,44 @@ async fn bundle_roundtrip_remints_hats_and_memory_without_restoring_authority() 
     .await
     .unwrap()
     .is_empty());
+
+    // Legacy bundles carry only a raw default. The service bridge recreates a
+    // named configuration with model-default effort, not the exported override.
+    manifest.version = 2;
+    manifest.bear.slug = format!("legacy-{}", Uuid::new_v4().simple());
+    manifest.bear.default_model = Some(model.clone());
+    manifest.model_configurations = None;
+    manifest.default_model_configuration_id = None;
+    manifest.hats[0].model_configuration_id = None;
+    let legacy = build_bear_bundle(&serde_yml::to_string(&manifest).unwrap(), &memory).unwrap();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/bears/import")
+                .header(header::COOKIE, &cookie)
+                .header(
+                    header::CONTENT_TYPE,
+                    "multipart/form-data; boundary=portable",
+                )
+                .body(Body::from(upload(&legacy, true)))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let legacy_bear = bears_db::bear_for_user_by_slug(&pool, actor, &manifest.bear.slug)
+        .await
+        .unwrap()
+        .unwrap();
+    let legacy_id = models::default_configuration_id(&pool, BearId::new(legacy_bear.id))
+        .await
+        .unwrap()
+        .unwrap();
+    let legacy_config = models::get(&pool, BearId::new(legacy_bear.id), legacy_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(legacy_config.model_handle.as_str(), model);
+    assert_eq!(legacy_config.thinking_effort, None);
 }

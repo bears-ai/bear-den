@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE model_selection_options SET metadata_json = metadata_json - 'supports_reasoning_effort'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "73edce5e4c4d98e47657ef05ddc751523fe36bb6dab5262d2c0e76faf227c2b3"
+}

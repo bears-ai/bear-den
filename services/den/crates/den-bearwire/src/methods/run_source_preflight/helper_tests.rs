@@ -267,12 +267,26 @@ pub(super) async fn checkout(
 }
 
 pub(super) async fn model_ready_state(pool: &PgPool, fixture: &Fixture) -> DenState {
+    model_ready_state_for_bear(pool, fixture.bear, &["openai/gpt-4.1"]).await
+}
+
+pub(super) async fn model_ready_state_for_bear(
+    pool: &PgPool,
+    bear: BearId,
+    models: &[&str],
+) -> DenState {
     use std::{
         io::{BufRead, BufReader, Write},
         net::TcpListener,
     };
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
+    let body = json!({"data": models.iter().map(|model| json!({
+        "id": model, "owned_by": "openai", "context_length": 128000,
+        "max_output_tokens": 4096, "supported_parameters": ["tools"],
+        "supported_methods": ["chat_completion"],
+    })).collect::<Vec<_>>()})
+    .to_string();
     let server = std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
         stream
@@ -292,16 +306,16 @@ pub(super) async fn model_ready_state(pool: &PgPool, fixture: &Fixture) -> DenSt
                 break;
             }
         }
-        let body = r#"{"data":[{"id":"openai/bearwire-test-model","owned_by":"openai","context_length":128000,"max_output_tokens":4096,"supported_parameters":["tools"],"supported_methods":["chat_completion"]}]}"#;
+
         write!(stream, "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}", body.len(), body).unwrap();
     });
     let mut config = den_core::config::Config::test_stub();
     config.llm_api_url = format!("http://{address}");
-    config.default_llm_model = "openai/bearwire-test-model".into();
+    config.default_llm_model = "openai/gpt-4.1".into();
     config.den_secret_encryption_key = "expected-source-test-secret".into();
     bears_db::set_bear_bifrost_virtual_key(
         pool,
-        fixture.bear.as_uuid(),
+        bear.as_uuid(),
         Some("vk-test"),
         Some("Startup test"),
         Some("sk-bf-startup-test"),
@@ -318,14 +332,12 @@ pub(super) async fn model_ready_state(pool: &PgPool, fixture: &Fixture) -> DenSt
     );
     let catalog = state
         .bifrost
-        .bear_catalog_snapshot(
-            pool,
-            fixture.bear.as_uuid(),
-            &config.den_secret_encryption_key,
-        )
+        .bear_catalog_snapshot(pool, bear.as_uuid(), &config.den_secret_encryption_key)
         .await
         .unwrap();
-    assert!(catalog.resolve("openai/bearwire-test-model").is_some());
+    for model in models {
+        assert!(catalog.resolve(model).is_some());
+    }
     server.join().unwrap();
     state
 }

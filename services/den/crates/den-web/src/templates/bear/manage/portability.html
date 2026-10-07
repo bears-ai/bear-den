@@ -3,8 +3,9 @@
 {% block manage %}
 <section class="box">
   <h2>Backup &amp; move</h2>
-  <table><caption>Contents of the current .bear bundle</caption><thead><tr><th>Material</th><th>Included?</th></tr></thead><tbody>
-    <tr><td>Name, description, Bear-wide steering and model/configuration</td><td>Yes</td></tr>
+  <table><caption>Contents of the .bear v3 bundle</caption><thead><tr><th>Material</th><th>Included?</th></tr></thead><tbody>
+    <tr><td>Name, description and Bear-wide steering</td><td>Yes</td></tr>
+    <tr><td>Named model configurations, Bear default and hat overrides</td><td>Yes — remapped IDs, validated against the destination catalog</td></tr>
     <tr><td>Canonical SQLite memory, all scopes and history</td><td>Yes — includes private source-local notes</td></tr>
     <tr><td>Hat definitions, identity and IDE choice</td><td>Yes — new IDs, Work and automatic sharing off on import</td></tr>
     <tr><td>Reviewed instruction-only skill versions</td><td>Yes — disabled and staged for review on import</td></tr><tr><td>Connection and resource grant intent</td><td>Included as a checklist, not live permission</td></tr><tr><td>Conversations, Jobs, runs and approvals</td><td>No — stay on this Den</td></tr>
@@ -17,7 +18,7 @@
 </section>
 <section class="box"><h2>Import as a new Bear</h2>
 {% if can_manage_bear %}<form method="post" action="/bears/import" enctype="multipart/form-data"><label for="bundle">Bundle file (.bear)</label><input type="file" id="bundle" name="bundle" accept=".bear,application/zip" required><p>Creates a new Bear; does not overwrite this one.</p><label><input type="checkbox" name="confirm_imported_knowledge" value="true" required>I reviewed the imported identity and knowledge audience. Hats and procedures do not restore live authority automatically.</label><button type="submit">Import bundle</button></form>{% else %}<p>A verified user can create/import a Bear from the Bears page. This Bear cannot be exported without admin access.</p>{% endif %}
-<details><summary>After import</summary><ol><li>Check the new Bear under Purpose and Models.</li><li>Create hats and review knowledge before enabling Work.</li><li>Re-attach repository connections and re-authorize access.</li><li>Grant membership on the new Bear deliberately.</li></ol><p>Imported memory alone does not establish live hats or permission grants.</p></details>
+<details><summary>After import</summary><ol><li>Check the new Bear under Purpose and Models.</li><li>Review imported hats and knowledge before enabling Work.</li><li>Re-attach repository connections and re-authorize access.</li><li>Grant membership on the new Bear deliberately.</li></ol><p>Imported memory alone does not establish live hats or permission grants.</p></details>
 </section>
 
 {% if can_manage_bear and reconnection_intent %}<section class="box"><h2>Imported reconnection checklist</h2>

@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT handle, selectable, metadata_json AS \"metadata_json!: Json<CatalogCapabilities>\"\n           FROM model_selection_options\n           WHERE handle = $1 OR handle = $2\n           ORDER BY (handle = $1) DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "handle",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "selectable",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 2,
+        "name": "metadata_json!: Json<CatalogCapabilities>",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "23ca9da7c40f7483116af6196b32200c89d9b14245e25bf0f22e7830de3d065f"
+}

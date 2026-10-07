@@ -1,5 +1,7 @@
 #[path = "session/lifecycle_tests.rs"]
 mod session_lifecycle;
+#[path = "session/model_tests.rs"]
+mod session_models;
 
 use std::{
     io::{Read, Write},
@@ -1424,6 +1426,16 @@ async fn seed_test_bifrost_virtual_key(
     bear_id: uuid::Uuid,
     config: &den_core::config::Config,
 ) {
+    // The provider fixture's custom handle also needs Den catalog admission.
+    sqlx::query!(
+        r#"INSERT INTO model_selection_options (handle, display_name, metadata_json)
+           VALUES ('openai/bearwire-test-model', 'BearWire test model',
+               '{"supports_reasoning_effort":false}'::jsonb)
+           ON CONFLICT (handle) DO NOTHING"#
+    )
+    .execute(pool)
+    .await
+    .expect("seed selectable fixture model");
     bears_db::set_bear_bifrost_virtual_key(
         pool,
         bear_id,
@@ -2564,7 +2576,7 @@ async fn docket_execute_starts_focused_session_loop_for_selected_task(pool: sqlx
     );
 
     let chat_run = rpc_value(
-        test_state(pool.clone()),
+        state.clone(),
         &token,
         "run.start",
         json!({
@@ -2857,7 +2869,7 @@ async fn blocked_focused_task_ends_docket_control_and_returns_to_chat(pool: sqlx
             .expect("client session exists");
     assert_eq!(session.current_task_id, Some(assigned_task_id));
     let chat_run = rpc_value(
-        test_state(pool.clone()),
+        state.clone(),
         &token,
         "run.start",
         json!({
@@ -5495,7 +5507,7 @@ async fn run_start_reuses_active_run_unless_explicitly_superseded(pool: sqlx::Pg
     );
 
     let replacement = rpc_value(
-        test_state(pool.clone()),
+        state.clone(),
         &token,
         "run.start",
         json!({
@@ -6605,7 +6617,11 @@ async fn current_task_start_recovers_orphaned_controller_without_execution_autho
 
     let mut config = den_core::config::Config::test_stub();
     config.den_secret_encryption_key = "bearwire-test-secret-key".to_string();
+    // The rebuilt service must fetch its own Bear catalog before recovery.
+    // Keep the provider alive for preparation/execution on both controllers.
     config.llm_api_url = start_mock_openai_sse_server_asserting_requests(vec![
+        MockLlmRequestAssertion::requiring(Vec::new()),
+        MockLlmRequestAssertion::requiring(Vec::new()),
         MockLlmRequestAssertion::requiring(Vec::new()),
         MockLlmRequestAssertion::requiring(Vec::new()),
     ]);

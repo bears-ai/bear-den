@@ -462,6 +462,7 @@ fn catalog_metadata_json(entry: &den_service::bifrost::BifrostCatalogEntry) -> s
         "supports_tools": entry.supports_tools,
         "supports_responses_api": entry.supports_responses_api,
         "supports_vision": entry.supports_vision,
+        "supports_reasoning_effort": entry.supports_reasoning_effort,
     })
 }
 
@@ -535,6 +536,9 @@ fn format_time(value: OffsetDateTime) -> String {
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_else(|_| value.to_string())
 }
+
+#[cfg(test)]
+mod catalog_tests;
 
 #[cfg(test)]
 mod tests {

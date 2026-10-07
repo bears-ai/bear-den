@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO bears (slug, default_model) VALUES ('invalid-sql-insert', 'missing/model')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "6774d7f5b7fa44978c247e5243a9c21d6091e5fccf0ef8a0306db37768431b1e"
+}

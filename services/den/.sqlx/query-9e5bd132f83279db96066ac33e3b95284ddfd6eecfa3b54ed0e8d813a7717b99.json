@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bears SET default_model = ' gpt-5 ' WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9e5bd132f83279db96066ac33e3b95284ddfd6eecfa3b54ed0e8d813a7717b99"
+}

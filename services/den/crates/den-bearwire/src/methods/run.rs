@@ -39,7 +39,11 @@ use den_runtime::{
     turn_runs, turn_steps,
 };
 use den_service::{
-    bears::{db as bears_db, render_turn_fragment, repository_prompt_fragment_registry},
+    bears::{
+        db as bears_db, hats::turn_binding::NativeTurnSource,
+        model_configurations::PrimaryModelSource, render_turn_fragment,
+        repository_prompt_fragment_registry,
+    },
     bifrost::BifrostCatalogEntry,
     client_sessions,
     conversation::events::{
@@ -364,26 +368,40 @@ fn runtime_upstream_target(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ResolvedRunModelSource {
     ConversationExplicit,
-    ConversationAuto,
+    HatOverride,
     BearDefault,
     SystemDefault,
 }
 
 impl ResolvedRunModelSource {
     const fn is_persisted_conversation_model(self) -> bool {
-        matches!(self, Self::ConversationExplicit | Self::ConversationAuto)
+        matches!(self, Self::ConversationExplicit)
     }
 
-    const fn is_default(self) -> bool {
-        matches!(self, Self::BearDefault | Self::SystemDefault)
+    const fn is_inherited(self) -> bool {
+        matches!(
+            self,
+            Self::HatOverride | Self::BearDefault | Self::SystemDefault
+        )
     }
 
     const fn as_str(self) -> &'static str {
         match self {
             Self::ConversationExplicit => "conversation_explicit",
-            Self::ConversationAuto => "conversation_auto",
+            Self::HatOverride => "hat_override",
             Self::BearDefault => "bear_default",
             Self::SystemDefault => "system_default",
+        }
+    }
+}
+
+impl From<PrimaryModelSource> for ResolvedRunModelSource {
+    fn from(source: PrimaryModelSource) -> Self {
+        match source {
+            PrimaryModelSource::ConversationPin => Self::ConversationExplicit,
+            PrimaryModelSource::HatOverride => Self::HatOverride,
+            PrimaryModelSource::BearDefault => Self::BearDefault,
+            PrimaryModelSource::DeploymentDefault => Self::SystemDefault,
         }
     }
 }
@@ -442,10 +460,10 @@ fn available_model_sample(models: &[den_service::bifrost::BifrostModelMetadata])
 fn pair_api_style_for_catalog_support(
     supports_responses_api: Option<bool>,
 ) -> den_llm::LlmApiStyle {
-    match supports_responses_api {
-        Some(false) => den_llm::LlmApiStyle::ChatCompletionsStream,
-        Some(true) | None => den_llm::LlmApiStyle::ResponsesStream,
-    }
+    den_llm::primary_api_style_for_catalog_support(
+        supports_responses_api,
+        den_llm::PrimaryTransportPreference::ResponsesWhenUnknown,
+    )
 }
 
 fn ensure_pair_model_capabilities(
@@ -477,83 +495,22 @@ fn unknown_capability_metadata(entry: &BifrostCatalogEntry) -> Vec<&'static str>
 async fn resolve_pair_run_model(
     state: &DenState,
     bear: &den_service::bears::Bear,
-    conversation_id: &str,
+    turn_source: NativeTurnSource,
 ) -> Result<ResolvedRunModel, CustomError> {
-    if let Some(conversation) =
-        den_service::conversation::persistence::get_conversation_for_external_id(
-            &state.sqlx_pool,
-            bear.id,
-            conversation_id,
-        )
-        .await?
-    {
-        if let Some(model_state) =
-            den_service::conversation::persistence::get_conversation_model_state(
-                &state.sqlx_pool,
-                conversation.id,
-            )
-            .await?
-        {
-            if model_state.selection_mode == "explicit" {
-                if let Some(model) = model_state
-                    .selected_model
-                    .or(model_state.requested_model)
-                    .map(|model| model.trim().to_string())
-                    .filter(|model| !model.is_empty())
-                {
-                    let handle = den_llm::normalize_llm_model_handle(&model);
-                    let provider_model_id = provider_model_id_for_den_handle(&handle);
-                    return Ok(ResolvedRunModel {
-                        api_style: RESOLVE_PLACEHOLDER_API_STYLE,
-                        supports_reasoning_effort: None,
-                        provider_model_id,
-                        handle,
-                        source: ResolvedRunModelSource::ConversationExplicit,
-                    });
-                }
-            } else if let Some(model) = model_state
-                .selected_model
-                .map(|model| model.trim().to_string())
-                .filter(|model| !model.is_empty())
-            {
-                let handle = den_llm::normalize_llm_model_handle(&model);
-                let provider_model_id = provider_model_id_for_den_handle(&handle);
-                return Ok(ResolvedRunModel {
-                    api_style: RESOLVE_PLACEHOLDER_API_STYLE,
-                    supports_reasoning_effort: None,
-                    provider_model_id,
-                    handle,
-                    source: ResolvedRunModelSource::ConversationAuto,
-                });
-            }
-        }
-    }
-
-    if let Some(model) = bear
-        .default_model
-        .as_deref()
-        .map(str::trim)
-        .filter(|model| !model.is_empty())
-    {
-        let handle = den_llm::normalize_llm_model_handle(model);
-        let provider_model_id = provider_model_id_for_den_handle(&handle);
-        return Ok(ResolvedRunModel {
-            api_style: RESOLVE_PLACEHOLDER_API_STYLE,
-            supports_reasoning_effort: None,
-            provider_model_id,
-            handle,
-            source: ResolvedRunModelSource::BearDefault,
-        });
-    }
-
-    let handle = den_llm::normalize_llm_model_handle(&state.config.default_llm_model);
-    let provider_model_id = provider_model_id_for_den_handle(&handle);
+    let primary = super::primary_model::resolve_for_source(
+        &state.sqlx_pool,
+        BearId::new(bear.id),
+        turn_source,
+        &state.config.default_llm_model,
+    )
+    .await?;
+    let handle = primary.model_handle;
     Ok(ResolvedRunModel {
         api_style: RESOLVE_PLACEHOLDER_API_STYLE,
         supports_reasoning_effort: None,
-        provider_model_id,
+        provider_model_id: provider_model_id_for_den_handle(&handle),
         handle,
-        source: ResolvedRunModelSource::SystemDefault,
+        source: primary.source.into(),
     })
 }
 
@@ -562,8 +519,9 @@ async fn preflight_pair_run_model(
     bear: &den_service::bears::Bear,
     session_id: &str,
     conversation_id: &str,
+    turn_source: NativeTurnSource,
 ) -> Result<ResolvedRunModel, CustomError> {
-    let resolved = resolve_pair_run_model(state, bear, conversation_id).await?;
+    let resolved = resolve_pair_run_model(state, bear, turn_source).await?;
     let snapshot = match state
         .bifrost
         .bear_catalog_snapshot(
@@ -2417,7 +2375,7 @@ async fn run_start_with_recovery_source(
         compatibility_backend: Some("native".to_string()),
     };
     let resolved_model =
-        preflight_pair_run_model(state, &bear, &session_id, &upstream_target).await?;
+        preflight_pair_run_model(state, &bear, &session_id, &upstream_target, turn_source).await?;
     if let Some(expected) = expected_work_source {
         require_expected_work_source(
             &state.sqlx_pool,
@@ -2455,7 +2413,9 @@ async fn run_start_with_recovery_source(
         },
     )
     .await?;
-    if resolved_model.source.is_default() {
+    // Keep the legacy auto row as a historical diagnostic only. Every turn
+    // resolves current source/configuration state; this row never pins a model.
+    if resolved_model.source.is_inherited() {
         require_conversation_access(&viewer, &state.sqlx_pool, conversation.id).await?;
         let established =
             den_service::conversation::persistence::establish_conversation_default_model_state(
@@ -2471,7 +2431,7 @@ async fn run_start_with_recovery_source(
                 conversation_id = %upstream_target,
                 model_handle = %resolved_model.handle,
                 model_selection_source = %resolved_model.source,
-                "Established default Pair model on conversation for continuity"
+                "Recorded inherited Pair model as a historical conversation diagnostic"
             );
         }
     }
@@ -3758,15 +3718,15 @@ mod tests {
     }
 
     #[test]
-    fn only_persisted_conversation_models_may_bypass_catalog_refresh() {
+    fn only_explicit_conversation_pins_may_bypass_catalog_refresh() {
         assert!(ResolvedRunModelSource::ConversationExplicit.is_persisted_conversation_model());
-        assert!(ResolvedRunModelSource::ConversationAuto.is_persisted_conversation_model());
+        assert!(!ResolvedRunModelSource::HatOverride.is_persisted_conversation_model());
         assert!(!ResolvedRunModelSource::BearDefault.is_persisted_conversation_model());
         assert!(!ResolvedRunModelSource::SystemDefault.is_persisted_conversation_model());
-        assert!(ResolvedRunModelSource::BearDefault.is_default());
-        assert!(ResolvedRunModelSource::SystemDefault.is_default());
-        assert!(!ResolvedRunModelSource::ConversationExplicit.is_default());
-        assert!(!ResolvedRunModelSource::ConversationAuto.is_default());
+        assert!(ResolvedRunModelSource::HatOverride.is_inherited());
+        assert!(ResolvedRunModelSource::BearDefault.is_inherited());
+        assert!(ResolvedRunModelSource::SystemDefault.is_inherited());
+        assert!(!ResolvedRunModelSource::ConversationExplicit.is_inherited());
     }
 
     #[test]

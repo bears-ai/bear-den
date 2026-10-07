@@ -2,12 +2,10 @@
 
 use den_core::{ids::BearId, DenError};
 use den_llm::{
-    preferred_api_style_for_model_with_catalog_support, ChatCompletionRequest, ChatMessage,
-    LlmApiStyle, LlmClient, LlmOperation, LlmRequestTelemetry,
+    ChatCompletionRequest, ChatMessage, LlmApiStyle, LlmClient, LlmOperation, LlmRequestTelemetry,
 };
-use den_service::{
-    bears::{db, render_turn_fragment, repository_prompt_fragment_registry, RuntimeContextLabel},
-    bifrost::BifrostClient,
+use den_service::bears::{
+    db, render_turn_fragment, repository_prompt_fragment_registry, RuntimeContextLabel,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -28,6 +26,7 @@ struct BriefingRequestInput<'a> {
     run_id: ReflectionRunId,
     bear_name: &'a str,
     model: String,
+    thinking_effort: Option<den_core::ThinkingEffort>,
     bifrost_virtual_key: String,
     briefing: &'a str,
 }
@@ -60,8 +59,7 @@ fn briefing_request(input: BriefingRequestInput<'_>) -> Result<ChatCompletionReq
         tool_choice: None,
         temperature: None,
         max_tokens: Some(MAX_OUTPUT_TOKENS),
-        // No reasoning override: unsupported and unknown catalog flags both omit it.
-        thinking_effort: None,
+        thinking_effort: input.thinking_effort,
         telemetry: Some(LlmRequestTelemetry {
             bear_id: Some(input.bear_id.to_string()),
             stance: Some(RuntimeContextLabel::Curation.as_str().into()),
@@ -265,33 +263,63 @@ pub(super) async fn collect_assistant_text(
     let bear = db::get_bear(deps.pool, bear_id)
         .await?
         .ok_or_else(|| DenError::NotFound("Curate briefing Bear not found".into()))?;
-    let model = llm.resolve_model(Some(&db::resolve_model_for_bear(
-        &bear,
+    // Internal Curate is Bear-scoped, not a human/Work hat turn.
+    let primary = den_service::bears::model_configurations::resolve_primary(
+        deps.pool,
+        bear.id.into(),
+        None,
+        None,
         llm.default_model(),
-    )));
+    )
+    .await?;
+    let model = primary.model_handle.clone();
     let request = briefing_request(BriefingRequestInput {
         bear_id,
         run_id: reflection_run_id,
         bear_name: &bear.name,
         model: model.clone(),
+        thinking_effort: primary.thinking_effort,
         bifrost_virtual_key: key,
         briefing,
     })?;
     source.require_live(deps.pool).await?;
-    let catalog = BifrostClient::new(deps.config)
-        .bear_catalog_snapshot(deps.pool, bear_id, &deps.config.den_secret_encryption_key)
-        .await
-        .map_err(|_| DenError::System("Curate briefing Bear catalog resolution failed".into()))?;
-    let entry = catalog.resolve(&model);
-    if entry.is_some_and(|entry| !entry.available) {
-        return Err(DenError::ValidationError(
-            "Curate briefing model is unavailable".into(),
-        ));
-    }
-    let api_style = preferred_api_style_for_model_with_catalog_support(
-        &model,
-        entry.and_then(|entry| entry.supports_responses_api),
-    );
+    let api_style = crate::primary_model::execution_api_style(
+        deps.pool,
+        deps.config,
+        bear_id.into(),
+        &primary,
+        crate::primary_model::transport_preference(
+            den_core::TurnExecutionOrigin::InternalCuration,
+            primary.thinking_effort,
+        ),
+    )
+    .await?;
+    let capabilities = den_service::bears::model_configurations::validate_model_configuration(
+        deps.pool,
+        &primary.model_handle,
+        primary.thinking_effort,
+    )
+    .await?;
+    let profile = den_core::ModelRequestProfile {
+        approved_model_ref: primary.model_handle.clone(),
+        supports_reasoning_effort: capabilities.supports_reasoning_effort,
+        thinking_effort: primary.thinking_effort,
+        ..Default::default()
+    };
+    crate::primary_model::persist_progress(
+        deps.pool,
+        bear.id.into(),
+        None,
+        source.session_id().as_str(),
+        Some(&reflection_run_id.as_uuid().to_string()),
+        crate::primary_model::configuration_progress_event(
+            &primary,
+            &profile,
+            request.thinking_effort,
+            api_style,
+        ),
+    )
+    .await?;
     verified_completion(
         deps.pool,
         source,

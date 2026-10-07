@@ -4,6 +4,7 @@ use uuid::Uuid;
 fn example() -> PortableHat {
     PortableHat {
         original_id: HatId::new(Uuid::new_v4()),
+        model_configuration_id: None,
         name: "Home".into(),
         purpose: "Care for the house".into(),
         short_summary: Some("House care".into()),

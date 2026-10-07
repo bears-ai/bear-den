@@ -104,6 +104,50 @@ impl FromStr for HatId {
     }
 }
 
+/// Identifier for a Bear-owned named model configuration (`model_configuration_id`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, sqlx::Type)]
+#[serde(transparent)]
+#[sqlx(transparent)]
+pub struct ModelConfigurationId(pub Uuid);
+
+impl ModelConfigurationId {
+    #[must_use]
+    pub const fn new(id: Uuid) -> Self {
+        Self(id)
+    }
+
+    #[must_use]
+    pub const fn as_uuid(self) -> Uuid {
+        self.0
+    }
+}
+
+impl From<Uuid> for ModelConfigurationId {
+    fn from(id: Uuid) -> Self {
+        Self(id)
+    }
+}
+
+impl From<ModelConfigurationId> for Uuid {
+    fn from(id: ModelConfigurationId) -> Self {
+        id.0
+    }
+}
+
+impl fmt::Display for ModelConfigurationId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl FromStr for ModelConfigurationId {
+    type Err = uuid::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Uuid::parse_str(s.trim()).map(Self)
+    }
+}
+
 /// Identifier for an authenticated human user (`user_id`).
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, sqlx::Type,

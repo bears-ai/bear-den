@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM model_selection_options WHERE handle = 'openai/gpt-4.1'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "8b3f9cf9fbdddbd9d9fb48b65e0f55cd92d13aca7e9a484f4d02caa544a810d1"
+}

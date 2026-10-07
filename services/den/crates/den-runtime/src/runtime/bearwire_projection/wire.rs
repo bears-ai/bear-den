@@ -156,15 +156,21 @@ pub fn runtime_semantic_event_to_bearwire_events(
                     }),
                 )];
             }
-            vec![BearWireEvent::ephemeral(
-                "run.progress",
-                json!({
-                    "kind": kind,
-                    "text": text,
-                    "phase": phase,
-                    "detail": detail,
-                }),
-            )]
+            let persistent = matches!(
+                kind.as_str(),
+                "model_request_profile_resolved" | "reasoning_effort_override"
+            );
+            let data = json!({
+                "kind": kind,
+                "text": text,
+                "phase": phase,
+                "detail": detail,
+            });
+            vec![if persistent {
+                BearWireEvent::persistent_typed("run.progress", data)
+            } else {
+                BearWireEvent::ephemeral("run.progress", data)
+            }]
         }
         RuntimeSemanticEvent::RunPaused {
             reason,

@@ -869,8 +869,7 @@ struct BuildSessionInput<'a> {
     checkpoint_audit_context: Option<den_protocol::CheckpointAuditContext>,
     work_run_id: Option<Uuid>,
     stream_tokens: bool,
-    api_style: Option<crate::llm::LlmApiStyle>,
-    supports_reasoning_effort: Option<bool>,
+
     technical_budget_recovery_start_payload: Option<serde_json::Value>,
     tool_messages: Vec<ChatMessage>,
 }
@@ -911,13 +910,11 @@ async fn build_session(
         checkpoint_audit_context,
         work_run_id,
         stream_tokens,
-        api_style,
-        supports_reasoning_effort,
+
         technical_budget_recovery_start_payload,
         tool_messages,
     } = input;
     let defaults = NativeTurnDefaults::for_origin(origin, den_core::Governance::Interactive)?;
-    let llm = LlmClient::new(deps.config);
     let bear = den_service::bears::db::get_bear(deps.pool, bear_id)
         .await?
         .ok_or_else(|| DenError::NotFound("bear not found".to_string()))?;
@@ -1023,30 +1020,27 @@ async fn build_session(
         .or_else(|| request_id.map(|id| id.to_string()))
         .unwrap_or_else(|| format!("unbound-{}", Uuid::new_v4().simple()));
     let session_key = agent_loop_session_key(conversation_id, client_session_id, &execution_id);
-    // Model selection uses the same canonical source as assembly and persistence.
-    let model_conversation_id = conversation_id;
-    let conversation_model = match conversation_persistence::get_conversation_for_external_id(
+    // Assembly resolved the whole configuration from the canonical conversation
+    // or eligible Work Job hat; runtime_target is not a model-selection source.
+    let primary_model = assembled.primary_model;
+    let model = primary_model.model_handle.clone();
+    let capabilities = den_service::bears::model_configurations::validate_model_configuration(
         deps.pool,
-        bear.id,
-        model_conversation_id,
+        &model,
+        primary_model.thinking_effort,
     )
-    .await?
-    {
-        Some(conversation) => {
-            conversation_persistence::resolve_conversation_selected_model(
-                deps.pool,
-                conversation.id,
-            )
-            .await?
-        }
-        None => None,
-    };
-    let model = if let Some(model) = conversation_model {
-        model
-    } else {
-        den_service::bears::db::resolve_model_for_bear(&bear, llm.default_model())
-    };
-    let model = llm.resolve_model(Some(&model));
+    .await?;
+    let supports_reasoning_effort = capabilities.supports_reasoning_effort;
+    let api_style = Some(
+        crate::primary_model::execution_api_style(
+            deps.pool,
+            deps.config,
+            bear.id.into(),
+            &primary_model,
+            crate::primary_model::transport_preference(origin, primary_model.thinking_effort),
+        )
+        .await?,
+    );
     let mut tool_budget_multiplier = bear.default_tool_budget_multiplier.unwrap_or(1.0);
     if let Some(model_multiplier) = deps.config.model_tool_budget_multipliers.get(&model) {
         tool_budget_multiplier *= *model_multiplier;
@@ -1147,6 +1141,7 @@ async fn build_session(
         model_request_profile: den_core::ModelRequestProfile {
             approved_model_ref: model,
             supports_reasoning_effort,
+            thinking_effort: primary_model.thinking_effort,
             ..Default::default()
         },
         model_context_window: model_option
@@ -1358,8 +1353,6 @@ pub async fn start_native_web_chat_turn_event_stream(
             checkpoint_audit_context: None,
             work_run_id: None,
             stream_tokens: true,
-            api_style: None,
-            supports_reasoning_effort: None,
             technical_budget_recovery_start_payload: None,
             tool_messages: Vec::new(),
         },
@@ -1486,8 +1479,7 @@ pub async fn start_native_turn_event_stream(
             checkpoint_audit_context: request.checkpoint_audit_context,
             work_run_id,
             stream_tokens: request.stream_tokens,
-            api_style: request.api_style,
-            supports_reasoning_effort: request.supports_reasoning_effort,
+
             technical_budget_recovery_start_payload: request
                 .technical_budget_recovery_start_payload,
             tool_messages: Vec::new(),
@@ -2493,6 +2485,10 @@ pub async fn continue_native_client_turn_event_stream(
 }
 
 #[cfg(test)]
+#[path = "turn/model_configuration_tests.rs"]
+mod model_configuration_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::agent_loop::{
@@ -2780,9 +2776,9 @@ mod tests {
             messages: vec![],
             tools: vec![],
             budget_components: Default::default(),
-            model: "openai/test".to_string(),
+            model: "openai/gpt-4.1".to_string(),
             model_request_profile: den_core::ModelRequestProfile {
-                approved_model_ref: "openai/test".to_string(),
+                approved_model_ref: "openai/gpt-4.1".to_string(),
                 ..Default::default()
             },
             model_context_window: None,
@@ -2899,9 +2895,9 @@ mod tests {
             messages: vec![],
             tools: vec![],
             budget_components: Default::default(),
-            model: "openai/test".to_string(),
+            model: "openai/gpt-4.1".to_string(),
             model_request_profile: den_core::ModelRequestProfile {
-                approved_model_ref: "openai/test".to_string(),
+                approved_model_ref: "openai/gpt-4.1".to_string(),
                 ..Default::default()
             },
             model_context_window: None,
@@ -2996,9 +2992,9 @@ mod tests {
             messages: vec![],
             tools: vec![],
             budget_components: Default::default(),
-            model: "openai/test".to_string(),
+            model: "openai/gpt-4.1".to_string(),
             model_request_profile: den_core::ModelRequestProfile {
-                approved_model_ref: "openai/test".to_string(),
+                approved_model_ref: "openai/gpt-4.1".to_string(),
                 ..Default::default()
             },
             model_context_window: None,
@@ -3064,9 +3060,9 @@ mod tests {
             messages: vec![],
             tools: vec![],
             budget_components: Default::default(),
-            model: "openai/test".to_string(),
+            model: "openai/gpt-4.1".to_string(),
             model_request_profile: den_core::ModelRequestProfile {
-                approved_model_ref: "openai/test".to_string(),
+                approved_model_ref: "openai/gpt-4.1".to_string(),
                 ..Default::default()
             },
             model_context_window: None,
@@ -3266,9 +3262,9 @@ mod tests {
             messages: Vec::new(),
             tools: Vec::new(),
             budget_components: Default::default(),
-            model: "openai/test".to_string(),
+            model: "openai/gpt-4.1".to_string(),
             model_request_profile: den_core::ModelRequestProfile {
-                approved_model_ref: "openai/test".to_string(),
+                approved_model_ref: "openai/gpt-4.1".to_string(),
                 ..Default::default()
             },
             model_context_window: None,
@@ -3405,9 +3401,9 @@ mod tests {
             ],
             tools: Vec::new(),
             budget_components: Default::default(),
-            model: "openai/test".to_string(),
+            model: "openai/gpt-4.1".to_string(),
             model_request_profile: den_core::ModelRequestProfile {
-                approved_model_ref: "openai/test".to_string(),
+                approved_model_ref: "openai/gpt-4.1".to_string(),
                 ..Default::default()
             },
             model_context_window: None,
@@ -3603,9 +3599,9 @@ mod tests {
             }],
             tools: Vec::new(),
             budget_components: Default::default(),
-            model: "openai/test".to_string(),
+            model: "openai/gpt-4.1".to_string(),
             model_request_profile: den_core::ModelRequestProfile {
-                approved_model_ref: "openai/test".to_string(),
+                approved_model_ref: "openai/gpt-4.1".to_string(),
                 ..Default::default()
             },
             model_context_window: None,

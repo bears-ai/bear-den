@@ -2,8 +2,8 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use den_core::ids::{BearId, HatId, UserId};
-use den_service::bears::hats;
+use den_core::ids::{BearId, HatId, ModelConfigurationId, UserId};
+use den_service::bears::{hats, model_configurations};
 use serde::{Deserialize, Serialize};
 
 use crate::{errors::CustomError, AppState};
@@ -12,6 +12,8 @@ use crate::{errors::CustomError, AppState};
 #[serde(deny_unknown_fields)]
 pub(crate) struct PortableHat {
     pub original_id: HatId,
+    #[serde(default)]
+    pub model_configuration_id: Option<ModelConfigurationId>,
     pub name: String,
     pub purpose: String,
     pub short_summary: Option<String>,
@@ -88,6 +90,12 @@ pub(super) async fn export(
         let grants = hats::access::web_grants_for_hat(state.sqlx_pool(), bear_id, hat.id).await?;
         result.push(PortableHat {
             original_id: hat.id,
+            model_configuration_id: model_configurations::hat_configuration_id(
+                state.sqlx_pool(),
+                bear_id,
+                hat.id,
+            )
+            .await?,
             name: hat.name,
             purpose: hat.purpose,
             short_summary: hat.short_summary,

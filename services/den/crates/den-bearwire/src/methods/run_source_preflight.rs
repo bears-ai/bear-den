@@ -346,5 +346,8 @@ mod expected_work_source_tests;
 #[path = "run_source_preflight/helper_tests.rs"]
 mod helpers;
 #[cfg(test)]
+#[path = "run_source_preflight/model_preflight_tests.rs"]
+mod model_preflight_tests;
+#[cfg(test)]
 #[path = "run_source_preflight/startup_authority_tests.rs"]
 mod startup_authority_tests;

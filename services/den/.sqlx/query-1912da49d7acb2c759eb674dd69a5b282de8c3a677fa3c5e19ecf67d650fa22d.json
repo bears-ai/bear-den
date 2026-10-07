@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bears SET name = 'Edited Bear', default_model = default_model WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1912da49d7acb2c759eb674dd69a5b282de8c3a677fa3c5e19ecf67d650fa22d"
+}

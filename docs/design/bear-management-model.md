@@ -42,7 +42,7 @@ The Den header holds **shared** destinations. The Bear's Connections link shows 
 | **Overview** | Is it working; what needs me? Open a recent chat, Job, or review. | Health, current hat/use, effective reach, and recent permitted activity. |
 | **Chat** | Talk to this Bear; start or resume my conversation. | Hat binding, transcript, own notes, linked Jobs and reviewable memory provenance. |
 | **Purpose** | Who is this Bear? Edit its name, slug, charter, and model choices. | Effective identity/steering preview and when changes take effect. A charter is a Bear property, not an entity. |
-| **Hats** | What responsibilities can it take on? Create/edit a hat, select permitted surfaces, choose an IDE default, or change Work eligibility. | Hat identity preview, allowed uses, reviewed hat knowledge and the Work-audience review; a hat restricts rather than grants reach. |
+| **Hats** | What responsibilities can it take on? Create/edit a hat, select permitted surfaces, inherit or override its model configuration, choose an IDE default, or change Work eligibility. | Hat identity preview, effective model/reasoning, allowed uses, reviewed hat knowledge and the Work-audience review; a hat restricts rather than grants reach. |
 | **Memory** | What does it know, and is that right? Browse/search, correct/forget, or request reviewed promotion. | Source, scope, dates, lineage, history, and whether search is derived rather than canonical. |
 | **Skills** | What owned procedures does it use? Review, attach, edit, or remove where authorized. | Source, trust, applicable uses, and any capability supplied by a skill. |
 | **Tools** | What can it do? Inspect origin and effective grants; authorize or revoke through the owning control. | Built-in Den tools, armature-local tools, and remote/MCP tools; exposure and enabling connection. |
@@ -54,6 +54,14 @@ The Den header holds **shared** destinations. The Bear's Connections link shows 
 | **People** | Who can use this Bear? Manage Bear membership and roles. | Effective Bear access; Cabinet page membership stays on the page. |
 | **Backup & move** | How do I take this Bear elsewhere? Preview, export/download, import and re-attach. | What travels, what stays, and what needs review or remapping on the new Den. |
 
+## Model choices under Purpose and Hats
+
+**Purpose → Models** owns named Bear configurations: a model and **Reasoning effort** (Model default, Low, Medium, High). Select one as the Bear default, or explicitly inherit the deployment default. **Hats → Primary model** references a configuration or inherits the Bear default; it does not keep another writable copy of the settings. Show the effective configuration, model, reasoning and source beside the control. An unavailable selection stays inspectable and repairable; it never quietly becomes a different model.
+
+A conversation's explicit **model pin** replaces the whole inherited configuration, including reasoning. Clearing the pin restores current hat/Bear inheritance; historical automatic selections are diagnostics, not pins. Model settings do not change identity, grant access or authorize delegation. Changes apply to new turns; an in-flight turn whose model or effort changes stops before its next request and asks for a new turn.
+
+One primary configuration is active at a time. Several named configurations may be saved for different tasks, but helper/subagent routing, fallback chains and advanced request-limit controls remain future work. Do not show executable-looking controls for them before runtime support exists.
+
 ## Ownership, reach, and canonical state
 
 **Bear-owned knowledge is not the same thing as a permission.** The charter describes the Bear's durable responsibility. Hats give a bound conversation or eligible Job a named responsibility and reviewed knowledge; they may restrict already-granted surfaces but do not grant tools, credentials, egress, local armature trust, or Work authority on their own. A Work-enabled hat requires the relevant identity/knowledge audience review; an authorized Job and current policy still govern each run. Prompt/identity previews show the compiled *effect* of changes without turning hat text or memory into authority. See [Bear memory and hats](../topics/bear-memory-hats.md) for current boundaries and remaining target work.
@@ -62,7 +70,7 @@ The Den header holds **shared** destinations. The Bear's Connections link shows 
 
 | Canonical owner | Record and relationship | Portability boundary |
 |-----------------|-------------------------|----------------------|
-| Bear identity and canonical memory | Purpose, hats/identity, reviewed hat and shared memory, source-local notes, and their provenance. | Bear-owned cognition/configuration is the *target* for package export; source privacy and review still apply on import. |
+| Bear identity and canonical memory | Purpose, named model configurations and references, hats/identity, reviewed hat and shared memory, source-local notes, and their provenance. | Bear-owned cognition/configuration is the *target* for package export; source privacy and review still apply on import. |
 | Den capability and host wiring | Tool descriptors/grants, account Connections, host secrets, concrete resources and effective access. | Document portable **intent** separately from host bindings; re-authorize/re-attach on import. A copied grant never provides a live credential. |
 | Den conversation storage | Human transcripts and client/session history, each with an owner and visibility boundary. | Not Bear cognition; not in a cognition package. |
 | Docket | Jobs, tasks, runs, criteria, assignments, approvals, evidence and settlement. | Den work state; not Bear memory and not in a cognition package. Conversation task lists are projections of Docket, not another task store. |

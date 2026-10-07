@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bears SET slug = 'invalid-sql-update', default_model = 'missing/model' WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "91fee3a831373db557810f6a1fba648c4e28a88ed6a52ca718f4e47786db048d"
+}

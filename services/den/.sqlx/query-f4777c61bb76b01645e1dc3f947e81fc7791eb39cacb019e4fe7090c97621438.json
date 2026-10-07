@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO model_selection_options (handle, display_name, selectable, metadata_json) VALUES ($1, 'UI test model', TRUE, $2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f4777c61bb76b01645e1dc3f947e81fc7791eb39cacb019e4fe7090c97621438"
+}

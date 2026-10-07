@@ -6,6 +6,7 @@ fn request(briefing: &str) -> Result<ChatCompletionRequest, DenError> {
         run_id: ReflectionRunId::new(Uuid::new_v4()),
         bear_name: "Lumen",
         model: "openai/test-model".into(),
+        thinking_effort: None,
         bifrost_virtual_key: "secret-test-bear-key".into(),
         briefing,
     })
@@ -181,12 +182,13 @@ fn responses_briefing_rejects_tools_refusals_failure_and_ambiguous_output() {
 
 #[test]
 fn briefing_uses_typed_catalog_api_selection_without_reasoning_override() {
+    let preference = den_llm::PrimaryTransportPreference::ChatCompletionsWhenUnknown;
     assert_eq!(
-        preferred_api_style_for_model_with_catalog_support("openai/gpt-5", Some(false)),
+        den_llm::primary_api_style_for_catalog_support(Some(false), preference),
         LlmApiStyle::ChatCompletionsStream
     );
     assert_eq!(
-        preferred_api_style_for_model_with_catalog_support("openai/test", Some(true)),
+        den_llm::primary_api_style_for_catalog_support(Some(true), preference),
         LlmApiStyle::ResponsesStream
     );
     assert!(request("briefing").unwrap().thinking_effort.is_none());

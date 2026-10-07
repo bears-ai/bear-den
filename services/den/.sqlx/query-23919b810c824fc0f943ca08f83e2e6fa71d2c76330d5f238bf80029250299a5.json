@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE model_selection_options SET selectable = FALSE WHERE handle = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "23919b810c824fc0f943ca08f83e2e6fa71d2c76330d5f238bf80029250299a5"
+}

@@ -1,4 +1,11 @@
-use den_core::DenError;
+use crate::bears::{
+    hats::memory_binding,
+    model_configurations::{self, PrimaryModelSource, ResolvedPrimaryModel},
+};
+use den_core::{
+    ids::{BearId, ModelConfigurationId},
+    DenError, ThinkingEffort,
+};
 use den_llm::model_registry::{
     ModelTokenCalibration, MODEL_TOKEN_CALIBRATION_EMA_ALPHA, MODEL_TOKEN_CALIBRATION_MAX_RATIO,
     MODEL_TOKEN_CALIBRATION_MIN_RATIO,
@@ -24,6 +31,9 @@ pub struct ConversationModelSelectionView {
     pub selected_model: Option<String>,
     pub effective_model: String,
     pub source: String,
+    pub configuration_id: Option<ModelConfigurationId>,
+    pub configuration_name: Option<String>,
+    pub thinking_effort: Option<ThinkingEffort>,
     pub model_options: Vec<ModelOption>,
 }
 
@@ -115,33 +125,6 @@ pub async fn list_selectable_model_options_for_acp(
         .collect())
 }
 
-fn resolve_selectable_model_handle(options: &[ModelOption], raw: &str) -> Result<String, DenError> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Err(DenError::ValidationError(
-            "model is required for explicit selection".to_string(),
-        ));
-    }
-    if den_llm::model_registry::is_routing_wildcard_model_handle(trimmed) {
-        return Err(DenError::ValidationError(
-            "routing wildcards are not selectable models".to_string(),
-        ));
-    }
-    let resolved = den_llm::model_registry::resolve_model_handle(trimmed);
-    let available = options.iter().any(|option| {
-        let handle = option.handle.as_str();
-        handle == trimmed
-            || resolved == Some(handle)
-            || den_llm::model_registry::resolve_model_handle(handle) == resolved
-    });
-    if !available {
-        return Err(DenError::ValidationError(
-            "model must be configured as a selectable Den model".to_string(),
-        ));
-    }
-    Ok(resolved.unwrap_or(trimmed).to_string())
-}
-
 pub async fn apply_conversation_model_selection(
     pool: &PgPool,
     conversation_id: Uuid,
@@ -150,19 +133,23 @@ pub async fn apply_conversation_model_selection(
     explicit_reason: &str,
     auto_reason: &str,
 ) -> Result<crate::conversation::persistence::ConversationModelState, DenError> {
-    let options = list_selectable_model_options(pool).await?;
-    if options.is_empty() {
-        return Err(DenError::System(
-            "No Den model selection options are configured.".to_string(),
-        ));
-    }
-    let selected = if selection_mode.trim() == "explicit" {
-        Some(resolve_selectable_model_handle(
-            &options,
-            requested_model.unwrap_or(""),
-        )?)
-    } else {
-        None
+    let selected = match selection_mode.trim() {
+        "explicit" => Some(
+            bears::model_configurations::validate_model_configuration(
+                pool,
+                requested_model.unwrap_or(""),
+                None,
+            )
+            .await?
+            .model_handle
+            .into_string(),
+        ),
+        "auto" => None,
+        _ => {
+            return Err(DenError::ValidationError(
+                "choose an explicit model pin or automatic inheritance".into(),
+            ));
+        }
     };
     crate::conversation::persistence::set_conversation_model_state(
         pool,
@@ -192,7 +179,6 @@ pub async fn load_conversation_model_selection_view(
     source_client_session_id: Option<&str>,
     acp_friendly_options: bool,
 ) -> Result<ConversationModelSelectionView, DenError> {
-    let base_model = bears::db::resolve_model_for_bear(bear, default_model);
     let model_options = if acp_friendly_options {
         list_selectable_model_options_for_acp(pool).await?
     } else {
@@ -208,9 +194,9 @@ pub async fn load_conversation_model_selection_view(
     )
     .await?;
     let model_state = persistence::get_conversation_model_state(pool, conversation.id).await?;
-    let effective_model = persistence::resolve_conversation_selected_model(pool, conversation.id)
-        .await?
-        .unwrap_or(base_model);
+    let primary =
+        resolve_conversation_primary_model(pool, bear.id.into(), conversation.id, default_model)
+            .await?;
     Ok(ConversationModelSelectionView {
         selection_mode: model_state
             .as_ref()
@@ -222,14 +208,69 @@ pub async fn load_conversation_model_selection_view(
         selected_model: model_state
             .as_ref()
             .and_then(|row| row.selected_model.clone()),
-        source: if model_state.as_ref().map(|row| row.selection_mode.as_str()) == Some("explicit") {
-            "conversation_explicit".to_string()
-        } else {
-            "stance_or_bear_default".to_string()
-        },
-        effective_model,
+        source: primary_source_label(primary.source).to_string(),
+        effective_model: primary.model_handle,
+        configuration_id: primary.configuration_id,
+        configuration_name: primary.configuration_name,
+        thinking_effort: primary.thinking_effort,
         model_options,
     })
+}
+
+/// Parse the legacy persisted selector at its boundary. An invalid explicit pin
+/// must not disappear into inheritance (including a blank or missing model).
+pub async fn conversation_model_pin(
+    pool: &PgPool,
+    conversation_id: Uuid,
+) -> Result<Option<String>, DenError> {
+    let Some(state) = persistence::get_conversation_model_state(pool, conversation_id).await?
+    else {
+        return Ok(None);
+    };
+    match state.selection_mode.as_str() {
+        "auto" => Ok(None),
+        "explicit" => state
+            .selected_model
+            .or(state.requested_model)
+            .map(Some)
+            .ok_or_else(|| {
+                DenError::ValidationError(
+                    "explicit conversation model selection has no model".into(),
+                )
+            }),
+        _ => Err(DenError::ValidationError(
+            "invalid conversation model selection mode".into(),
+        )),
+    }
+}
+
+/// Resolve from the canonical conversation's verified hat, never a runtime target.
+pub async fn resolve_conversation_primary_model(
+    pool: &PgPool,
+    bear_id: BearId,
+    conversation_id: Uuid,
+    deployment_default: &str,
+) -> Result<ResolvedPrimaryModel, DenError> {
+    let memory_binding::ResolvedMemoryBinding::Bound(grant) =
+        memory_binding::for_conversation(pool, bear_id, conversation_id).await?;
+    let pin = conversation_model_pin(pool, conversation_id).await?;
+    model_configurations::resolve_primary(
+        pool,
+        bear_id,
+        grant.hat_id(),
+        pin.as_deref(),
+        deployment_default,
+    )
+    .await
+}
+
+fn primary_source_label(source: PrimaryModelSource) -> &'static str {
+    match source {
+        PrimaryModelSource::ConversationPin => "conversation_explicit",
+        PrimaryModelSource::HatOverride => "hat_override",
+        PrimaryModelSource::BearDefault => "bear_default",
+        PrimaryModelSource::DeploymentDefault => "deployment_default",
+    }
 }
 
 pub async fn resolve_model_option(

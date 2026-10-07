@@ -106,6 +106,7 @@ impl AssembleTurnContext<'_> {
 #[derive(Debug, Clone)]
 pub struct AssembledNativeTurn {
     pub messages: Vec<ChatMessage>,
+    pub primary_model: den_service::bears::model_configurations::ResolvedPrimaryModel,
     pub key_memory_projection: Option<KeyMemoryProjectionResult>,
     /// Diagnostic for the derived-recall section (ADR-0038 Phase 2); `None` when recall is
     /// disabled, skipped (e.g. empty query), or failed best-effort.
@@ -506,12 +507,19 @@ pub async fn assemble_native_turn_for_bear(
     let hat_id = grant
         .hat_id()
         .ok_or_else(|| DenError::Authorization("bound source has no hat identity".into()))?;
+    let primary_model = crate::primary_model::resolve_for_grant(
+        ctx.pool,
+        ctx.bear_id.into(),
+        grant,
+        &ctx.config.default_llm_model,
+    )
+    .await?;
     let compiled_prompt = bound_prompt_text(ctx.pool, bear, ctx.context_label(), hat_id).await?;
     let mut budget_components = AssembledTurnBudgetComponents {
         compiled_prompt_chars: compiled_prompt.chars().count() as u32,
         ..Default::default()
     };
-    let model_for_budget = bears_db::resolve_model_for_bear(bear, &ctx.config.default_llm_model);
+    let model_for_budget = &primary_model.model_handle;
     let projection = match project_key_memory_with_scope(
         KeyMemoryProjectionInput {
             pool: ctx.pool,
@@ -522,7 +530,7 @@ pub async fn assemble_native_turn_for_bear(
             session_hints: ctx.session_hints(),
             work_surface_status_override: ctx.work_surface_status_override(),
             native_runtime: ctx.native_runtime,
-            model_for_budget: Some(&model_for_budget),
+            model_for_budget: Some(model_for_budget.as_str()),
             // Fail-closed default: until session identity is resolved to entities (Phase 6),
             // any access-gated record is hidden. No-op today (no access rules exist yet).
             access: den_memory::AccessContext::empty(),
@@ -740,6 +748,7 @@ pub async fn assemble_native_turn_for_bear(
     };
     Ok(AssembledNativeTurn {
         messages,
+        primary_model,
         key_memory_projection: Some(projection),
         recall_diagnostic,
         budget_components,

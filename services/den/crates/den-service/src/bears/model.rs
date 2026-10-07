@@ -23,6 +23,9 @@ pub struct Bear {
     pub slug: String,
     pub name: String,
     pub description: String,
+    /// Database projection of the selected named configuration. Legacy SQL
+    /// writes are routing inputs, not independent model state.
+    /// Use `model_configurations::resolve_primary` for executable model/effort.
     pub default_model: Option<String>,
     pub default_tool_budget_multiplier: Option<f64>,
     pub tools_enabled: Option<Json<serde_json::Value>>,

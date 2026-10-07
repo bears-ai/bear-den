@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO model_selection_options (handle, display_name) VALUES ('openai/future-unknown', 'Unknown capability')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "86ee9411a20076463e30b44b9a4074b77af94b5a1b032aec9c94b55500bcd6f8"
+}

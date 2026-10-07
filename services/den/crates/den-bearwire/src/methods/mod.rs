@@ -12,6 +12,7 @@ pub(crate) mod client;
 pub(crate) mod conversation;
 pub(crate) mod docket;
 pub(crate) mod focused_execution;
+mod primary_model;
 pub(crate) mod resource;
 pub(crate) mod run;
 pub(crate) mod session;

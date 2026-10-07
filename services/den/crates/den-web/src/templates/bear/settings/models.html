@@ -9,29 +9,74 @@
     <p class="form-errors">{{ error | e }}</p>
     {% endif %}
 
-    <p class="form-hint">
-        Configure Bear-wide model, loop-control, and tool-budget defaults here.
-        Model selection for an individual conversation stays in that conversation.
+    {% macro configuration_fields(fields, suffix) %}
+    <label for="configuration-name-{{ suffix }}">Name</label>
+    <input id="configuration-name-{{ suffix }}" name="name" value="{{ fields.name | e }}" required>
+    <label for="configuration-model-{{ suffix }}">Model</label>
+    <input id="configuration-model-{{ suffix }}" name="model_handle" list="catalog-models" value="{{ fields.model_handle | e }}" required>
+    <label for="configuration-effort-{{ suffix }}">Reasoning effort</label>
+    <select id="configuration-effort-{{ suffix }}" name="thinking_effort">
+        {% if fields.thinking_effort and fields.thinking_effort not in ['model_default', 'low', 'medium', 'high'] %}
+        <option value="{{ fields.thinking_effort | e }}" selected>{{ fields.thinking_effort | e }} — invalid effort</option>
+        {% endif %}
+        <option value="model_default"{% if not fields.thinking_effort or fields.thinking_effort == 'model_default' %} selected{% endif %}>Model default</option>
+        <option value="low"{% if fields.thinking_effort == 'low' %} selected{% endif %}>Low</option>
+        <option value="medium"{% if fields.thinking_effort == 'medium' %} selected{% endif %}>Medium</option>
+        <option value="high"{% if fields.thinking_effort == 'high' %} selected{% endif %}>High</option>
+    </select>
+    {% endmacro %}
+
+    <h3>Bear default configuration</h3>
+    <p>
+        {{ effective_model.source_label | e }}:
+        {% if effective_model.name %}<strong>{{ effective_model.name | e }}</strong> · {% endif %}
+        <code>{{ effective_model.model_handle | e }}</code> · reasoning {{ effective_model.effort_label | e }} ·
+        <strong>{{ effective_model.status | e }}</strong>
     </p>
+    {% if effective_model.status_detail %}<p class="form-errors">{{ effective_model.status_detail | e }}</p>{% endif %}
+    <form method="post" action="/bear/{{ bear.slug | e }}/models/default">
+        <label for="default-configuration">Default configuration</label>
+        <select id="default-configuration" name="configuration_id"{% if not can_manage_bear %} disabled{% endif %}>
+            <option value=""{% if not default_selection %} selected{% endif %}>Inherit deployment default</option>
+            {% for view in configurations %}
+            <option value="{{ view.configuration.id }}"{% if default_selection == view.configuration.id | string %} selected{% endif %}>{{ view.configuration.name | e }} · {{ view.configuration.model_handle | e }} · {{ view.effort_label | e }} · {{ view.status | e }}</option>
+            {% endfor %}
+        </select>
+        {% if can_manage_bear %}<button type="submit">Save Bear default</button>{% endif %}
+    </form>
+    <p class="form-hint">Conversation model pins replace the whole configuration, including reasoning effort. Hats may override this default.</p>
 
-    {% if models_fetch_error %}
-    <p class="form-errors">{{ models_fetch_error | e }}</p>
+    <h3>Named model configurations</h3>
+    {% for view in configurations %}
+    <div class="box">
+        <h4>{{ view.configuration.name | e }}</h4>
+        <p><code>{{ view.configuration.model_handle | e }}</code> · reasoning {{ view.effort_label | e }} · <strong>{{ view.status | e }}</strong></p>
+        {% if view.status_detail %}<p class="form-errors">{{ view.status_detail | e }}</p>{% endif %}
+        {% if can_manage_bear %}
+        <form method="post" action="/bear/{{ bear.slug | e }}/models/configurations/{{ view.configuration.id }}">
+            {{ configuration_fields(view.fields, view.configuration.id) }}
+            <button type="submit">Save configuration</button>
+        </form>
+        <form method="post" action="/bear/{{ bear.slug | e }}/models/configurations/{{ view.configuration.id }}/delete">
+            <button type="submit">Delete {{ view.configuration.name | e }}</button>
+        </form>
+        {% endif %}
+    </div>
+    {% else %}<p>No named model configurations.</p>{% endfor %}
+    {% if can_manage_bear %}
+    <form method="post" action="/bear/{{ bear.slug | e }}/models/configurations" class="box">
+        <h4>New configuration</h4>
+        {{ configuration_fields(new_configuration, 'new') }}
+        <button type="submit">Create configuration</button>
+    </form>
     {% endif %}
+    <p class="form-hint">Reasoning effort applies to model requests; loop control manages checkpoints and budgets separately. Explicit effort requires catalog support. Configurations grant no authority; referenced configurations cannot be deleted.</p>
+    <datalist id="catalog-models">
+        {% for model in model_options %}<option value="{{ model.handle | e }}">{{ model.label | e }}</option>{% endfor %}
+    </datalist>
 
-    <form method="post" class="box full-width" data-model-settings>
-        <h3>Bear default</h3>
-        <p class="form-hint">
-            Choose <code>inherit</code> to use the deployment default.
-        </p>
-        <p class="form-hint">
-            Bear default status:
-            <strong>{{ bear_default_availability_status | e }}</strong> ·
-            metadata <strong>{{ bear_default_metadata_status | e }}</strong>
-        </p>
-        <p class="form-hint">
-            Auto mode is planned for conversation/model routing work and is not
-            available for Bear defaults yet.
-        </p>
+    <form method="post" action="/bear/{{ bear.slug | e }}/models" class="box full-width">
+        <h3>Loop and tool budgets</h3>
 
         <label for="bear_loop_control">Agent loop control</label>
         <select
@@ -46,7 +91,7 @@
             <option value="strict" {% if bear_loop_control == "strict" %}selected{% endif %}>Strict</option>
         </select>
         <p class="form-hint">
-            Controls checkpoint intensity, loop budgets, and optional checkpoint thinking level.
+            Controls loop checkpoints and budgets, separately from reasoning effort.
         </p>
 
         <label for="bear_tool_budget_multiplier">Tool budget multiplier</label>
@@ -66,73 +111,6 @@
             Blank inherits the deployment/model default; valid range is greater than 0 and at most 10.
         </p>
 
-        <label for="bear_default_model">Model</label>
-        <input
-            id="bear_default_model"
-            name="bear_default_model"
-            list="all-bifrost-models"
-            value="{% if bear.default_model %}{{ bear.default_model | e }}{% else %}inherit{% endif %}"
-            placeholder="inherit or provider/model"
-            required
-            data-model-input{%
-            if
-            not
-            can_manage_bear
-            %}
-            disabled{%
-            endif
-            %}
-        />
-
-        <label for="bear_default_model_shortcut">Recommended shortcuts</label>
-        <select
-            id="bear_default_model_shortcut"
-            data-model-shortcut-target="bear_default_model"
-            {%
-            if
-            not
-            can_manage_bear
-            %}
-            disabled{%
-            endif
-            %}
-        >
-            <option
-                value="inherit"
-                {%
-                if
-                not
-                bear.default_model
-                %}
-                selected{%
-                endif
-                %}
-            >
-                Inherit deployment default
-            </option>
-            {% if bear_default_custom_model %}
-            <option value="{{ bear_default_custom_model | e }}" selected>
-                Custom model — {{ bear_default_custom_model | e }}
-            </option>
-            {% endif %} {% for m in model_options %}
-            <option
-                value="{{ m.handle | e }}"
-                {%
-                if
-                bear.default_model == m.handle
-                %}
-                selected{%
-                endif
-                %}
-            >
-                {{ m.label | e }} — {{ m.handle | e }}
-            </option>
-            {% endfor %}
-        </select>
-        <p class="form-hint">
-            The shortcut list is curated. The Model field accepts configured Den
-            model options and any live Bifrost options shown in autocomplete.
-        </p>
 
         <h3>Bifrost virtual key</h3>
         <p class="form-hint">
@@ -325,90 +303,14 @@
         <p class="form-errors">{{ bifrost_usage.error | e }}</p>
         {% endif %}
 
-        <datalist id="all-bifrost-models">
-            <option value="inherit">Inherit from the relevant default</option>
-            {% for m in all_model_options %}
-            <option value="{{ m.handle | e }}">{{ m.label | e }}</option>
-            {% endfor %}
-        </datalist>
 
         {% if can_manage_bear %}
-        <p><button type="submit">Save model settings</button></p>
+        <p><button type="submit">Save loop, tool, and Bifrost settings</button></p>
         {% else %}
         <p class="form-hint">Only Bear admins can edit model settings.</p>
         {% endif %}
     </form>
 </div>
 
-<script>
-    (function () {
-        var datalist = document.getElementById("all-bifrost-models");
-        var form = document.querySelector("form[data-model-settings]");
-        if (!datalist || !form) {
-            return;
-        }
 
-        function allowedValues() {
-            return new Set(
-                Array.prototype.map.call(datalist.options, function (option) {
-                    return option.value;
-                }),
-            );
-        }
-
-        function validateModelInput(input) {
-            var value = input.value.trim();
-            var allowed = allowedValues();
-            if (!value) {
-                input.setCustomValidity(
-                    "Choose inherit or a configured model.",
-                );
-            } else if (!allowed.has(value)) {
-                input.setCustomValidity("Choose a value from the model list.");
-            } else {
-                input.setCustomValidity("");
-            }
-        }
-
-        Array.prototype.forEach.call(
-            document.querySelectorAll("[data-model-input]"),
-            function (input) {
-                validateModelInput(input);
-                input.addEventListener("input", function () {
-                    validateModelInput(input);
-                });
-                input.addEventListener("change", function () {
-                    validateModelInput(input);
-                });
-            },
-        );
-
-        Array.prototype.forEach.call(
-            document.querySelectorAll("[data-model-shortcut-target]"),
-            function (select) {
-                select.addEventListener("change", function () {
-                    var target = document.getElementById(
-                        select.getAttribute("data-model-shortcut-target"),
-                    );
-                    if (!target || !select.value) {
-                        return;
-                    }
-                    target.value = select.value;
-                    target.dispatchEvent(new Event("input", { bubbles: true }));
-                });
-            },
-        );
-
-        form.addEventListener("submit", function (event) {
-            Array.prototype.forEach.call(
-                document.querySelectorAll("[data-model-input]"),
-                validateModelInput,
-            );
-            if (!form.checkValidity()) {
-                event.preventDefault();
-                form.reportValidity();
-            }
-        });
-    })();
-</script>
 {% endblock %}

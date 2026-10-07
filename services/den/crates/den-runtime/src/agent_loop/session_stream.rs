@@ -3054,9 +3054,9 @@ mod tests {
             messages: Vec::new(),
             tools: Vec::new(),
             budget_components: Default::default(),
-            model: "openai/test".to_string(),
+            model: "openai/gpt-4.1".to_string(),
             model_request_profile: den_core::ModelRequestProfile {
-                approved_model_ref: "openai/test".to_string(),
+                approved_model_ref: "openai/gpt-4.1".to_string(),
                 ..Default::default()
             },
             model_context_window: None,

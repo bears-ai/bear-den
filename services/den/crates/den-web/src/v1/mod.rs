@@ -17,7 +17,7 @@ use serde_json::{json, Value};
 use tracing::Instrument;
 use uuid::Uuid;
 
-use crate::web::bear::create_support::model_catalog_select_context;
+use crate::bear::settings::model_configurations::selectable_model_options;
 use crate::{
     auth_backend::{AuthSession, Backend},
     errors::CustomError,
@@ -29,8 +29,8 @@ use crate::{
     web_chat_runtime::WebChatRuntimeRequest,
 };
 use den_core::{
-    ids::{BearId, UserId},
-    DenError,
+    ids::{BearId, ModelConfigurationId, UserId},
+    DenError, ThinkingEffort,
 };
 use den_docket::{
     DocketEffortHint, DocketService, DocketTaskCreate, DocketTaskDifficulty, DocketTaskKind,
@@ -48,7 +48,9 @@ use den_service::{
     artifacts::{self, ArtifactAccessContext},
     bears::{
         db::{self as bears_db, role_is_bear_admin},
-        hats, RuntimeContextLabel,
+        hats,
+        model_configurations::{self, PrimaryModelSource, ResolvedPrimaryModel},
+        RuntimeContextLabel,
     },
     client_sessions,
     conversation::{persistence as conversation_persistence, viewer::ConversationViewer},
@@ -259,9 +261,68 @@ pub struct ChatModelResponse {
     pub selection_mode: String,
     pub requested_model: Option<String>,
     pub selected_model: Option<String>,
-    pub effective_model: String,
-    pub source: String,
+    pub effective_model: Option<String>,
+    pub source: Option<String>,
+    pub error: Option<String>,
+    pub configuration_id: Option<ModelConfigurationId>,
+    pub configuration_name: Option<String>,
+    pub thinking_effort: Option<ThinkingEffort>,
     pub model_options: Vec<ModelOption>,
+}
+
+impl ChatModelResponse {
+    fn from_primary(primary: ResolvedPrimaryModel, model_options: Vec<ModelOption>) -> Self {
+        let pinned = primary.source == PrimaryModelSource::ConversationPin;
+        Self {
+            selection_mode: if pinned { "explicit" } else { "auto" }.to_string(),
+            requested_model: pinned.then(|| primary.model_handle.clone()),
+            selected_model: pinned.then(|| primary.model_handle.clone()),
+            effective_model: Some(primary.model_handle),
+            source: Some(
+                match primary.source {
+                    PrimaryModelSource::ConversationPin => "conversation_explicit",
+                    PrimaryModelSource::HatOverride => "hat_override",
+                    PrimaryModelSource::BearDefault => "bear_default",
+                    PrimaryModelSource::DeploymentDefault => "deployment_default",
+                }
+                .to_string(),
+            ),
+            error: None,
+            configuration_id: primary.configuration_id,
+            configuration_name: primary.configuration_name,
+            thinking_effort: primary.thinking_effort,
+            model_options,
+        }
+    }
+
+    fn from_resolution(
+        primary: Result<ResolvedPrimaryModel, DenError>,
+        model_state: Option<conversation_persistence::ConversationModelState>,
+        model_options: Vec<ModelOption>,
+    ) -> Result<Self, CustomError> {
+        match primary {
+            Ok(primary) => Ok(Self::from_primary(primary, model_options)),
+            Err(DenError::ValidationError(message)) => {
+                // These persisted strings are a legacy protocol boundary, not
+                // resolved execution state. Auto caches are never projected as pins.
+                let pin = model_state.filter(|state| state.selection_mode == "explicit");
+                let pinned = pin.is_some();
+                Ok(Self {
+                    selection_mode: if pinned { "explicit" } else { "auto" }.to_string(),
+                    requested_model: pin.as_ref().and_then(|state| state.requested_model.clone()),
+                    selected_model: pin.as_ref().and_then(|state| state.selected_model.clone()),
+                    effective_model: None,
+                    source: pinned.then(|| "conversation_explicit".into()),
+                    error: Some(message),
+                    configuration_id: None,
+                    configuration_name: None,
+                    thinking_effort: None,
+                    model_options,
+                })
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
 }
 
 /// `None` / empty / `default` → agent main conversation. Existing runtime conversations use
@@ -1419,57 +1480,40 @@ async fn chat_model_response_for(
     let requested_id = normalize_client_conversation_id(conversation_id)?;
     let (viewer, conv_id) =
         checked_chat_id(state.sqlx_pool(), bear.id, user_id, &requested_id).await?;
-    let (configured, model_options, fetch_error) = model_catalog_select_context(state).await;
-    if !configured || model_options.is_empty() {
-        return Err(CustomError::System(fetch_error.unwrap_or_else(|| {
-            "No Den model selection options are configured.".to_string()
-        })));
-    }
-
-    let base_model =
-        bears_db::resolve_model_for_bear(&bear, state.config.default_llm_model.as_str());
-
-    if conv_id.starts_with("new-") {
-        return Ok(ChatModelResponse {
-            selection_mode: "auto".to_string(),
-            requested_model: None,
-            selected_model: None,
-            effective_model: base_model,
-            source: "bear_or_deployment_default".to_string(),
-            model_options,
-        });
-    }
-
-    let conversation =
-        ensure_chat_conversation(state.sqlx_pool(), bear.id, user_id, &viewer, &conv_id).await?;
-    let state_row =
-        conversation_persistence::get_conversation_model_state(state.sqlx_pool(), conversation.id)
-            .await?;
-    let effective = conversation_persistence::resolve_conversation_selected_model(
-        state.sqlx_pool(),
-        conversation.id,
-    )
-    .await?
-    .unwrap_or(base_model);
-    Ok(ChatModelResponse {
-        selection_mode: state_row
-            .as_ref()
-            .map(|row| row.selection_mode.clone())
-            .unwrap_or_else(|| "auto".to_string()),
-        requested_model: state_row
-            .as_ref()
-            .and_then(|row| row.requested_model.clone()),
-        selected_model: state_row
-            .as_ref()
-            .and_then(|row| row.selected_model.clone()),
-        effective_model: effective,
-        source: if state_row.as_ref().map(|row| row.selection_mode.as_str()) == Some("explicit") {
-            "conversation_explicit".to_string()
-        } else {
-            "bear_or_deployment_default".to_string()
-        },
-        model_options,
-    })
+    let model_options = selectable_model_options(state.sqlx_pool()).await?;
+    let (primary, model_state) = if conv_id.starts_with("new-") {
+        (
+            model_configurations::resolve_primary(
+                state.sqlx_pool(),
+                BearId::new(bear.id),
+                None,
+                None,
+                &state.config.default_llm_model,
+            )
+            .await,
+            None,
+        )
+    } else {
+        let conversation =
+            ensure_chat_conversation(state.sqlx_pool(), bear.id, user_id, &viewer, &conv_id)
+                .await?;
+        let model_state = conversation_persistence::get_conversation_model_state(
+            state.sqlx_pool(),
+            conversation.id,
+        )
+        .await?;
+        (
+            den_service::model_selection::resolve_conversation_primary_model(
+                state.sqlx_pool(),
+                BearId::new(bear.id),
+                conversation.id,
+                &state.config.default_llm_model,
+            )
+            .await,
+            model_state,
+        )
+    };
+    ChatModelResponse::from_resolution(primary, model_state, model_options)
 }
 
 async fn chat_model_get(
@@ -1514,13 +1558,15 @@ async fn chat_model_patch(
     }
     let (viewer, conv_id) =
         checked_chat_id(state.sqlx_pool(), bear.id, user_id, &requested_id).await?;
-    let (configured, model_options, fetch_error) = model_catalog_select_context(&state).await;
-    if !configured || model_options.is_empty() {
-        return Err(CustomError::System(fetch_error.unwrap_or_else(|| {
-            "No Den model selection options are configured.".to_string()
-        })));
-    }
     let mode = body.selection_mode.as_deref().unwrap_or("auto").trim();
+    if mode == "explicit" {
+        model_configurations::validate_model_configuration(
+            state.sqlx_pool(),
+            body.model.as_deref().unwrap_or(""),
+            None,
+        )
+        .await?;
+    }
     let conversation =
         ensure_chat_conversation(state.sqlx_pool(), bear.id, user_id, &viewer, &conv_id).await?;
     den_service::model_selection::apply_conversation_model_selection(
@@ -1529,7 +1575,7 @@ async fn chat_model_patch(
         mode,
         body.model.as_deref(),
         "human_selected",
-        "inherit_stance_or_bear_default",
+        "inherit_hat_bear_or_deployment_default",
     )
     .await?;
     Ok(Json(
@@ -1937,6 +1983,8 @@ async fn chat_send_inner(
 
 #[cfg(test)]
 mod access_tests;
+#[cfg(test)]
+mod model_configuration_tests;
 #[cfg(test)]
 mod native_stream_tests;
 

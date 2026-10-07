@@ -42,9 +42,9 @@ pub(crate) fn test_session(
         messages: vec![],
         tools: vec![],
         budget_components: Default::default(),
-        model: "openai/test".into(),
+        model: "openai/gpt-4.1".into(),
         model_request_profile: den_core::ModelRequestProfile {
-            approved_model_ref: "openai/test".into(),
+            approved_model_ref: "openai/gpt-4.1".into(),
             ..Default::default()
         },
         model_context_window: None,
@@ -338,6 +338,13 @@ async fn standalone_budget_stop_needs_no_source_but_inference_does() {
         run_agent_step_stream(&llm, &session, None).await,
         Err(DenError::Authorization(_))
     ));
+    // A registered model's catalog window takes precedence over this fallback.
+    // This synthetic source-free stop must neither resolve a model nor infer.
+    session.model = "budget-fixture/unregistered".into();
+    session
+        .model_request_profile
+        .approved_model_ref
+        .clone_from(&session.model);
     session.model_context_window = Some(1);
     session.messages.push(ChatMessage {
         role: "user".into(),

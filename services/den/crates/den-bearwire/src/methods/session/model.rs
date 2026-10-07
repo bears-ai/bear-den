@@ -1,11 +1,73 @@
 //! Model inspection never creates or claims a canonical source.
 
 use super::{
-    access, authenticated_bear, bears_db, bearwire_events, client_sessions, json, parse_params,
+    access, authenticated_bear, bearwire_events, client_sessions, json, parse_params,
     BearWireEvent, CustomError, DenState, HeaderMap, SessionIdRequest, SessionModelSetRequest,
     Value,
 };
-use den_service::{conversation::persistence, model_selection};
+use bearwire_protocol::session::SessionAccessState;
+use den_core::ids::{BearId, UserId};
+use den_service::{
+    bears::{
+        hats::turn_binding::NativeTurnSource,
+        model_configurations::{self, ResolvedPrimaryModel},
+    },
+    conversation::persistence,
+    model_selection,
+};
+
+async fn resolve_session_primary_model(
+    state: &DenState,
+    session: &client_sessions::ClientSessionRow,
+    source: &access::SessionSource,
+) -> Result<ResolvedPrimaryModel, CustomError> {
+    let pool = &state.sqlx_pool;
+    let bear_id = BearId::new(session.bear_id);
+    let turn_source =
+        match den_docket::work_runs::get_live_work_run_by_session(pool, &session.client_session_id)
+            .await?
+        {
+            Some(work) => {
+                if source.access.state != SessionAccessState::Executable {
+                    return Err(CustomError::Authorization(
+                        "Work model configuration requires a verified live source".into(),
+                    ));
+                }
+                access::require_work_source(
+                    pool,
+                    bear_id,
+                    UserId::new(session.user_id),
+                    &session.client_session_id,
+                    super::resolved_or_stored_conversation_id(session),
+                    work.id,
+                )
+                .await?;
+                NativeTurnSource::WorkRun(work.id)
+            }
+            None => match source.conversation.as_ref() {
+                Some(conversation) => NativeTurnSource::Conversation(conversation.id),
+                // A pending source has no canonical hat. Preview only Bear/deployment
+                // inheritance; inspecting models must not select or manufacture a hat.
+                None => {
+                    return Ok(model_configurations::resolve_primary(
+                        pool,
+                        bear_id,
+                        None,
+                        None,
+                        &state.config.default_llm_model,
+                    )
+                    .await?);
+                }
+            },
+        };
+    Ok(crate::methods::primary_model::resolve_for_source(
+        pool,
+        bear_id,
+        turn_source,
+        &state.config.default_llm_model,
+    )
+    .await?)
+}
 
 async fn session_model_payload(
     state: &DenState,
@@ -28,15 +90,11 @@ async fn session_model_payload(
         }
         None => None,
     };
-    let selected = match source.conversation.as_ref() {
-        Some(conversation) => {
-            persistence::resolve_conversation_selected_model(&state.sqlx_pool, conversation.id)
-                .await?
-        }
-        None => None,
-    };
-    let base_model =
-        bears_db::resolve_model_for_bear(bear, state.config.default_llm_model.as_str());
+    let (primary, model_resolution_error) =
+        match resolve_session_primary_model(state, &session, &source).await {
+            Ok(primary) => (Some(primary), None),
+            Err(error) => (None, Some(error.to_string())),
+        };
     Ok(json!({
         "ok": true,
         "session_id": session_id,
@@ -45,7 +103,12 @@ async fn session_model_payload(
         "selection_mode": model_state.as_ref().map(|m| m.selection_mode.as_str()).unwrap_or("auto"),
         "requested_model": model_state.as_ref().and_then(|m| m.requested_model.as_deref()),
         "selected_model": model_state.as_ref().and_then(|m| m.selected_model.as_deref()),
-        "effective_model": selected.unwrap_or(base_model),
+        "effective_model": primary.as_ref().map(|model| model.model_handle.as_str()),
+        "source": primary.as_ref().map(|model| model.source),
+        "configuration_id": primary.as_ref().and_then(|model| model.configuration_id),
+        "configuration_name": primary.as_ref().and_then(|model| model.configuration_name.as_deref()),
+        "thinking_effort": primary.as_ref().and_then(|model| model.thinking_effort).map(den_core::ThinkingEffort::as_str),
+        "model_resolution_error": model_resolution_error,
         "model_options": model_selection::list_selectable_model_options_for_acp(&state.sqlx_pool).await?,
     }))
 }

@@ -7,7 +7,9 @@
 
 use super::*;
 mod backend_management;
+mod model_configurations;
 mod portability;
+mod portable_models;
 use axum::{
     body::Body,
     http::{header, Request, StatusCode},
@@ -191,6 +193,12 @@ fn test_state(pool: sqlx::PgPool) -> AppState {
             .expect("add settings template");
     }
     template_env
+        .add_template(
+            "bear/manage/hat.jinja",
+            include_str!("../../templates/bear/manage/hat.jinja"),
+        )
+        .expect("add hat template");
+    template_env
         .add_template("bear/settings/reflections.html", "reflections admin page")
         .expect("add inspection test template");
     AppState::test_with_template_env(pool, template_env, config)
@@ -219,6 +227,7 @@ async fn test_app(pool: sqlx::PgPool) -> axum::Router {
     Router::new()
         .merge(router())
         .merge(super::super::manage::router())
+        .merge(super::super::hats::router())
         .merge(crate::management_hub::router())
         .merge(crate::connections::router())
         .merge(super::super::skills::router())
@@ -501,7 +510,8 @@ async fn bear_defaults_save_preserves_historical_profile_overrides_and_ignores_o
     }
     let (status, body) = get_as(&app, &cookie, &format!("/bear/{slug}/models")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(body.contains("bear_default_model"));
+    assert!(body.contains("Default configuration"));
+    assert!(!body.contains("bear_default_model"));
     assert!(body.contains("Bifrost usage"));
     assert!(!body.contains("Stance defaults"));
     assert!(!body.contains("Configure stance"));

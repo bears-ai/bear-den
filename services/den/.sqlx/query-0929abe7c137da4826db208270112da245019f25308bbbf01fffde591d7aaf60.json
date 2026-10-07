@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO model_selection_options (handle, display_name) VALUES ('vendor/unseeded', 'Unseeded')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "0929abe7c137da4826db208270112da245019f25308bbbf01fffde591d7aaf60"
+}

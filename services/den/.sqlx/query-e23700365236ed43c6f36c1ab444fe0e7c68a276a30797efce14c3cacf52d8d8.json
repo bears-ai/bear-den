@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE bears\n        SET slug = $1,\n            name = $2,\n            description = $3,\n            system_prompt = $4,\n            tools_enabled = $5,\n            updated_at = NOW()\n        WHERE id = $6\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e23700365236ed43c6f36c1ab444fe0e7c68a276a30797efce14c3cacf52d8d8"
+}

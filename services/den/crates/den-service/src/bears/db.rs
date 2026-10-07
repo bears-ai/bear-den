@@ -1,4 +1,5 @@
-//! SQL for bears and `user_bear` (runtime `query_as` — see `model.rs`).
+//! SQL for bears and `user_bear`. Raw default model values are compatibility
+//! projections; model configuration writes go through the canonical bridge.
 
 use sqlx::{types::Json, FromRow, PgPool};
 use uuid::Uuid;
@@ -163,6 +164,7 @@ pub async fn bear_slug_exists_excluding(
 
 pub async fn update_bear(pool: &PgPool, id: Uuid, params: BearParams<'_>) -> Result<(), DenError> {
     let tools_enabled = params.tools_enabled.map(|Json(value)| value);
+    let mut transaction = pool.begin().await?;
     let r = sqlx::query!(
         r"
         UPDATE bears
@@ -170,24 +172,29 @@ pub async fn update_bear(pool: &PgPool, id: Uuid, params: BearParams<'_>) -> Res
             name = $2,
             description = $3,
             system_prompt = $4,
-            default_model = $5,
-            tools_enabled = $6,
+            tools_enabled = $5,
             updated_at = NOW()
-        WHERE id = $7
+        WHERE id = $6
         ",
         params.slug,
         params.name,
         params.description,
         params.system_prompt,
-        params.default_model,
         tools_enabled,
         id
     )
-    .execute(pool)
+    .execute(&mut *transaction)
     .await?;
     if r.rows_affected() == 0 {
         return Err(DenError::NotFound("bear not found".to_string()));
     }
+    super::model_configurations::compatibility::set_legacy_default(
+        &mut transaction,
+        id.into(),
+        params.default_model,
+    )
+    .await?;
+    transaction.commit().await?;
     Ok(())
 }
 
@@ -203,25 +210,31 @@ pub async fn create_bear_with_context_profile(
 ) -> Result<Uuid, DenError> {
     let tools_enabled = params.tools_enabled.map(|Json(value)| value);
     let context_profile = params.context_profile.map(|Json(value)| value);
+    let mut transaction = pool.begin().await?;
     let id = sqlx::query_scalar!(
         r"
         INSERT INTO bears (
-            slug, name, description, system_prompt, default_model, tools_enabled,
-            context_profile
+            slug, name, description, system_prompt, tools_enabled, context_profile
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING id
         ",
         params.slug,
         params.name,
         params.description,
         params.system_prompt,
-        params.default_model,
         tools_enabled,
         context_profile,
     )
-    .fetch_one(pool)
+    .fetch_one(&mut *transaction)
     .await?;
+    super::model_configurations::compatibility::set_legacy_default(
+        &mut transaction,
+        id.into(),
+        params.default_model,
+    )
+    .await?;
+    transaction.commit().await?;
     Ok(id)
 }
 
@@ -934,6 +947,8 @@ pub async fn list_profile_model_settings(
     .map_err(Into::into)
 }
 
+/// Historical profile metadata only; never a primary-model configuration or
+/// hat override. Retained for legacy record compatibility, not runtime routing.
 pub async fn set_profile_model_setting(
     pool: &PgPool,
     bear_id: Uuid,
@@ -1067,6 +1082,9 @@ fn parse_agent_loop_control_setting(
     }
 }
 
+/// Legacy projection reader for callers awaiting cutover. This cannot resolve
+/// hats/effort or revalidate catalog membership; execution must use
+/// `model_configurations::resolve_primary` instead.
 pub fn resolve_model_for_bear(bear: &Bear, system_default_model: &str) -> String {
     resolve_model_from_values(bear.default_model.as_deref(), system_default_model)
 }

@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO model_selection_options (handle, display_name, metadata_json)\n           VALUES ('openai/bearwire-test-model', 'BearWire test model',\n               '{\"supports_reasoning_effort\":false}'::jsonb)\n           ON CONFLICT (handle) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "cfb1ffc18cade511bde4d9ae6244da393e8f526a32f81b33c3a47cfae75e386a"
+}

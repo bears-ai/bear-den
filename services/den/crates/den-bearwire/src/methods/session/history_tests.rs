@@ -16,16 +16,7 @@ async fn history_inspection_never_grants_configuration_or_hat_mutation(pool: sql
     config.den_secret_encryption_key = "bearwire-test-secret-key".into();
     config.default_llm_model = "openai/bearwire-test-model".into();
     config.llm_api_url = inference.url.clone();
-    bears_db::set_bear_bifrost_virtual_key(
-        &pool,
-        bear,
-        Some("vk-test"),
-        Some("History source test"),
-        Some("sk-bf-bearwire-test"),
-        &config.den_secret_encryption_key,
-    )
-    .await
-    .unwrap();
+    seed_test_bifrost_virtual_key(&pool, bear, &config).await;
     let state = test_state_with_config(pool.clone(), config);
     let owner_executable = ensure_conversation_for_external_id(
         &pool,

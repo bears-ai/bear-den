@@ -7,6 +7,7 @@ pub mod db;
 pub mod hats;
 pub mod managed_blocks;
 pub mod model;
+pub mod model_configurations;
 pub mod prompt_fragments;
 pub mod provision;
 #[cfg(test)]

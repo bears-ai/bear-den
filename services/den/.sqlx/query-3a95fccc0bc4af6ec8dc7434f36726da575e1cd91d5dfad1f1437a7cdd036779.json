@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bears SET default_model = 'openai/gpt-4.1' WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3a95fccc0bc4af6ec8dc7434f36726da575e1cd91d5dfad1f1437a7cdd036779"
+}

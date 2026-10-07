@@ -5,8 +5,8 @@ use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use den_core::{
-    config::Config, execution_context::RuntimeContextLabel, resolve_agent_primary_request_profile,
-    AgentPrimaryStep, DenError, ThinkingEffort,
+    config::Config, execution_context::RuntimeContextLabel, AgentPrimaryStep, DenError,
+    ThinkingEffort,
 };
 use den_protocol::{RuntimeEventStream, RuntimeSemanticEvent, RuntimeStreamEvent};
 use futures::{stream, Stream, StreamExt, TryStreamExt};
@@ -26,8 +26,7 @@ use crate::{
     },
     context_budget::estimate_context_budget,
     llm::{
-        bifrost_key_selection_error, byte_stream_with_idle_timeout,
-        execution_fallback_model_handles, preferred_api_style_for_model, ChatCompletionRequest,
+        byte_stream_with_idle_timeout, preferred_api_style_for_model, ChatCompletionRequest,
         LlmApiStyle, LlmClient,
     },
     native_runtime::{
@@ -142,6 +141,14 @@ impl LazyAgentStepStream {
         started: Instant,
         calibration_pool: Option<&PgPool>,
     ) -> Result<RuntimeEventStream, DenError> {
+        if let Some(pool) = calibration_pool {
+            den_service::bears::model_configurations::validate_model_configuration(
+                pool,
+                &request.model,
+                request.thinking_effort,
+            )
+            .await?;
+        }
         let usage_sink = observed_prompt_usage_sink(calibration_pool, request);
         match api_style {
             LlmApiStyle::ChatCompletionsStream => {
@@ -156,8 +163,9 @@ impl LazyAgentStepStream {
                     usage_sink,
                 )
             }
-            LlmApiStyle::ResponsesStream => match llm.responses_byte_stream(request).await {
-                Ok(byte_stream) => Self::connect_byte_stream(
+            LlmApiStyle::ResponsesStream => {
+                let byte_stream = llm.responses_byte_stream(request).await?;
+                Self::connect_byte_stream(
                     session_key.to_string(),
                     model.to_string(),
                     api_style,
@@ -165,100 +173,9 @@ impl LazyAgentStepStream {
                     byte_stream,
                     request.telemetry.clone(),
                     usage_sink,
-                ),
-                Err(err) if bifrost_key_selection_error(&err.to_string()) => {
-                    tracing::warn!(
-                        session_key = %session_key,
-                        model = %model,
-                        api_style = %api_style.as_str(),
-                        error = %err,
-                        "LLM responses stream hit Bifrost key-selection error; retrying via chat/completions stream"
-                    );
-                    let byte_stream = llm.chat_completions_byte_stream(request).await?;
-                    Self::connect_byte_stream(
-                        session_key.to_string(),
-                        model.to_string(),
-                        LlmApiStyle::ChatCompletionsStream,
-                        started,
-                        byte_stream,
-                        request.telemetry.clone(),
-                        usage_sink,
-                    )
-                }
-                Err(err) => Err(err),
-            },
-        }
-    }
-
-    async fn retry_with_fallback_models(
-        llm: &LlmClient,
-        request: &ChatCompletionRequest,
-        session_key: &str,
-        api_style_override: Option<LlmApiStyle>,
-        calibration_pool: Option<&PgPool>,
-    ) -> Result<Option<RuntimeEventStream>, DenError> {
-        let fallback_models = execution_fallback_model_handles(&request.model);
-        if fallback_models.is_empty() {
-            return Ok(None);
-        }
-        for fallback_model in fallback_models {
-            let mut fallback_request = request.clone();
-            fallback_request.model = (*fallback_model).to_string();
-            let fallback_style =
-                api_style_override.unwrap_or_else(|| preferred_api_style_for_model(fallback_model));
-            tracing::warn!(
-                session_key = %session_key,
-                requested_model = %request.model,
-                fallback_model,
-                api_style = %fallback_style.as_str(),
-                "retrying LLM stream with fallback model after Bifrost key-selection error"
-            );
-            match timeout(
-                native_llm_handshake_timeout(),
-                Self::connect_request_stream(
-                    llm,
-                    &fallback_request,
-                    session_key,
-                    fallback_model,
-                    fallback_style,
-                    Instant::now(),
-                    calibration_pool,
-                ),
-            )
-            .await
-            {
-                Ok(Ok(stream)) => {
-                    tracing::info!(
-                        session_key = %session_key,
-                        requested_model = %request.model,
-                        fallback_model,
-                        api_style = %fallback_style.as_str(),
-                        "LLM stream fallback model handshake succeeded"
-                    );
-                    return Ok(Some(stream));
-                }
-                Ok(Err(err)) if bifrost_key_selection_error(&err.to_string()) => {
-                    tracing::warn!(
-                        session_key = %session_key,
-                        requested_model = %request.model,
-                        fallback_model,
-                        error = %err,
-                        "fallback model also hit Bifrost key-selection error"
-                    );
-                }
-                Ok(Err(err)) => return Err(err),
-                Err(_) => {
-                    tracing::warn!(
-                        session_key = %session_key,
-                        requested_model = %request.model,
-                        fallback_model,
-                        handshake_timeout_secs = native_llm_handshake_timeout().as_secs(),
-                        "fallback model handshake timed out"
-                    );
-                }
+                )
             }
         }
-        Ok(None)
     }
 
     fn new(
@@ -267,6 +184,7 @@ impl LazyAgentStepStream {
         session_key: String,
         api_style_override: Option<LlmApiStyle>,
         overflow: Option<AgentStepOverflowContext>,
+        primary: den_service::bears::model_configurations::ResolvedPrimaryModel,
     ) -> Self {
         let model = request.model.clone();
         let message_count = request.messages.len();
@@ -280,6 +198,7 @@ impl LazyAgentStepStream {
             tool_count,
             api_style_override,
             overflow,
+            primary,
         );
         Self {
             state: Some(LazyAgentStepState::Init { fut }),
@@ -295,6 +214,7 @@ impl LazyAgentStepStream {
         tool_count: usize,
         api_style_override: Option<LlmApiStyle>,
         overflow: Option<AgentStepOverflowContext>,
+        primary: den_service::bears::model_configurations::ResolvedPrimaryModel,
     ) -> Pin<Box<dyn Future<Output = Result<RuntimeEventStream, DenError>> + Send>> {
         Box::pin(async move {
             let started = Instant::now();
@@ -348,19 +268,7 @@ impl LazyAgentStepStream {
                         api_style = %api_style.as_str(),
                         "LLM stream handshake failed"
                     );
-                    if bifrost_key_selection_error(&err.to_string()) {
-                        if let Some(stream) = Self::retry_with_fallback_models(
-                            &llm,
-                            &request,
-                            &session_key,
-                            api_style_override,
-                            overflow.as_ref().map(|ctx| &ctx.pool),
-                        )
-                        .await?
-                        {
-                            return Ok(stream);
-                        }
-                    }
+
                     if let Some(ctx) = overflow {
                         if den_error_indicates_context_overflow(&err) {
                             return Self::recover_from_overflow_and_retry(
@@ -371,6 +279,7 @@ impl LazyAgentStepStream {
                                 model,
                                 api_style,
                                 started,
+                                primary,
                             )
                             .await;
                         }
@@ -426,6 +335,7 @@ impl LazyAgentStepStream {
         model: String,
         api_style: LlmApiStyle,
         started: Instant,
+        primary: den_service::bears::model_configurations::ResolvedPrimaryModel,
     ) -> Result<RuntimeEventStream, DenError> {
         let session = ctx.session_store.get(&session_key).ok_or_else(|| {
             DenError::System("agent loop session not found for overflow recovery".into())
@@ -490,35 +400,39 @@ impl LazyAgentStepStream {
         );
 
         let handshake_timeout = native_llm_handshake_timeout();
-        let usage_sink = observed_prompt_usage_sink(Some(&ctx.pool), &retry_request);
-        let handshake = timeout(handshake_timeout, async {
-            match api_style {
-                LlmApiStyle::ChatCompletionsStream => {
-                    let byte_stream = llm.chat_completions_byte_stream(&retry_request).await?;
-                    Self::connect_byte_stream(
-                        session_key.clone(),
-                        model.clone(),
-                        api_style,
-                        started,
-                        byte_stream,
-                        retry_request.telemetry.clone(),
-                        usage_sink,
-                    )
-                }
-                LlmApiStyle::ResponsesStream => {
-                    let byte_stream = llm.responses_byte_stream(&retry_request).await?;
-                    Self::connect_byte_stream(
-                        session_key.clone(),
-                        model.clone(),
-                        api_style,
-                        started,
-                        byte_stream,
-                        retry_request.telemetry.clone(),
-                        usage_sink,
-                    )
-                }
-            }
-        })
+        // Compaction may take time: admit the source and winning configuration
+        // again before retrying the same model (never a substitute model).
+        let source = require_ordinary_session_source(&ctx.pool, (&session).into()).await?;
+        let live = crate::primary_model::resolve_for_source(
+            &ctx.pool,
+            session.bear_id.into(),
+            source,
+            llm.default_model(),
+        )
+        .await?;
+        if live != primary {
+            return Err(DenError::ValidationError(
+                "primary model configuration changed during overflow recovery; start a new turn"
+                    .into(),
+            ));
+        }
+        if retry_request.model != primary.model_handle {
+            return Err(DenError::Authorization(
+                "overflow retry request does not match the verified primary model".into(),
+            ));
+        }
+        let handshake = timeout(
+            handshake_timeout,
+            Self::connect_request_stream(
+                &llm,
+                &retry_request,
+                &session_key,
+                &model,
+                api_style,
+                started,
+                Some(&ctx.pool),
+            ),
+        )
         .await;
 
         match handshake {
@@ -589,6 +503,7 @@ impl Stream for LazyAgentStepStream {
 /// that wait on `POST /prompt` with no timeout.
 pub const RUNTIME_CHECKPOINT_TOOL_NAME: &str = "checkpoint";
 
+#[cfg(test)]
 fn api_compatible_thinking_effort(
     api_style: Option<LlmApiStyle>,
     has_function_tools: bool,
@@ -601,6 +516,7 @@ fn api_compatible_thinking_effort(
     }
 }
 
+#[cfg(test)]
 fn primary_request_profile(
     approved_model_ref: impl Into<String>,
     checkpoint_active: bool,
@@ -612,7 +528,7 @@ fn primary_request_profile(
     } else {
         AgentPrimaryStep::OrdinaryTurn
     };
-    resolve_agent_primary_request_profile(
+    den_core::resolve_agent_primary_request_profile(
         approved_model_ref,
         step,
         supports_reasoning_effort,
@@ -628,10 +544,15 @@ fn primary_request_profile_for_session(
         .enabled
         .then_some(policy.checkpoint_turn_effort)
         .flatten();
-    primary_request_profile(
+    den_core::model_request_policy::resolve_agent_primary_request_profile_with_configuration(
         session.model_request_profile.approved_model_ref.clone(),
-        session.checkpoint_state.last_checkpoint_reason.is_some(),
+        if session.checkpoint_state.last_checkpoint_reason.is_some() {
+            AgentPrimaryStep::Checkpoint
+        } else {
+            AgentPrimaryStep::OrdinaryTurn
+        },
         session.model_request_profile.supports_reasoning_effort,
+        session.model_request_profile.thinking_effort,
         configured_effort,
     )
 }
@@ -641,16 +562,18 @@ fn compatible_thinking_effort_for_session(
     request_profile: &den_core::ModelRequestProfile,
     has_function_tools: bool,
 ) -> Option<ThinkingEffort> {
-    let checkpoint_active = request_profile.agent_primary_step == AgentPrimaryStep::Checkpoint;
     let configured_effort = request_profile.thinking_effort;
+    let api_style = session
+        .api_style
+        .unwrap_or_else(|| preferred_api_style_for_model(&session.model));
     let compatible_effort =
-        api_compatible_thinking_effort(session.api_style, has_function_tools, configured_effort);
-    if checkpoint_active && configured_effort.is_some() && compatible_effort.is_none() {
+        crate::primary_model::compatible_effort(api_style, has_function_tools, configured_effort);
+    if configured_effort.is_some() && compatible_effort.is_none() {
         tracing::warn!(
             session_key = %session.session_key,
             model = %session.model,
             api_style = LlmApiStyle::ChatCompletionsStream.as_str(),
-            "omitting checkpoint reasoning effort because Chat Completions with function tools is incompatible"
+            "omitting reasoning effort because Chat Completions with function tools is incompatible"
         );
     }
     compatible_effort
@@ -661,10 +584,10 @@ fn reasoning_effort_disposition_event(
     configured_effort: Option<ThinkingEffort>,
     compatible_effort: Option<ThinkingEffort>,
 ) -> Option<RuntimeStreamEvent> {
-    if !matches!(
-        request_profile.agent_primary_step,
-        AgentPrimaryStep::Checkpoint | AgentPrimaryStep::PreRiskReview
-    ) {
+    if request_profile.agent_primary_step != AgentPrimaryStep::Checkpoint
+        && request_profile.agent_primary_step != AgentPrimaryStep::PreRiskReview
+        && request_profile.thinking_effort.is_none()
+    {
         return None;
     }
     let configured_effort = configured_effort?;
@@ -684,6 +607,7 @@ fn reasoning_effort_disposition_event(
                 "step": request_profile.agent_primary_step.as_str(),
                 "catalog_support": request_profile.supports_reasoning_effort,
                 "configured_effort": configured_effort.as_str(),
+                "effective_request_effort": compatible_effort.map(ThinkingEffort::as_str),
             })),
         },
     ))
@@ -800,6 +724,7 @@ fn checkpoint_tools(
     tools
 }
 
+#[cfg(test)]
 fn resolved_request_profile_progress_event(
     request_profile: &den_core::ModelRequestProfile,
 ) -> RuntimeStreamEvent {
@@ -833,6 +758,27 @@ fn resolved_control_progress_event(
     })
 }
 
+fn primary_request_for_session(
+    session: &AgentLoopSession,
+    profile: &den_core::ModelRequestProfile,
+    messages: Vec<crate::llm::ChatMessage>,
+    tools: Vec<crate::llm::LlmToolDefinition>,
+) -> ChatCompletionRequest {
+    let thinking_effort =
+        compatible_thinking_effort_for_session(session, profile, !tools.is_empty());
+    ChatCompletionRequest {
+        model: profile.approved_model_ref.clone(),
+        messages,
+        tools,
+        stream: true,
+        tool_choice: None,
+        temperature: None,
+        max_tokens: None,
+        thinking_effort,
+        telemetry: Some(session.llm_telemetry()),
+    }
+}
+
 pub async fn run_agent_step_stream(
     llm: &LlmClient,
     session: &AgentLoopSession,
@@ -840,10 +786,59 @@ pub async fn run_agent_step_stream(
 ) -> Result<RuntimeEventStream, DenError> {
     // Validate before preflight persistence or compaction (which can itself infer).
     // Pure budget-stop callers without a pool may still stop without any effect.
-    if let Some(context) = overflow.as_ref() {
-        require_ordinary_session_source(&context.pool, session.into()).await?;
-    }
+    let primary = if let Some(context) = overflow.as_ref() {
+        let source = require_ordinary_session_source(&context.pool, session.into()).await?;
+        let primary = crate::primary_model::resolve_for_source(
+            &context.pool,
+            session.bear_id.into(),
+            source,
+            llm.default_model(),
+        )
+        .await?;
+        if primary.model_handle != session.model {
+            return Err(DenError::ValidationError(
+                "primary model changed; start a new turn to rebuild model context".into(),
+            ));
+        }
+        if primary.thinking_effort != session.model_request_profile.thinking_effort {
+            return Err(DenError::ValidationError(
+                "primary model configuration reasoning effort changed; start a new turn to apply it"
+                    .into(),
+            ));
+        }
+        Some(primary)
+    } else {
+        None
+    };
     let mut session = session.clone();
+    if let (Some(primary), Some(context)) = (primary.as_ref(), overflow.as_ref()) {
+        let capabilities = den_service::bears::model_configurations::validate_model_configuration(
+            &context.pool,
+            &primary.model_handle,
+            primary.thinking_effort,
+        )
+        .await?;
+        session
+            .model_request_profile
+            .approved_model_ref
+            .clone_from(&primary.model_handle);
+        session.model_request_profile.supports_reasoning_effort =
+            capabilities.supports_reasoning_effort;
+
+        session.api_style = Some(
+            crate::primary_model::execution_api_style(
+                &context.pool,
+                &context.config,
+                session.bear_id.into(),
+                primary,
+                crate::primary_model::transport_preference(
+                    session.origin,
+                    primary_request_profile_for_session(&session).thinking_effort,
+                ),
+            )
+            .await?,
+        );
+    }
     let mut recovered_from_preflight_context_budget = false;
     let mut messages = repair_tool_call_message_chain(session.messages.clone());
     tracing::info!(
@@ -875,34 +870,16 @@ pub async fn run_agent_step_stream(
             .recently_discovered_capabilities_chars = chars;
     }
     let request_profile = primary_request_profile_for_session(&session);
-    let configured_effort = session
-        .agent_loop_control
-        .profile
-        .thinking
-        .enabled
-        .then_some(
-            session
-                .agent_loop_control
-                .profile
-                .thinking
-                .checkpoint_turn_effort,
-        )
-        .flatten();
+    let configured_effort = session.model_request_profile.thinking_effort.or_else(|| {
+        let thinking = session.agent_loop_control.profile.thinking;
+        thinking
+            .enabled
+            .then_some(thinking.checkpoint_turn_effort)
+            .flatten()
+    });
     let (request, budget, context_budget_evaluation) = loop {
         let tools = tools_with_checkpoint_tool(&session);
-        let thinking_effort =
-            compatible_thinking_effort_for_session(&session, &request_profile, !tools.is_empty());
-        let request = ChatCompletionRequest {
-            model: request_profile.approved_model_ref.clone(),
-            messages,
-            tools,
-            stream: true,
-            tool_choice: None,
-            temperature: None,
-            max_tokens: None,
-            thinking_effort,
-            telemetry: Some(session.llm_telemetry()),
-        };
+        let request = primary_request_for_session(&session, &request_profile, messages, tools);
         let budget = estimate_context_budget(
             &request,
             &session.budget_components,
@@ -1021,44 +998,107 @@ pub async fn run_agent_step_stream(
         configured_effort,
         request.thinking_effort,
     );
-    let checkpoint_thinking_event = request.thinking_effort.map(|effort| {
-        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
-            kind: "checkpoint_thinking_override_applied".to_string(),
-            text: Some(format!(
-                "Applied checkpoint thinking effort `{}` for this model call.",
-                effort.as_str()
-            )),
-            phase: Some("agent_loop_control".to_string()),
-            detail: Some(serde_json::json!({
-                "effort": effort.as_str(),
-                "reason": session.checkpoint_state.last_checkpoint_reason,
-                "model": session.model,
-                "control_level": session.agent_loop_control.level,
-            })),
+    let checkpoint_thinking_event = request
+        .thinking_effort
+        .filter(|_| {
+            request_profile.agent_primary_step == AgentPrimaryStep::Checkpoint
+                && session.model_request_profile.thinking_effort.is_none()
         })
-    });
+        .map(|effort| {
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
+                kind: "checkpoint_thinking_override_applied".to_string(),
+                text: Some(format!(
+                    "Applied checkpoint thinking effort `{}` for this model call.",
+                    effort.as_str()
+                )),
+                phase: Some("agent_loop_control".to_string()),
+                detail: Some(serde_json::json!({
+                    "effort": effort.as_str(),
+                    "reason": session.checkpoint_state.last_checkpoint_reason,
+                    "model": session.model,
+                    "control_level": session.agent_loop_control.level,
+                })),
+            })
+        });
     let context = overflow.as_ref().ok_or_else(|| {
         DenError::Authorization("ordinary inference requires source validation dependencies".into())
     })?;
     let pool = context.pool.clone();
     let llm = llm.clone();
     let admission_session = session.clone();
+    let primary = primary
+        .ok_or_else(|| DenError::Authorization("primary model has no verified source".into()))?;
+    let model_progress = crate::primary_model::configuration_progress_event(
+        &primary,
+        &request_profile,
+        request.thinking_effort,
+        session.api_style.expect("execution transport resolved"),
+    );
+    let persistence_profile = request_profile.clone();
     // Streaming is lazy: revalidate again at consumption, not just construction.
     let base_stream = Box::pin(
         stream::once(async move {
-            require_ordinary_session_source(&pool, (&admission_session).into()).await?;
+            let source =
+                require_ordinary_session_source(&pool, (&admission_session).into()).await?;
+            let live = crate::primary_model::resolve_for_source(
+                &pool,
+                admission_session.bear_id.into(),
+                source,
+                llm.default_model(),
+            )
+            .await?;
+            let capabilities =
+                den_service::bears::model_configurations::validate_model_configuration(
+                    &pool,
+                    &live.model_handle,
+                    live.thinking_effort,
+                )
+                .await?;
+            if live != primary
+                || capabilities.supports_reasoning_effort
+                    != admission_session
+                        .model_request_profile
+                        .supports_reasoning_effort
+            {
+                return Err(DenError::ValidationError(
+                    "primary model configuration changed before execution; start a new turn".into(),
+                ));
+            }
+            if matches!(
+                admission_session.origin,
+                den_core::TurnExecutionOrigin::ChannelConversation
+                    | den_core::TurnExecutionOrigin::BrowserTaskSession
+            ) {
+                crate::primary_model::persist_progress(
+                    &pool,
+                    admission_session.bear_id.into(),
+                    admission_session.user_id,
+                    &admission_session.client_session_id,
+                    admission_session.run_id.as_deref(),
+                    crate::primary_model::configuration_progress_event(
+                        &primary,
+                        &persistence_profile,
+                        request.thinking_effort,
+                        admission_session
+                            .api_style
+                            .expect("execution transport resolved"),
+                    ),
+                )
+                .await?;
+            }
             Ok::<RuntimeEventStream, DenError>(Box::pin(LazyAgentStepStream::new(
                 llm,
                 request,
                 admission_session.session_key,
                 admission_session.api_style,
                 overflow,
+                primary,
             )) as RuntimeEventStream)
         })
         .try_flatten(),
     ) as RuntimeEventStream;
     let prefix_events = [
-        Some(resolved_request_profile_progress_event(&request_profile)),
+        Some(model_progress),
         Some(resolved_control_progress_event(&session.agent_loop_control)),
         context_budget_pressure_event,
         reasoning_effort_disposition_event,
@@ -1074,6 +1114,10 @@ pub async fn run_agent_step_stream(
         Ok(Box::pin(stream::iter(prefix_events).chain(base_stream)) as RuntimeEventStream)
     }
 }
+
+#[cfg(test)]
+#[path = "step_model_configuration_tests.rs"]
+mod model_configuration_tests;
 
 #[cfg(test)]
 mod tests {
