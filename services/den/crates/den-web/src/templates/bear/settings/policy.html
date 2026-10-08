@@ -16,12 +16,14 @@
 <form method="post" action="/bear/{{ bear.slug | urlencode }}/web-sources" class="den-management-form-row">
   <label>Scope<br><select name="scope_kind"><option value="host">Host</option><option value="url">URL</option></select></label>
   <label>Destination<br><input type="text" name="scope_value" placeholder="docs.rs" size="30" required></label>
-  <label>Policy<br><select name="policy"><option value="preferred">Preferred</option>{% if not hats_configured %}<option value="allowed">Historical allow</option>{% endif %}<option value="blocked">Blocked</option></select></label>
+  <label>Source policy<br><select name="policy" aria-describedby="source-policy-effects"><option value="preferred">Preferred</option>{% if not hats_configured %}<option value="allowed">Historical allow</option>{% endif %}<option value="blocked">Blocked</option></select></label>
   <button type="submit">Save source</button>
 </form>
 {% endif %}
+<p class="form-hint" id="source-policy-effects">Preferred changes source ordering, not permission. Blocked denies access. Hat tools and exact destinations require separate grants{% if can_manage_bear %} in <a href="/bear/{{ bear.slug | urlencode }}/hats">Hats</a>{% endif %}.</p>
+<p class="form-hint">Combining private data, external content and outbound actions deserves review, not a “safe” badge.</p>
 {% if web_sources %}<table><thead><tr><th>Policy</th><th>Destination</th><th>Label</th><th>Action</th></tr></thead><tbody>{% for source in web_sources %}<tr><td>{{ source.policy | e }}</td><td>{{ source.scope_value | e }}</td><td>{{ source.label | default("—", true) | e }}</td><td>{% if can_manage_bear %}<form method="post" action="/bear/{{ bear.slug | urlencode }}/web-sources/{{ source.id }}/delete"><button type="submit">Remove</button></form>{% endif %}</td></tr>{% endfor %}</tbody></table>{% else %}<p>No web sources configured.</p>{% endif %}
-<details><summary>How source policy and access differ</summary><p>Preferred sources affect ordering; blocks deny access. Old Bear-wide allows and approvals do not authorize a configured hat. A source preference or historical allow is not a hat tool grant. Exact HTTPS destinations and web tools are authorized on each hat. Combining private data, external content and outbound actions deserves review, not a “safe” badge.</p></details>
+<details><summary>Help: historical source policy</summary><p>Old Bear-wide allows and approvals do not authorize a configured hat. A historical allow is not a hat tool grant; exact HTTPS destinations and web tools are authorized on each hat.</p></details>
 </section>
 {% if can_manage_bear %}
 <details class="box"><summary>Standing approvals</summary>

@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                SELECT EXISTS (\n                    SELECT 1 FROM user_bear\n                    WHERE bear_id = $1 AND user_id <> $2\n                      AND lower(btrim(coalesce(role, ''))) = 'admin'\n                ) AS \"exists!\"\n                ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "exists!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "43a31466e20778a75004e3ad81e56015ef45d8d80e2961496fc6d7d58942ed9b"
+}

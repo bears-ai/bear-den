@@ -1,316 +1,125 @@
-{% extends "bear/_manage.html" %} {% block title %}Models · {{ bear.slug }}{% endblock
-%} {% block manage %}
-<div class="box">
-    <h2>Models · {{ bear.name }}</h2>
+{% extends "bear/_manage.html" %}
+{% block title %}Models · {{ bear.name | e }}{% endblock %}
+{% block manage %}
+<section class="box">
+  <h2>Models</h2>
+  {% if message %}<p role="status"><strong>{{ message | e }}</strong></p>{% endif %}
+  {% if error %}<p class="form-errors" role="alert">{{ error | e }}</p>{% endif %}
 
-    {% if message %}
-    <p><strong>{{ message | e }}</strong></p>
-    {% endif %} {% if error %}
-    <p class="form-errors">{{ error | e }}</p>
-    {% endif %}
+  {% macro configuration_fields(fields, suffix) %}
+  <label for="configuration-name-{{ suffix }}">Name</label>
+  <input id="configuration-name-{{ suffix }}" name="name" value="{{ fields.name | e }}" required>
+  <label for="configuration-model-{{ suffix }}">Model</label>
+  <input id="configuration-model-{{ suffix }}" name="model_handle" list="catalog-models" value="{{ fields.model_handle | e }}" required>
+  <label for="configuration-effort-{{ suffix }}">Reasoning effort</label>
+  <select id="configuration-effort-{{ suffix }}" name="thinking_effort">
+    {% if fields.thinking_effort and fields.thinking_effort not in ['model_default', 'low', 'medium', 'high'] %}<option value="{{ fields.thinking_effort | e }}" selected>{{ fields.thinking_effort | e }} — invalid effort</option>{% endif %}
+    <option value="model_default"{% if not fields.thinking_effort or fields.thinking_effort == 'model_default' %} selected{% endif %}>Model default</option>
+    <option value="low"{% if fields.thinking_effort == 'low' %} selected{% endif %}>Low</option>
+    <option value="medium"{% if fields.thinking_effort == 'medium' %} selected{% endif %}>Medium</option>
+    <option value="high"{% if fields.thinking_effort == 'high' %} selected{% endif %}>High</option>
+  </select>
+  <p class="form-hint">Explicit effort requires support from the selected model.</p>
+  {% endmacro %}
 
-    {% macro configuration_fields(fields, suffix) %}
-    <label for="configuration-name-{{ suffix }}">Name</label>
-    <input id="configuration-name-{{ suffix }}" name="name" value="{{ fields.name | e }}" required>
-    <label for="configuration-model-{{ suffix }}">Model</label>
-    <input id="configuration-model-{{ suffix }}" name="model_handle" list="catalog-models" value="{{ fields.model_handle | e }}" required>
-    <label for="configuration-effort-{{ suffix }}">Reasoning effort</label>
-    <select id="configuration-effort-{{ suffix }}" name="thinking_effort">
-        {% if fields.thinking_effort and fields.thinking_effort not in ['model_default', 'low', 'medium', 'high'] %}
-        <option value="{{ fields.thinking_effort | e }}" selected>{{ fields.thinking_effort | e }} — invalid effort</option>
-        {% endif %}
-        <option value="model_default"{% if not fields.thinking_effort or fields.thinking_effort == 'model_default' %} selected{% endif %}>Model default</option>
-        <option value="low"{% if fields.thinking_effort == 'low' %} selected{% endif %}>Low</option>
-        <option value="medium"{% if fields.thinking_effort == 'medium' %} selected{% endif %}>Medium</option>
-        <option value="high"{% if fields.thinking_effort == 'high' %} selected{% endif %}>High</option>
+  <h3>Bear default configuration</h3>
+  <p>{{ effective_model.source_label | e }}: {% if effective_model.name %}<strong>{{ effective_model.name | e }}</strong> · {% endif %}<code>{{ effective_model.model_handle | e }}</code> · reasoning {{ effective_model.effort_label | e }} · <strong>{{ effective_model.status | e }}</strong></p>
+  {% if effective_model.status_detail %}<p class="form-errors" role="alert">{{ effective_model.status_detail | e }}</p><p>{% if can_manage_bear %}Choose an available default or repair its named configuration below.{% else %}Ask a Bear admin to repair this selection.{% endif %}</p>{% endif %}
+  {% if can_manage_bear %}
+  <form method="post" action="/bear/{{ bear.slug | e }}/models/default">
+    <label for="default-configuration">Default configuration</label>
+    <select id="default-configuration" name="configuration_id">
+      <option value=""{% if not default_selection %} selected{% endif %}>Inherit deployment default</option>
+      {% for view in configurations %}<option value="{{ view.configuration.id }}"{% if default_selection == view.configuration.id | string %} selected{% endif %}>{{ view.configuration.name | e }} · {{ view.configuration.model_handle | e }} · {{ view.effort_label | e }} · {{ view.status | e }}</option>{% endfor %}
     </select>
-    {% endmacro %}
+    <p class="form-hint">Applies on future turns. Hats may override this default; a conversation pin replaces the whole configuration, including reasoning.</p>
+    <button type="submit">Save Bear default</button>
+  </form>
+  {% else %}<p class="form-hint">Read-only. Only Bear admins can change model settings.</p>{% endif %}
 
-    <h3>Bear default configuration</h3>
-    <p>
-        {{ effective_model.source_label | e }}:
-        {% if effective_model.name %}<strong>{{ effective_model.name | e }}</strong> · {% endif %}
-        <code>{{ effective_model.model_handle | e }}</code> · reasoning {{ effective_model.effort_label | e }} ·
-        <strong>{{ effective_model.status | e }}</strong>
-    </p>
-    {% if effective_model.status_detail %}<p class="form-errors">{{ effective_model.status_detail | e }}</p>{% endif %}
-    <form method="post" action="/bear/{{ bear.slug | e }}/models/default">
-        <label for="default-configuration">Default configuration</label>
-        <select id="default-configuration" name="configuration_id"{% if not can_manage_bear %} disabled{% endif %}>
-            <option value=""{% if not default_selection %} selected{% endif %}>Inherit deployment default</option>
-            {% for view in configurations %}
-            <option value="{{ view.configuration.id }}"{% if default_selection == view.configuration.id | string %} selected{% endif %}>{{ view.configuration.name | e }} · {{ view.configuration.model_handle | e }} · {{ view.effort_label | e }} · {{ view.status | e }}</option>
-            {% endfor %}
-        </select>
-        {% if can_manage_bear %}<button type="submit">Save Bear default</button>{% endif %}
-    </form>
-    <p class="form-hint">Conversation model pins replace the whole configuration, including reasoning effort. Hats may override this default.</p>
-
-    <h3>Named model configurations</h3>
-    {% for view in configurations %}
-    <div class="box">
-        <h4>{{ view.configuration.name | e }}</h4>
-        <p><code>{{ view.configuration.model_handle | e }}</code> · reasoning {{ view.effort_label | e }} · <strong>{{ view.status | e }}</strong></p>
-        {% if view.status_detail %}<p class="form-errors">{{ view.status_detail | e }}</p>{% endif %}
-        {% if can_manage_bear %}
-        <form method="post" action="/bear/{{ bear.slug | e }}/models/configurations/{{ view.configuration.id }}">
-            {{ configuration_fields(view.fields, view.configuration.id) }}
-            <button type="submit">Save configuration</button>
-        </form>
-        <form method="post" action="/bear/{{ bear.slug | e }}/models/configurations/{{ view.configuration.id }}/delete">
-            <button type="submit">Delete {{ view.configuration.name | e }}</button>
-        </form>
-        {% endif %}
-    </div>
-    {% else %}<p>No named model configurations.</p>{% endfor %}
+  <h3>Named model configurations</h3>
+  {% for view in configurations %}
+  <section class="box">
+    <h4>{{ view.configuration.name | e }}</h4>
+    <p><code>{{ view.configuration.model_handle | e }}</code> · reasoning {{ view.effort_label | e }} · <strong>{{ view.status | e }}</strong></p>
+    {% if view.status_detail %}<p class="form-errors" role="alert">{{ view.status_detail | e }}</p>{% endif %}
     {% if can_manage_bear %}
-    <form method="post" action="/bear/{{ bear.slug | e }}/models/configurations" class="box">
-        <h4>New configuration</h4>
-        {{ configuration_fields(new_configuration, 'new') }}
-        <button type="submit">Create configuration</button>
+    <form method="post" action="/bear/{{ bear.slug | e }}/models/configurations/{{ view.configuration.id }}">
+      {{ configuration_fields(view.fields, view.configuration.id) }}
+      <button type="submit">Save configuration</button>
+    </form>
+    <form method="post" action="/bear/{{ bear.slug | e }}/models/configurations/{{ view.configuration.id }}/delete">
+      <p class="form-hint">To delete, first remove any Bear-default or hat references.</p>
+      <button type="submit">Delete {{ view.configuration.name | e }}</button>
     </form>
     {% endif %}
-    <p class="form-hint">Reasoning effort applies to model requests; loop control manages checkpoints and budgets separately. Explicit effort requires catalog support. Configurations grant no authority; referenced configurations cannot be deleted.</p>
-    <datalist id="catalog-models">
-        {% for model in model_options %}<option value="{{ model.handle | e }}">{{ model.label | e }}</option>{% endfor %}
-    </datalist>
+  </section>
+  {% else %}<p>No named model configurations.</p>{% endfor %}
+  {% if can_manage_bear %}
+  <form method="post" action="/bear/{{ bear.slug | e }}/models/configurations" class="box">
+    <h4>New configuration</h4>
+    {{ configuration_fields(new_configuration, 'new') }}
+    <button type="submit">Create configuration</button>
+  </form>
+  <datalist id="catalog-models">{% for model in model_options %}<option value="{{ model.handle | e }}">{{ model.label | e }}</option>{% endfor %}</datalist>
+  {% endif %}
+  <details><summary>Help: how model settings work</summary><p>Reasoning effort applies to model requests; loop control manages checkpoints and budgets separately. Hats inherit this Bear's default unless they reference another named configuration. A conversation pin replaces both model and effort; clearing it restores inheritance. Model settings grant no tools, permissions, or helper execution.</p></details>
+</section>
 
-    <form method="post" action="/bear/{{ bear.slug | e }}/models" class="box full-width">
-        <h3>Loop and tool budgets</h3>
+<section class="box" id="model-usage">
+  <h3>Usage &amp; gateway status</h3>
+  <p>Gateway key: <strong>{% if bifrost_virtual_key_configured %}configured{% else %}not configured{% endif %}</strong>{% if bifrost_virtual_key_name %} · {{ bifrost_virtual_key_name | e }}{% endif %}</p>
+  <p>Saved loop control: <strong>{% if stored_bear_loop_control | default(bear_loop_control) == 'inherit' %}Model default{% else %}{{ stored_bear_loop_control | default(bear_loop_control) | default('Model default', true) | e }}{% endif %}</strong> · saved tool budget multiplier: <strong>{{ stored_bear_tool_budget_multiplier | default(bear_tool_budget_multiplier) | default('Inherited', true) | e }}</strong></p>
+  {% if bifrost_usage.status == 'ok' %}
+  <p>{{ bifrost_usage.virtual_key_name | e }} · active: <strong>{{ bifrost_usage.is_active | e }}</strong></p>
+  {% if bifrost_usage.has_budgets %}
+  <table><caption>Usage limits</caption><thead><tr><th>Scope</th><th>Used</th><th>Limit</th><th>Remaining</th><th>Reset</th></tr></thead><tbody>{% for budget in bifrost_usage.budget_rows %}<tr><td>{{ budget.scope | e }}</td><td>{{ budget.current_usage | e }}</td><td>{{ budget.max_limit | e }}</td><td>{{ budget.remaining | e }}</td><td>{{ budget.reset_duration | e }}</td></tr>{% endfor %}</tbody></table>
+  {% else %}<p>No usage limits reported for this key.</p>{% endif %}
+  {% if bifrost_usage.has_model_usage %}
+  <table><caption>Model usage this budget period</caption><thead><tr><th>Model</th><th>Provider</th><th>Requests</th><th>Tokens</th><th>Cost</th></tr></thead><tbody>{% for model in bifrost_usage.model_usage_rows %}<tr><td>{{ model.model | e }}</td><td>{{ model.provider | e }}</td><td>{{ model.total_requests | e }}</td><td>{{ model.total_tokens | e }}</td><td>{{ model.total_cost | e }}</td></tr>{% endfor %}</tbody></table>
+  {% else %}<p>No per-model usage reported yet.</p>{% endif %}
+  <details><summary>Gateway details</summary><p>Validated via <code>{{ bifrost_usage.auth_mode | e }}</code>.</p>{% if bifrost_usage.has_providers %}<table><caption>Allowed providers</caption><thead><tr><th>Provider</th><th>Allowed models</th><th>Budgets</th></tr></thead><tbody>{% for provider in bifrost_usage.provider_rows %}<tr><td>{{ provider.provider | e }}</td><td>{{ provider.allowed_models | e }}</td><td>{{ provider.budget_count }}</td></tr>{% endfor %}</tbody></table>{% endif %}</details>
+  {% else %}
+  <p class="form-errors" role="status">{% if bifrost_usage.status == 'unavailable' %}<strong>Usage temporarily unavailable.</strong> {% endif %}{{ bifrost_usage.error | e }}</p>
+  <p><a href="/bear/{{ bear.slug | e }}/models">Refresh usage</a>{% if can_manage_bear %} · <a href="#advanced-model-settings">Inspect gateway settings</a>{% else %} · Ask a Bear admin about gateway problems.{% endif %}</p>
+  {% endif %}
+</section>
 
-        <label for="bear_loop_control">Agent loop control</label>
-        <select
-            id="bear_loop_control"
-            name="bear_loop_control"
-            {% if not can_manage_bear %}disabled{% endif %}
-        >
-            <option value="inherit" {% if bear_loop_control == "inherit" %}selected{% endif %}>Model default</option>
-            <option value="light" {% if bear_loop_control == "light" %}selected{% endif %}>Light</option>
-            <option value="standard" {% if bear_loop_control == "standard" %}selected{% endif %}>Standard</option>
-            <option value="careful" {% if bear_loop_control == "careful" %}selected{% endif %}>Careful</option>
-            <option value="strict" {% if bear_loop_control == "strict" %}selected{% endif %}>Strict</option>
-        </select>
-        <p class="form-hint">
-            Controls loop checkpoints and budgets, separately from reasoning effort.
-        </p>
-
-        <label for="bear_tool_budget_multiplier">Tool budget multiplier</label>
-        <input
-            id="bear_tool_budget_multiplier"
-            name="bear_tool_budget_multiplier"
-            type="number"
-            min="0.01"
-            max="10"
-            step="0.01"
-            value="{{ bear_tool_budget_multiplier | e }}"
-            placeholder="inherit"
-            {% if not can_manage_bear %}disabled{% endif %}
-        />
-        <p class="form-hint">
-            Optional Bear-level multiplier for native runtime tool-use budgets.
-            Blank inherits the deployment/model default; valid range is greater than 0 and at most 10.
-        </p>
-
-
-        <h3>Bifrost virtual key</h3>
-        <p class="form-hint">
-            Bear-scoped gateway governance. Den sends this virtual key as
-            <code>x-bf-vk</code> on this Bear's LLM requests so Bifrost can
-            enforce usage, budgets, and model policy for the Bear.
-        </p>
-        <label for="bifrost_virtual_key_id">Virtual key ID</label>
-        <input
-            id="bifrost_virtual_key_id"
-            name="bifrost_virtual_key_id"
-            value="{{ bifrost_virtual_key_id | e }}"
-            placeholder="Bifrost virtual key id"
-            autocomplete="off"
-            {%
-            if
-            not
-            can_manage_bear
-            %}
-            disabled{%
-            endif
-            %}
-        />
-        <label for="bifrost_virtual_key_name">Virtual key name</label>
-        <input
-            id="bifrost_virtual_key_name"
-            name="bifrost_virtual_key_name"
-            value="{{ bifrost_virtual_key_name | e }}"
-            placeholder="Bifrost virtual key name"
-            autocomplete="off"
-            {%
-            if
-            not
-            can_manage_bear
-            %}
-            disabled{%
-            endif
-            %}
-        />
-        <label for="bifrost_virtual_key_value">Virtual key value</label>
-        <input
-            id="bifrost_virtual_key_value"
-            name="bifrost_virtual_key_value"
-            type="password"
-            value=""
-            placeholder="{% if bifrost_virtual_key_configured %}Configured — leave blank to keep current value{% else %}sk-bf-…{% endif %}"
-            autocomplete="off"
-            {%
-            if
-            not
-            can_manage_bear
-            %}
-            disabled{%
-            endif
-            %}
-        />
-        {% if bifrost_virtual_key_configured %}
-        <label
-            ><input
-                type="checkbox"
-                name="bifrost_virtual_key_clear"
-                {%
-                if
-                not
-                can_manage_bear
-                %}
-                disabled{%
-                endif
-                %}
-            />
-            Clear configured Bifrost virtual key value</label
-        >
-        {% endif %} {% if can_manage_bear %}
-        <p>
-            <button
-                type="submit"
-                formaction="/bear/{{ bear.slug | e }}/models/provision-bifrost-key"
-                onclick="
-                    return confirm(
-                        'Provision a new Bifrost virtual key for this Bear? The current key will be archived, and Bifrost usage and budget metrics will start fresh for the replacement key.',
-                    );
-                "
-            >
-                Provision new Bifrost virtual key
-            </button>
-        </p>
-        <p class="form-hint">
-            Provisioning creates a Bear-scoped virtual key in Bifrost and stores
-            its value encrypted in Den. It will replace the currently configured
-            value.
-        </p>
-        {% endif %}
-
-        <h3>Bifrost usage</h3>
-        {% if bifrost_usage.status == "ok" %}
-        <p class="form-hint">
-            Virtual key
-            <strong>{{ bifrost_usage.virtual_key_name | e }}</strong> · active
-            <strong>{{ bifrost_usage.is_active | e }}</strong> · validated via
-            <code>{{ bifrost_usage.auth_mode | e }}</code>.
-        </p>
-
-        {% if bifrost_usage.has_budgets %}
-        <table>
-            <thead>
-                <tr>
-                    <th>Scope</th>
-                    <th>Used</th>
-                    <th>Limit</th>
-                    <th>Remaining</th>
-                    <th>Reset</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for budget in bifrost_usage.budget_rows %}
-                <tr>
-                    <td>{{ budget.scope | e }}</td>
-                    <td>{{ budget.current_usage | e }}</td>
-                    <td>{{ budget.max_limit | e }}</td>
-                    <td>{{ budget.remaining | e }}</td>
-                    <td>{{ budget.reset_duration | e }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        {% else %}
-        <p class="form-hint">
-            No Bifrost budget rows were reported for this key. New
-            BEARS-provisioned keys include a high monthly tracking budget so
-            usage can appear here after requests are logged.
-        </p>
-        {% endif %} {% if bifrost_usage.has_model_usage %}
-        <h4>Model usage this budget period</h4>
-        <table>
-            <thead>
-                <tr>
-                    <th>Model</th>
-                    <th>Provider</th>
-                    <th>Requests</th>
-                    <th>Tokens</th>
-                    <th>Cost</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for model in bifrost_usage.model_usage_rows %}
-                <tr>
-                    <td>{{ model.model | e }}</td>
-                    <td>{{ model.provider | e }}</td>
-                    <td>{{ model.total_requests | e }}</td>
-                    <td>{{ model.total_tokens | e }}</td>
-                    <td>{{ model.total_cost | e }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        {% else %}
-        <p class="form-hint">
-            No per-model usage has been reported yet. It may appear after this
-            Bear completes Bifrost-backed requests and Bifrost logging/cost
-            calculation has recorded them.
-        </p>
-        {% endif %} {% if bifrost_usage.has_providers %}
-        <h4>Allowed providers</h4>
-        <table>
-            <thead>
-                <tr>
-                    <th>Provider</th>
-                    <th>Allowed models</th>
-                    <th>Budgets</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for provider in bifrost_usage.provider_rows %}
-                <tr>
-                    <td>{{ provider.provider | e }}</td>
-                    <td>{{ provider.allowed_models | e }}</td>
-                    <td>{{ provider.budget_count }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        {% endif %} {% elif bifrost_usage.status == "missing" %}
-        <p class="form-hint">{{ bifrost_usage.error | e }}</p>
-        {% elif bifrost_usage.status == "unavailable" %}
-        <p class="form-hint">
-            <strong>Usage temporarily unavailable.</strong>
-            {{ bifrost_usage.error | e }}
-        </p>
-        {% else %}
-        <p class="form-errors">{{ bifrost_usage.error | e }}</p>
-        {% endif %}
-
-
-        {% if can_manage_bear %}
-        <p><button type="submit">Save loop, tool, and Bifrost settings</button></p>
-        {% else %}
-        <p class="form-hint">Only Bear admins can edit model settings.</p>
-        {% endif %}
-    </form>
-</div>
-
-
+{% if can_manage_bear %}
+<details class="box" id="advanced-model-settings"{% if error %} open{% endif %}>
+  <summary>Advanced settings: loop budgets &amp; gateway</summary>
+  <form method="post" action="/bear/{{ bear.slug | e }}/models">
+    <h3>Loop and tool budgets</h3>
+    <label for="bear_loop_control">Agent loop control</label>
+    <select id="bear_loop_control" name="bear_loop_control">
+      <option value="inherit"{% if bear_loop_control == 'inherit' %} selected{% endif %}>Model default</option>
+      <option value="light"{% if bear_loop_control == 'light' %} selected{% endif %}>Light</option>
+      <option value="standard"{% if bear_loop_control == 'standard' %} selected{% endif %}>Standard</option>
+      <option value="careful"{% if bear_loop_control == 'careful' %} selected{% endif %}>Careful</option>
+      <option value="strict"{% if bear_loop_control == 'strict' %} selected{% endif %}>Strict</option>
+    </select>
+    {% if field_errors and field_errors.bear_loop_control %}<p class="form-errors" role="alert">{{ field_errors.bear_loop_control | e }}</p>{% endif %}
+    <label for="bear_tool_budget_multiplier">Tool budget multiplier</label>
+    <input id="bear_tool_budget_multiplier" name="bear_tool_budget_multiplier" type="number" min="0.01" max="10" step="0.01" value="{{ bear_tool_budget_multiplier | e }}" placeholder="inherit">
+    <p class="form-hint">Blank inherits the deployment/model default; greater than 0 and at most 10.</p>
+    {% if field_errors and field_errors.bear_tool_budget_multiplier %}<p class="form-errors" role="alert">{{ field_errors.bear_tool_budget_multiplier | e }}</p>{% endif %}
+    <h3>Gateway key</h3>
+    <details><summary>How gateway governance works</summary><p>Den sends the Bear-scoped virtual key as <code>x-bf-vk</code> on model requests. Bifrost uses it for usage, budgets, and model policy. Secret values are never shown here.</p></details>
+    <label for="bifrost_virtual_key_id">Virtual key ID</label>
+    <input id="bifrost_virtual_key_id" name="bifrost_virtual_key_id" value="{{ bifrost_virtual_key_id | e }}" autocomplete="off">
+    <label for="bifrost_virtual_key_name">Virtual key name</label>
+    <input id="bifrost_virtual_key_name" name="bifrost_virtual_key_name" value="{{ bifrost_virtual_key_name | e }}" autocomplete="off">
+    <label for="bifrost_virtual_key_value">Replacement key value</label>
+    <input id="bifrost_virtual_key_value" name="bifrost_virtual_key_value" type="password" value="" autocomplete="off">
+    <p class="form-hint">Leave blank to keep the stored secret. A new value replaces it and is stored encrypted in Den.</p>
+    {% if field_errors and field_errors.bifrost_virtual_key_value %}<p class="form-errors" role="alert">{{ field_errors.bifrost_virtual_key_value | e }}</p>{% endif %}
+    {% if bifrost_virtual_key_configured %}<label><input type="checkbox" name="bifrost_virtual_key_clear"{% if bifrost_virtual_key_clear %} checked{% endif %}>Clear this Bear's stored gateway key</label><p class="form-hint">Clearing removes the stored key and metadata from Den; it does not revoke the key at Bifrost and can disrupt this Bear's model requests.</p>{% endif %}
+    <button type="submit">Save loop, tool, and Bifrost settings</button>
+  </form>
+  <form method="post" action="/bear/{{ bear.slug | e }}/models/provision-bifrost-key">
+    <p>Provisioning replaces this Bear's current key, archives it, and starts usage and budget metrics fresh. It does not save the edits in the form above.</p>
+    <button type="submit" onclick="return confirm('Replace this Bear’s gateway key and start usage metrics fresh?');">Provision new Bifrost virtual key</button>
+  </form>
+</details>
+{% endif %}
 {% endblock %}

@@ -1,29 +1,29 @@
 {% extends "base.html" %}
 {% import "forms.jinja" as forms %}
 
-{% block title %}Create a bear{% endblock %}
+{% block title %}Create a Bear{% endblock %}
 
 {% block content %}
 <section>
-    <h2>Create a bear</h2>
-    <p>You become an <strong>admin</strong> for the new bear and can invite other users from its details page.</p>
-    {% if provision_error %}
-    <p class="form-errors"><strong>Runtime setup failed</strong> (bear was saved): {{ provision_error }}</p>
-    {% endif %}
-    {% if runtime_sync_error %}
-    <p class="form-errors"><strong>Runtime sync failed</strong> (bear was saved): {{ runtime_sync_error }}</p>
-    {% endif %}
+    <h2>Create a Bear</h2>
+    <p>You become this Bear's Admin. Next, create a hat to start a conversation; creating a Bear does not start a Job.</p>
+    {% if provision_error %}<p class="form-errors" role="alert">{{ provision_error | e }}</p>{% endif %}
+    {% if saved_bear_slug %}
+    <p><strong>Your Bear was saved, but initialization failed.</strong> <a href="/bear/{{ saved_bear_slug | urlencode }}/edit/overview">Open the saved Bear and submit its saved values to retry initialization</a>, or <a href="/bear/{{ saved_bear_slug | urlencode }}/advanced">inspect diagnostics</a>. Do not create it again.</p>
+    {% else %}
     <form method="post">
-        {{ forms.input("slug", "Slug", "text", 'required maxlength="120"', form) }}
+        {{ forms.input("slug", "Handle", "text", 'required maxlength="120"', form, "Use lowercase letters, numbers, and single hyphens; no leading or trailing hyphen.") }}
         {{ forms.input("name", "Name", "text", 'maxlength="255"', form) }}
-        {{ forms.input("description", "Description", "text", 'maxlength="2000"', form) }}
-        <label for="system_prompt_textarea" {% if errors and errors.system_prompt %}class="has-error"{% endif %}>System prompt</label>
+        {{ forms.input("description", "Purpose / description", "text", 'maxlength="2000"', form) }}
+        <details{% if errors and errors.system_prompt %} open{% endif %}><summary>Optional Bear-wide steering</summary>
+        <label for="system_prompt_textarea" {% if errors and errors.system_prompt %}class="has-error"{% endif %}>Bear-wide steering</label>
         <div class="form-field{% if errors and errors.system_prompt %} has-error{% endif %}">
-            <textarea id="system_prompt_textarea" name="system_prompt" rows="12" cols="72">{{ form.system_prompt if form else '' }}</textarea>
+            <textarea id="system_prompt_textarea" name="system_prompt" rows="5">{{ (form.system_prompt if form else '') | e }}</textarea>
             {% if errors and errors.system_prompt %}
             <span class="form-hint form-errors">Submission error: {{ errors.system_prompt | map(attribute="message", default="unknown error") | join(", ") }}</span>
             {% endif %}
         </div>
+        </details>
         {% if model_catalog_configured %}
         <label for="default_model_field" {% if errors and errors.default_model %}class="has-error"{% endif %}>Model</label>
         {% if models_fetch_error %}
@@ -49,8 +49,9 @@
         {% else %}
         {{ forms.input("default_model", "Default model (optional)", "text", 'maxlength="255" placeholder="e.g. gpt-4o"', form) }}
         {% endif %}
-        <p><button type="submit">Create bear</button></p>
+        <p><button type="submit">Create Bear</button></p>
     </form>
+    {% endif %}
     <p><a href="/">Back to home</a></p>
 </section>
 {% endblock %}

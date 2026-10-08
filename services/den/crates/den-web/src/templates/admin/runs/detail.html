@@ -1,39 +1,24 @@
 {% extends "admin/base.html" %}
-{% macro open(tag) %}{{ ("<" ~ tag ~ ">") | safe }}{% endmacro %}
-{% macro close(tag) %}{{ ("</" ~ tag ~ ">") | safe }}{% endmacro %}
-
 {% block title %}Run {{ run.run_id }} · Admin{% endblock %}
-
 {% block admin_content %}
-{{ open("p") }}{{ open("a href=\"/admin/runs/\"") }}← Run diagnostics{{ close("a") }}{{ close("p") }}
-{{ open("h3") }}Run {{ open("code") }}{{ run.run_id }}{{ close("code") }}{{ close("h3") }}
-
-{{ open("table") }}{{ open("tbody") }}
-{{ open("tr") }}{{ open("th") }}State{{ close("th") }}{{ open("td") }}{{ run.state }}{{ close("td") }}{{ close("tr") }}
-{{ open("tr") }}{{ open("th") }}Terminal reason{{ close("th") }}{{ open("td") }}{% if run.terminal_reason %}{{ run.terminal_reason }}{% else %}—{% endif %}{{ close("td") }}{{ close("tr") }}
-{{ open("tr") }}{{ open("th") }}Session ID{{ close("th") }}{{ open("td") }}{{ open("code") }}{{ run.session_id }}{{ close("code") }}{{ close("td") }}{{ close("tr") }}
-{{ open("tr") }}{{ open("th") }}Bear ID{{ close("th") }}{{ open("td") }}{{ open("code") }}{{ run.bear_id }}{{ close("code") }}{{ close("td") }}{{ close("tr") }}
-{{ open("tr") }}{{ open("th") }}User ID{{ close("th") }}{{ open("td") }}{{ run.user_id }}{{ close("td") }}{{ close("tr") }}
-{{ open("tr") }}{{ open("th") }}Created{{ close("th") }}{{ open("td") }}{{ run.created_at }}{{ close("td") }}{{ close("tr") }}
-{{ open("tr") }}{{ open("th") }}Updated{{ close("th") }}{{ open("td") }}{{ run.updated_at }}{{ close("td") }}{{ close("tr") }}
-{{ open("tr") }}{{ open("th") }}Completed{{ close("th") }}{{ open("td") }}{% if run.completed_at %}{{ run.completed_at }}{% else %}—{% endif %}{{ close("td") }}{{ close("tr") }}
-{{ close("tbody") }}{{ close("table") }}
-
-{{ open("h4") }}Run-scoped BearWire events{{ close("h4") }}
-{{ open("p class=\"form-hint\"") }}Showing up to 500 persisted events whose canonical BearWire {{ open("code") }}run_id{{ close("code") }} matches this run. Failed tool and run events are highlighted below.{{ close("p") }}
-{% for event in events if event.is_failure %}
-{{ open("details open") }}
-{{ open("summary") }}Failure · #{{ event.sequence_no }} · {{ event.event_type }} · {{ event.created_at }}{{ close("summary") }}
-{{ open("pre") }}{{ open("code") }}{{ event.event_json }}{{ close("code") }}{{ close("pre") }}
-{{ close("details") }}
-{% endfor %}
+<p><a href="/admin/runs/">Back to run diagnostics</a></p>
+<table><tbody>
+  <tr><th>State</th><td>{{ run.state | e }}</td></tr>
+  <tr><th>Terminal reason</th><td>{{ run.terminal_reason | default("—", true) | e }}</td></tr>
+  <tr><th>Session ID</th><td><code>{{ run.session_id | e }}</code></td></tr>
+  <tr><th>Bear ID</th><td><code>{{ run.bear_id | e }}</code></td></tr>
+  <tr><th>User ID</th><td>{{ run.user_id }}</td></tr>
+  <tr><th>Created</th><td>{{ run.created_at }}</td></tr>
+  <tr><th>Updated</th><td>{{ run.updated_at }}</td></tr>
+  <tr><th>Completed</th><td>{{ run.completed_at | default("—", true) | e }}</td></tr>
+</tbody></table>
+<h3>Run-scoped BearWire events</h3>
+<p class="form-hint">Up to 500 persisted events matching this run’s canonical <code>run_id</code>. Failure evidence is expanded.</p>
 {% for event in events %}
-{{ open("details") }}
-{{ open("summary") }}#{{ event.sequence_no }} · {{ event.event_type }} · {{ event.created_at }}{{ close("summary") }}
-{{ open("p class=\"form-hint\"") }}Session: {{ open("code") }}{{ event.session_id }}{{ close("code") }}{{ close("p") }}
-{{ open("pre") }}{{ open("code") }}{{ event.event_json }}{{ close("code") }}{{ close("pre") }}
-{{ close("details") }}
-{% else %}
-{{ open("p") }}No persisted BearWire events are associated with this run.{{ close("p") }}
-{% endfor %}
+<details{% if event.is_failure %} open{% endif %}>
+  <summary>{% if event.is_failure %}Failure · {% endif %}#{{ event.sequence_no }} · {{ event.event_type | e }} · {{ event.created_at }}</summary>
+  <p class="form-hint">Session: <code>{{ event.session_id | e }}</code></p>
+  <pre class="inspection-evidence">{{ event.event_json | e }}</pre>
+</details>
+{% else %}<p>No persisted BearWire events are associated with this run.</p>{% endfor %}
 {% endblock %}

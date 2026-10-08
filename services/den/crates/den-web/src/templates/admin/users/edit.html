@@ -15,13 +15,14 @@
       <option value="0"{% if user.email_verified == 0 %} selected{% endif %}>No (not verified)</option>
       <option value="1"{% if user.email_verified == 1 %} selected{% endif %}>Yes (verified)</option>
     </select>
-    <span class="form-hint">Sets <code>email_configs.verified_at</code> for the active row matching this user’s email (operator override).</span>
+    <p class="form-hint">Operator override: “Yes” marks this email verified without the user completing an email check; “No” removes verification.</p>
+        <details><summary>Help: how the override is stored</summary><p>Updates <code>email_configs.verified_at</code> on the active row matching this user’s email.</p></details>
     {% if errors and errors.email_verified %}
     <span class="form-hint form-errors">Submission error: {{ errors.email_verified | map(attribute="message", default="unknown error") | join(", ") }}</span>
     {% endif %}
   </div>
   {{ forms.select("theme", "Theme", theme_descriptions, 'required', user) }}
-  {{ forms.select("week_start_day", "Start Week On", day_of_week_names, 'required', user, hint="Weekly reports will be sent on this day") }}
+  {{ forms.select("week_start_day", "Start Week On", day_of_week_names, 'required', user) }}
   <button>Save</button>
 </form>
 </div>

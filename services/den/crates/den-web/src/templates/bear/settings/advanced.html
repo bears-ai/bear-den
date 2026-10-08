@@ -7,7 +7,7 @@
 <h2>Advanced · {{ bear.name }}</h2>
 
 {% if message %}
-<p><strong>{{ message | e }}</strong></p>
+<p role="status"><strong>{{ message | e }}</strong></p>
 {% endif %}
 
 <h3>Diagnostics</h3>
@@ -23,7 +23,8 @@
 </dl>
 
 <h3>Live reflection</h3>
-<p class="form-hint"><strong>Live reflection</strong> is a conservative background sweep: when this Bear and the Den worker are enabled, open conversations are checked and reflected if normal context-pressure policy has produced a summary. <strong>Manual reflection checkpoints</strong> are separate: the Activity page buttons force a checkpoint for selected conversations before mining it for memory proposals.</p>
+<p>Bear setting: <strong>{% if bear.live_reflection_enabled %}On{% else %}Off{% endif %}</strong>. <a href="/bear/{{ bear.slug | e }}/activity">Inspect worker state and recent activity</a> · <a href="/bear/{{ bear.slug | e }}/reflections">Inspect reflection outcomes and retry failures</a>.</p>
+<p class="form-hint">Idle time: 1–1440 minutes; activity threshold: 1–1000 events; sweep limit: 1–100 conversations.</p>
 <form method="post" action="/bear/{{ bear.slug | e }}/advanced/live-reflection">
   <label>
     <input type="checkbox" name="enabled" value="1" {% if bear.live_reflection_enabled %}checked{% endif %} {% if not can_manage_bear %}disabled{% endif %}>
@@ -48,6 +49,7 @@
   <p><button type="submit">Save live reflection settings</button></p>
   {% endif %}
 </form>
+<details><summary>Help: live reflection and manual checkpoints</summary><p>Live sweeps require both this Bear’s setting and the Den worker. Open conversations are checked under normal context-pressure policy. Manual reflection on the Activity page forces a fresh checkpoint before discovering memory proposals.</p></details>
 
 {% if stats %}
 <h3>SQLite memory file</h3>
@@ -59,7 +61,7 @@
   <dt>Records</dt>
   <dd>{{ stats.record_count }}</dd>
 </dl>
-{% endif %}
+{% else %}<p class="form-errors" role="alert">Memory file statistics unavailable. <a href="/bear/{{ bear.slug | e }}/memory">Inspect Memory</a> or reload to retry.</p>{% endif %}
 
 </div>
 {% endblock %}

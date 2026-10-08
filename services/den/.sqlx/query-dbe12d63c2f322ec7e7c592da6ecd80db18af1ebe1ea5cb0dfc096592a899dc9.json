@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT j.id AS job_id, r.state FROM bear_jobs j JOIN bear_job_runs r ON r.id = j.current_run_id AND r.job_id = j.id WHERE j.id = ANY($1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "job_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "state",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "dbe12d63c2f322ec7e7c592da6ecd80db18af1ebe1ea5cb0dfc096592a899dc9"
+}

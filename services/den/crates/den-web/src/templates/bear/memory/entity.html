@@ -8,6 +8,7 @@
 
 <div class="box">
   <h2>{{ entity.display_name | e }}</h2>
+  {% if inspection_errors %}<ul class="form-errors" role="alert">{% for error in inspection_errors %}<li>{{ error | e }}</li>{% endfor %}</ul>{% endif %}
   <p><a href="/bear/{{ bear.slug }}/entities">← Back to entities</a></p>
 
   <dl>
@@ -24,10 +25,11 @@
   </dl>
 </div>
 
-<section class="two-columns" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+<section class="den-reach-grid">
   <div class="box">
     <h3>Handles</h3>
-    {% if handles %}
+    {% if handles is none %}<p class="form-errors">Entity handles unavailable. Reload to retry.</p>
+    {% elif handles %}
     <table>
       <thead><tr><th>Type</th><th>Value</th><th>Trust</th><th>State</th></tr></thead>
       <tbody>
@@ -43,7 +45,8 @@
 
   <div class="box">
     <h3>Linked memory records</h3>
-    {% if related %}
+    {% if related is none %}<p class="form-errors">Linked memory records unavailable. Reload to retry.</p>
+    {% elif related %}
     <ul>
       {% for r in related %}
       <li>
@@ -60,6 +63,6 @@
 
 <div class="box">
   <h3>Metadata</h3>
-  <pre style="white-space: pre-wrap; max-height: 12rem; overflow: auto;">{{ entity.metadata_json | tojson(indent=2) }}</pre>
+  <pre class="bear-manage-prompt-preview">{{ entity.metadata_json | tojson(indent=2) }}</pre>
 </div>
 {% endblock %}

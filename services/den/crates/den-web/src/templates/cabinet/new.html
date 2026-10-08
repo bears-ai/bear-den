@@ -2,6 +2,7 @@
 {% block title %}New Cabinet page{% endblock %}
 {% block breadcrumb %}<a href="/">Bears</a> / <a href="/cabinet">Cabinet</a>{% endblock %}
 {% block content %}
+<div class="usability-work">
 <p><a href="/cabinet">← Cabinet</a></p>
 <h1>New Cabinet page</h1>
 <form method="post" action="/cabinet/new">
@@ -14,6 +15,9 @@
         <label for="content">Content (Markdown)</label><br>
         <textarea id="content" name="content" rows="20" cols="100"></textarea>
     </p>
-    <button type="submit">Create</button>
+    {% include "cabinet/_audience.html" %}
+    <p>Creation publishes the page to this audience immediately. A new child inherits its parent's restrictions; a root page starts open wiki. To prepare restricted content, configure access on a non-sensitive page before adding that content.</p>
+    <button type="submit">Create and publish page</button>
 </form>
+</div>
 {% endblock %}

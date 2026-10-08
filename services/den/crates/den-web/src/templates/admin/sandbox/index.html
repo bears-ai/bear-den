@@ -3,7 +3,7 @@
 {% block title %}Sandbox images{% endblock %}
 
 {% block admin_content %}
-<h3>Sandbox images</h3>
+<details><summary>Help: catalog and engine store</summary>
 <p>
     The image <strong>catalog</strong> is the dispatch trust boundary: jobs
     select images by catalog name, and the sandbox provider resolves them to
@@ -11,13 +11,14 @@
     engine actually holds — catalog entries referencing registry images are
     pulled on first use.
 </p>
+</details>
 
 {% if message %}
-<p><strong>{{ message }}</strong></p>
+<p role="status"><strong>{{ message }}</strong></p>
 {% endif %}
 
 {% if provider_error %}
-<p>⚠ Provider unavailable: {{ provider_error }}. The catalog below is still
+<p class="form-errors" role="alert">Provider unavailable: {{ provider_error }}. The catalog below is still
 editable; engine-store data and pulls/builds need the provider.</p>
 {% endif %}
 

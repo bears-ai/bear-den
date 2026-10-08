@@ -1,9 +1,14 @@
-            <h4>Runtime</h4>
-<ul>
-    <li><a href="/admin/models">Models</a></li>
-    <li><a href="/admin/workers/">Workers</a></li>
-    <li><a href="/admin/sandbox">Sandbox images</a></li>
-    <li><a href="/admin/oauth_clients/">OAuth clients</a></li>
-</ul>
+{% extends "base.html" %}
 
+{% block title %}Operator console{% endblock %}
+{% block sidebar %}
+{% if session is defined and session.username is defined %}
+{% include "admin/_operator_nav.html" %}
+{% endif %}
+{% endblock %}
+
+{% block content %}
+<main class="operator-console">
 {% block admin_content %}{% endblock %}
+</main>
+{% endblock %}

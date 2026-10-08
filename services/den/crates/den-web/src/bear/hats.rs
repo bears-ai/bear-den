@@ -35,6 +35,7 @@ mod legacy_review;
 mod primary_model;
 mod review;
 mod work_review;
+mod work_review_draft;
 
 #[cfg(test)]
 mod tests;

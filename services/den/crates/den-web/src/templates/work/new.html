@@ -5,6 +5,7 @@ document.addEventListener('DOMContentLoaded', function () {
     var surface = document.querySelector('select[name="surface_id"]');
     var hats = document.getElementById('job-hat-choice');
     if (!surface || !hats) return;
+    var eligibility = document.getElementById('job-hat-eligibility');
     function updateHats() {
         Array.prototype.forEach.call(hats.options, function (option) {
             if (!option.value) return;
@@ -12,6 +13,8 @@ document.addEventListener('DOMContentLoaded', function () {
             option.disabled = !surface.value || allowed.indexOf(surface.value) < 0;
         });
         if (hats.selectedOptions.length && hats.selectedOptions[0].disabled) hats.value = '';
+        if (eligibility) eligibility.textContent = surface.value && !Array.prototype.some.call(hats.options, function (option) { return option.value && !option.disabled; })
+            ? 'No Work-enabled hat currently permits this repository. Choose another repository or ask a Bear admin to review Work access.' : '';
     }
     surface.addEventListener('change', updateHats);
     updateHats();
@@ -19,33 +22,30 @@ document.addEventListener('DOMContentLoaded', function () {
 </script>
 {% endblock %}
 {% block manage %}
+<div class="usability-work">
 <p><a href="/bear/{{ bear_slug }}/jobs">← Jobs</a></p>
-<h2>New Job</h2>
-<p>
-    Creates a Docket job that runs autonomously in one shared sandbox session.
-    Choose a source change policy explicitly. Publishing policies push successful runs to the
-    job's work branch on the root's upstream.
-</p>
+<p>Define the goal and tasks here. Creating a Job does not start work; dispatch it from the Job page when ready.</p>
 
+{% if error %}<p role="alert"><strong>{{ error }}</strong> No Job was created. Your draft is preserved below.</p>{% endif %}
 <form method="post" action="/bear/{{ bear_slug }}/jobs/new">
     <p>
         <label>Goal<br>
-            <input type="text" name="goal" size="80" required
+            <input type="text" name="goal" size="80" required value="{{ draft.goal or '' }}"
                    placeholder="What this job should accomplish">
         </label>
     </p>
     <p>
         <label>Repository<br>
             {% if surfaces %}
-            <select name="surface_id">
-                <option value="">— none —</option>
+            <select name="surface_id" required>
+                <option value="" {% if not draft.surface_id or draft_surface_unavailable %}selected{% endif %} disabled>{% if draft_surface_unavailable %}Previous repository unavailable — choose explicitly{% else %}Choose a repository…{% endif %}</option>
                 {% for surface in surfaces %}
-                <option value="{{ surface.id }}">{{ surface.name }} (git: {{ surface.default_ref }})</option>
+                <option value="{{ surface.id }}" {% if draft.surface_id == surface.id %}selected{% endif %}>{{ surface.name }} (git: {{ surface.default_ref }})</option>
                 {% endfor %}
             </select>
             <small><a href="/work/surfaces">manage repositories</a></small>
             {% else %}
-            <small>No repositories are assigned to your Bears yet — <a href="/work/surfaces/new">create one</a> and assign it to this Bear.</small>
+            <small>No repositories are currently assigned to this Bear — <a href="/work/surfaces/new">create one</a> and assign it to this Bear.</small>
             {% endif %}
         </label>
     </p>
@@ -53,13 +53,14 @@ document.addEventListener('DOMContentLoaded', function () {
     <p>
         <label>Responsibility (hat)<br>
             <select name="hat_id" required id="job-hat-choice">
-                <option value="" selected disabled>Choose a Work-enabled hat…</option>
+                <option value="" {% if not draft.hat_id or draft_hat_unavailable %}selected{% endif %} disabled>{% if draft_hat_unavailable %}Previous responsibility unavailable — choose explicitly{% else %}Choose a Work-enabled hat…{% endif %}</option>
                 {% for hat in hat_choices %}
-                <option value="{{ hat.id }}" data-surfaces="{{ hat.surface_ids | join(',') | e }}">{{ hat.name | e }}{% if hat.short_summary %} — {{ hat.short_summary | e }}{% endif %}</option>
+                <option value="{{ hat.id }}" {% if draft.hat_id == hat.id %}selected{% endif %} data-surfaces="{{ hat.surface_ids | join(',') | e }}">{{ hat.name | e }}{% if hat.short_summary %} — {{ hat.short_summary | e }}{% endif %}</option>
                 {% endfor %}
             </select>
         </label><br>
-        <small>Only hats that allow the chosen surface are eligible. A hat limits the Job; it does not grant credentials or start a run.</small>
+        <small>Choose a Work-enabled hat that permits this repository. Credentials and current grants are checked separately; creation does not start a run.</small>
+        <p id="job-hat-eligibility" role="status"></p>
     </p>
     {% else %}
     <p class="form-errors">A Work-enabled hat with permitted surfaces is required. Ask a Bear admin to <a href="/bear/{{ bear_slug | e }}/hats">configure one</a> before creating a Job.</p>
@@ -67,19 +68,18 @@ document.addEventListener('DOMContentLoaded', function () {
     <p>
         <label>Output policy<br>
             <select name="commit_policy" required>
-                <option value="" selected disabled>— choose explicitly —</option>
-                <option value="per_task">Publish after each task</option>
-                <option value="per_job">Publish to the job branch</option>
-                <option value="none">No source changes expected</option>
+                <option value="" {% if draft.commit_policy != "per_task" %}selected{% endif %} disabled>— choose explicitly —</option>
+                <option value="per_task" {% if draft.commit_policy == "per_task" %}selected{% endif %}>Publish after each task</option>
+
             </select>
         </label>
-        <br><small><strong>No source changes expected</strong> is for investigation/validation jobs. Use a publishing policy when source changes are expected; the job branch is the review boundary.</small>
+        <br><small>Browser dispatch delivers repository changes and currently supports only <strong>Publish after each task</strong>. Publication uses the work branch. Per-Job publication and no-change dispatch are not available here.</small>
     </p>
     <p>
         <label>Work branch <small>(optional; default <code>den/job-&lt;id&gt;</code>)</small><br>
-            <input type="text" name="work_branch" size="40" placeholder="den/job-…">
+            <input type="text" name="work_branch" size="40" placeholder="den/job-…" value="{{ draft.work_branch or '' }}">
         </label><br>
-        <label><input type="checkbox" name="allow_default_ref" value="true"> Work directly on the surface's default branch</label><br>
+        <label><input type="checkbox" name="allow_default_ref" value="true" {% if draft.allow_default_ref %}checked{% endif %}> Work directly on the repository's default branch</label><br>
         <small>Warning: this bypasses the normal work-branch safety boundary and pushes successful work directly to the configured default branch. It is never enabled by default.</small>
     </p>
 
@@ -89,16 +89,17 @@ document.addEventListener('DOMContentLoaded', function () {
             <tr><th>Title</th><th>Completion criteria (semicolon-separated)</th></tr>
         </thead>
         <tbody>
-            {% for i in range(3) %}
+            {% for i in range([3, draft.task_title | default([]) | length] | max) %}
             <tr>
-                <td><input type="text" name="task_title" size="40"
+                <td><input type="text" name="task_title" size="40" value="{% if i < draft.task_title | length %}{{ draft.task_title[i] }}{% endif %}"
                            {% if loop.first %}required{% endif %}></td>
-                <td><input type="text" name="task_criteria" size="60"
+                <td><input type="text" name="task_criteria" size="60" value="{% if i < draft.task_criteria | length %}{{ draft.task_criteria[i] }}{% endif %}"
                            placeholder="criterion one; criterion two"></td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
-    <p><button type="submit"{% if has_hats and not hat_choices %} disabled{% endif %}>Create job</button></p>
+    <p><button type="submit"{% if not hat_choices or not surfaces %} disabled{% endif %}>Create job</button></p>
 </form>
+</div>
 {% endblock %}

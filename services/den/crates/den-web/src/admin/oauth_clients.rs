@@ -3,13 +3,17 @@ use serde::{Deserialize, Serialize};
 
 use axum::{
     debug_handler,
-    extract::{Path, Query, State},
+    extract::{Path, State},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
     Router,
 };
 use axum_extra::extract::Form;
 use axum_extra::routing::RouterExt;
+use axum_login::tower_sessions::Session;
+
+#[path = "token_generation.rs"]
+mod token_generation;
 
 use validator::{Validate, ValidationError, ValidationErrors};
 
@@ -23,7 +27,12 @@ use den_oauth::oauth::{
         scopes_from_json, validate_code_challenge_method, validate_pkce, validate_redirect_uri,
         validate_scopes_with_conflict_detection,
     },
-    AccessTokenWithContext, OAuthScope,
+    OAuthScope,
+};
+
+use super::{
+    oauth_feedback::{self, ClientFeedback},
+    oauth_tokens::{ClientOption, TokenUserOption, TokenView},
 };
 
 use crate::{
@@ -72,6 +81,7 @@ pub fn router() -> Router<AppState> {
             "/oauth_tokens/generate",
             get(generate_token_view).post(generate_token_action),
         )
+        .layer(axum::middleware::from_fn(oauth_feedback::protect))
 }
 
 #[derive(Validate, Serialize, Deserialize, Debug)]
@@ -96,10 +106,13 @@ pub struct PKCETestForm {
 
 #[derive(Validate, Serialize, Deserialize, Debug)]
 pub struct GenerateTokenForm {
+    #[serde(default)]
     #[validate(length(min = 1, message = "Client is required"))]
     client_id: String,
+    #[serde(default)]
     #[validate(length(min = 1, message = "User is required"))]
     user_id: String,
+    #[serde(default)]
     #[validate(custom(function = "validate_scopes"))]
     scopes: Vec<String>,
     #[validate(range(
@@ -107,6 +120,7 @@ pub struct GenerateTokenForm {
         max = 720,
         message = "Expiration must be between 1 and 720 hours"
     ))]
+    #[serde(default)]
     expires_in: i32,
 }
 
@@ -253,7 +267,11 @@ async fn oauth_clients_list(
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
-    let clients = oauth_db::list_oauth_clients(&state.sqlx_pool).await?;
+    let clients = oauth_db::list_oauth_clients(&state.sqlx_pool)
+        .await?
+        .into_iter()
+        .map(ClientOption::from)
+        .collect::<Vec<_>>();
 
     web::render_template(
         &state,
@@ -287,6 +305,7 @@ async fn add_oauth_client_view(
 pub async fn add_oauth_client_action(
     State(state): State<AppState>,
     auth_session: AuthSession,
+    session: Session,
     Form(form): Form<NewOAuthClientForm>,
 ) -> Result<Response, CustomError> {
     tracing::debug!(
@@ -377,28 +396,23 @@ pub async fn add_oauth_client_action(
         form.public
     );
 
-    // Redirect to view page with success message
-    // For public clients, don't show client_secret in URL
-    let redirect_url = if let Some(secret) = client_secret {
-        format!("/admin/oauth_clients/{client_db_id}?created=true&client_secret={secret}")
-    } else {
-        format!("/admin/oauth_clients/{client_db_id}?created=true")
-    };
-    Ok(Redirect::to(&redirect_url).into_response())
-}
-
-#[derive(Deserialize)]
-struct ViewQueryParams {
-    created: Option<String>,
-    regenerated: Option<String>,
-    client_secret: Option<String>,
+    oauth_feedback::put_client(
+        &session,
+        &auth_session,
+        client_db_id,
+        ClientFeedback::Created {
+            secret: client_secret,
+        },
+    )
+    .await?;
+    Ok(Redirect::to(&format!("/admin/oauth_clients/{client_db_id}")).into_response())
 }
 
 async fn view_oauth_client(
     Path(id): Path<i32>,
-    Query(params): Query<ViewQueryParams>,
     State(state): State<AppState>,
     auth_session: AuthSession,
+    session: Session,
 ) -> Result<Response, CustomError> {
     let client = oauth_db::get_oauth_client_by_id(&state.sqlx_pool, id)
         .await?
@@ -418,11 +432,17 @@ async fn view_oauth_client(
         None => vec![],
     };
 
-    // Extract query parameters for success messages
-    let show_created = params.created.as_deref() == Some("true");
-    let show_regenerated = params.regenerated.as_deref() == Some("true");
-    let client_secret = params.client_secret;
+    let feedback = oauth_feedback::take_client(&session, &auth_session, id).await?;
+    let show_created = matches!(&feedback, Some(ClientFeedback::Created { .. }));
+    let show_regenerated = matches!(&feedback, Some(ClientFeedback::Regenerated { .. }));
+    let client_secret = match feedback {
+        Some(ClientFeedback::Created { secret }) => secret,
+        Some(ClientFeedback::Regenerated { secret }) => Some(secret),
+        None => None,
+    };
 
+    let created_label = client.created_at.to_string();
+    let updated_label = client.updated_at.to_string();
     web::render_template(
         &state,
         "admin/oauth_clients/view.html",
@@ -434,6 +454,8 @@ async fn view_oauth_client(
             show_created,
             show_regenerated,
             client_secret,
+            created_label,
+            updated_label,
         },
     )
     .await
@@ -595,10 +617,8 @@ pub async fn pkce_test_action(
             Ok(()) => PKCETestResult {
                 success: true,
                 message: "PKCE validation successful!".to_string(),
-                validation_details: format!(
-                    "Code verifier '{}' successfully validated against challenge '{}' using method '{}'",
-                    &form.code_verifier, &form.code_challenge, &form.code_challenge_method
-                ),
+                validation_details: "The verifier matches the challenge for the selected method."
+                    .to_string(),
             },
             Err(e) => PKCETestResult {
                 success: false,
@@ -701,7 +721,17 @@ pub async fn pkce_test_action(
 pub async fn regenerate_client_secret_action(
     Path(id): Path<i32>,
     State(state): State<AppState>,
+    auth_session: AuthSession,
+    session: Session,
 ) -> Result<Redirect, CustomError> {
+    let client = oauth_db::get_oauth_client_by_id(&state.sqlx_pool, id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("OAuth client not found".into()))?;
+    if client.public {
+        return Err(CustomError::ValidationError(
+            "Public clients use PKCE and have no client secret to regenerate.".into(),
+        ));
+    }
     // Generate new client secret
     let new_client_secret = generate_client_secret();
     let new_client_secret_hash = hash_client_secret_for_admin(&new_client_secret)?;
@@ -715,10 +745,16 @@ pub async fn regenerate_client_secret_action(
     .execute(&state.sqlx_pool)
     .await?;
 
-    // Redirect back to view page with the new secret
-    Ok(Redirect::to(&format!(
-        "/admin/oauth_clients/{id}?regenerated=true&client_secret={new_client_secret}"
-    )))
+    oauth_feedback::put_client(
+        &session,
+        &auth_session,
+        id,
+        ClientFeedback::Regenerated {
+            secret: new_client_secret,
+        },
+    )
+    .await?;
+    Ok(Redirect::to(&format!("/admin/oauth_clients/{id}")))
 }
 
 pub async fn toggle_trusted_status_action(
@@ -752,7 +788,11 @@ async fn oauth_tokens_list(
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
-    let tokens = oauth_db::list_all_access_tokens_with_context(&state.sqlx_pool).await?;
+    let tokens = oauth_db::list_all_access_tokens_with_context(&state.sqlx_pool)
+        .await?
+        .into_iter()
+        .map(TokenView::from)
+        .collect::<Vec<_>>();
 
     web::render_template(
         &state,
@@ -805,7 +845,7 @@ async fn view_oauth_token(
         "admin/oauth_tokens/view.html",
         auth_session,
         context! {
-            token
+            token => TokenView::from(token)
         },
     )
     .await
@@ -825,171 +865,23 @@ pub async fn revoke_oauth_token_action(
 async fn generate_token_view(
     State(state): State<AppState>,
     auth_session: AuthSession,
+    session: Session,
 ) -> Result<Response, CustomError> {
-    // Get all active OAuth clients
-    let clients = oauth_db::list_oauth_clients(&state.sqlx_pool).await?;
-
-    // Get all active users
-    let users = sqlx::query!(
-        r"
-        SELECT id, username, display_name, email
-        FROM users
-        ORDER BY username
-        ",
-    )
-    .fetch_all(&state.sqlx_pool)
-    .await?
-    .into_iter()
-    .map(|row| (row.id, row.username, row.display_name, row.email))
-    .collect::<Vec<_>>();
-
-    let available_scopes = available_scope_names();
-
-    web::render_template(
-        &state,
-        "admin/oauth_tokens/generate.html",
-        auth_session,
-        context! {
-            clients,
-            users,
-            available_scopes,
-            form_data => None::<GenerateTokenForm>,
-            errors => None::<Option<minijinja::value::Value>>,
-            generated_token => None::<AccessTokenWithContext>,
-        },
-    )
-    .await
+    let generated_token = match oauth_feedback::take_token(&session, &auth_session).await? {
+        Some(id) => oauth_db::get_oauth_token_by_id(&state.sqlx_pool, id)
+            .await?
+            .map(TokenView::from),
+        None => None,
+    };
+    token_generation::render(&state, auth_session, None, None, None, generated_token).await
 }
 
 #[debug_handler]
 pub async fn generate_token_action(
     State(state): State<AppState>,
     auth_session: AuthSession,
+    session: Session,
     Form(form): Form<GenerateTokenForm>,
 ) -> Result<Response, CustomError> {
-    let mut validation_errors = ValidationErrors::new();
-    if let Err(form_validation_errors) = form.validate() {
-        validation_errors = form_validation_errors;
-    }
-    if !validation_errors.is_empty() {
-        let client_id_errors = field_error_messages(&validation_errors, "client_id");
-        let user_id_errors = field_error_messages(&validation_errors, "user_id");
-        let scopes_errors = field_error_messages(&validation_errors, "scopes");
-        let expires_in_errors = field_error_messages(&validation_errors, "expires_in");
-
-        return web::render_template(
-            &state,
-            "admin/oauth_tokens/generate.html",
-            auth_session,
-            context! {
-                clients => oauth_db::list_oauth_clients(&state.sqlx_pool).await?,
-                users => sqlx::query!(
-                    r"SELECT id, username, display_name, email FROM users ORDER BY username"
-                )
-                .fetch_all(&state.sqlx_pool)
-                .await?
-                .into_iter()
-                .map(|row| (row.id, row.username, row.display_name, row.email))
-                .collect::<Vec<_>>(),
-                available_scopes => available_scope_names(),
-                form_data => Some(form),
-                errors => Some(context! {
-                    client_id => client_id_errors,
-                    user_id => user_id_errors,
-                    scopes => scopes_errors,
-                    expires_in => expires_in_errors,
-                }),
-                generated_token => None::<AccessTokenWithContext>,
-            },
-        )
-        .await;
-    }
-
-    // Parse client_id and user_id
-    let client_id = form
-        .client_id
-        .parse::<i32>()
-        .map_err(|_| CustomError::ValidationError("Invalid client ID".to_string()))?;
-
-    let user_id = form
-        .user_id
-        .parse::<i32>()
-        .map_err(|_| CustomError::ValidationError("Invalid user ID".to_string()))?;
-
-    // Validate that the client exists and is active
-    let client = oauth_db::get_oauth_client_by_id(&state.sqlx_pool, client_id)
-        .await?
-        .ok_or_else(|| CustomError::NotFound("OAuth client not found".to_string()))?;
-
-    if !client.active {
-        return Err(CustomError::ValidationError(
-            "Client is not active".to_string(),
-        ));
-    }
-
-    // Validate that the user exists
-    let user_exists = sqlx::query_scalar!(
-        r#"SELECT EXISTS(SELECT 1 FROM users WHERE id = $1) AS "exists!""#,
-        user_id,
-    )
-    .fetch_one(&state.sqlx_pool)
-    .await?;
-
-    if !user_exists {
-        return Err(CustomError::ValidationError("User not found".to_string()));
-    }
-
-    // Parse scopes
-    let scopes = selected_oauth_scopes(&form.scopes);
-
-    // Validate scopes against client's allowed scopes
-    let client_scopes = scopes_from_json(&client.scopes)
-        .map_err(|_| CustomError::Parsing("Invalid client scopes format".to_string()))?;
-
-    if !den_oauth::oauth::utils::validate_scopes_for_client(&scopes, &client_scopes) {
-        return Err(CustomError::ValidationError(
-            "Requested scopes exceed client's allowed scopes".to_string(),
-        ));
-    }
-
-    // Generate token
-    let token = generate_access_token();
-
-    // Create the token in database
-    let token_id = oauth_db::create_admin_access_token(
-        &state.sqlx_pool,
-        &token,
-        client_id,
-        user_id,
-        &scopes,
-        form.expires_in,
-    )
-    .await?;
-
-    // Get the full token context for display
-    let generated_token = oauth_db::get_oauth_token_by_id(&state.sqlx_pool, token_id)
-        .await?
-        .ok_or_else(|| CustomError::System("Failed to retrieve generated token".to_string()))?;
-
-    web::render_template(
-        &state,
-        "admin/oauth_tokens/generate.html",
-        auth_session,
-        context! {
-            clients => oauth_db::list_oauth_clients(&state.sqlx_pool).await?,
-            users => sqlx::query!(
-                r"SELECT id, username, display_name, email FROM users ORDER BY username"
-            )
-            .fetch_all(&state.sqlx_pool)
-            .await?
-            .into_iter()
-            .map(|row| (row.id, row.username, row.display_name, row.email))
-            .collect::<Vec<_>>(),
-            available_scopes => available_scope_names(),
-            form_data => Some(form),
-            errors => None::<Option<minijinja::value::Value>>,
-            generated_token => Some(generated_token),
-        },
-    )
-    .await
+    token_generation::issue(&state, auth_session, session, form).await
 }

@@ -33,12 +33,28 @@ struct ReviewBear {
 }
 
 #[derive(Serialize)]
+struct ConnectionCatalogView {
+    #[serde(flatten)]
+    account: den_service::connections::Connection,
+    repositories: Vec<RepositoryLabel>,
+    other_repository_count: i64,
+    github_app_write_enabled: Option<bool>,
+}
+
+#[derive(Serialize)]
+struct RepositoryLabel {
+    id: Uuid,
+    name: String,
+}
+
+#[derive(Serialize)]
 struct RepositoryConnection {
     id: Uuid,
     name: String,
     credential_configured: bool,
     github_app_configured: bool,
-    reusable: bool,
+    linked_account: Option<crate::work::connection_view::LinkedAccount>,
+    can_link: bool,
 }
 
 pub fn router() -> Router<AppState> {
@@ -61,9 +77,34 @@ pub(crate) async fn pending_memory_reviews(
     Ok(total)
 }
 
+#[derive(Default, Deserialize)]
+struct ConnectionQuery {
+    sync: Option<String>,
+}
+
 async fn connections(
     State(state): State<AppState>,
+    Query(query): Query<ConnectionQuery>,
     auth_session: AuthSession,
+) -> Result<Response, CustomError> {
+    render_connections(
+        &state,
+        auth_session,
+        query.sync.as_deref() == Some("pending"),
+        None,
+        None,
+        None,
+    )
+    .await
+}
+
+pub(crate) async fn render_connections(
+    state: &AppState,
+    auth_session: AuthSession,
+    sync_pending: bool,
+    draft: Option<&crate::connections::ConnectionDraft>,
+    error: Option<&str>,
+    attachment_feedback: Option<&crate::connections::AttachmentFeedback>,
 ) -> Result<Response, CustomError> {
     let user = auth_session
         .user
@@ -77,6 +118,11 @@ async fn connections(
     let connection_catalog =
         den_service::connections::list(state.sqlx_pool(), den_core::ids::UserId::new(user.id))
             .await?;
+    let app_permissions = sqlx::query!(
+        "SELECT id, github_app_write_enabled FROM provider_connections WHERE owner_user_id = $1 AND provider = 'github_app'",
+        user.id,
+    ).fetch_all(state.sqlx_pool()).await.map_err(den_core::DenError::from)?;
+    let linkable = work_surfaces::list_surfaces_managed_by(state.sqlx_pool(), user.id).await?;
     let mut repositories = if user.is_admin {
         work_surfaces::list_all_surfaces(state.sqlx_pool()).await?
     } else {
@@ -88,17 +134,64 @@ async fn connections(
         name: surface.name,
         credential_configured: surface.credential_kind.is_some(),
         github_app_configured: surface.github_app_installation_id.is_some(),
-        reusable: false,
+        linked_account: None,
+        can_link: linkable.iter().any(|managed| managed.id == surface.id),
     })
     .collect::<Vec<_>>();
-    let linked = den_service::connections::linked_repositories(
+    let linked = crate::work::connection_view::linked_accounts(
         state.sqlx_pool(),
+        den_core::ids::UserId::new(user.id),
         &repositories.iter().map(|row| row.id).collect::<Vec<_>>(),
     )
     .await?;
-    for row in &mut repositories {
-        row.reusable = linked.contains(&row.id);
+    for account in linked {
+        if let Some(row) = repositories
+            .iter_mut()
+            .find(|row| row.id == account.surface_id)
+        {
+            row.linked_account = Some(account);
+        }
     }
+    let connection_catalog: Vec<_> = connection_catalog
+        .into_iter()
+        .map(|account| {
+            let visible: Vec<_> = repositories
+                .iter()
+                .filter(|row| {
+                    row.linked_account
+                        .as_ref()
+                        .is_some_and(|linked| linked.id == account.id)
+                })
+                .map(|row| RepositoryLabel {
+                    id: row.id,
+                    name: row.name.clone(),
+                })
+                .collect();
+            ConnectionCatalogView {
+                other_repository_count: account
+                    .repository_count
+                    .saturating_sub(visible.len() as i64)
+                    .max(0),
+                github_app_write_enabled: app_permissions
+                    .iter()
+                    .find(|row| row.id == account.id.0)
+                    .map(|row| row.github_app_write_enabled),
+                account,
+                repositories: visible,
+            }
+        })
+        .collect();
+    let attachment_account_available = attachment_feedback.is_some_and(|feedback| {
+        connection_catalog.iter().any(|connection| {
+            connection.account.id == feedback.account_id && !connection.account.revoked
+        })
+    });
+    let attachment_repository_available = attachment_feedback.is_some_and(|feedback| {
+        repositories
+            .iter()
+            .any(|repository| repository.id == feedback.surface_id && repository.can_link)
+    });
+    let has_linkable_repositories = repositories.iter().any(|repository| repository.can_link);
     let bears = bears_db::list_bears_for_user(state.sqlx_pool(), user.id)
         .await?
         .into_iter()
@@ -109,10 +202,11 @@ async fn connections(
         })
         .collect::<Vec<_>>();
     web::render_template(
-        &state,
+        state,
         "connections.html",
         auth_session,
-        context! { repositories, bears, connection_catalog },
+        context! { repositories, bears, connection_catalog, sync_pending, draft, error,
+            attachment_feedback, attachment_account_available, attachment_repository_available, has_linkable_repositories },
     )
     .await
 }

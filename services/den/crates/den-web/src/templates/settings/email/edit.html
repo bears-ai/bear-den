@@ -2,13 +2,16 @@
 {% import "forms.jinja" as forms %}
 
 {% block breadcrumb %}<a href="/settings">Settings</a> > {% endblock %}
-{% block title %}Change Email{% endblock %}
+{% block title %}Change email{% endblock %}
 
 {% block content %}
+{% if form.errors %}<p class="form-errors" role="alert">Email was not changed. Check the address below.</p>{% endif %}
+<p>Changing your email requires verification of the new address.</p>
 <div class="box">
 <form method="post">
-  {{ forms.input("email", "Email", 'email', 'required', form) }}
-  <button>Update</button>
+  {{ forms.input("email", "Email", 'email', 'autocomplete="email" required', form) }}
+  <button type="submit">Save email</button>
+    <a href="/settings">Cancel</a>
 </form>
 </div>
 {% endblock %}

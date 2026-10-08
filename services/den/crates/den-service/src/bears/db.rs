@@ -6,6 +6,11 @@ use uuid::Uuid;
 
 use den_core::{AgentLoopControlLevel, DenError};
 
+mod membership;
+pub use membership::{
+    grant_membership, revoke_membership, BearMembershipRole, LAST_BEAR_ADMIN_MESSAGE,
+};
+
 use super::model::{
     Bear, BearProfileBinding, BearSkillManifestEntry, BearSkillProposal, BearWithMembership,
     RuntimeContextLabel,
@@ -275,41 +280,6 @@ pub fn role_is_bear_admin(role: Option<&str>) -> bool {
         role.map(|s| s.trim().eq_ignore_ascii_case(BEAR_ROLE_ADMIN)),
         Some(true)
     )
-}
-
-pub async fn grant_membership(
-    pool: &PgPool,
-    user_id: i32,
-    bear_id: Uuid,
-    role: Option<&str>,
-) -> Result<(), DenError> {
-    sqlx::query!(
-        r"
-        INSERT INTO user_bear (user_id, bear_id, role)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (user_id, bear_id) DO UPDATE SET role = EXCLUDED.role
-        ",
-        user_id,
-        bear_id,
-        role
-    )
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-pub async fn revoke_membership(pool: &PgPool, user_id: i32, bear_id: Uuid) -> Result<(), DenError> {
-    let r = sqlx::query!(
-        "DELETE FROM user_bear WHERE user_id = $1 AND bear_id = $2",
-        user_id,
-        bear_id
-    )
-    .execute(pool)
-    .await?;
-    if r.rows_affected() == 0 {
-        return Err(DenError::NotFound("membership not found".to_string()));
-    }
-    Ok(())
 }
 
 pub async fn delete_bear(pool: &PgPool, bear_id: Uuid) -> Result<(), DenError> {

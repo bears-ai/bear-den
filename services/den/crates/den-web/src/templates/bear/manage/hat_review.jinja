@@ -4,6 +4,7 @@
 <p><a href="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}">← {{ hat.name | e }}</a></p>
 <div class="box">
   <h2>Review notes for {{ hat.name | e }}</h2>
+  {% if error %}<p class="form-errors" role="alert">{{ error | e }}</p><p>No entry was published. Your draft is preserved below. Review the current source and target again, then acknowledge the audience before resubmitting.</p>{% endif %}
   <p class="form-hint">These are private notes from individual sources, not shared memory. A promoted entry is newly written, reviewed data—not a copied instruction or a permission. It will be readable by other Bear members wearing this hat. Do not include secrets, private context, or untrusted instructions in the reviewed entry.</p>
   {% if hat.work_enabled %}<p><strong>Autonomous Work is enabled.</strong> Future authorized Jobs wearing this hat can read its reviewed memory. Review the text for that audience too.</p>{% endif %}
   {% if sources %}<ul>{% for source in sources %}
@@ -13,16 +14,17 @@
 {% if selected %}
 <div class="box">
   <h3>Private source (untrusted data)</h3>
-  <p>{{ selected.source | e }} · <code>{{ selected.id | e }}</code></p>
+  <p>Source: {{ selected.source | e }} · private notes; not yet shared.</p>
+  <details><summary>Source details</summary><p>Record <code>{{ selected.id | e }}</code></p></details>
   <pre>{{ selected.content_text | e }}</pre>
   {% if current_head %}<h3>Current reviewed entry at this hat path</h3><pre>{{ current_head.content_text | e }}</pre><p class="form-hint">Your new entry will replace this version only if it is still current when you submit.</p>{% endif %}
   <h3>Write the reviewed entry</h3>
   <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/review">
     <input type="hidden" name="source_memory_id" value="{{ selected.id | e }}">
     {% if current_head %}<input type="hidden" name="expected_head" value="{{ current_head.id | e }}">{% endif %}
-    <label>Kind (lowercase identifier) <input name="kind" value="{{ selected.kind | e }}" required maxlength="64"></label>
-    <label>Reviewed, shareable content (do not paste the source by default) <textarea name="reviewed_content" required rows="8" maxlength="16000"></textarea></label>
-    <label>What did you verify, omit, or change? <textarea name="review_notes" required rows="3" maxlength="4000"></textarea></label>
+    <label>Kind (lowercase identifier) <input name="kind" value="{{ (draft.kind if draft else selected.kind) | e }}" required maxlength="64"></label>
+    <label>Reviewed, shareable content (do not paste the source by default) <textarea name="reviewed_content" required rows="8" maxlength="16000">{{ draft.reviewed_content | default('') | e }}</textarea></label>
+    <label>What did you verify, omit, or change? <textarea name="review_notes" required rows="3" minlength="12" maxlength="4000">{{ draft.review_notes | default('') | e }}</textarea></label>
     <label><input type="checkbox" name="acknowledge_sharing" value="true" required> This content is safe to share with members wearing this hat.</label>
     {% if hat.work_enabled %}<label><input type="checkbox" name="work_audience_reviewed" value="true" required> I also reviewed this content for autonomous Work runs wearing this hat.</label>{% endif %}
     <button type="submit">Publish reviewed entry to this hat</button>

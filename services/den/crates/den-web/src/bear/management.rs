@@ -779,6 +779,12 @@ async fn bear_code_token_get(
         return Ok(r.into_response());
     }
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
+    let can_manage_bear = viewer_can_manage_bear(
+        state.sqlx_pool(),
+        super::settings::session_user(&auth_session).await?,
+        bear.id,
+    )
+    .await?;
     render_template(
         &state,
         "bear/code_token.html",
@@ -786,6 +792,7 @@ async fn bear_code_token_get(
         context! {
             bear,
             bear_nav_active => "connections",
+            can_manage_bear,
             token_name => format!("Zed - {}", bear.name),
             raw_token => None::<String>,
             api_server_url => state.config.api_server_url.clone(),
@@ -809,6 +816,12 @@ async fn bear_code_token_post(
         return Ok(r.into_response());
     }
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
+    let can_manage_bear = viewer_can_manage_bear(
+        state.sqlx_pool(),
+        super::settings::session_user(&auth_session).await?,
+        bear.id,
+    )
+    .await?;
     let token_name = form.name.trim();
     let created =
         armature_tokens::create_for_bear(state.sqlx_pool(), user_id, bear.id, token_name).await?;
@@ -820,6 +833,7 @@ async fn bear_code_token_post(
         context! {
             bear,
             bear_nav_active => "connections",
+            can_manage_bear,
             token_name => token_name,
             raw_token => created.raw_token,
             token_id => created.id.to_string(),
@@ -904,8 +918,8 @@ async fn new_bear_post(
                 auth_session,
                 context! {
                     form => form,
-                    validation_errors => validation_errors,
-                    provision_error => format!("Bifrost virtual key provisioning failed: {e}"),
+                    errors => validation_errors,
+                    provision_error => format!("Bear setup failed while provisioning its gateway key: {e}. Your draft is preserved."),
                     ..page
                 },
             )
@@ -926,6 +940,7 @@ async fn new_bear_post(
                 context! {
                     form => form,
                     provision_error => e.to_string(),
+                    saved_bear_slug => form.slug.trim(),
                     ..page
                 },
             )
@@ -996,6 +1011,7 @@ async fn bear_edit_overview_get(
         "bear/edit_overview.html",
         auth_session,
         context! {
+            can_manage_bear => true,
             bear,
             bear_nav_active => "identity",
             form,
@@ -1068,6 +1084,7 @@ async fn bear_edit_overview_post(
                 "bear/edit_overview.html",
                 auth_session,
                 context! {
+                    can_manage_bear => true,
                     errors => ValidationErrors::new(),
                     form => form,
                     bear,
@@ -1089,6 +1106,7 @@ async fn bear_edit_overview_post(
         "bear/edit_overview.html",
         auth_session,
         context! {
+            can_manage_bear => true,
             errors => validation_errors,
             form => form,
             bear,
@@ -1124,6 +1142,7 @@ async fn bear_edit_prompt_get(
         "bear/edit_prompt.html",
         auth_session,
         context! {
+            can_manage_bear => true,
             bear,
             bear_nav_active => "identity",
             form,
@@ -1186,6 +1205,7 @@ async fn bear_edit_prompt_post(
                 "bear/edit_prompt.html",
                 auth_session,
                 context! {
+                    can_manage_bear => true,
                     errors => ValidationErrors::new(),
                     form => form,
                     bear,
@@ -1206,6 +1226,7 @@ async fn bear_edit_prompt_post(
         "bear/edit_prompt.html",
         auth_session,
         context! {
+            can_manage_bear => true,
             errors => validation_errors,
             form => form,
             bear,
@@ -1235,21 +1256,8 @@ async fn bear_edit_configuration_get(
             "bear admin role required".to_string(),
         ));
     }
-    let form = BearConfigurationEditForm::from(&bear);
-    let page = bear_configuration_page_context(&state, &bear, &form).await;
-    render_template(
-        &state,
-        "bear/edit_configuration.html",
-        auth_session,
-        context! {
-            bear,
-            bear_nav_active => "identity",
-            form,
-            errors => ValidationErrors::new(),
-            ..page
-        },
-    )
-    .await
+    // Keep legacy POSTs compatible, but send new edits to the canonical model UI.
+    Ok(Redirect::to(&format!("/bear/{}/models", bear.slug)).into_response())
 }
 
 async fn bear_edit_configuration_post(
@@ -1318,6 +1326,7 @@ async fn bear_edit_configuration_post(
                 "bear/edit_configuration.html",
                 auth_session,
                 context! {
+                    can_manage_bear => true,
                     errors => ValidationErrors::new(),
                     form => form,
                     bear,
@@ -1340,6 +1349,7 @@ async fn bear_edit_configuration_post(
         "bear/edit_configuration.html",
         auth_session,
         context! {
+            can_manage_bear => true,
             errors => validation_errors,
             form => form,
             bear,

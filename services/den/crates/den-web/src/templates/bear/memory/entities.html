@@ -8,7 +8,9 @@
 
 <div class="box">
   <h2>Entities</h2>
-  <p class="form-hint">People, organizations, work surfaces, missions, and other entities this Bear has resolved from its memory (ADR-0042). The Bear builds this layer as it recognizes entities; it may be empty until entity ingestion is active.</p>
+  {% if inspection_errors %}<ul class="form-errors" role="alert">{% for error in inspection_errors %}<li>{{ error | e }}</li>{% endfor %}</ul>{% endif %}
+  {% if entities is not none %}<p class="form-hint">{{ entities | length }} entities shown{% if type_filter %} in this filter{% endif %}.</p>{% endif %}
+    <details><summary>Help: entity records</summary><p>Entities identify people, organizations, repositories, Cabinet pages and other things referenced by memory. Resolution, trust, handles and record links are inspectable on each entity. This derived layer is separate from canonical memory content.</p></details>
 
   {% if types %}
   <p>
@@ -18,7 +20,8 @@
   </p>
   {% endif %}
 
-  {% if entities %}
+  {% if entities is none %}<p class="form-errors">Entity list unavailable. Reload to retry.</p>
+  {% elif entities %}
   <table>
     <thead>
       <tr><th>Name</th><th>Type</th><th>Resolution</th><th>Trust</th><th>Created</th></tr>

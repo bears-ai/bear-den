@@ -3,12 +3,16 @@
 
 use axum::{
     extract::{Path, Query, State},
+    http::StatusCode,
     response::{IntoResponse, Redirect, Response},
     routing::get,
     Router,
 };
 use axum_extra::{extract::Form, routing::RouterExt};
-use den_core::ids::{BearId, HatId, UserId};
+use den_core::{
+    ids::{BearId, HatId, UserId},
+    DenError,
+};
 use den_service::bears::hats::{
     legacy_review::{self, LegacyReviewDecision},
     manage,
@@ -37,7 +41,7 @@ struct ReviewQuery {
     before: Option<i64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct ReviewForm {
     source_memory_id: String,
     kind: String,
@@ -66,8 +70,26 @@ async fn review_get(
         Ok(bear) => bear,
         Err(redirect) => return Ok(redirect.into_response()),
     };
+    render_review(state, auth, bear, HatId::new(hat_uuid), query, None).await
+}
+
+async fn render_review(
+    state: AppState,
+    auth: AuthSession,
+    bear: den_service::bears::Bear,
+    hat_id: HatId,
+    query: ReviewQuery,
+    feedback: Option<(StatusCode, String, ReviewForm)>,
+) -> Result<Response, CustomError> {
+    let (status, error, draft) = match feedback {
+        Some((status, error, mut draft)) => {
+            draft.acknowledge_unverified_source_and_members = false;
+            draft.work_audience_reviewed = false;
+            (status, Some(error), Some(draft))
+        }
+        None => (StatusCode::OK, None, None),
+    };
     let bear_id = BearId::new(bear.id);
-    let hat_id = HatId::new(hat_uuid);
     let reviewer = UserId::new(session_user(&auth).await?.id);
     let hat = manage::get_hat(state.sqlx_pool(), bear_id, hat_id).await?;
     let page = legacy_review::inventory_page(
@@ -96,26 +118,35 @@ async fn review_get(
     };
     let current_head = if let Some(ref selected) = selected {
         let store = state.memory_stores.store_for_bear(bear.id).await?;
-        den_memory::hat_promotion::current_hat_head(&store, hat_id, &selected.kind)
-            .await?
-            .map(|head| HeadView {
-                id: head.memory_id.to_string(),
-                content_text: head.content_text,
-            })
+        den_memory::hat_promotion::current_hat_head(
+            &store,
+            hat_id,
+            draft
+                .as_ref()
+                .map(|form| form.kind.as_str())
+                .unwrap_or(&selected.kind),
+        )
+        .await?
+        .map(|head| HeadView {
+            id: head.memory_id.to_string(),
+            content_text: head.content_text,
+        })
     } else {
         None
     };
-    web::render_template(
+    let mut response = web::render_template(
         &state,
         "bear/manage/hat_legacy_review.jinja",
         auth,
         context! {
-            hat, page, selected, current_head,
+            hat, page, selected, current_head, error, draft,
             can_manage_bear => true, native_runtime => true,
             ..bear_nav_context(&bear, "hats"),
         },
     )
-    .await
+    .await?;
+    *response.status_mut() = status;
+    Ok(response)
 }
 
 async fn review_post(
@@ -128,24 +159,53 @@ async fn review_post(
         Ok(bear) => bear,
         Err(redirect) => return Ok(redirect.into_response()),
     };
+    let hat_id = HatId::new(hat_uuid);
+    let hat = manage::get_hat(state.sqlx_pool(), BearId::new(bear.id), hat_id).await?;
+    if !form.acknowledge_unverified_source_and_members
+        || (hat.work_enabled && !form.work_audience_reviewed)
+    {
+        return render_review(
+            state, auth, bear, hat_id,
+            ReviewQuery { source_id: Some(form.source_memory_id.clone()), before: None },
+            Some((StatusCode::FORBIDDEN, "Acknowledge the unverified source and member audience, and review for autonomous Work when enabled, before publishing.".into(), form)),
+        ).await;
+    }
     let result = legacy_review::reauthor(
         state.sqlx_pool(),
         &state.memory_stores,
         BearId::new(bear.id),
         UserId::new(session_user(&auth).await?.id),
         LegacyReviewDecision {
-            source_memory_id: form.source_memory_id,
+            source_memory_id: form.source_memory_id.clone(),
             target_hat: HatId::new(hat_uuid),
-            kind: form.kind,
-            reviewed_content: form.reviewed_content,
+            kind: form.kind.clone(),
+            reviewed_content: form.reviewed_content.clone(),
             expected_head: form.expected_head,
-            review_notes: form.review_notes,
+            review_notes: form.review_notes.clone(),
             acknowledge_unverified_source_and_members: form
                 .acknowledge_unverified_source_and_members,
             work_audience_reviewed: form.work_audience_reviewed,
         },
     )
-    .await?;
+    .await;
+    let result = match result {
+        Ok(result) => result,
+        Err(DenError::ValidationError(message)) => {
+            return render_review(
+                state,
+                auth,
+                bear,
+                hat_id,
+                ReviewQuery {
+                    source_id: Some(form.source_memory_id.clone()),
+                    before: None,
+                },
+                Some((StatusCode::BAD_REQUEST, message, form)),
+            )
+            .await;
+        }
+        Err(error) => return Err(error.into()),
+    };
     den_runtime::reflection::conductor::enqueue_recall_index_if_enabled(
         state.sqlx_pool(),
         state.config.as_ref(),

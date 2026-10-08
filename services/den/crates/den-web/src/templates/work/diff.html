@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Work surface diff{% endblock %}
 {% block content %}
+<div class="usability-work">
 <p><a href="/work/surfaces/{{ surface_id }}">← {{ surface_name }}</a></p>
 <h1>Diff details</h1>
 <p>Comparing <code>{{ base }}</code> to <code>{{ head }}</code>.</p>
@@ -11,4 +12,5 @@
 {% else %}
 <p><strong>Diff unavailable.</strong> {{ unavailable or "The selected refs could not be inspected." }}</p>
 {% endif %}
+</div>
 {% endblock %}

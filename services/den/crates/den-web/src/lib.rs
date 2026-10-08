@@ -279,10 +279,21 @@ pub async fn server_with_state_and_runtime(
     .await
 }
 
+struct ImportStagingCleanup(tokio::task::AbortHandle);
+
+impl Drop for ImportStagingCleanup {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 pub async fn server(
     state: AppState,
     session_store: PostgresStore,
 ) -> Result<Router, Box<dyn std::error::Error>> {
+    let import_cleanup = Arc::new(ImportStagingCleanup(
+        bear::settings::start_import_staging_cleanup(state.config.clone()).abort_handle(),
+    ));
     crate::cabinet::cleanup::spawn(state.clone());
     let mut session_layer = SessionManagerLayer::new(session_store)
         .with_same_site(SameSite::Lax)
@@ -368,6 +379,7 @@ pub async fn server(
         .merge(public::router())
         .nest("/assets", asset_router)
         .layer(auth_layer)
+        .layer(axum::Extension(import_cleanup))
         .layer(
             TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
                 let matched_path = request

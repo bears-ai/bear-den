@@ -2,31 +2,87 @@
 {% block title %}Connections{% endblock %}
 {% block breadcrumb %}<a href="/">Bears</a> / This Den{% endblock %}
 {% block content %}
-<main class="den-hub">
+<main class="den-hub usability-work">
+  {% if error %}<p role="alert"><strong>{{ error }}</strong> No account was created. Name and provider settings are preserved; re-enter secret material, which is never echoed.</p>{% endif %}
+  {% if attachment_feedback %}<p role="alert"><strong>{{ attachment_feedback.error }}</strong> No repository authentication was changed. Your repository selection is preserved where still permitted; review it and confirm again. {% if attachment_account_available %}<a href="#account-{{ attachment_feedback.account_id }}">Retry attachment below</a>.{% else %}The previous account is unavailable; choose another current account below.{% endif %}</p>{% endif %}
+  {% if sync_pending %}<p role="alert">Connection change saved, but the sandbox provider has not received the updated configuration. Open the affected repository and use Test &amp; prepare; ask a Den operator if it still fails.</p>{% endif %}
   <section class="box"><h2>Your reusable accounts</h2>
-    {% if connection_catalog %}<ul class="den-record-list">{% for connection in connection_catalog %}<li><strong>{{ connection.name | e }}</strong><span>{{ connection.provider | e }} · {{ connection.repository_count }} linked repositories · {% if connection.revoked %}revoked{% else %}active{% endif %}</span>
-    {% if not connection.revoked %}<form method="post" action="/connections/{{ connection.id }}/revoke"><input type="hidden" name="revision" value="{{ connection.revision }}"><button type="submit">Revoke</button></form>
-    {% if repositories %}<form method="post" action="/connections/{{ connection.id }}/repositories"><label>Attach to repository <select name="surface_id" required>{% for repository in repositories %}<option value="{{ repository.id }}">{{ repository.name | e }}</option>{% endfor %}</select></label><button type="submit">Attach</button></form>{% endif %}{% endif %}</li>{% endfor %}</ul>{% else %}<p>No reusable accounts yet.</p>{% endif %}
-    <details><summary>Add a reusable account</summary><form method="post" action="/connections/create"><label>Name <input name="name" maxlength="120" required></label><label>Provider <select name="provider"><option value="git_https">Git HTTPS token</option><option value="git_ssh">Git SSH key</option><option value="github_app">GitHub App installation</option></select></label><label>Secret (HTTPS token or SSH key; never displayed) <textarea name="secret" rows="4" autocomplete="new-password"></textarea></label><label>GitHub installation ID <input name="installation" inputmode="numeric"></label><label><input type="checkbox" name="allow_write" value="true">GitHub App may write</label><button type="submit">Create account</button></form></details>
-  </section>
-  <section class="box">
-    <h2>Repository connections</h2>
-    <p class="button-row"><a class="button-link" href="/work/surfaces/new">Connect a repository</a><a href="/work/surfaces">All permitted repositories</a></p>
-    {% if repositories %}
-    <ul class="den-record-list">
-      {% for repository in repositories %}
-      <li><a href="/work/surfaces/{{ repository.id }}">{{ repository.name | e }}</a>
-        <span class="form-hint">{% if repository.reusable %}Reusable connection linked{% elif repository.github_app_configured %}GitHub App configured{% elif repository.credential_configured %}Credential configured{% else %}No credential configured{% endif %}</span>
-        <a href="/work/surfaces/{{ repository.id }}#connection">Manage connection</a>{% if repository.reusable %}<form method="post" action="/connections/repositories/{{ repository.id }}/detach"><button type="submit">Detach reusable account</button></form>{% endif %}
+    {% if connection_catalog %}
+    <ul class="den-record-list">{% for connection in connection_catalog %}
+      <li id="account-{{ connection.id }}"><strong>{{ connection.name | e }}</strong>
+        <span>{% if connection.provider == "git_https" %}Git HTTPS token{% elif connection.provider == "git_ssh" %}Git SSH key{% else %}GitHub App installation{% endif %} · {{ connection.repository_count }} linked repositories · {% if connection.revoked %}<strong>revoked</strong>{% else %}active{% endif %}</span>
+        {% if connection.provider == "github_app" %}<p>{% if connection.github_app_write_enabled %}Publication enabled, subject to installation permissions.{% else %}<strong>Read-only installation — cannot publish repository changes.</strong> Create a write-enabled replacement account if publication is required.{% endif %}</p>{% endif %}
+        <p>Affected repositories: {% for repository in connection.repositories %}{% if not loop.first %}, {% endif %}<a href="/work/surfaces/{{ repository.id }}">{{ repository.name | e }}</a>{% else %}No linked repositories within your current repository access{% endfor %}.{% if connection.other_repository_count %} Also {{ connection.other_repository_count }} linked repository/repositories outside your current repository access.{% endif %}</p>
+        {% if not connection.revoked %}
+        <form method="post" action="/connections/{{ connection.id }}/revoke">
+          <input type="hidden" name="revision" value="{{ connection.revision }}">
+          <p>Revoking this account denies future Work provisioning and live connection checks for <strong>all {{ connection.repository_count }} linked repositories</strong>. It does not fall back to old local credentials or promise to stop every already-running process.</p>
+          <label><input type="checkbox" name="confirmed" value="true" required>I understand the affected repositories will lose this account's authorization.</label>
+          <button type="submit">Revoke account</button>
+        </form>
+        {% set retry_attachment = attachment_feedback and attachment_feedback.account_id == connection.id %}
+        <details {% if retry_attachment %}open{% endif %}><summary>Attach or replace an account on a repository</summary>
+          <form method="post" action="/connections/{{ connection.id }}/repositories">
+            <label>Repository to change <select name="surface_id" required>
+              <option value="" {% if not retry_attachment or not attachment_repository_available %}selected{% endif %} disabled>{% if retry_attachment and not attachment_repository_available %}Previous repository unavailable — choose explicitly{% else %}Choose a repository…{% endif %}</option>
+              {% for repository in repositories %}{% if repository.can_link %}<option value="{{ repository.id }}" {% if retry_attachment and attachment_feedback.surface_id == repository.id %}selected{% endif %}>{{ repository.name | e }} — {% if repository.linked_account %}replaces {{ repository.linked_account.name | e }}{% elif repository.github_app_configured %}replaces local GitHub App authorization{% elif repository.credential_configured %}replaces local credential{% else %}no account linked{% endif %}</option>{% endif %}{% endfor %}
+            </select></label>
+            <p>This changes only the selected repository. Attaching replaces its account link and permanently clears its local token/key and local GitHub App authorization; detaching later will not restore them. Other repositories keep their existing links.</p>
+            <p>{% if connection.provider == "git_ssh" %}Requires an SSH or SCP-style upstream.{% elif connection.provider == "github_app" %}Requires a plain HTTPS upstream on github.com; installation permissions still apply.{% else %}Requires a plain HTTPS upstream without embedded credentials.{% endif %}</p>
+            <label><input type="checkbox" name="confirmed" value="true" required>I understand the selected repository's existing authentication will be replaced.</label>
+            {% if not has_linkable_repositories %}<p role="status">No repositories are currently yours to attach. Obtain a repository-management grant first.</p>{% endif %}
+            <button type="submit" {% if not has_linkable_repositories %}disabled{% endif %}>Attach / replace account</button>
+          </form>
+        </details>
+        {% endif %}
       </li>
-      {% endfor %}
-    </ul>
-    {% else %}<p>No repository connections you can manage yet.</p>{% endif %}
+    {% endfor %}</ul>
+    {% else %}<p>No reusable accounts yet.</p>{% endif %}
+    <details {% if error %}open{% endif %}><summary>Add a reusable account</summary>
+      <p>Choose the provider below. Secrets stay encrypted on this Den and are never displayed. Creating an account does not grant a Bear access; attach it to a repository separately.</p>
+      <details {% if draft.provider == "git_https" %}open{% endif %}><summary>Git HTTPS token</summary>
+        <form method="post" action="/connections/create"><input type="hidden" name="provider" value="git_https">
+          <label>Account name <input name="name" maxlength="120" required value="{{ draft.name or '' }}"></label>
+          <label>HTTPS access token <input type="password" name="secret" required autocomplete="new-password"></label>
+          <button type="submit">Create HTTPS account</button>
+        </form>
+      </details>
+      <details {% if draft.provider == "git_ssh" %}open{% endif %}><summary>Git SSH key</summary>
+        <form method="post" action="/connections/create"><input type="hidden" name="provider" value="git_ssh">
+          <label>Account name <input name="name" maxlength="120" required value="{{ draft.name or '' }}"></label>
+          <label>SSH private key <textarea name="secret" rows="6" required autocomplete="new-password" spellcheck="false"></textarea></label>
+          <button type="submit">Create SSH account</button>
+        </form>
+      </details>
+      <details {% if draft.provider == "github_app" %}open{% endif %}><summary>GitHub App installation</summary>
+        <form method="post" action="/connections/create"><input type="hidden" name="provider" value="github_app">
+          <label>Account name <input name="name" maxlength="120" required value="{{ draft.name or '' }}"></label>
+          <label>GitHub App installation ID (positive number) <input type="text" name="installation" inputmode="numeric" pattern="[1-9][0-9]*" required value="{{ draft.installation or '' }}"></label>
+          <label><input type="checkbox" name="allow_write" value="true" {% if draft.allow_write %}checked{% endif %}>Allow this installation to publish repository changes</label>
+          <p>Read-only access cannot publish. The installation's permissions and repository selection still limit access.</p>
+          <button type="submit">Create GitHub App account</button>
+        </form>
+      </details>
+    </details>
   </section>
-  <section class="box">
-    <h2>Editors</h2>
-    {% if bears %}<ul class="den-record-list">{% for bear in bears %}<li><a href="/bear/{{ bear.slug | urlencode }}/connections">{{ bear.name | e }}</a><span class="form-hint">{% if bear.can_manage %}Manage editor access{% else %}View editor setup{% endif %}</span></li>{% endfor %}</ul>{% else %}<p>No Bears assigned to you.</p>{% endif %}
+  <section class="box"><h2>Repository connections</h2>
+    <p class="button-row"><a class="button-link" href="/work/surfaces/new">Connect a repository</a><a href="/work/surfaces">All permitted repositories</a></p>
+    {% if repositories %}<ul class="den-record-list">{% for repository in repositories %}
+      <li id="repository-{{ repository.id }}"><a href="/work/surfaces/{{ repository.id }}">{{ repository.name | e }}</a>
+        <span>{% if repository.linked_account %}Account: {{ repository.linked_account.name | e }} · {% if repository.linked_account.state == "revoked" %}<strong>revoked — replace or detach to repair</strong>{% elif repository.linked_account.state == "unavailable" %}<strong>unavailable — check owner access and upstream compatibility</strong>{% elif repository.linked_account.github_app_write_enabled == false %}<strong>read-only — cannot publish; replace with a write-enabled account</strong>{% else %}authorized; provider readiness is checked separately{% endif %}{% elif repository.github_app_configured %}Local GitHub App configured{% elif repository.credential_configured %}Local credential configured{% else %}No account or local credential; verify upstream access{% endif %}</span>
+        <a href="/work/surfaces/{{ repository.id }}#connection">Inspect account &amp; test readiness</a>
+        {% if repository.linked_account and repository.can_link %}
+        <form method="post" action="/connections/repositories/{{ repository.id }}/detach">
+          <p>Detaching <strong>{{ repository.linked_account.name | e }}</strong> affects only <strong>{{ repository.name | e }}</strong>. Previously cleared local credentials are not restored. Configure replacement authentication and Test &amp; prepare before dispatching.</p>
+          <label><input type="checkbox" name="confirmed" value="true" required>I understand this repository loses its linked account.</label>
+          <button type="submit">Detach account</button>
+        </form>{% endif %}
+      </li>
+    {% endfor %}</ul>{% else %}<p>No repository connections you can manage yet.</p>{% endif %}
   </section>
-  <details class="box"><summary>Other provider accounts</summary><p>Reusable Git HTTPS, SSH keys and GitHub App installations are supported. Other provider adapters are not available. Attaching an account clears the local credential copy; revocation denies future Work provisioning and live egress checks without falling back to stale credentials.</p></details>
+  <section class="box"><h2>Editors</h2>
+    {% if bears %}<ul class="den-record-list">{% for bear in bears %}<li><a href="/bear/{{ bear.slug | urlencode }}/connections">{{ bear.name | e }}</a><span>{% if bear.can_manage %}Manage editor access{% else %}View editor setup{% endif %}</span></li>{% endfor %}</ul>{% else %}<p>No Bears assigned to you.</p>{% endif %}
+  </section>
+  <details class="box"><summary>How reusable accounts work</summary><p>HTTPS tokens, SSH keys and GitHub App installations are supported. An account owner who also manages a repository can attach their account to it. Repository managers can detach links; only the account owner can revoke the account. To replace secret material, create a new account and replace each intended repository link, then revoke the old account if no longer needed.</p></details>
 </main>
 {% endblock %}

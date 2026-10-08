@@ -2,6 +2,7 @@
 {% block title %}Repositories{% endblock %}
 {% block breadcrumb %}<a href="/connections">Connections</a> / Repositories{% endblock %}
 {% block content %}
+<div class="usability-work">
 <p><a href="/">← Bears</a></p>
 <h1>Repositories</h1>
 <details><summary>Repository access</summary><p>Repository assignment, eligible hats, Job authority and current policy govern work. Repository credentials are write-only and remain on this Den.</p></details>
@@ -24,14 +25,14 @@
                 <td><a href="/work/surfaces/{{ surface.reference.route_id }}" title="UUID prefix for {{ surface.reference.full_id }}">{{ surface.reference.kind }} <code class="entity-reference-id">{{ surface.reference.id }}</code>: {{ surface.reference.title }}</a></td>
                 <td><code>{{ surface.upstream_url }}</code></td>
                 <td>{{ surface.default_ref }}</td>
-                <td>{{ surface.credential_kind or "none" }}</td>
+                <td>{% if surface.linked_account %}<a href="/connections#repository-{{ surface.linked_account.surface_id }}">{{ surface.linked_account.name }}</a> · {{ surface.linked_account.state }}{% if surface.linked_account.github_app_write_enabled == false %} · read-only; cannot publish{% endif %}{% elif surface.github_app_configured %}Local GitHub App{% elif surface.credential_kind %}Local {{ surface.credential_kind }}{% else %}No account or credential{% endif %}</td>
                 <td>{{ surface.description or "—" }}</td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
     {% else %}
-    <p>You don't manage any surfaces yet.</p>
+    <p>You don't manage any repositories yet.</p>
     {% endif %}
 </section>
 
@@ -53,7 +54,8 @@
         </tbody>
     </table>
     {% else %}
-    <p>No surfaces are assigned to your bears. Assign one from a surface's manage page.</p>
+    <p>No repositories are assigned to your Bears. A repository manager can assign one from its page.</p>
     {% endif %}
 </section>
+</div>
 {% endblock %}

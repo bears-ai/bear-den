@@ -3,7 +3,6 @@
 {% block title %}OAuth Client: {{ client.name }}{% endblock %}
 
 {% block admin_content %}
-<h2>OAuth Client Details</h2>
 
 {% if show_created %}
 <div class="alert alert-success">
@@ -85,11 +84,11 @@
       </tr>
       <tr>
         <td><strong>Created:</strong></td>
-        <td>{{ client.created_at | datetimeformat(format="short") }}</td>
+        <td>{{ created_label | e }}</td>
       </tr>
       <tr>
         <td><strong>Updated:</strong></td>
-        <td>{{ client.updated_at | datetimeformat(format="short") }}</td>
+        <td>{{ updated_label | e }}</td>
       </tr>
     </table>
   </div>
@@ -129,28 +128,30 @@
   <a class="action" href="/admin/oauth_clients/{{ client.id }}/pkce-test">PKCE Testing</a>
 
   {% if client.active %}
-  <form method="post" action="./toggle_trusted" style="display: inline;">
+  <p class="form-hint">Trusted clients automatically approve authorization requests; untrusted clients ask the user to approve.</p>
+    <form method="post" action="/admin/oauth_clients/{{ client.id }}/toggle_trusted"
+          onsubmit="return confirm('{% if client.trusted %}Require users to approve authorization requests?{% else %}Automatically approve authorization requests for this client?{% endif %}')">
     {% if client.trusted %}
-    <button type="submit" class="action-warning"
-            onsubmit="return confirm('Are you sure you want to mark this client as untrusted? Users will need to manually approve authorization requests.')">
+    <button type="submit" class="action-warning">
       Mark as Untrusted
     </button>
     {% else %}
-    <button type="submit" class="action-info"
-            onsubmit="return confirm('Are you sure you want to mark this client as trusted? Authorization requests will be automatically approved.')">
+    <button type="submit" class="action-info">
       Mark as Trusted
     </button>
     {% endif %}
   </form>
 
   {% if not client.public %}
-  <form method="post" action="./regenerate_secret" style="display: inline;"
+  <p class="form-hint">Regenerating invalidates the current secret and may break integrations. The new secret is shown once.</p>
+  <form method="post" action="/admin/oauth_clients/{{ client.id }}/regenerate_secret" style="display: inline;"
         onsubmit="return confirm('Are you sure you want to regenerate the client secret? This will invalidate the current secret and may break existing integrations.')">
     <button type="submit" class="action-warning">Regenerate Secret</button>
   </form>
   {% endif %}
 
-  <form method="post" action="./deactivate" style="display: inline;"
+  <p class="form-hint">Deactivation prevents new authorizations using this client.</p>
+  <form method="post" action="/admin/oauth_clients/{{ client.id }}/deactivate" style="display: inline;"
         onsubmit="return confirm('Are you sure you want to deactivate this OAuth client? This will prevent it from being used for new authorizations.')">
     <button type="submit" class="action-danger">Deactivate Client</button>
   </form>

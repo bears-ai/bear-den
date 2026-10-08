@@ -24,6 +24,6 @@
     Started {{ operation.started_at }}{% if operation.finished_at %}, finished {{ operation.finished_at }}{% endif %}.
     {% if running %}This page refreshes every 3 seconds.{% endif %}
 </p>
-<pre style="max-height: 30em; overflow: auto">{{ operation.log_tail }}</pre>
+<pre class="inspection-evidence">{{ operation.log_tail }}</pre>
 {% endif %}
 {% endblock %}

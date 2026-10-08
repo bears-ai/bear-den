@@ -15,9 +15,6 @@
     </span>
     <span class="bears-health-time"><code>{{ checked_at }}</code></span>
   </p>
-  {% if ghcr_note %}
-  <p class="bears-health-ghcr-note"><em>{{ ghcr_note }}</em></p>
-  {% endif %}
 
   <h3 class="status-section-heading">Stack checks</h3>
   <table class="bears-health-table">
@@ -73,6 +70,8 @@
   </table>
 
   <h3 class="status-section-heading">Deployed vs GHCR</h3>
+  {% if ghcr_error %}<p class="form-errors" role="alert">GHCR comparison failed: {{ ghcr_error | e }}. Check registry access and reload to retry; stack checks above remain independent.</p>{% endif %}
+  {% if ghcr_note %}<p class="form-hint">GHCR comparison is not configured. Running version details remain available below.</p><details><summary>Help: optional GHCR comparison</summary><p class="bears-health-ghcr-note">{{ ghcr_note | e }}</p></details>{% endif %}
   <table class="bears-health-table bears-health-table-deploy">
     <thead>
       <tr>

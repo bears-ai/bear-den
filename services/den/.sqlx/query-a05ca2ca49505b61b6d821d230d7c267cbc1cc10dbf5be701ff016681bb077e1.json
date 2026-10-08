@@ -1,0 +1,41 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT a.job_id, s.id,\n            CASE WHEN access.can_manage OR EXISTS (\n                SELECT 1 FROM work_surface_bears b JOIN user_bear membership ON membership.bear_id = b.bear_id\n                WHERE b.surface_id = s.id AND b.bear_id = j.bear_id AND membership.user_id = $2\n            ) THEN s.name ELSE NULL END AS \"name?\", access.can_manage AS \"can_manage!\"\n        FROM job_work_surface_assignments a JOIN bear_jobs j ON j.id = a.job_id\n        JOIN work_surfaces s ON s.id = a.work_surface_id\n        CROSS JOIN LATERAL (SELECT EXISTS (SELECT 1 FROM users u WHERE u.id = $2 AND u.is_admin)\n            OR EXISTS (SELECT 1 FROM work_surface_managers m WHERE m.surface_id = s.id AND m.user_id = $2) AS can_manage) access\n        WHERE a.job_id = ANY($1) ORDER BY a.created_at, s.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "job_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "name?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "can_manage!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "a05ca2ca49505b61b6d821d230d7c267cbc1cc10dbf5be701ff016681bb077e1"
+}

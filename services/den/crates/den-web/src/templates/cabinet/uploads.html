@@ -2,6 +2,7 @@
 {% block title %}Your uploads · Cabinet{% endblock %}
 {% block breadcrumb %}<a href="/">Bears</a> / <a href="/cabinet">Cabinet</a> / Your uploads{% endblock %}
 {% block content %}
+<div class="usability-work">
 <p><a href="/cabinet">← Cabinet</a></p>
 <h1>Your uploads</h1>
 {% if not storage_enabled %}<p role="status">Automatic cleanup and retry are unavailable: this Den has no file storage configured.</p>{% endif %}
@@ -14,11 +15,12 @@
         <td>{{ upload.title | e }}<details><summary>Details</summary><p>Created {{ upload.created_at | timeago }}</p>{% if upload.eligible_at %}<p>Earliest cleanup: <time datetime="{{ upload.eligible_at }}">{{ upload.eligible_at }}</time></p>{% endif %}<code>{{ upload.reference }}</code></details></td>
         <td>{{ upload.bear | e }}</td><td>{{ upload.state | e }}</td>
         <td>{% if upload.page_ref %}<a href="/cabinet/{{ upload.page_ref }}">{{ upload.page_title | e }}</a>{% endif %}
-        {% if upload.can_retry %}<form method="post" action="/cabinet/uploads/{{ upload.reference }}/cleanup"><button type="submit">Retry cleanup</button></form>{% endif %}</td>
+        {% if upload.can_retry %}<form method="post" action="/cabinet/uploads/{{ upload.reference }}/cleanup"><p>Cleanup permanently removes this unretained file's bytes; it does not restore the upload. The record remains for inspection.</p><label><input type="checkbox" required>I understand this removes file content permanently.</label><button type="submit">Retry file removal</button></form>{% endif %}</td>
     </tr>
     {% endfor %}
     </tbody>
 </table>
 {% else %}<p>No uploads available to you.</p>{% endif %}
-<details class="box"><summary>Recovery and retention</summary><p>Only your latest 64 uploads under current Bear membership appear here. Interrupted uploads are retired after their write lease and a safety grace period. Cleanup retries automatically; Cabinet-retained files and snapshots are never candidates. Removed file records remain for inspection, but their content is not readable.</p></details>
+<details class="box"><summary>Cleanup and retention details</summary><p>Only your latest 64 uploads under current Bear membership appear here. Interrupted uploads are retired after their write lease and a safety grace period. Cleanup retries automatically; Cabinet-retained files and snapshots are never candidates. Removed file records remain for inspection, but their content is not readable.</p></details>
+</div>
 {% endblock %}

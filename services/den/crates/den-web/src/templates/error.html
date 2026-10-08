@@ -1,15 +1,9 @@
 {% extends "base.html" %}
 
-{% block title %}{{ error_name }} Error{% endblock %}
+{% block title %}Unable to complete this request{% endblock %}
 
 {% block content %}
-    <p>
-        Something has gone terribly awry.
-    </p><p>
-        So far, there are no proactive notifications. So please tell Hans about this.
-    </p>
-    <div class="box">
-        <code>{{ error_message }}</code>
-        <!-- {{ error_details }} -->
-    </div>
+<p role="alert">This request could not be completed.</p>
+<p>Try opening the page again. If you submitted a change, check its current state before submitting it again.</p>
+<p><a class="button-link" href="/">Return home</a></p>
 {% endblock %}

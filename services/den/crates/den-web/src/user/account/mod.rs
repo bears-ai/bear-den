@@ -1,6 +1,6 @@
 // ROUTES: When modifying routes in this file, update /src/web/ROUTES.md
 use axum::extract::Query;
-use axum_login::login_required;
+use axum_login::{login_required, tower_sessions::Session, AuthnBackend};
 use serde::{Deserialize, Serialize};
 
 use axum::{
@@ -31,7 +31,37 @@ use crate::{
     web::{self, AppState},
 };
 
+use super::form_feedback::validation_messages;
 use crate::core::user::RESERVED_NAMES;
+
+mod token_view;
+use token_view::AccountTokenView;
+
+#[cfg(test)]
+mod tests;
+
+const ACCOUNT_NOTICE_KEY: &str = "account_notice";
+
+#[derive(Serialize, Deserialize)]
+enum AccountNotice {
+    PasswordChanged,
+    TokenRevoked,
+}
+
+impl AccountNotice {
+    fn message(&self) -> &'static str {
+        match self {
+            Self::PasswordChanged => "Password changed. This session stays signed in; other web sessions will need to sign in again.",
+            Self::TokenRevoked => "Editor token revoked. It can no longer be used to connect; earlier actions are unchanged.",
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct EditorSetupBear {
+    slug: String,
+    name: String,
+}
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -75,7 +105,7 @@ impl From<user::db::User> for AccountForm {
 
 pub fn regex_alphanumeric() -> &'static regex::Regex {
     static REGEX_ALPHANUMERIC: OnceLock<regex::Regex> = OnceLock::new();
-    REGEX_ALPHANUMERIC.get_or_init(|| regex::Regex::new(r"[a-zA-Z0-9]+").unwrap())
+    REGEX_ALPHANUMERIC.get_or_init(|| regex::Regex::new(r"^[a-zA-Z0-9]+$").unwrap())
 }
 
 // Backwards compatibility
@@ -86,40 +116,58 @@ pub use regex_alphanumeric as REGEX_ALPHANUMERIC;
 pub struct RegisterForm {
     #[validate(custom(function = validate_invite_key))]
     invite_key: String,
-    #[validate(length(min = 4, max = 30))]
+    #[validate(length(min = 4, max = 30, message = "Use 4–30 letters and numbers."))]
     #[validate(custom(function = validate_username_format))]
     #[validate(custom(function = validate_username_allowed))]
     #[validate(custom(function = validate_username_unique, use_context))]
     username: String,
-    #[validate(length(max = 255))]
+    #[validate(length(max = 255, message = "Use no more than 255 characters."))]
     display_name: String,
-    #[validate(email)]
+    #[validate(email(message = "Enter a valid email address."))]
     email: String,
-    #[validate(length(min = 8))]
+    #[serde(skip_serializing)]
+    #[validate(length(min = 8, message = "Use at least 8 characters."))]
     password: String,
-    #[validate(must_match(other = "password"))]
+    #[serde(skip_serializing)]
+    #[validate(length(min = 8, message = "Use at least 8 characters."))]
+    #[validate(must_match(other = "password", message = "Passwords must match."))]
     password_check: String,
+    #[serde(default)]
+    #[validate(custom(function = validate_terms_consent))]
+    terms: String,
 }
+fn validate_terms_consent(terms: &str) -> Result<(), ValidationError> {
+    if terms == "on" {
+        Ok(())
+    } else {
+        Err(ValidationError::new("consent")
+            .with_message("Confirm the terms acknowledgement to create an account.".into()))
+    }
+}
+
 fn validate_invite_key(invite_key: &str) -> Result<(), ValidationError> {
     static INVITE_RE: OnceLock<regex::Regex> = OnceLock::new();
     let re = INVITE_RE
         .get_or_init(|| regex::Regex::new(r"^[a-zA-Z0-9_-]{8,128}$").expect("invite key regex"));
     if !re.is_match(invite_key) {
-        return Err(ValidationError::new("Invalid key"));
+        return Err(ValidationError::new("invite_format")
+            .with_message("Use an invitation code of 8–128 letters, numbers, _ or -.".into()));
     }
     Ok(())
 }
 
 fn validate_username_format(username: &str) -> Result<(), ValidationError> {
     if !REGEX_ALPHANUMERIC().is_match(username) {
-        return Err(ValidationError::new("Must be alphanumeric"));
+        return Err(ValidationError::new("username_format")
+            .with_message("Use letters and numbers only.".into()));
     }
     Ok(())
 }
 
 fn validate_username_allowed(username: &str) -> Result<(), ValidationError> {
     if RESERVED_NAMES.contains(&username) {
-        return Err(ValidationError::new("Username reserved"));
+        return Err(ValidationError::new("username_reserved")
+            .with_message("Choose a different username; this one is reserved.".into()));
     }
     Ok(())
 }
@@ -137,7 +185,8 @@ fn validate_username_unique(
             ))
         {
             if users_count > 0 {
-                return Err(ValidationError::new("Username already in use."));
+                return Err(ValidationError::new("username_taken")
+                    .with_message("This username is already in use.".into()));
             }
         }
         Ok(())
@@ -181,7 +230,22 @@ async fn register_view(
                 },
             ]);
         } else {
-            tracing::warn!("Invalid invite key in querystring: {}", invite_key);
+            tracing::warn!("Invalid invitation in registration link");
+            let mut errors = ValidationErrors::new();
+            errors.add(
+                "invite_key",
+                ValidationError::new("invite_unavailable").with_message(
+                    "This invitation is invalid or has already been used. Ask for a new one."
+                        .into(),
+                ),
+            );
+            template_context = merge_maps([
+                template_context,
+                context! {
+                    invite_error => "This invitation is invalid or has already been used. Ask for a new one.",
+                    user => context! { invite_key, errors => validation_messages(&errors) },
+                },
+            ]);
         }
     }
 
@@ -208,7 +272,6 @@ pub async fn register_action(
     };
 
     if let Err(form_validation_errors) = form.validate_with_args(&validate_context) {
-        // TODO: abstract to share with add_user_view?
         web::render_template(
             &state,
             "account/register.html",
@@ -216,8 +279,8 @@ pub async fn register_action(
             context! {
                 pattern_invite => "^[a-zA-Z0-9_-]{8,128}$",
                 pattern_username => REGEX_ALPHANUMERIC().as_str(),
-                errors => form_validation_errors,
-                user => form,
+                errors => validation_messages(&form_validation_errors),
+                user => context! { errors => validation_messages(&form_validation_errors), ..minijinja::Value::from_serialize(&form) },
             },
         )
         .await
@@ -264,7 +327,10 @@ pub async fn register_action(
             let mut form_validation_errors = ValidationErrors::new();
             form_validation_errors.add(
                 "invite_key",
-                ValidationError::new("This key isn't valid or has already been used"),
+                ValidationError::new("invite_unavailable").with_message(
+                    "This invitation is invalid or has already been used. Ask for a new one."
+                        .into(),
+                ),
             );
             // again, this could be abstracted?
             web::render_template(
@@ -274,8 +340,8 @@ pub async fn register_action(
                 context! {
                     pattern_invite => "^[a-zA-Z0-9_-]{8,128}$",
                     pattern_username => REGEX_ALPHANUMERIC().as_str(),
-                    errors => form_validation_errors,
-                    user => form,
+                    errors => validation_messages(&form_validation_errors),
+                    user => context! { errors => validation_messages(&form_validation_errors), ..minijinja::Value::from_serialize(&form) },
                 },
             )
             .await
@@ -286,6 +352,7 @@ pub async fn register_action(
 async fn view_account(
     State(state): State<AppState>,
     auth_session: AuthSession,
+    session: Session,
 ) -> Result<Response, CustomError> {
     let user_id = auth_session
         .user
@@ -294,8 +361,23 @@ async fn view_account(
         .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
     let user = crate::core::user::user_by_id(&state.sqlx_pool, user_id).await?;
 
+    let account_notice = session.remove::<AccountNotice>(ACCOUNT_NOTICE_KEY).await?;
+    let editor_setup_bears: Vec<_> =
+        den_service::bears::db::list_bears_for_user(&state.sqlx_pool, user_id)
+            .await?
+            .into_iter()
+            .map(|row| EditorSetupBear {
+                slug: row.bear.slug,
+                name: row.bear.name,
+            })
+            .collect();
     let invites = user::invites::db::by_user_id(&state.sqlx_pool, user_id).await?;
-    let armature_tokens = armature_tokens::list_for_user(&state.sqlx_pool, user_id).await?;
+    let now = time::OffsetDateTime::now_utc();
+    let armature_tokens: Vec<_> = armature_tokens::list_for_user(&state.sqlx_pool, user_id)
+        .await?
+        .into_iter()
+        .map(|token| AccountTokenView::at(token, now))
+        .collect();
     let invite_contexts: Vec<_> = invites
         .iter()
         .map(|invite| {
@@ -316,6 +398,8 @@ async fn view_account(
             // premium_until => user.premium_until,
             invites => invite_contexts,
             armature_tokens => armature_tokens,
+            editor_setup_bears,
+            account_message => account_notice.as_ref().map(AccountNotice::message),
         },
     )
     .await
@@ -324,6 +408,7 @@ async fn view_account(
 async fn revoke_armature_token_action(
     State(state): State<AppState>,
     auth_session: AuthSession,
+    session: Session,
     Path(token_id): Path<Uuid>,
 ) -> Result<Redirect, CustomError> {
     let user_id = auth_session
@@ -332,6 +417,9 @@ async fn revoke_armature_token_action(
         .map(|u| u.id)
         .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
     armature_tokens::revoke_for_user(&state.sqlx_pool, user_id, token_id).await?;
+    session
+        .insert(ACCOUNT_NOTICE_KEY, AccountNotice::TokenRevoked)
+        .await?;
     Ok(Redirect::to("/account"))
 }
 
@@ -378,9 +466,12 @@ async fn revoke_armature_token_action(
 
 #[derive(Validate, Serialize, Deserialize)]
 pub struct ChangePasswordForm {
-    #[validate(length(min = 8))]
+    #[serde(skip_serializing)]
+    #[validate(length(min = 8, message = "Use at least 8 characters."))]
     password: String,
-    #[validate(must_match(other = "password"))]
+    #[serde(skip_serializing)]
+    #[validate(length(min = 8, message = "Use at least 8 characters."))]
+    #[validate(must_match(other = "password", message = "Passwords must match."))]
     password_check: String,
 }
 
@@ -399,7 +490,7 @@ pub async fn change_password_view(
         auth_session,
         context! {
             target => context!{ username },
-            // errors => validation_errors,
+            form => context! {},
         },
     )
     .await
@@ -407,7 +498,8 @@ pub async fn change_password_view(
 
 pub async fn change_password_action(
     State(state): State<AppState>,
-    auth_session: AuthSession,
+    mut auth_session: AuthSession,
+    session: Session,
     Form(form): Form<ChangePasswordForm>,
 ) -> Result<Response, CustomError> {
     let user_id = auth_session.user.clone().unwrap().id;
@@ -422,7 +514,7 @@ pub async fn change_password_action(
             auth_session,
             context! {
                 form => context! {
-                    error => form_validation_errors,
+                    errors => validation_messages(&form_validation_errors),
                 },
                 target => context!{ username },
             },
@@ -433,7 +525,16 @@ pub async fn change_password_action(
         user::db::set_user_passhash_by_id(&state.sqlx_pool, user_id, &generate_hash(form.password))
             .await?;
 
-        // TODO redirect to user detail page with success message
+        // The password hash is also the session auth hash. Refresh this session before redirecting.
+        let updated_user = auth_session
+            .backend
+            .get_user(&user_id)
+            .await?
+            .ok_or_else(|| CustomError::NotFound("User not found".to_string()))?;
+        auth_session.login(&updated_user).await?;
+        session
+            .insert(ACCOUNT_NOTICE_KEY, AccountNotice::PasswordChanged)
+            .await?;
         Ok(Redirect::to("/account").into_response())
     }
 }

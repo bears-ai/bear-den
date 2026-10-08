@@ -9,7 +9,7 @@
   <a href="/bear/{{ bear.slug | e }}/conversations/{{ conv.id }}">Back to conversation</a> ·
   <a href="/bear/{{ bear.slug | e }}/memory">Open Memory review queue</a>
 </p>
-<p class="form-hint">This page is the synchronous output from reconsidering this conversation for memory discovery. It forced the manual compaction/reflection path, recorded a reflection event, and created any resulting memory review proposals.</p>
+<p role="status">Reconsideration finished. Inspect the recorded outcomes below; only the listed proposals were created.</p>
 
 <dl>
   <dt>Conversation</dt>
@@ -28,6 +28,10 @@
   <dd>{% if result.reflection_event_id %}<code>{{ result.reflection_event_id }}</code>{% if result.reflection_event_sequence_no is not none %} · sequence #{{ result.reflection_event_sequence_no }}{% endif %}{% else %}<em>not recorded</em>{% endif %}</dd>
 </dl>
 
+{% if can_manage_bear and (result.skipped_reason or result.compaction_status == "failed") %}
+<form method="post" action="/bear/{{ bear.slug | e }}/conversations/{{ conv.id }}/reconsider"><button type="submit">Retry reconsideration</button></form>
+{% endif %}
+
 {% if result.discarded_reasons and result.discarded_reasons | length > 0 %}
 <p class="form-hint">Discarded reasons: {% for reason in result.discarded_reasons %}<code>{{ reason | e }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</p>
 {% endif %}
@@ -44,15 +48,16 @@
 {% endif %}
 
 {% if result.compaction_artifact_json %}
-<details open>
+<details>
   <summary>Compaction artifact reference</summary>
   <pre style="white-space: pre-wrap; max-height:18rem; overflow:auto;">{{ result.compaction_artifact_json | e }}</pre>
 </details>
 {% endif %}
 
-<details open>
+<details>
   <summary>Reflection event payload</summary>
   <pre style="white-space: pre-wrap; max-height:24rem; overflow:auto;">{{ result.reflection_payload_json | e }}</pre>
 </details>
+<details><summary>Help: reconsideration</summary><p>This synchronous action requests a manual checkpoint, then runs memory discovery and records any resulting reflection event and review proposals. Compaction and reflection can skip or fail independently; their actual diagnostics appear above.</p></details>
 </div>
 {% endblock %}

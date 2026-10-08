@@ -4,6 +4,7 @@
 {% if run.is_active %}<meta http-equiv="refresh" content="10" />{% endif %}
 {% endblock %}
 {% block manage %}
+<div class="usability-work">
 <p><a href="/bear/{{ bear_slug }}/jobs">← Jobs</a> · <a href="/bear/{{ bear_slug }}/jobs/{{ run.job_route_id }}" title="{{ run.job_title }}">Job <code class="entity-reference-id">{{ run.job_display_id }}</code></a></p>
 <h1>Docket run <code class="entity-reference-id">{{ run.display_id }}</code></h1>
 <h2>{{ run.title }}</h2>
@@ -11,38 +12,28 @@
 <p><a href="/bear/{{ run.bear_slug | urlencode }}/?conversation_id={{ conversation_id | urlencode }}">Open headless conversation transcript →</a></p>
 {% endif %}
 
+{% if canonical_diagnostics.attention %}<p role="alert"><strong>{{ canonical_diagnostics.attention.cause }}</strong> — {{ canonical_diagnostics.attention.recovery_action }}</p>{% endif %}
+<p role="status"><strong>{{ run.state }}</strong>{% if run.cancel_requested %} — stop requested{% endif %}{% if run.queue_position %} — queue position {{ run.queue_position }}{% endif %}</p>
+{% if run.attachment_warning %}<p role="status">⚠ {{ run.attachment_warning }}</p>{% endif %}
+{% if run.disconnect_deadline_at %}<p>Reconnect deadline: {{ run.disconnect_deadline_at }}</p>{% endif %}
+{% if run.cleanup_failed %}<p role="alert">Cleanup failed; ask a Den operator to remove remaining sandbox resources.</p>{% endif %}
+{% if run.result_summary or run.error or run.published_branch or run.publish_failed or not run.is_active %}
 <section>
-    <h2>Execution</h2>
-    <table>
-        <tbody>
-            <tr><th>Bear</th><td>{{ run.bear_slug }}</td></tr>
-            <tr><th>State</th><td>
-                {{ run.state }}{% if run.cancel_requested %} (cancel requested){% endif %}
-                {% if run.queue_position %}
-                — position {{ run.queue_position }} in the job's queue{% if run.waiting_on_run_id %},
-                waiting on run <a href="/bear/{{ bear_slug }}/jobs/runs/{{ run.waiting_on_run_id }}">{{ run.waiting_on_run_id[:8] }}…</a>{% endif %}
-                (runs within a job execute one at a time)
-                {% endif %}
-            </td></tr>
-            <tr><th>Attempt</th><td>{{ run.attempt }}</td></tr>
-            <tr><th>Repository / ref</th><td>{% if work_surface_link %}<a href="/work/surfaces/{{ work_surface_link.id }}"><code>{{ work_surface_link.name }}</code></a>{% else %}—{% endif %} {% if run.git_ref %}@ {{ run.git_ref }}{% endif %}</td></tr>
-            <tr><th>Image</th><td>{{ run.image or "root default" }}</td></tr>
-            <tr><th>Sandbox</th><td>{{ run.sandbox_type or "—" }}</td></tr>
-            <tr><th>Sandbox strength</th><td>{{ run.sandbox_strength or "—" }}</td></tr>
-            <tr><th>Execution target</th><td>{{ run.execution_target }}</td></tr>
-            {% if run.attached_client_session_id %}<tr><th>Attached session</th><td><code>{{ run.attached_client_session_id }}</code></td></tr>{% endif %}
-            {% if run.attachment_state %}<tr><th>Attachment state</th><td>{{ run.attachment_state }}</td></tr>{% endif %}
-            {% if run.attachment_warning %}<tr><th>Worktree warning</th><td role="status">⚠ {{ run.attachment_warning }}</td></tr>{% endif %}
-            {% if run.disconnected_at %}<tr><th>Disconnected</th><td>{{ run.disconnected_at }}</td></tr>{% endif %}
-            {% if run.disconnect_deadline_at %}<tr><th>Reconnect deadline</th><td>{{ run.disconnect_deadline_at }}</td></tr>{% endif %}
-            <tr><th>Queued</th><td>{{ run.queued_at }}</td></tr>
-            <tr><th>Started</th><td>{{ run.started_at or "—" }}</td></tr>
-            <tr><th>Finished</th><td>{{ run.finished_at or "—" }}</td></tr>
-            <tr><th>Duration</th><td>{% if run.duration_secs is not none %}{{ run.duration_secs }}s{% else %}—{% endif %}</td></tr>
-            {% if usage %}<tr><th>Usage</th><td><code>{{ usage }}</code></td></tr>{% endif %}
-            {% if run.cleanup_failed %}<tr><th>Cleanup</th><td>⚠ failed — sandbox resources may need manual removal</td></tr>{% endif %}
-        </tbody>
-    </table>
+    <h2>Outcome</h2>
+    <p>{{ outcome }}</p>
+    {% if run.error %}<details open><summary>Error evidence</summary><p>{{ run.error }}</p></details>{% endif %}
+    {% if run.published_branch %}
+    <p><strong>Published:</strong> <code>{{ run.published_branch }}</code> @ <code>{{ run.published_commit }}</code></p>
+    {% endif %}
+    {% if run.publish_failed %}
+    <p><strong>⚠ Publish failed:</strong> {{ run.publish_failed }} — the task's commits remain in the run diff below.</p>
+    {% endif %}
+    {% if armature_report %}<details><summary>Armature report</summary><p><small>Armature report: <code>{{ armature_report }}</code></small></p></details>{% endif %}
+    {% if turn_outcome and turn_outcome != "headless turn reached a terminal run event" %}<details><summary>Turn details</summary><p><small>Turn outcome: <code>{{ turn_outcome }}</code></small></p></details>{% endif %}
+</section>
+{% endif %}
+
+<section aria-label="Run controls">
     {% if can_pause %}
     <form method="post" action="/bear/{{ bear_slug }}/jobs/runs/{{ run.id }}/pause">
         <button type="submit">Pause at boundary</button>
@@ -62,6 +53,25 @@
     </form>
     {% endif %}
 </section>
+{% if changed_files %}
+<section>
+    <h2>Changed files ({{ changed_files | length }})</h2>
+    <table>
+        <tbody>
+            {% for file in changed_files %}
+            <tr><td><code>{{ file.status }}</code></td><td>{{ file.path }}</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% if diff_patch %}
+    <details>
+        <summary>Diff</summary>
+        <pre><code>{{ diff_patch }}</code></pre>
+    </details>
+    {% endif %}
+</section>
+{% endif %}
+
 
 {% if watchdog_failure %}
 <section aria-labelledby="watchdog-failure-heading">
@@ -86,6 +96,17 @@
 </section>
 {% endif %}
 
+<section>
+    {% if canonical_diagnostics.rollups %}
+    <h2>Task result summaries</h2>
+    <ol>
+        {% for rollup in canonical_diagnostics.rollups %}
+        <li><p>{{ rollup.summary }}</p><details><summary>Evidence</summary><pre><code>{{ rollup.evidence }}</code></pre></details></li>
+        {% endfor %}
+    </ol>
+    {% endif %}
+
+</section>
 <section aria-labelledby="run-activity-heading">
     <h2 id="run-activity-heading">Activity</h2>
     {% if activity %}
@@ -93,9 +114,8 @@
         {% for entry in activity %}
         <li>
             <strong>{{ entry.kind }}</strong>
-            {% if entry.tool_call_id %}<code>{{ entry.tool_call_id }}</code>{% endif %}
             <p>{{ entry.text }}{% if entry.truncated %} <em>[truncated]</em>{% endif %}</p>
-            <small>events {{ entry.first_sequence }}{% if entry.last_sequence != entry.first_sequence %}–{{ entry.last_sequence }}{% endif %}</small>
+            <details><summary>Activity record details</summary>{% if entry.tool_call_id %}<p>Tool call <code>{{ entry.tool_call_id }}</code></p>{% endif %}<small>events {{ entry.first_sequence }}{% if entry.last_sequence != entry.first_sequence %}–{{ entry.last_sequence }}{% endif %}</small></details>
         </li>
         {% endfor %}
     </ol>
@@ -106,8 +126,7 @@
     {% endif %}
 </section>
 
-<section aria-labelledby="run-diagnostics-heading">
-    <h2 id="run-diagnostics-heading">Run diagnostics</h2>
+<details class="box" {% if canonical_diagnostics.attention %}open{% endif %}><summary id="run-diagnostics-heading">Run diagnostic evidence</summary>
     <p role="status"><strong>{{ canonical_diagnostics.run_state }}</strong> — {{ canonical_diagnostics.explanation }}</p>
     <dl>
         <dt>Job state</dt><dd>{{ canonical_diagnostics.job_status }}</dd>
@@ -129,16 +148,7 @@
         {% endif %}
     </dl>
 
-    {% if canonical_diagnostics.rollups %}
-    <h3>Parent-visible rollups</h3>
-    <ol>
-        {% for rollup in canonical_diagnostics.rollups %}
-        <li><p>{{ rollup.summary }}</p><details><summary>Evidence</summary><pre><code>{{ rollup.evidence }}</code></pre></details></li>
-        {% endfor %}
-    </ol>
-    {% endif %}
-
-    <h3>Timeline</h3>
+    <details><summary>Diagnostic timeline</summary>
     {% if canonical_diagnostics.timeline %}
     <ol>
         {% for event in canonical_diagnostics.timeline %}
@@ -159,17 +169,18 @@
     {% else %}
     <p>No routing or attempt events have been recorded yet.</p>
     {% endif %}
-</section>
+    </details>
+</details>
 
 {% if diagnostic %}
 <section>
     <h2>Diagnostic</h2>
     <p><strong>{{ diagnostic.title }}</strong></p>
-    <dl>
+    <p><strong>Next step:</strong> {{ diagnostic.recovery }}</p>
+    <details><summary>Technical evidence</summary><dl>
         <dt>Attempted operation</dt><dd>{{ diagnostic.operation }}</dd>
         <dt>Observed evidence</dt><dd>{{ diagnostic.evidence }}</dd>
-        <dt>Recovery</dt><dd>{{ diagnostic.recovery }}</dd>
-    </dl>
+    </dl></details>
 </section>
 {% endif %}
 
@@ -186,8 +197,7 @@
     </dl>
 </section>
 {% elif dependency_preparation %}
-<section>
-    <h2>Rust dependency cache</h2>
+<details {% if dependency_preparation.status != "prepared" %}open{% endif %}><summary>Rust dependency preparation</summary>
     <p><strong>{{ dependency_preparation.status }}</strong> — {{ dependency_preparation.content }}</p>
     <dl>
         <dt>Stage</dt><dd><code>{{ dependency_preparation.stage }}</code></dd>
@@ -198,63 +208,61 @@
         <dt>Lockfile</dt><dd>{% if dependency_preparation.lockfile_changed %}updated{% else %}unchanged{% endif %}</dd>
         <dt>Retry</dt><dd>{% if dependency_preparation.retryable %}retry may succeed{% else %}input or environment must change first{% endif %}</dd>
     </dl>
-</section>
-{% endif %}
-
-{% if run.result_summary or run.error or run.published_branch or run.publish_failed or not run.is_active %}
-<section>
-    <h2>Outcome</h2>
-    <p>{{ outcome }}</p>
-    {% if run.error %}<p><strong>Error:</strong> {{ run.error }}</p>{% endif %}
-    {% if run.published_branch %}
-    <p><strong>Published:</strong> <code>{{ run.published_branch }}</code> @ <code>{{ run.published_commit }}</code></p>
-    {% endif %}
-    {% if run.publish_failed %}
-    <p><strong>⚠ Publish failed:</strong> {{ run.publish_failed }} — the task's commits remain in the run diff below.</p>
-    {% endif %}
-    {% if armature_report %}<p><small>Armature report: <code>{{ armature_report }}</code></small></p>{% endif %}
-    {% if turn_outcome and turn_outcome != "headless turn reached a terminal run event" %}<p><small>Turn outcome: <code>{{ turn_outcome }}</code></small></p>{% endif %}
-</section>
+</details>
 {% endif %}
 
 {% if work_surface %}
 <section>
-    <h2>Work surface{% if work_surface_link %}: <a href="/work/surfaces/{{ work_surface_link.id }}"><code>{{ work_surface_link.name }}</code></a>{% endif %}</h2>
-    <pre><code>{{ work_surface }}</code></pre>
-</section>
-{% endif %}
-
-{% if changed_files %}
-<section>
-    <h2>Changed files ({{ changed_files | length }})</h2>
-    <table>
-        <tbody>
-            {% for file in changed_files %}
-            <tr><td><code>{{ file.status }}</code></td><td>{{ file.path }}</td></tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    {% if diff_patch %}
-    <details>
-        <summary>Diff</summary>
-        <pre><code>{{ diff_patch }}</code></pre>
-    </details>
-    {% endif %}
+    <details><summary>Repository execution details{% if work_surface_link %}: {% if work_surface_link.can_inspect %}<a href="/work/surfaces/{{ work_surface_link.id }}"><code>{{ work_surface_link.name }}</code></a>{% else %}<code>{{ work_surface_link.name }}</code>{% endif %}{% endif %}</summary>
+    <pre><code>{{ work_surface }}</code></pre></details>
 </section>
 {% endif %}
 
 {% if conversation_id or log_tail %}
 <section>
-    <h2>Run output</h2>
+    <h2>System logs &amp; transcript</h2>
     {% if conversation_id %}
     <p>The model transcript is stored as a Den conversation. <a href="/bear/{{ run.bear_slug | urlencode }}/?conversation_id={{ conversation_id | urlencode }}">Open the conversation</a>.</p>
     {% endif %}
     {% if log_tail %}
-    <details open>
+    <details {% if run.error or run.publish_failed or watchdog_failure or cargo_failure %}open{% endif %}>
         <summary>Sandbox stdout/stderr and armature lifecycle log</summary>
         <pre><code>{{ log_tail }}</code></pre>
     </details>
     {% endif %}
 </section>
 {% endif %}
+<details class="box"><summary>Execution metadata &amp; usage</summary>
+    <table>
+        <tbody>
+            <tr><th>Bear</th><td>{{ run.bear_slug }}</td></tr>
+            <tr><th>State</th><td>
+                {{ run.state }}{% if run.cancel_requested %} (cancel requested){% endif %}
+                {% if run.queue_position %}
+                — position {{ run.queue_position }} in the job's queue{% if run.waiting_on_run_id %},
+                waiting on run <a href="/bear/{{ bear_slug }}/jobs/runs/{{ run.waiting_on_run_id }}">{{ run.waiting_on_run_id[:8] }}…</a>{% endif %}
+                (runs within a job execute one at a time)
+                {% endif %}
+            </td></tr>
+            <tr><th>Attempt</th><td>{{ run.attempt }}</td></tr>
+            <tr><th>Repository / ref</th><td>{% if work_surface_link %}{% if work_surface_link.can_inspect %}<a href="/work/surfaces/{{ work_surface_link.id }}"><code>{{ work_surface_link.name }}</code></a>{% else %}<code>{{ work_surface_link.name }}</code>{% endif %}{% else %}—{% endif %} {% if run.git_ref %}@ {{ run.git_ref }}{% endif %}</td></tr>
+            <tr><th>Image</th><td>{{ run.image or "root default" }}</td></tr>
+            <tr><th>Sandbox</th><td>{{ run.sandbox_type or "—" }}</td></tr>
+            <tr><th>Sandbox strength</th><td>{{ run.sandbox_strength or "—" }}</td></tr>
+            <tr><th>Execution target</th><td>{{ run.execution_target }}</td></tr>
+            {% if run.attached_client_session_id %}<tr><th>Attached session</th><td><code>{{ run.attached_client_session_id }}</code></td></tr>{% endif %}
+            {% if run.attachment_state %}<tr><th>Attachment state</th><td>{{ run.attachment_state }}</td></tr>{% endif %}
+            {% if run.attachment_warning %}<tr><th>Worktree warning</th><td role="status">⚠ {{ run.attachment_warning }}</td></tr>{% endif %}
+            {% if run.disconnected_at %}<tr><th>Disconnected</th><td>{{ run.disconnected_at }}</td></tr>{% endif %}
+            {% if run.disconnect_deadline_at %}<tr><th>Reconnect deadline</th><td>{{ run.disconnect_deadline_at }}</td></tr>{% endif %}
+            <tr><th>Queued</th><td>{{ run.queued_at }}</td></tr>
+            <tr><th>Started</th><td>{{ run.started_at or "—" }}</td></tr>
+            <tr><th>Finished</th><td>{{ run.finished_at or "—" }}</td></tr>
+            <tr><th>Duration</th><td>{% if run.duration_secs is not none %}{{ run.duration_secs }}s{% else %}—{% endif %}</td></tr>
+            {% if usage %}<tr><th>Usage</th><td><code>{{ usage }}</code></td></tr>{% endif %}
+            {% if run.cleanup_failed %}<tr><th>Cleanup</th><td>⚠ failed — sandbox resources may need manual removal</td></tr>{% endif %}
+        </tbody>
+    </table>
+</details>
+</div>
 {% endblock %}

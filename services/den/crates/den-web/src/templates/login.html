@@ -1,20 +1,20 @@
 {% extends "base.html" %}
 {% import "forms.jinja" as forms %}
 
-{% block title %}Login{% endblock %}
+{% block title %}Sign in{% endblock %}
 
 {% block content %}
 <form method="post" action="/login/password" class="box">
     <div class="fields-grid">
-        {% if message is defined %}
-        <div class="form-message">⚠️ {{ message }}</div>
-        {% endif %}
-        {{ forms.input("username", "Username or Email", "text", 'autocomplete="username" required minlength="3"') }}
-        {{ forms.input("password", "Password", "password", 'required minlength="8"') }}
+        {% if message %}<p class="form-errors" role="alert">{{ message }}</p>{% endif %}
+        {% if form_data is defined and form_data.errors %}<p class="form-errors" role="alert">Check the fields below to sign in.</p>{% endif %}
+        {{ forms.input("username", "Username or email", "text", 'autocomplete="username" required maxlength="255"', form_data) }}
+        {{ forms.input("password", "Password", "password", 'autocomplete="current-password" required minlength="8"', form_data) }}
         <input type="hidden" name="next" value="{{ next }}">
     </div>
     <ul class="button-row">
-        <li><button>Login</button></li>
+        <li><button type="submit">Sign in</button></li>
+                <li><a href="/account/register">Create account</a></li>
     </ul>
 </form>
 {% if not next %}

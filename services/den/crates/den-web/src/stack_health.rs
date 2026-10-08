@@ -385,7 +385,7 @@ async fn check_bifrost_live_models(llm_api_url: &str) -> HealthCheck {
                     id: "bifrost_models",
                     label: "Bifrost models",
                     state: CheckState::Fail,
-                    detail: format!("HTTP {status} from {url}: {text}"),
+                    detail: format!("HTTP {status} from {url}; upstream response body withheld."),
                 };
             }
             let value: serde_json::Value = match serde_json::from_str(&text) {
@@ -395,7 +395,9 @@ async fn check_bifrost_live_models(llm_api_url: &str) -> HealthCheck {
                         id: "bifrost_models",
                         label: "Bifrost models",
                         state: CheckState::Fail,
-                        detail: format!("/v1/models JSON parse failed: {e}; body: {text}"),
+                        detail: format!(
+                            "/v1/models JSON parse failed: {e}; upstream response body withheld."
+                        ),
                     };
                 }
             };
@@ -484,7 +486,7 @@ async fn check_bifrost_management_auth(management_url: &str) -> HealthCheck {
             {
                 if text.contains("Authentication is not enabled") {
                     return stale_bifrost_auth_config_check(format!(
-                        "HTTP {status} from {url}: {text}"
+                        "HTTP {status} from {url}: Bifrost reports that management authentication is not enabled."
                     ));
                 }
                 return HealthCheck {
@@ -502,7 +504,7 @@ async fn check_bifrost_management_auth(management_url: &str) -> HealthCheck {
                     id: "bifrost_management_auth",
                     label: "Bifrost management auth",
                     state: CheckState::Fail,
-                    detail: format!("HTTP {status} from {url}: {text}"),
+                    detail: format!("HTTP {status} from {url}; upstream response body withheld."),
                 };
             }
 
@@ -513,7 +515,9 @@ async fn check_bifrost_management_auth(management_url: &str) -> HealthCheck {
                         id: "bifrost_management_auth",
                         label: "Bifrost management auth",
                         state: CheckState::Fail,
-                        detail: format!("/api/config JSON parse failed: {e}; body: {text}"),
+                        detail: format!(
+                            "/api/config JSON parse failed: {e}; upstream response body withheld."
+                        ),
                     };
                 }
             };
@@ -641,3 +645,7 @@ async fn check_qdrant(config: &Config) -> HealthCheck {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "stack_health/status_probe_tests.rs"]
+mod status_probe_tests;

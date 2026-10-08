@@ -1,208 +1,58 @@
 {% extends "bear/_manage.html" %}
-
 {% block title %}Context · {{ bear.slug }}{% endblock %}
-
 {% block manage %}
 <div class="box">
-    <h2>Context</h2>
-    <p class="form-hint">
-        Every turn, Den composes a bounded context for {{ bear.name }} instead
-        of handing the model everything. This page shows that assembly, layer
-        by layer — what your Bear sees when it thinks.
-    </p>
+  <h2>Context inspection</h2>
+  <p class="form-hint">Recorded budgets, stored compiled prompt previews and current standing-note previews. This is not a live turn preview; opening this page does not compile a prompt or initialize a runtime.</p>
+  {% if inspection_errors %}<ul class="form-errors" role="alert">{% for error in inspection_errors %}<li>{{ error | e }}</li>{% endfor %}</ul>{% endif %}
+  {% if latest_budget %}
+  <h3>Latest recorded turn budget</h3>
+  <p class="form-hint">From <a href="/bear/{{ bear.slug | e }}/conversations/{{ latest_budget.conversation_id | e }}">{{ latest_budget.conversation_title | e }}</a> at {{ latest_budget.updated_at | e }}, estimated against <code>{{ latest_budget.model | e }}</code>.</p>
+  <p>{{ latest_budget.estimated_input_tokens }} estimated input tokens{% if latest_budget.context_window %} of a {{ latest_budget.context_window }}-token window{% endif %} · {{ latest_budget.reserved_output_tokens }} reserved for output{% if latest_budget.over_budget %} · <strong class="form-errors">over budget</strong>{% elif latest_budget.near_budget %} · <strong>near budget</strong>{% endif %}. Estimates, not provider-exact counts.</p>
+  <table>
+    <thead><tr><th>Recorded component</th><th>Estimated tokens</th><th>Share</th></tr></thead>
+    <tbody>{% for c in latest_budget.components %}<tr><td>{{ c.label | e }}</td><td>{{ c.tokens }}</td><td>{{ c.pct_display }}%</td></tr>{% endfor %}</tbody>
+  </table>
+  {% else %}<p>No turn budget snapshot recorded.</p>{% endif %}
 
-    {% if latest_budget %}
-    <h3>The last assembled turn</h3>
-    <p class="form-hint">
-        Where the context went on the most recent turn — from
-        <a
-            href="/bear/{{ bear.slug | e }}/conversations/{{ latest_budget.conversation_id | e }}"
-            >{{ latest_budget.conversation_title | e }}</a
-        >
-        at {{ latest_budget.updated_at | e }}, estimated against
-        <code>{{ latest_budget.model | e }}</code>.
-    </p>
-    <table>
-        <thead>
-            <tr>
-                <th>Source</th>
-                <th>Tokens (est.)</th>
-                <th>Share</th>
-                <th></th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for c in latest_budget.components %}
-            <tr>
-                <td>{{ c.label | e }}</td>
-                <td>{{ c.tokens }}</td>
-                <td>{{ c.pct_display }}%</td>
-                <td class="full-width">
-                    <span class="bear-manage-bar-track"
-                        ><span
-                            class="bear-manage-bar bear-manage-bar-w{{ c.pct }}"
-                        ></span
-                    ></span>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    <p class="form-hint">
-        {{ latest_budget.estimated_input_tokens }} input tokens estimated{%
-        if latest_budget.context_window %} of a
-        {{ latest_budget.context_window }}-token window{% endif %} ·
-        {{ latest_budget.reserved_output_tokens }} reserved for output{% if
-        latest_budget.over_budget %} · <strong>over budget</strong>{% elif
-        latest_budget.near_budget %} · <strong>near budget</strong>{% endif
-        %}. Estimates, not provider-exact counts.
-    </p>
-    {% endif %}
+  <h3>Stored Bear base and mode snapshots</h3>
+  <p class="form-hint">Stored compiled previews, not the complete prompt sent on the recorded turn. <a href="/bear/{{ bear.slug | e }}/hats">Manage hats</a>.</p>
+  {% if compiled_bound_prompts %}
+  <table>
+    <thead><tr><th>Component</th><th>Full size</th><th>Stored preview (up to 600 characters)</th></tr></thead>
+    <tbody>{% for row in compiled_bound_prompts %}<tr><td>{{ row.role | e }}</td><td>{{ row.char_count }} chars</td><td><pre class="bear-manage-prompt-preview">{{ row.prompt_preview | e }}</pre></td></tr>{% endfor %}</tbody>
+  </table>
+  {% else %}<p>No compiled Bear base/mode snapshot. Inspection does not create one.</p>{% endif %}
+  {% if can_manage_bear %}<p><a href="/bear/{{ bear.slug | e }}/edit/prompt">Edit Bear-wide steering</a></p>{% endif %}
 
-    <h3>1 · Bear base and modes</h3>
-    <p class="form-hint">
-        Hat-bound turns use the shared Bear base and a chat, pair, or work mode,
-        with the selected hat supplying its purpose. These are stored compiled
-        snapshots, not a live turn preview.
-        <a href="/bear/{{ bear.slug | e }}/hats">Manage hats</a>.
-    </p>
-    {% if compiled_bound_prompts %}
-    <table>
-        <thead><tr><th>Component</th><th>Size</th><th>Compiled preview</th></tr></thead>
-        <tbody>
-        {% for row in compiled_bound_prompts %}
-            <tr>
-                <td>{{ row.role | e }}</td>
-                <td>{{ row.char_count }} chars</td>
-                <td><details><summary class="form-hint">show preview</summary><pre class="bear-manage-prompt-preview">{{ row.prompt_preview | e }}</pre></details></td>
-            </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p><em>No compiled Bear base/mode snapshot yet. Inspection does not create one.</em></p>
-    {% endif %}
+  <h3>Current standing-note previews</h3>
+  <p class="form-hint">Current stored notes, not a reconstruction of the last turn’s note selection. Up to 200 characters per note.</p>
+  {% if standing_notes %}
+  <table><thead><tr><th>Note</th><th>Scope</th><th>Content preview</th></tr></thead><tbody>
+    {% for note in standing_notes %}<tr><td>{{ note.title | e }}</td><td>{{ note.scope | e }}</td><td><pre class="bear-manage-note-preview">{{ note.body_preview | e }}</pre></td></tr>{% endfor %}
+  </tbody></table>
+  {% else %}<p>No standing notes returned.</p>{% endif %}
+  {% if session_note_count > 0 %}<p>{{ session_note_count }} session-scoped notes excluded from this list. <a href="/bear/{{ bear.slug | e }}/activity">Inspect conversations</a>.</p>{% endif %}
+  {% if inactive_note_count > 0 %}<p>{{ inactive_note_count }} superseded or archived notes excluded.</p>{% endif %}
 
-    <details>
+  <h3>Recall configuration</h3>
+  <p>{% if recall_configured %}Recall index configured. This is configuration state, not a successful retrieval or health check.{% else %}Recall index not configured in this Den. Keyword memory search remains available.{% endif %} <a href="/bear/{{ bear.slug | e }}/memory">Inspect memory and recall status</a>.</p>
+
+  <details>
+    <summary>Help: how context is assembled</summary>
+    <p>Turns use bounded components: the Bear base, mode and hat purpose, matching standing notes, projected memory, recent conversation and tool descriptors. Recall can retrieve additional memory on demand.</p>
+    <p>Component token estimates in a recorded budget describe that turn. Stored prompt and note previews on this page may come from different times; they do not reconstruct the exact request or predict a future turn.</p>
+    <p>Durable knowledge belongs in <a href="/bear/{{ bear.slug | e }}/memory">Memory</a>; the transcript window is bounded. Inspect available tool descriptors under <a href="/bear/{{ bear.slug | e }}/tools">Tools</a>.</p>
+  </details>
+  <details>
     <summary>Older stance reference snapshots</summary>
-    <p class="form-hint">Retained for reference; these are not the Bear base/mode components used by hat-bound turns.</p>
-    {% if context_profile_enabled %}
-    <p>
-        Older profile: <strong>stance-aware composition</strong>{% if template_id %} ·
-        template <code>{{ template_id | e }}</code>{% endif %}
-    </p>
-    {% else %}
-    <p>Older profile: <strong>single baseline prompt</strong></p>
-    {% endif %}
-    {% if compiled_roles and compiled_roles | length > 0 %}
-    <table>
-        <thead>
-            <tr>
-                <th>Stance</th>
-                <th>Size</th>
-                <th>Compiled prompt (preview)</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for row in compiled_roles %}
-            <tr>
-                <td>{{ row.role | e }}</td>
-                <td>{{ row.char_count }} chars</td>
-                <td>
-                    <details>
-                        <summary class="form-hint">show preview</summary>
-                        <pre class="bear-manage-prompt-preview">{{ row.prompt_preview | e }}</pre>
-                    </details>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p><em>No older stance reference snapshots.</em></p>
-    {% endif %}
-    </details>
-    {% if can_manage_bear %}
-    <p class="button-row">
-        <a class="button-link" href="/bear/{{ bear.slug | e }}/edit/prompt"
-            >Edit charter</a
-        >
-    </p>
-    {% endif %}
-
-    <h3>2 · Standing notes</h3>
-    <p class="form-hint">
-        Editable notes pinned into every matching turn — written by you or by
-        the Bear itself. A note applies to the whole Bear, one stance, or one
-        work surface, and stays until superseded or archived.
-    </p>
-    {% if standing_notes and standing_notes | length > 0 %}
-    <table>
-        <thead>
-            <tr>
-                <th>Note</th>
-                <th>Applies to</th>
-                <th>Content</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for note in standing_notes %}
-            <tr>
-                <td>{{ note.title | e }}</td>
-                <td>{{ note.scope | e }}</td>
-                <td>
-                    <pre class="bear-manage-note-preview">{{ note.body_preview | e }}</pre>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p><em>No standing notes.</em></p>
-    {% endif %}
-    <p class="form-hint">
-        {% if session_note_count > 0 %}{{ session_note_count }} session-scoped
-        note{% if session_note_count != 1 %}s{% endif %} (transient working
-        state) not shown — session notes belong to their
-        <a href="/bear/{{ bear.slug | e }}/activity">conversation</a>.
-        {% endif %}{% if inactive_note_count > 0 %}{{ inactive_note_count }}
-        superseded or archived note{% if inactive_note_count != 1 %}s{% endif
-        %} excluded from assembly.{% endif %}
-    </p>
-
-    <h3>3 · Projected memory</h3>
-    <p class="form-hint">
-        A budgeted selection from the Bear's canonical
-        <a href="/bear/{{ bear.slug | e }}/memory">memory</a> — key memories
-        projected at turn start, not the whole store.
-    </p>
-
-    <h3>4 · Recall</h3>
-    {% if recall_configured %}
-    <p class="form-hint">
-        Hybrid search over the derived recall index is
-        <strong>enabled</strong>: when the turn calls for it, relevant
-        memories beyond the projection are retrieved on demand.
-    </p>
-    {% else %}
-    <p class="form-hint">
-        Recall index not configured on this Den — the Bear relies on
-        projected memory and keyword search only.
-    </p>
-    {% endif %}
-
-    <h3>5 · Conversation window</h3>
-    <p class="form-hint">
-        The recent transcript of the active conversation, bounded rather than
-        unlimited — older turns fall out of the window (and are candidates
-        for compaction), which is why durable knowledge lives in memory, not
-        the transcript.
-    </p>
-
-    <h3>6 · Tool descriptors</h3>
-    <p class="form-hint">
-        The stance's <a href="/bear/{{ bear.slug | e }}/tools">tool surface</a>
-        — each available tool described to the model, gated per stance.
-    </p>
+    <p class="form-hint">Reference only; not the base/mode components used by hat-bound turns.</p>
+    <p>{% if context_profile_enabled %}Older stance-aware profile{% if template_id %} · template <code>{{ template_id | e }}</code>{% endif %}{% else %}Older single baseline profile{% endif %}.</p>
+    {% if compiled_roles %}
+    <table><thead><tr><th>Stance</th><th>Size</th><th>Stored preview</th></tr></thead><tbody>
+      {% for row in compiled_roles %}<tr><td>{{ row.role | e }}</td><td>{{ row.char_count }}</td><td><pre class="bear-manage-prompt-preview">{{ row.prompt_preview | e }}</pre></td></tr>{% endfor %}
+    </tbody></table>
+    {% else %}<p>No older stance reference snapshots.</p>{% endif %}
+  </details>
 </div>
 {% endblock %}

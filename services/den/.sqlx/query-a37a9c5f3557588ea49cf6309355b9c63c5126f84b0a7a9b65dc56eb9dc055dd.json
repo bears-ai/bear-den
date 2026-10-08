@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT a.work_surface_id, a.mutation_policy,\n            EXISTS (SELECT 1 FROM work_surface_bears b WHERE b.surface_id = a.work_surface_id AND b.bear_id = $2) AS \"assigned!\"\n        FROM job_work_surface_assignments a JOIN work_surfaces s ON s.id = a.work_surface_id\n        WHERE a.job_id = $1 AND s.kind = 'git_workspace' ORDER BY a.created_at LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "work_surface_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "mutation_policy",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "assigned!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "a37a9c5f3557588ea49cf6309355b9c63c5126f84b0a7a9b65dc56eb9dc055dd"
+}

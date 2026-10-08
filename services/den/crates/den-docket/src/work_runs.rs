@@ -318,7 +318,7 @@ pub async fn enqueue_work_job(
     );
     if !preflight.dispatchable {
         return Err(DenError::ValidationError(
-            "repository_changes_without_publication: sandbox runs use isolated ephemeral checkouts; set commit_policy to per_task or per_job, or use the attached worktree"
+            "repository_changes_without_publication: sandbox runs use isolated ephemeral checkouts; set commit_policy to per_task, or use the attached worktree"
                 .into(),
         ));
     }

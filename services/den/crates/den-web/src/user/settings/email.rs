@@ -22,6 +22,8 @@ use crate::{
     web::{self, AppState},
 };
 
+use super::super::form_feedback::validation_messages;
+
 static VERIFY_TOKEN: &str = "send_token";
 
 fn session_user_id(auth_session: &AuthSession) -> Result<i32, CustomError> {
@@ -42,7 +44,7 @@ pub fn router() -> Router<AppState> {
 
 #[derive(Serialize, Deserialize, Debug, Validate)]
 pub struct EmailForm {
-    #[validate(email)]
+    #[validate(email(message = "Enter a valid email address."))]
     email: String,
 }
 impl From<UserEmailSettings> for EmailForm {
@@ -99,9 +101,9 @@ pub async fn edit_email_action(
             auth_session,
             context! {
 
-                email_form => context! {
-                    errors => form_validation_errors,
-                    ..context! {email_form}
+                form => context! {
+                    errors => validation_messages(&form_validation_errors),
+                    ..minijinja::Value::from_serialize(&email_form)
                 }
             },
         )
@@ -126,7 +128,16 @@ async fn verify_email_view(
 
     let user_email_settings = email_settings::settings_by_id(&sqlx_pool, user_id).await?;
     if user_email_settings.verified_at.is_some() {
-        Err(CustomError::Email("Email is already verified".to_string()))
+        web::render_template(
+            &state,
+            "settings/email/verify.html",
+            auth_session,
+            context! {
+                email_address => user_email_settings.email,
+                email_verified => true,
+            },
+        )
+        .await
     } else {
         let token: String = {
             use rand::Rng;

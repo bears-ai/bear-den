@@ -2,11 +2,12 @@
 {% block title %}Edit: {{ item_title }}{% endblock %}
 {% block breadcrumb %}<a href="/">Bears</a> / <a href="/cabinet">Cabinet</a>{% endblock %}
 {% block content %}
+<div class="usability-work">
 <p><a href="/cabinet/{{ cabinet_ref }}">← Back to page</a></p>
 <h1>Edit Cabinet page</h1>
 
 {% if error %}
-<p><strong>{{ error }}</strong></p>
+<p role="alert"><strong>{{ error }}</strong> <a href="/cabinet/{{ cabinet_ref }}">Inspect the latest revision</a> and reconcile it with your preserved draft before publishing again.</p>
 {% endif %}
 
 <form method="post" action="/cabinet/{{ cabinet_ref }}/edit">
@@ -19,6 +20,9 @@
         <label for="content">Content (Markdown)</label><br>
         <textarea id="content" name="content" rows="20" cols="100">{{ content }}</textarea>
     </p>
+    {% include "cabinet/_audience.html" %}
+    <p>Publishing makes this revision readable to the effective page audience immediately. It does not change page membership or share private attachments.</p>
     <button type="submit">Publish revision</button>
 </form>
+</div>
 {% endblock %}

@@ -10,9 +10,10 @@
   <h2>Memory library</h2>
   <p class="form-hint">{% if can_manage_bear %}All recorded logical paths for admin inspection. Each path links to its current entry.{% else %}Curated Bear-wide and named-hat entries only; session notes are not shown until promoted. Each entry links to its current version.{% endif %} Counts show visible versions.</p>
 
-  {% if delete_notice %}<p class="success">Deleted memory at {{ delete_notice }} path(s).</p>{% endif %}
-  {% if review_notice %}<p class="success">Review requested; a memory proposal was created for curate.</p>{% endif %}
-  {% if delete_error %}<p class="form-errors">{{ delete_error | e }}</p>{% endif %}
+  {% if delete_notice is defined and delete_notice is not none %}<p class="success" role="status">Deleted memory at {{ delete_notice }} path(s).</p>{% endif %}
+  {% if review_notice %}<p class="success" role="status">Review requested; a memory proposal was created for curate.</p>{% endif %}
+  {% if delete_error %}<p class="form-errors" role="alert">{{ delete_error | e }}</p>{% endif %}
+  {% if inspection_errors %}<ul class="form-errors" role="alert">{% for error in inspection_errors %}<li>{{ error | e }}</li>{% endfor %}</ul>{% endif %}
 </div>
 
 {% if groups %}
@@ -27,7 +28,7 @@
       {% for p in group.paths %}
       <tr>
         {% if can_manage_bear %}
-        <td><input type="checkbox" form="memory-delete-form" name="paths" value="{{ p.logical_path | e }}"></td>
+        <td><input type="checkbox" form="memory-delete-form" name="paths" value="{{ p.logical_path | e }}" aria-label="Select {{ p.logical_path | e }}"{% if form and p.logical_path in form.paths %} checked{% endif %}></td>
         {% endif %}
         <td>
           <a href="/bear/{{ bear.slug | e }}/memory/records/{{ p.head_memory_id | urlencode }}">{% if can_manage_bear %}<code>{{ p.logical_path | e }}</code>{% else %}{{ p.kind | e }}{% endif %}</a>
@@ -42,29 +43,35 @@
   </table>
 </div>
 {% endfor %}
+{% elif paths_available is defined and not paths_available %}
+<div class="box"><p class="form-errors">Memory paths unavailable. Reload to retry.</p></div>
+{% else %}
+<div class="box"><p class="form-hint">No memory recorded yet.</p></div>
+{% endif %}
 
-{% if can_manage_bear %}
+{% if can_manage_bear and (groups or form) %}
 <div class="box">
   <h3>Manage selected paths</h3>
   <p class="form-hint">Select one or more paths above, then delete them or request a curate review. Deletion removes <strong>all versions</strong> at the selected profile-local paths and cannot be undone.</p>
   <form id="memory-delete-form" method="post" action="/bear/{{ bear.slug | e }}/memory/browse">
+    {% for path in unavailable_selections %}<label><input type="checkbox" name="paths" value="{{ path | e }}" checked> Unavailable selected path: {{ path | e }}</label>{% endfor %}
     <div class="fields-grid">
-      <label>Profile (scope_profile)
-        <input type="text" name="role" placeholder="pair" required>
+      <label>Profile to manage
+        <input type="text" name="role" placeholder="pair" value="{{ form.role | default('') | e }}" required>
       </label>
       <label>Confirm (type the profile name or Bear slug)
-        <input type="text" name="confirm" placeholder="{{ bear.slug | e }}">
+        <input type="text" name="confirm" placeholder="{{ bear.slug | e }}" value="{{ form.confirm | default('') | e }}">
       </label>
     </div>
-    <details style="margin: 0.5rem 0;">
+    <details{% if form %} open{% endif %}>
       <summary>Request curate review instead of deleting</summary>
       <div class="fields-grid">
-        <label>Title <input type="text" name="review_title" placeholder="Review selected memory"></label>
-        <label>Suggested action <input type="text" name="suggested_action" placeholder="unspecified"></label>
+        <label>Title <input type="text" name="review_title" placeholder="Review selected memory" value="{{ form.review_title | default('', true) | e }}"></label>
+        <label>Suggested action <input type="text" name="suggested_action" placeholder="unspecified" value="{{ form.suggested_action | default('', true) | e }}"></label>
       </div>
-      <label>Summary <textarea name="review_summary" rows="2"></textarea></label>
-      <label>Rationale <textarea name="review_rationale" rows="2"></textarea></label>
-      <label><input type="checkbox" name="requires_human" value="on"> Requires human review</label>
+      <label>Summary <textarea name="review_summary" rows="2">{{ form.review_summary | default('', true) | e }}</textarea></label>
+      <label>Rationale <textarea name="review_rationale" rows="2">{{ form.review_rationale | default('', true) | e }}</textarea></label>
+      <label><input type="checkbox" name="requires_human" value="on"{% if form and form.requires_human == 'on' %} checked{% endif %}> Requires human review</label>
     </details>
     <button type="submit" name="action" value="request_review">Request review</button>
     <button type="submit" name="action" value="delete" class="danger" style="margin-left: 0.5rem;">Delete selected</button>
@@ -72,7 +79,4 @@
 </div>
 {% endif %}
 
-{% else %}
-<div class="box"><p class="form-hint">No memory recorded yet.</p></div>
-{% endif %}
 {% endblock %}

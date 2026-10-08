@@ -17,6 +17,9 @@ use crate::{auth_backend::Backend, config::Config};
 
 static TEST_DB_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+#[path = "feedback_tests.rs"]
+mod feedback_tests;
+
 struct TestSqliteDir(PathBuf);
 
 impl TestSqliteDir {
@@ -354,7 +357,10 @@ async fn memory_routes_enforce_curated_member_and_admin_inspection_boundaries() 
         assert!(!body.contains("core/pretend-core.md"), "{route}: {body}");
         assert!(!body.contains(&shared_old.memory_id));
         if mode == "semantic" {
-            assert!(body.contains("showing curated keyword results"), "{body}");
+            crate::admin::usability_tests::assert_visible(
+                &body,
+                "Semantic search failed; showing keyword results.",
+            );
             assert!(body.contains("(keyword)"), "{body}");
             assert!(!body.contains("score "), "raw Qdrant passage in {body}");
         }

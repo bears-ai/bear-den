@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bear_jobs SET commit_policy = 'per_job' WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0b235c49689a27106b26bb6caa3a31816794f9aa91268ef7bbfcd0c88ae33ab7"
+}

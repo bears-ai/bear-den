@@ -254,7 +254,7 @@ async fn mission_link_and_snapshot_forms_preserve_visibility_and_version_identit
     let app = test_app(pool.clone()).await;
     let cookie = login_cookie(&app, owner).await;
     let peer_cookie = login_cookie(&app, peer).await;
-    let created=post_form(&app,&cookie,&format!("/bear/{slug}/jobs/new"),format!("hat_id={hat}&goal=Knowledge+fixture+{}&surface_id={surface}&commit_policy=none&task_title=Inspect+knowledge&task_criteria=record+inspection",Uuid::new_v4())).await;
+    let created=post_form(&app,&cookie,&format!("/bear/{slug}/jobs/new"),format!("hat_id={hat}&goal=Knowledge+fixture+{}&surface_id={surface}&commit_policy=per_task&task_title=Inspect+knowledge&task_criteria=record+inspection",Uuid::new_v4())).await;
     assert_eq!(created.status(), StatusCode::SEE_OTHER);
     let job_url = created.headers()[header::LOCATION]
         .to_str()
@@ -377,7 +377,7 @@ async fn mission_link_and_snapshot_forms_preserve_visibility_and_version_identit
     let (status, _) = get_page(&app, &peer_cookie, &evidence_url).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     let other = post_form(&app, &cookie, &format!("/bear/{slug}/jobs/new"),
-        format!("hat_id={hat}&goal=Other+knowledge+fixture&surface_id={surface}&commit_policy=none&task_title=Inspect&task_criteria=record"),
+        format!("hat_id={hat}&goal=Other+knowledge+fixture&surface_id={surface}&commit_policy=per_task&task_title=Inspect&task_criteria=record"),
     ).await;
     assert_eq!(other.status(), StatusCode::SEE_OTHER);
     let other_url = other.headers()[header::LOCATION].to_str().unwrap();

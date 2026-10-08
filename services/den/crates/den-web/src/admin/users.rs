@@ -10,6 +10,7 @@ use axum::{
 };
 use axum_extra::extract::Form;
 use axum_extra::routing::RouterExt;
+use axum_login::{tower_sessions::Session, AuthnBackend};
 
 use validator::{Validate, ValidationError, ValidationErrors};
 
@@ -23,6 +24,36 @@ use crate::{
     errors::CustomError,
     web::{self, AppState},
 };
+
+#[cfg(test)]
+#[path = "user_password_tests.rs"]
+mod user_password_tests;
+
+const USER_PASSWORD_NOTICE_KEY: &str = "admin_user_password_changed";
+
+#[derive(Serialize, Deserialize)]
+struct PasswordChangedNotice {
+    target_user_id: i32,
+}
+
+fn password_validation_messages(errors: &ValidationErrors) -> minijinja::Value {
+    let fields: std::collections::BTreeMap<_, Vec<_>> = errors
+        .field_errors()
+        .into_iter()
+        .map(|(field, errors)| {
+            let messages = errors
+                .iter()
+                .map(|error| {
+                    context! {
+                        message => error.message.as_deref().unwrap_or("Check this field."),
+                    }
+                })
+                .collect();
+            (field, messages)
+        })
+        .collect();
+    minijinja::Value::from_serialize(fields)
+}
 
 const INVITE_CODE_LEN: usize = 24;
 const INVITE_CODE_ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
@@ -269,9 +300,12 @@ fn user_not_found() -> CustomError {
 
 #[derive(Validate, Serialize, Deserialize)]
 pub struct ChangePasswordForm {
-    #[validate(length(min = 8))]
+    #[serde(skip_serializing)]
+    #[validate(length(min = 8, message = "Use at least 8 characters."))]
     password: String,
-    #[validate(must_match(other = "password"))]
+    #[serde(skip_serializing)]
+    #[validate(length(min = 8, message = "Use at least 8 characters."))]
+    #[validate(must_match(other = "password", message = "Passwords must match."))]
     password_check: String,
 }
 
@@ -279,10 +313,21 @@ pub async fn change_user_password_view(
     Path(id): Path<i32>,
     State(state): State<AppState>,
     auth_session: AuthSession,
+    session: Session,
 ) -> Result<Response, CustomError> {
     let username = user_db::get_username_by_id(&state.sqlx_pool, id)
         .await?
         .ok_or_else(user_not_found)?;
+
+    let password_changed = session
+        .get::<PasswordChangedNotice>(USER_PASSWORD_NOTICE_KEY)
+        .await?
+        .is_some_and(|notice| notice.target_user_id == id);
+    if password_changed {
+        session
+            .remove::<PasswordChangedNotice>(USER_PASSWORD_NOTICE_KEY)
+            .await?;
+    }
 
     web::render_template(
         &state,
@@ -291,7 +336,8 @@ pub async fn change_user_password_view(
         context! {
             id,
             target => context!{ username },
-            // errors => validation_errors,
+            form => context! {},
+                        password_changed,
         },
     )
     .await
@@ -300,14 +346,14 @@ pub async fn change_user_password_view(
 pub async fn change_user_password_action(
     Path(id): Path<i32>,
     State(state): State<AppState>,
-    auth_session: AuthSession,
+    mut auth_session: AuthSession,
+    session: Session,
     Form(form): Form<ChangePasswordForm>,
 ) -> Result<Response, CustomError> {
+    let username = user_db::get_username_by_id(&state.sqlx_pool, id)
+        .await?
+        .ok_or_else(user_not_found)?;
     if let Err(form_validation_errors) = form.validate() {
-        let username = user_db::get_username_by_id(&state.sqlx_pool, id)
-            .await?
-            .ok_or_else(user_not_found)?;
-
         Ok(web::render_template(
             &state,
             "admin/users/change_password.html",
@@ -315,7 +361,7 @@ pub async fn change_user_password_action(
             context! {
                 id,
                 form => context! {
-                    error => form_validation_errors,
+                    errors => password_validation_messages(&form_validation_errors),
                 },
                 target => context!{ username },
             },
@@ -326,8 +372,22 @@ pub async fn change_user_password_action(
         user_db::set_user_passhash_by_id(&state.sqlx_pool, id, &generate_hash(form.password))
             .await?;
 
-        // TODO redirect to user detail page with success message
-        Ok(Redirect::to("/admin/users/").into_response())
+        // A password reset invalidates the target's web sessions; preserve the operator's current session for a self-reset.
+        if auth_session.user.as_ref().is_some_and(|user| user.id == id) {
+            let updated_user = auth_session
+                .backend
+                .get_user(&id)
+                .await?
+                .ok_or_else(user_not_found)?;
+            auth_session.login(&updated_user).await?;
+        }
+        session
+            .insert(
+                USER_PASSWORD_NOTICE_KEY,
+                PasswordChangedNotice { target_user_id: id },
+            )
+            .await?;
+        Ok(Redirect::to(&format!("/admin/users/{id}/change_password")).into_response())
     }
 }
 

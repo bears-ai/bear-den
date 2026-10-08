@@ -481,17 +481,30 @@ fn models_template_renders_status_saved_effort_draft_and_read_only_controls() {
             default_selection => config_id.to_string(), can_manage_bear,
             new_configuration => json!({"name": "", "model_handle": "", "thinking_effort": ""}),
             bifrost_usage => json!({"status": "missing", "error": "Not configured"}),
+            bear_loop_control => "careful", bear_tool_budget_multiplier => "1.25",
+            stored_bear_loop_control => "standard", stored_bear_tool_budget_multiplier => "1",
+            bifrost_virtual_key_id => "", bifrost_virtual_key_name => "",
+            bifrost_virtual_key_configured => false, bifrost_virtual_key_clear => false,
+            field_errors => std::collections::BTreeMap::<String, String>::new(),
+            model_options => Vec::<serde_json::Value>::new(),
         }).unwrap();
         assert!(page.contains("Deep &lt;plan&gt;"));
         assert!(page.contains("reasoning High"));
         assert!(page.contains("unavailable"));
-        assert!(page.contains(&format!("value=\"{config_id}\" selected")));
+        assert_eq!(
+            page.contains(&format!("value=\"{config_id}\" selected")),
+            can_manage_bear,
+        );
+        assert!(page.contains("Saved loop control: <strong>standard</strong>"));
+        assert!(page.contains("saved tool budget multiplier: <strong>1</strong>"));
         assert_eq!(page.contains("Unsaved &lt;draft&gt;"), can_manage_bear);
         assert_eq!(page.contains("Create configuration"), can_manage_bear);
         assert!(!page.contains("bear_default_model"));
         assert!(!page.contains("fallback"));
         assert!(!page.contains("delegation"));
         if can_manage_bear {
+            assert!(page.contains("value=\"careful\" selected"));
+            assert!(page.contains("value=\"1.25\""));
             assert!(page.contains("value=\"medium\" selected"));
             assert!(page.contains("Reasoning effort"));
             assert!(page.contains("applies to model requests; loop control manages checkpoints and budgets separately"));

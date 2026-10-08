@@ -1,14 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Connect repository{% endblock %}
 {% block content %}
+<div class="usability-work">
 <p><a href="/work/surfaces">← Repositories</a></p>
 <h1>Connect repository</h1>
-<p>You become the surface's owner and can grant other managers afterwards.</p>
+<p>You become the repository connection's owner and can grant other managers afterwards. Connecting does not start work.</p>
 
 <form method="post" action="/work/surfaces/new">
     {% if bear_id %}<input type="hidden" name="bear_id" value="{{ bear_id }}">{% endif %}
     {% if return_job_id %}<input type="hidden" name="return_job_id" value="{{ return_job_id }}">{% endif %}
-    {% if return_job_id %}<p><strong>This surface will be assigned to the job's Bear and attached to the originating job.</strong></p>{% endif %}
+    {% if return_job_id %}<p><strong>This repository will be assigned to the Job's Bear and attached to the originating job.</strong></p>{% endif %}
     <p>
         <label>Name <small>(immutable; lowercase letters, digits, <code>.</code> <code>_</code> <code>-</code>)</small><br>
             <input type="text" name="name" required pattern="[a-z0-9][a-z0-9._-]{0,63}"
@@ -51,21 +52,22 @@
 
     <h2>Credential <small>(optional; stored encrypted, write-only)</small></h2>
     <p>
-        <label>Kind<br>
+        <label>Authentication type<br>
             <select name="credential_kind">
-                <option value="">— none (public repo) —</option>
+                <option value="">No local authentication</option>
                 <option value="ssh_key">SSH private key (deploy key)</option>
                 <option value="https_token">HTTPS token</option>
             </select>
         </label>
     </p>
     <p>
-        <label>Value<br>
+        <label>HTTPS access token or SSH private key (use the selected type)<br>
             <textarea name="credential_value" rows="6" cols="70"
-                      placeholder="-----BEGIN OPENSSH PRIVATE KEY----- … or ghp_…"></textarea>
+                      autocomplete="new-password" spellcheck="false" placeholder="Secret for the selected authentication type"></textarea><br><small>Use an HTTPS token with a plain HTTPS upstream, or an SSH key with an SSH/SCP upstream. Leave empty when no local authentication is selected. Secrets are encrypted and never displayed. You can instead attach a reusable account from Connections after creation.</small>
         </label>
     </p>
 
     <p><button type="submit">Connect repository</button></p>
 </form>
+</div>
 {% endblock %}

@@ -62,7 +62,7 @@ pub async fn list(pool: &PgPool, bear: BearId, actor: UserId) -> Result<Vec<Skil
         .await?
         .ok_or_else(|| DenError::NotFound("Bear not found".into()))?;
     let admin = crate::bears::db::role_is_bear_admin(role.as_deref());
-    let rows = sqlx::query!("SELECT c.id,c.name,c.version,c.description,c.content,c.content_hash,c.status,c.owner_user_id,(m.enabled AND m.content_hash=c.content_hash) AS attached,m.applies_to_profiles AS \"applies_to_profiles?\" FROM skill_catalog_entries c LEFT JOIN bear_skills_manifest m ON m.catalog_entry_id=c.id AND m.bear_id=$1 WHERE ($2 AND (c.owner_user_id=$3 OR c.status = 'approved')) OR (c.status='approved' AND m.enabled AND m.content_hash=c.content_hash) ORDER BY c.name,c.version",bear.as_uuid(),admin,actor.get()).fetch_all(pool).await?;
+    let rows = sqlx::query!("SELECT c.id,c.name,c.version,c.description,c.content,c.content_hash,c.status,c.owner_user_id,(m.enabled AND m.content_hash=c.content_hash) AS attached,m.applies_to_profiles AS \"applies_to_profiles?\" FROM skill_catalog_entries c LEFT JOIN bear_skills_manifest m ON m.catalog_entry_id=c.id AND m.bear_id=$1 WHERE ($2 AND (c.owner_user_id=$3 OR c.status = 'approved')) OR (c.status IN ('approved','disabled') AND m.enabled AND m.content_hash=c.content_hash) ORDER BY c.name,c.version",bear.as_uuid(),admin,actor.get()).fetch_all(pool).await?;
     rows.into_iter()
         .map(|row| {
             if row.content_hash != hash(&row.content) {

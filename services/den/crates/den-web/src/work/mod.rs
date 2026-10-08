@@ -200,7 +200,9 @@ use den_sandbox::protocol::CatalogResponse;
 use den_sandbox::SandboxClient;
 use den_service::bears::{db as bears_db, hats, RuntimeContextLabel};
 
+pub(crate) mod connection_view;
 mod knowledge;
+mod presentation;
 pub mod surfaces;
 
 #[cfg(test)]
@@ -642,7 +644,6 @@ async fn index(
     let show_archived = query.archived.as_deref() == Some("show");
     let bear_id = bear.id;
     let bear_slug = &bear.slug;
-    let mut jobs_with_work: Vec<serde_json::Value> = Vec::new();
 
     let service = PgDocketService::from_pool(state.sqlx_pool());
     let jobs = service
@@ -667,28 +668,15 @@ async fn index(
     .into_iter()
     .map(|row| (row.job_id, row.count))
     .collect();
-    for job in jobs {
-        if !show_completed && job.status == "completed" {
-            continue;
-        }
-        let run_count = run_counts.get(&job.id).copied().unwrap_or_default();
-        jobs_with_work.push(serde_json::json!({
-            "id": job.id.to_string(),
-            "display_id": uuid_hex_prefix(job.id, DISPLAY_ID_HEX_LEN),
-            "route_id": uuid_hex_prefix(job.id, ROUTE_ID_HEX_LEN),
-            "full_id": job.id.to_string(),
-            "title": entity_ref(job.id, "Job", &job.goal, Some(&job.status))["title"],
-            "bear_slug": bear_slug,
-            "goal": job.goal,
-            "status": job.status,
-            "work_surface_id": job.work_surface_id,
-            "docket_run_id": job.current_run_id.map(|id| uuid_hex_prefix(id, DISPLAY_ID_HEX_LEN)),
-            "docket_run_state": job.status,
-            // ponytail: lifecycle runs and sandbox attempts are separate rows.
-            "has_docket_run": job.current_run_id.is_some(),
-            "run_count": run_count,
-        }));
-    }
+    let jobs_with_work = presentation::job_list(
+        state.sqlx_pool(),
+        jobs,
+        den_core::ids::UserId::new(bear.viewer_id),
+        bear_slug,
+        show_completed,
+        &run_counts,
+    )
+    .await?;
 
     // Dispatch-path status so "why is my queued run not starting?" is
     // answerable from this page: is a provider configured, and is it
@@ -745,47 +733,74 @@ async fn new_job_form(
     auth_session: AuthSession,
     Path(bear_slug): Path<String>,
 ) -> Result<Response, CustomError> {
-    let bear = bear_context(&state, &auth_session, &bear_slug).await?;
+    render_new_job(&state, auth_session, &bear_slug, None, None).await
+}
+
+async fn render_new_job(
+    state: &AppState,
+    auth_session: AuthSession,
+    bear_slug: &str,
+    draft: Option<&NewJobForm>,
+    error: Option<&str>,
+) -> Result<Response, CustomError> {
+    let bear = bear_context(state, &auth_session, bear_slug).await?;
     let user_id = require_user(&auth_session)?;
-    let bears = member_bears(&state, user_id).await?;
+    let bears = member_bears(state, user_id).await?;
     let mut bear_slugs: Vec<(String, String)> = bears
         .iter()
         .map(|(id, slug)| (id.to_string(), slug.clone()))
         .collect();
     bear_slugs.sort_by(|a, b| a.1.cmp(&b.1));
-    let catalog = provider_catalog(&state).await;
+    let catalog = provider_catalog(state).await;
 
     // Only this Bear's assigned surfaces can appear beside its hat choices.
     // The handler still re-checks the grant before creating a Job.
     let bear_ids = [bear.id];
-    let mut surfaces: Vec<serde_json::Value> = Vec::new();
+    let mut surfaces = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for surface in
         den_service::work_surfaces::list_surfaces_for_bears(state.sqlx_pool(), &bear_ids).await?
     {
         if seen.insert(surface.id) {
-            surfaces.push(serde_json::json!({
-                "id": surface.id.to_string(),
-                "name": surface.name,
-                "default_ref": surface.default_ref,
-            }));
+            surfaces.push(presentation::RepositoryChoice {
+                id: surface.id,
+                name: surface.name,
+                default_ref: surface.default_ref,
+            });
         }
     }
 
+    let available_ids = seen;
     let configured_hats = hats::list_hats(state.sqlx_pool(), BearId::new(bear.id)).await?;
     let mut hat_choices = Vec::new();
     for hat in configured_hats.into_iter().filter(|hat| hat.work_enabled) {
         let granted =
             hats::manage::allowed_surfaces(state.sqlx_pool(), BearId::new(bear.id), hat.id).await?;
+        let granted: Vec<_> = granted
+            .into_iter()
+            .filter(|id| available_ids.contains(id))
+            .collect();
         if !granted.is_empty() {
-            hat_choices.push(serde_json::json!({
-                "id": hat.id, "name": hat.name, "short_summary": hat.short_summary,
-                "surface_ids": granted.into_iter().map(|id| id.to_string()).collect::<Vec<_>>(),
-            }));
+            hat_choices.push(presentation::HatChoice {
+                id: hat.id,
+                name: hat.name,
+                short_summary: hat.short_summary,
+                surface_ids: granted,
+            });
         }
     }
+    let draft_surface_unavailable = draft.is_some_and(|draft| {
+        !draft.surface_id.is_empty()
+            && !draft
+                .surface_id
+                .parse::<Uuid>()
+                .is_ok_and(|id| available_ids.contains(&id))
+    });
+    let draft_hat_unavailable = draft
+        .and_then(|draft| draft.hat_id)
+        .is_some_and(|id| !hat_choices.iter().any(|hat| hat.id == HatId::new(id)));
     web::render_template(
-        &state,
+        state,
         "work/new.html",
         auth_session,
         context! {
@@ -796,6 +811,10 @@ async fn new_job_form(
             catalog => catalog,
             surfaces => surfaces,
             hat_choices,
+            draft => draft.cloned().unwrap_or_default(),
+            draft_surface_unavailable,
+            draft_hat_unavailable,
+            error,
         },
     )
     .await
@@ -803,7 +822,7 @@ async fn new_job_form(
 
 /// One task row per repeated `task_title[]` input; criteria are
 /// semicolon-separated within the row. Blank rows are skipped.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
 struct NewJobForm {
     goal: String,
     #[serde(default)]
@@ -829,8 +848,35 @@ async fn create_job(
     Path(bear_slug): Path<String>,
     Form(form): Form<NewJobForm>,
 ) -> Result<Response, CustomError> {
-    let bear = bear_context(&state, &auth_session, &bear_slug).await?;
-    let user_id = require_user(&auth_session)?;
+    let (message, status) = match create_job_inner(&state, &auth_session, &bear_slug, form.clone())
+        .await
+    {
+        Err(CustomError::ValidationError(message)) => {
+            (message, axum::http::StatusCode::BAD_REQUEST)
+        }
+        Err(CustomError::Authorization(message)) => (message, axum::http::StatusCode::FORBIDDEN),
+        other => return other,
+    };
+    let mut response = render_new_job(
+        &state,
+        auth_session,
+        &bear_slug,
+        Some(&form),
+        Some(&message),
+    )
+    .await?;
+    *response.status_mut() = status;
+    Ok(response)
+}
+
+async fn create_job_inner(
+    state: &AppState,
+    auth_session: &AuthSession,
+    bear_slug: &str,
+    form: NewJobForm,
+) -> Result<Response, CustomError> {
+    let bear = bear_context(state, auth_session, bear_slug).await?;
+    let user_id = require_user(auth_session)?;
 
     let commit_policy = match form.commit_policy.trim() {
         "" => {
@@ -844,6 +890,10 @@ async fn create_job(
             })?,
         ),
     };
+
+    presentation::require_supported_policy(commit_policy.ok_or_else(|| {
+        CustomError::ValidationError("choose an output policy explicitly".into())
+    })?)?;
 
     let mut tasks = Vec::new();
     for (index, title) in form.task_title.iter().enumerate() {
@@ -896,17 +946,13 @@ async fn create_job(
         form.surface_id.trim().parse::<Uuid>().map_err(|_| {
             CustomError::ValidationError("choose a managed work surface".to_string())
         })?;
-    let surface = den_service::work_surfaces::surface_by_id(state.sqlx_pool(), work_surface_id)
+    let surface = den_service::work_surfaces::list_surfaces_for_bears(state.sqlx_pool(), &[bear.id])
         .await?
-        .ok_or_else(|| CustomError::NotFound("work surface not found".to_string()))?;
-    if !den_service::work_surfaces::bear_may_use_surface(state.sqlx_pool(), bear.id, surface.id)
-        .await?
-    {
-        return Err(CustomError::ValidationError(format!(
-            "bear is not assigned to work surface '{}'",
-            surface.name
-        )));
-    }
+        .into_iter()
+        .find(|surface| surface.id == work_surface_id)
+        .ok_or_else(|| CustomError::ValidationError(
+            "Selected repository is unavailable or no longer assigned to this Bear. Choose a currently permitted repository.".into()
+        ))?;
     let work_surface_id = Some(surface.id);
 
     let surface_default_ref = Some(surface.default_ref);
@@ -932,6 +978,22 @@ async fn create_job(
             "choose a Work-enabled hat for this Bear before creating a Job".into(),
         )
     })?;
+    let hat = hats::list_hats(state.sqlx_pool(), BearId::new(bear.id))
+        .await?
+        .into_iter()
+        .find(|hat| hat.id == selected_hat && hat.work_enabled)
+        .ok_or_else(|| {
+            CustomError::Authorization(
+                "Selected Work responsibility is unavailable. Choose a currently Work-enabled hat."
+                    .into(),
+            )
+        })?;
+    if !hats::manage::allowed_surfaces(state.sqlx_pool(), BearId::new(bear.id), hat.id)
+        .await?
+        .contains(&surface.id)
+    {
+        return Err(CustomError::Authorization("Selected Work responsibility does not permit this repository. Choose a compatible hat.".into()));
+    }
     let service = PgDocketService::from_pool(state.sqlx_pool());
     let create = DocketJobCreate {
         bear_id: bear.id,
@@ -970,7 +1032,7 @@ async fn create_job(
     .into_response())
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct EditJobForm {
     goal: String,
     #[serde(default)]
@@ -988,10 +1050,40 @@ async fn edit_job(
     Path((bear_slug, job_ref)): Path<(String, String)>,
     Form(form): Form<EditJobForm>,
 ) -> Result<Response, CustomError> {
-    let bear = bear_context(&state, &auth_session, &bear_slug).await?;
-    let job_id = resolve_job_prefix(state.sqlx_pool(), &bear, &job_ref).await?;
-    let user_id = require_user(&auth_session)?;
-    let bears = member_bears(&state, user_id).await?;
+    match edit_job_inner(&state, &auth_session, &bear_slug, &job_ref, &form).await {
+        Err(CustomError::ValidationError(error)) => {
+            let mut response = render_job_detail(
+                state,
+                auth_session,
+                bear_slug,
+                job_ref,
+                JobDetailQuery { task: None },
+                Some(EditFeedback { draft: form, error }),
+            )
+            .await?;
+            *response.status_mut() = axum::http::StatusCode::BAD_REQUEST;
+            Ok(response)
+        }
+        result => result,
+    }
+}
+
+struct EditFeedback {
+    draft: EditJobForm,
+    error: String,
+}
+
+async fn edit_job_inner(
+    state: &AppState,
+    auth_session: &AuthSession,
+    bear_slug: &str,
+    job_ref: &str,
+    form: &EditJobForm,
+) -> Result<Response, CustomError> {
+    let bear = bear_context(state, auth_session, bear_slug).await?;
+    let job_id = resolve_job_prefix(state.sqlx_pool(), &bear, job_ref).await?;
+    let user_id = require_user(auth_session)?;
+    let bears = member_bears(state, user_id).await?;
     let bear_id: Option<Uuid> =
         sqlx::query_scalar!("SELECT bear_id FROM bear_jobs WHERE id = $1", job_id)
             .fetch_optional(state.sqlx_pool())
@@ -1007,7 +1099,15 @@ async fn edit_job(
         ));
     }
     let commit_policy =
-        parse_docket_enum::<DocketCommitPolicy>("commit policy", form.commit_policy.trim())?;
+        parse_docket_enum::<DocketCommitPolicy>("output policy", form.commit_policy.trim())?;
+    let existing = PgDocketService::from_pool(state.sqlx_pool())
+        .get_job(bear_id, job_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("job not found".into()))?;
+    // Historical selections can be retained while editing unrelated intent, not newly selected.
+    if presentation::stored_policy(existing.job.commit_policy.as_deref())? != Some(commit_policy) {
+        presentation::require_supported_policy(commit_policy)?;
+    }
     let entered_branch = clean_form_field(&form.work_branch);
     if entered_branch
         .as_deref()
@@ -1019,20 +1119,9 @@ async fn edit_job(
     }
     let (work_surface_id, surface_default_ref) = match form.surface_id {
         Some(surface_id) => {
-            let surface = den_service::work_surfaces::surface_by_id(state.sqlx_pool(), surface_id)
-                .await?
-                .ok_or_else(|| CustomError::NotFound("work surface not found".to_string()))?;
-            if !den_service::work_surfaces::bear_may_use_surface(
-                state.sqlx_pool(),
-                bear_id,
-                surface_id,
-            )
-            .await?
-            {
-                return Err(CustomError::ValidationError(
-                    "the job's Bear is not assigned to that work surface".to_string(),
-                ));
-            }
+            let surface = den_service::work_surfaces::list_surfaces_for_bears(state.sqlx_pool(), &[bear_id])
+                .await?.into_iter().find(|surface| surface.id == surface_id)
+                .ok_or_else(|| CustomError::ValidationError("Selected repository is unavailable or no longer assigned to this Bear. Choose a currently permitted repository.".into()))?;
             (Some(surface.id), Some(surface.default_ref))
         }
         None => {
@@ -1064,7 +1153,9 @@ async fn edit_job(
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             goal: Some(goal.to_string()),
-            work_surface_id: Some(work_surface_id),
+            // Saving unrelated settings must not collapse a multi-repository Job.
+            work_surface_id: (existing.job.work_surface_id != work_surface_id)
+                .then_some(work_surface_id),
             commit_policy: Some(Some(commit_policy)),
             work_branch: Some(work_branch),
             status: None,
@@ -1463,6 +1554,17 @@ async fn job_detail(
     Path((bear_slug, job_ref)): Path<(String, String)>,
     Query(query): Query<JobDetailQuery>,
 ) -> Result<Response, CustomError> {
+    render_job_detail(state, auth_session, bear_slug, job_ref, query, None).await
+}
+
+async fn render_job_detail(
+    state: AppState,
+    auth_session: AuthSession,
+    bear_slug: String,
+    job_ref: String,
+    query: JobDetailQuery,
+    feedback: Option<EditFeedback>,
+) -> Result<Response, CustomError> {
     let bear = bear_context(&state, &auth_session, &bear_slug).await?;
     let job_id = resolve_job_prefix(state.sqlx_pool(), &bear, &job_ref).await?;
     let user_id = require_user(&auth_session)?;
@@ -1658,25 +1760,19 @@ async fn job_detail(
             .iter()
             .find(|surface| surface.id == surface_id)
     });
+    let readiness = presentation::browser_readiness(state.sqlx_pool(), &projection.job).await?;
+    let repository_account_available = readiness.account_available;
     let allow_default_ref = selected_work_surface.is_some_and(|surface| {
         projection.job.work_branch.as_deref() == Some(surface.default_ref.as_str())
     });
-    let dispatch_preflight = den_docket::preflight_dispatch(
-        &work_runs::WorkExecutionTarget::Sandbox,
-        den_docket::DurableResultKind::RepositoryChanges,
-        match projection.job.commit_policy.as_deref() {
-            Some("none") => Some(den_docket::DocketCommitPolicy::None),
-            Some("per_task") => Some(den_docket::DocketCommitPolicy::PerTask),
-            Some("per_job") => Some(den_docket::DocketCommitPolicy::PerJob),
-            _ => None,
-        },
+    let dispatch_preflight = presentation::browser_preflight(
+        presentation::stored_policy(projection.job.commit_policy.as_deref())?,
         projection.job.work_branch.as_deref(),
     );
-    let hat_id = if bear.is_admin {
-        hats::bindings::job_hat(state.sqlx_pool(), BearId::new(bear_id), job_id).await?
-    } else {
-        None
-    };
+    let bound_hat =
+        hats::bindings::job_hat(state.sqlx_pool(), BearId::new(bear_id), job_id).await?;
+    let job_hat_available = readiness.hat_available;
+    let hat_id = if bear.is_admin { bound_hat } else { None };
     let job_hat_name = if let Some(id) = hat_id {
         Some(
             hats::manage::get_hat(state.sqlx_pool(), BearId::new(bear_id), id)
@@ -1686,20 +1782,68 @@ async fn job_detail(
     } else {
         None
     };
-    let hat_choices = if bear.is_admin && hat_id.is_none() {
-        hats::list_hats(state.sqlx_pool(), BearId::new(bear_id))
+    let mut hat_choices = Vec::new();
+    if bear.is_admin && hat_id.is_none() {
+        let assignments = sqlx::query_scalar!(
+            "SELECT work_surface_id FROM job_work_surface_assignments WHERE job_id = $1",
+            job_id,
+        )
+        .fetch_all(state.sqlx_pool())
+        .await
+        .map_err(den_core::DenError::from)?;
+        for hat in hats::list_hats(state.sqlx_pool(), BearId::new(bear_id))
             .await?
             .into_iter()
             .filter(|hat| hat.work_enabled)
-            .collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    };
+        {
+            let granted =
+                hats::manage::allowed_surfaces(state.sqlx_pool(), BearId::new(bear_id), hat.id)
+                    .await?;
+            if !assignments.is_empty() && assignments.iter().all(|id| granted.contains(id)) {
+                hat_choices.push(hat);
+            }
+        }
+    }
     let can_bind_job_hat = bear.is_admin
         && hat_id.is_none()
         && projection.job.lifecycle_intent.is_none()
         && projection.job.current_run_id.is_none()
         && selected_work_surface_id.is_some();
+    let edit_draft = feedback
+        .as_ref()
+        .map(|feedback| feedback.draft.clone())
+        .unwrap_or_else(|| EditJobForm {
+            goal: projection.job.goal.clone(),
+            surface_id: selected_work_surface_id,
+            commit_policy: projection.job.commit_policy.clone().unwrap_or_default(),
+            work_branch: if allow_default_ref {
+                String::new()
+            } else {
+                projection.job.work_branch.clone().unwrap_or_default()
+            },
+            allow_default_ref,
+        });
+    let edit_repository_unavailable = edit_draft
+        .surface_id
+        .is_some_and(|id| !available_surfaces.iter().any(|surface| surface.id == id));
+    let edit_error = feedback.as_ref().map(|feedback| feedback.error.as_str());
+    let edit_policy =
+        parse_docket_enum::<DocketCommitPolicy>("output policy", &edit_draft.commit_policy).ok();
+    let edit_policy_unavailable = edit_policy.is_none()
+        || (edit_policy != Some(DocketCommitPolicy::PerTask)
+            && edit_policy
+                != presentation::stored_policy(projection.job.commit_policy.as_deref())?);
+    let repository_can_inspect = if let Some(surface) = selected_work_surface {
+        auth_session.user.as_ref().is_some_and(|user| user.is_admin)
+            || den_service::work_surfaces::user_may_manage_surface(
+                state.sqlx_pool(),
+                user_id,
+                surface.id,
+            )
+            .await?
+    } else {
+        false
+    };
     let catalog = provider_catalog(&state).await;
     web::render_template(
         &state,
@@ -1722,6 +1866,17 @@ async fn job_detail(
             job_hat_name,
             hat_choices,
             can_bind_job_hat,
+            job_hat_bound => bound_hat.is_some(),
+            job_hat_available,
+            repository_available => readiness.repository_available,
+            repository_account_available,
+            repository_can_inspect,
+            browser_dispatch_blocker => readiness.blocker.as_ref().map(presentation::BrowserDispatchBlocker::message),
+            browser_dispatch_ready => readiness.blocker.is_none(),
+            edit_draft,
+            edit_repository_unavailable,
+            edit_policy_unavailable,
+            edit_error,
             job_title => entity_ref(job_id, "Job", &projection.job.goal, Some(&projection.job.status))["title"],
             status => projection.job.status,
             docket_run_state => projection.current_run.as_ref().map(|run| run.state.clone()),
@@ -2096,16 +2251,30 @@ async fn run_detail(
         None => Vec::new(),
     };
     let work_surface = run.work_surface.clone();
-    let work_surface_link = match dispatch_context.work_surface_name.as_deref() {
-        Some(name) => den_service::work_surfaces::surface_by_name(state.sqlx_pool(), name)
-            .await?
-            .map(|surface| {
-                serde_json::json!({
-                    "id": surface.id.to_string(),
-                    "name": surface.name,
-                })
-            }),
+    let work_surface_link = if let Some(surface) = match dispatch_context
+        .work_surface_name
+        .as_deref()
+    {
+        Some(name) => den_service::work_surfaces::surface_by_name(state.sqlx_pool(), name).await?,
         None => None,
+    } {
+        let can_inspect = auth_session.user.as_ref().is_some_and(|user| user.is_admin)
+            || den_service::work_surfaces::user_may_manage_surface(
+                state.sqlx_pool(),
+                user_id,
+                surface.id,
+            )
+            .await?;
+        let can_read = can_inspect
+            || den_service::work_surfaces::bear_may_use_surface(
+                state.sqlx_pool(),
+                run.bear_id,
+                surface.id,
+            )
+            .await?;
+        can_read.then(|| serde_json::json!({ "id": surface.id, "name": surface.name, "can_inspect": can_inspect }))
+    } else {
+        None
     };
     let usage = run.usage.clone();
     let mut views = vec![run_view(&run, &bear_slug, &dispatch_context.job_goal)];

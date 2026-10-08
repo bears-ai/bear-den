@@ -1,9 +1,37 @@
-    <h4>Runtime</h4>
+{% extends "admin/base.html" %}
+{% block title %}Operator console{% endblock %}
+{% block admin_content %}
+{% if session.is_admin %}
+<p>Manage Den identities, access and runtime configuration. Open a destination to inspect its current state or make a change.</p>
+<div class="den-reach-grid">
+  <section class="box">
+    <h3>Identity &amp; access</h3>
     <ul>
-      <li><a href="/admin/models">Models</a></li>
-      <li><a href="/admin/loop-control/">Loop control</a></li>
-      <li><a href="/admin/workers/">Workers</a></li>
-      <li><a href="/admin/runs/">Run diagnostics</a></li>
-      <li><a href="/admin/sandbox">Sandbox images</a></li>
-      <li><a href="/admin/oauth_clients/">OAuth clients</a></li>
+      <li><a href="/admin/users/">Users</a> — accounts, email verification and invitations</li>
+      <li><a href="/admin/bears/">Bears</a> — all Bears and their management pages</li>
+      <li><a href="/admin/membership/">Bear membership</a> — current grants and access levels</li>
     </ul>
+  </section>
+  <section class="box">
+    <h3>Runtime</h3>
+    <ul>
+      <li><a href="/admin/models">Models</a> — catalog, capabilities, usage and selection settings</li>
+      <li><a href="/admin/workers/">Workers</a> — pending, running, failed and blocked work</li>
+      <li><a href="/admin/loop-control/">Loop control</a> — decision totals and reasons</li>
+      <li><a href="/admin/runs/">Run diagnostics</a> — failures and persisted run evidence</li>
+      <li><a href="/admin/sandbox">Sandbox images</a> — image catalog, engine store and operations</li>
+      <li><a href="/status">Stack status</a> — provider checks and deployed versions</li>
+    </ul>
+  </section>
+  <section class="box">
+    <h3>OAuth</h3>
+    <ul>
+      <li><a href="/admin/oauth_clients/">OAuth clients</a> — scopes, redirect URIs, trust and PKCE tests</li>
+      <li><a href="/admin/oauth_tokens/">OAuth tokens</a> — inspect, generate and revoke credentials</li>
+    </ul>
+  </section>
+</div>
+{% else %}
+<p>Den administrator access is required for operator controls. <a href="/">Return to Bears</a>.</p>
+{% endif %}
+{% endblock %}

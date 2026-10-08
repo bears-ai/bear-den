@@ -7,10 +7,12 @@
 <h2>People</h2>
 
 {% if message %}
-<p><strong>{{ message | e }}</strong></p>
+<p role="status"><strong>{{ message | e }}</strong></p>
 {% endif %}
+{% if error %}<p class="form-errors" role="alert">{{ error | e }}</p>{% endif %}
 
-<p class="form-hint">Who can use this Bear on this Den. <strong>Admin</strong> can manage settings and members; <strong>member</strong> can chat and pair. Membership stays with this Den — it does not travel with an export.</p>
+<p><strong>Member</strong> can chat, use the Bear in an editor, and inspect member-readable settings and records. <strong>Admin</strong> can also manage Bear settings, grants, shared-knowledge reviews, and People. Jobs and Cabinet pages keep their own authorization rules; Bear membership does not grant access to every record or page.</p>
+{% if can_manage_bear %}<p class="form-hint">Keep at least one Admin. <a href="#grant-access">Grant another Admin first</a> before removing the last Admin or changing their role to Member. Granting access for an existing username replaces that person's Bear role.</p>{% endif %}
 
 {% if members and members | length > 0 %}
 <table>
@@ -22,7 +24,7 @@
       <td>{{ m.role_label | e }}</td>
       {% if can_manage_bear %}
       <td>
-        <form method="post" action="/bear/{{ bear.slug | e }}/members/{{ m.user_id }}/revoke" style="display:inline;">
+        <form method="post" action="/bear/{{ bear.slug | e }}/members/{{ m.user_id }}/revoke">
           <button type="submit" onclick="return confirm('Remove access for {{ m.username | e }}?');">Remove</button>
         </form>
       </td>
@@ -36,19 +38,21 @@
 {% endif %}
 
 {% if can_manage_bear %}
-<h3>Grant access</h3>
-<form method="post" action="/bear/{{ bear.slug | e }}/members/grant" class="form-field" style="display:flex; gap:0.75rem; flex-wrap:wrap; align-items:end;">
+<h3 id="grant-access">Grant or change access</h3>
+<p class="form-hint">Removing membership stops this person's Bear access; Cabinet page membership is managed in <a href="/cabinet">Cabinet</a>.</p>
+<form method="post" action="/bear/{{ bear.slug | e }}/members/grant" class="form-field">
   <label>Username<br>
-    <input type="text" name="username" required maxlength="120" autocomplete="username" />
+    <input type="text" name="username" value="{{ member_form.username | default('') | e }}" required maxlength="120" autocomplete="username" />
   </label>
   <label>Access<br>
     <select name="role">
-      <option value="member" selected>Member</option>
-      <option value="admin">Admin</option>
+      <option value="member"{% if member_form.role != 'admin' %} selected{% endif %}>Member</option>
+      <option value="admin"{% if member_form.role == 'admin' %} selected{% endif %}>Admin</option>
     </select>
   </label>
   <button type="submit">Grant access</button>
 </form>
 {% endif %}
+<details><summary>Help: membership and Backup &amp; move</summary><p>People and Bear roles belong to this Den. They are not included in a Bear export; manage membership again at the destination.</p><a href="/bear/{{ bear.slug | e }}/portability">Backup &amp; move</a></details>
 </div>
 {% endblock %}

@@ -1,109 +1,22 @@
 {% extends "work/_manage.html" %}
 {% block title %}Job · {{ bear_slug | e }}{% endblock %}
 {% block manage %}
+<div class="usability-work">
 <p><a href="/bear/{{ bear_slug }}/jobs">← Jobs</a> · <a href="/cabinet">Shared pages</a></p>
 <h1>Job <code class="entity-reference-id">{{ job_display_id }}</code></h1>
 <h2>{{ goal }}</h2>
+{% if edit_error %}<p role="alert"><strong>{{ edit_error }}</strong> No Job settings were changed. Your draft is preserved in <a href="#job-settings">Edit Job settings</a>; review unavailable choices before saving again.</p>{% endif %}
 <p>
     Bear <a href="/bear/{{ bear_slug | urlencode }}">{{ bear_name }}</a> · status <strong>{{ status }}</strong>
     {% if docket_run_state %} · Docket run <code>{{ docket_run_id }}</code> <strong>{{ docket_run_state }}</strong>{% endif %}
-    {% if work_surface_name %} · work surface <a href="/work/surfaces/{{ work_surface_id }}">{{ work_surface_name }}</a>{% endif %}
-    · source change policy <strong>{{ commit_policy_label }}</strong>
-    {% if work_branch %} · publishes to <code>{{ work_branch }}</code>{% endif %}
+    {% if work_surface_name %} · repository {% if repository_can_inspect %}<a href="/work/surfaces/{{ work_surface_id }}">{{ work_surface_name }}</a>{% else %}{{ work_surface_name }}{% endif %}{% endif %}
+    · output policy <strong>{{ commit_policy_label }}</strong>
+    {% if work_branch %} · work branch <code>{{ work_branch }}</code>{% endif %}
 </p>
-
-<section class="box">
-    <h2>Mission knowledge</h2>
-    {% if mission.reference %}
-    <p><a href="/cabinet/{{ mission.reference }}">{{ mission.title | e }}</a></p>
-    {% else %}
-    <p>No accessible Mission page linked.</p>
-    {% endif %}
-    {% if mission.can_edit %}
-    <form method="post" action="/bear/{{ bear_slug | urlencode }}/jobs/{{ job_id }}/mission">
-        <input type="hidden" name="revision" value="{{ mission.revision }}">
-        <label>Cabinet page
-            <select name="cabinet_ref">
-                <option value="">No page</option>
-                {% for page in mission_choices %}
-                <option value="{{ page.cabinet_ref }}" {% if page.cabinet_ref == mission.reference %}selected{% endif %}>{{ page.title | e }}</option>
-                {% endfor %}
-            </select>
-        </label>
-        <button type="submit">Save knowledge link</button>
-    </form>
-    {% if mission.reference and mission.version %}
-    <form method="post" action="/bear/{{ bear_slug | urlencode }}/jobs/{{ job_id }}/mission/snapshot">
-        <input type="hidden" name="revision" value="{{ mission.revision }}">
-        <input type="hidden" name="version" value="{{ mission.version }}">
-        <button type="submit">Save a private copy</button>
-        <details><summary>About this copy</summary><p>Saves this published version as private evidence. Later page edits do not change it. It does not change the Job status or give the Bear access.</p></details>
-    </form>
-    {% endif %}
-    {% endif %}
-    <h3>Saved document evidence</h3>
-    {% if mission.evidence %}
-    <ul>
-        {% for evidence in mission.evidence %}
-        <li>{{ evidence.title | e }} · <a href="/bear/{{ bear_slug | urlencode }}/jobs/{{ job_id }}/evidence/{{ evidence.reference }}/content">Download saved copy</a></li>
-        {% endfor %}
-    </ul>
-    {% else %}
-    <p>No saved documents available.</p>
-    {% endif %}
-</section>
-{% if can_manage_hat %}
-<div class="box">
-  <h3>Hat for this Job</h3>
-  {% if job_hat %}
-  <p>Bound to <a href="/bear/{{ bear_slug | e }}/hats/{{ job_hat }}">{{ job_hat_name | e }}</a>. An existing Job cannot switch hats.</p>
-  {% elif can_bind_job_hat and hat_choices %}
-  <p class="form-hint">Only a draft Job with no runs can be bound. The hat must have autonomous Work enabled and include every surface assigned to the Job.</p>
-  <form method="post" action="/bear/{{ bear_slug | e }}/jobs/{{ job_id }}/hat">
-    <label>Responsibility <select name="hat_id" required>{% for hat in hat_choices %}<option value="{{ hat.id }}">{{ hat.name | e }}</option>{% endfor %}</select></label>
-    <button type="submit">Bind draft Job to hat</button>
-  </form>
-  {% else %}<p class="form-hint">No eligible hat is available for this Job. <a href="/bear/{{ bear_slug | e }}/hats">Configure a hat</a> before starting a new draft Job.</p>{% endif %}
-</div>
-{% endif %}
-{% if work_surface_id and work_branch %}
-<p><a href="/work/surfaces/{{ work_surface_id }}/diff?base={{ work_surface_default_ref | urlencode }}&head={{ work_branch | urlencode }}">Inspect work branch diff and provider diagnostics</a>.</p>
-{% endif %}
-<details {% if not selected_work_surface_id %}open{% endif %}>
-    <summary>Edit job settings</summary>
-    <form method="post" action="/bear/{{ bear_slug }}/jobs/{{ job_id }}/edit">
-        <p><label>Goal<br><input name="goal" value="{{ goal }}" required size="80"></label></p>
-        <p><label>Repository<br>
-            <select name="surface_id" required>
-                {% if not selected_work_surface_id %}<option value="" selected disabled>Choose a repository…</option>{% endif %}
-                {% for surface in available_surfaces %}
-                <option value="{{ surface.id }}" {% if surface.id == selected_work_surface_id %}selected{% endif %}>{{ surface.name }} ({{ surface.default_ref }})</option>
-                {% endfor %}
-            </select>
-        </label></p>
-        <p><label>Output policy<br>
-            <select name="commit_policy" required>
-                <option value="per_task" {% if commit_policy == "per_task" %}selected{% endif %}>Publish after each task</option>
-                <option value="per_job" {% if commit_policy == "per_job" %}selected{% endif %}>Publish to the job branch</option>
-                <option value="none" {% if commit_policy == "none" %}selected{% endif %}>No source changes expected</option>
-            </select>
-        </label></p>
-        <p><label>Work branch <small>(blank regenerates <code>den/job-&lt;id&gt;</code> on the next publishable dispatch)</small><br><input name="work_branch" value="{% if not allow_default_ref %}{{ work_branch or '' }}{% endif %}" size="50"></label></p>
-        <p><label><input type="checkbox" name="allow_default_ref" value="true" {% if allow_default_ref %}checked{% endif %}> Work directly on the surface's default branch</label><br><small>Warning: this bypasses the normal work-branch safety boundary and pushes successful work directly to the configured default branch. It is never enabled by default.</small></p>
-        <button type="submit">Save job settings</button>
-    </form>
-</details>
-<form method="post" action="/bear/{{ bear_slug }}/jobs/{{ job_id }}/duplicate">
-    <button type="submit">Duplicate job</button>
-    <small>Copies job intent, criteria, work-surface settings, and task definitions into a fresh job.</small>
-</form>
-<form method="post" action="/bear/{{ bear_slug }}/jobs/{{ job_id }}/archive">
-    <button type="submit">{% if status == "archived" %}Unarchive job{% else %}Archive job{% endif %}</button>
-</form>
 
 {% if status not in ["completed", "cancelled", "archived"] %}
 <section>
-    <h2>Job lifecycle</h2>
+    {% if docket_run_state in ["dispatched", "running", "blocked"] or tasks_complete %}<h2>Job controls</h2>{% endif %}
     {% if docket_run_state in ["dispatched", "running", "blocked"] %}
     <form method="post" action="/bear/{{ bear_slug }}/jobs/{{ job_id }}/cancel">
         <button type="submit">Cancel Docket run</button>
@@ -138,7 +51,7 @@
 {% if status not in ["completed", "cancelled", "archived"] %}
 <section>
     <h2>Dispatch job</h2>
-    <dl aria-label="Dispatch topology">
+    <details><summary>Dispatch details</summary><dl aria-label="Dispatch topology">
         <dt>Execution target</dt><dd>Sandbox</dd>
         <dt>Checkout</dt><dd>Isolated from your current checkout</dd>
         <dt>Durable result</dt><dd>Repository changes</dd>
@@ -148,30 +61,35 @@
             Commit{% if dispatch_preflight.publication.branch %} to <code>{{ dispatch_preflight.publication.branch }}</code>{% else %} to the generated job branch{% endif %}
             {% else %}None — repository changes cannot be delivered{% endif %}
         </dd>
-        <dt>Status</dt><dd>{% if dispatch_preflight.dispatchable %}Ready to launch{% else %}Cannot launch{% endif %}</dd>
-    </dl>
-    {% if not dispatch_preflight.dispatchable %}<p role="alert">Choose a publishable output policy before dispatching source-changing sandbox work.</p>{% endif %}
-    <p>Queues one run for this job's pending or blocked tasks using the assigned work surface as source context. The tasks run within one isolated job session.</p>
+        <dt>Output route</dt><dd>{% if dispatch_preflight.dispatchable %}Publication configured; current grants and provider readiness are checked at launch{% else %}Cannot deliver repository changes{% endif %}</dd>
+    </dl></details>
+    {% if not dispatch_preflight.dispatchable %}<p role="alert">This historical output policy cannot deliver repository changes through browser dispatch. <a href="#job-settings">Edit Job settings</a> and explicitly select <strong>Publish after each task</strong>; saving settings does not start work.</p>{% endif %}
+    {% if not repository_available %}<p role="alert">No currently assigned repository is available to this Bear. <a href="#job-settings">Check Job settings</a> or ask a repository manager to <a href="/work/surfaces">restore its assignment</a>.</p>{% endif %}
+    {% if not job_hat_bound %}<p role="alert">This Job has no bound Work responsibility. {% if can_bind_job_hat %}<a href="#job-responsibility">Bind an eligible hat below</a>.{% else %}Ask a Bear admin to <a href="/bear/{{ bear_slug }}/hats">configure a Work-enabled hat</a> and create a new draft Job.{% endif %}</p>{% endif %}
+    {% if browser_dispatch_blocker %}<p role="alert">{{ browser_dispatch_blocker }}. <a href="#job-settings">Review Job settings</a> or ask the repository/Bear administrator to restore the required access.</p>{% endif %}
+    {% if repository_available and not repository_account_available %}<p role="alert">Repository authentication is revoked, unavailable or explicitly read-only. Ask a repository manager to <a href="/connections">replace or repair its account link</a>; dispatch cannot use cleared local credentials as a fallback.</p>{% endif %}
+    {% if job_hat_bound and not job_hat_available %}<p role="alert">The bound responsibility is not currently Work-enabled or no longer permits every Job assignment. Ask a Bear admin to <a href="/bear/{{ bear_slug }}/hats">review its Work access</a> before dispatching.</p>{% endif %}
+    <p>Dispatch queues a run for pending or blocked tasks in an isolated repository checkout.</p>
     {% if has_active_work_run %}
     <p><button type="button" disabled>Dispatch job</button> A job work session is already active. <a href="/bear/{{ bear_slug }}/jobs/runs/{{ active_work_run.route_id }}">{{ active_work_run.title }}</a>.</p>
     {% elif has_runnable_work %}
     <form method="post" action="/bear/{{ bear_slug }}/jobs/{{ job_id }}/dispatch">
-        <p>Using assigned work surface <a href="/work/surfaces/{{ work_surface_id }}"><code>{{ work_surface_name }}</code></a>.</p>
+        {% if work_surface_name %}<p>Using repository {% if repository_can_inspect %}<a href="/work/surfaces/{{ work_surface_id }}"><code>{{ work_surface_name }}</code></a>{% else %}<code>{{ work_surface_name }}</code>{% endif %}.</p>{% endif %}
         {% if catalog and catalog.images %}
-        <select name="image"><option value="">image: surface default</option>{% for image in catalog.images %}<option value="{{ image.name }}">{{ image.name }}</option>{% endfor %}</select>
+        <label>Sandbox image <select name="image"><option value="">Repository default</option>{% for image in catalog.images %}<option value="{{ image.name }}">{{ image.name }}</option>{% endfor %}</select></label>
         {% endif %}
-        <button type="submit" {% if not dispatch_preflight.dispatchable %}disabled aria-describedby="dispatch-blocked-reason"{% endif %}>Dispatch job</button>
-        {% if not dispatch_preflight.dispatchable %}<small id="dispatch-blocked-reason">No publication route is configured.</small>{% endif %}
+        <button type="submit" {% if not browser_dispatch_ready %}disabled{% endif %}>Dispatch job</button>
+        {% if not dispatch_preflight.dispatchable %}<small id="dispatch-blocked-reason">Only Publish after each task is supported for repository changes.</small>{% endif %}
     </form>
     {% else %}
-    <p><button type="button" disabled>Dispatch job</button> No pending or blocked tasks are currently runnable. Add a task above, or inspect the work runs below.</p>
+    <p><button type="button" disabled>Dispatch job</button> No pending or blocked tasks are currently runnable. Add a task below, or inspect the work runs below.</p>
     {% endif %}
 </section>
 {% endif %}
 
 <section>
     <details open>
-        <summary><h2>Tasks</h2></summary>
+        <summary><span class="section-title">Tasks</span></summary>
         {% if status not in ["completed", "cancelled", "archived"] %}
         <details>
             <summary>Add top-level task</summary>
@@ -189,12 +107,14 @@
                 {% for task in tasks %}
                 <tr>
                     <td>
+                        {% if status not in ["completed", "cancelled", "archived"] %}
                         <form method="post" action="/bear/{{ bear_slug }}/jobs/{{ job_id }}/tasks/{{ task.id }}/move/up" class="inline-form"><button type="submit" aria-label="Move task up">↑</button></form>
                         <form method="post" action="/bear/{{ bear_slug }}/jobs/{{ job_id }}/tasks/{{ task.id }}/move/down" class="inline-form"><button type="submit" aria-label="Move task down">↓</button></form>
+                        {% endif %}
                     </td>
                     <td><span class="form-hint">{% for level in range(task.depth) %}↳ {% endfor %}</span>
                         <a href="?task={{ task.id }}#task-{{ task.display_id }}" id="task-{{ task.display_id }}" title="UUID prefix for {{ task.full_id }}"><code class="entity-reference-id">{{ task.display_id }}</code></a>
-                        {{ task.description }} <small>({{ task.kind }})</small>
+                        <strong>{{ task.title }}</strong> <small>({{ task.kind | replace("_", " ") }})</small>
                         <div>
                             {% if task.status == "done" %}✅ done
                             {% elif task.status == "blocked" %}🚫 blocked
@@ -202,15 +122,15 @@
                             {% elif task.status == "cancelled" %}🚫 cancelled
                             {% else %}⏳ pending{% endif %}
                         </div>
+                        {% if task.status == "blocked" %}<p role="status"><strong>Blocked because:</strong> {{ task.blocker_reason or "No blocker reason was recorded. Inspect the linked run before retrying." }}</p>{% endif %}
+                            {% if task.can_retry and status not in ["completed", "cancelled", "archived"] %}<form method="post" action="/bear/{{ bear_slug }}/jobs/{{ job_id }}/tasks/{{ task.id }}/retry"><label>Reason <input name="reason" required></label><button type="submit">Retry task</button></form>{% endif %}
                         <details>
-                            <summary>Details</summary>
-                            <p>{{ task.title }}</p>
-                            {% if task.blocker_reason %}<p><strong>Blocked because:</strong> {{ task.blocker_reason }}</p>{% endif %}
+                            <summary>Task criteria &amp; history</summary>
+                            <p>{{ task.description }}</p>
                             {% if task.retry_reason %}<p><small>Retry requested: {{ task.retry_reason }}{% if task.previous_blocked_reason %} (previous blocker: {{ task.previous_blocked_reason }}){% endif %}</small></p>{% endif %}
                             {% if task.run_route_id %}<p><a href="/bear/{{ bear_slug }}/jobs/runs/{{ task.run_route_id }}">Run <code class="entity-reference-id">{{ task.run_display_id }}</code></a></p>{% endif %}
                             <ul>{% for criterion in task.completion_criteria %}<li>{{ criterion }}</li>{% endfor %}</ul>
-                            {% if task.can_retry %}<form method="post" action="/bear/{{ bear_slug }}/jobs/{{ job_id }}/tasks/{{ task.id }}/retry"><label>Reason <input name="reason" required></label><button type="submit">Retry task</button></form>{% endif %}
-                            <details><summary>Add child task</summary><form method="post" action="/bear/{{ bear_slug }}/jobs/{{ job_id }}/tasks/{{ task.id }}/children"><label>Title <input name="title" required></label><label>Criteria <input name="criteria" required></label><label>Details <textarea name="body"></textarea></label><button type="submit">Add child</button></form></details>
+                            {% if status not in ["completed", "cancelled", "archived"] %}<details><summary>Add child task</summary><form method="post" action="/bear/{{ bear_slug }}/jobs/{{ job_id }}/tasks/{{ task.id }}/children"><label>Title <input name="title" required></label><label>Criteria <input name="criteria" required></label><label>Details <textarea name="body"></textarea></label><button type="submit">Add child</button></form></details>{% endif %}
                         </details>
                     </td>
                 </tr>
@@ -237,30 +157,9 @@
 </section>
 {% endif %}
 
-<section aria-labelledby="job-notebook-heading">
-    <h2 id="job-notebook-heading">Job notebook</h2>
-    <p><small>Durable decisions and context promoted from task journals. Dispatched workers receive a bounded selection, not the full notebook.</small></p>
-    {% if notebook_entries %}
-    <ol>
-        {% for entry in notebook_entries %}
-        <li>
-            <strong>{{ entry.kind | replace("_", " ") }}</strong>: <span>{{ entry.summary }}</span>
-            {% if entry.task_route_id %} · <a href="?task={{ entry.task_route_id }}#selected-task">task <code class="entity-reference-id">{{ entry.task_display_id }}</code></a>{% endif %}
-            · by {{ entry.by_role }} · <time datetime="{{ entry.created_at }}">{{ entry.created_at }}</time>
-            {% if entry.body %}<details><summary>Details</summary><p>{{ entry.body }}</p></details>{% endif %}
-            {% if entry.tags %}<div><small>Tags: {{ entry.tags | join(", ") }}</small></div>{% endif %}
-            {% if entry.source_entry_id %}<div><small>Promoted by reference from its task journal.</small></div>{% endif %}
-        </li>
-        {% endfor %}
-    </ol>
-    {% else %}
-    <p>No notebook entries yet. Promote a durable decision or useful task-journal entry to make it visible here and available to future workers.</p>
-    {% endif %}
-</section>
-
 <section aria-labelledby="settlement-history-heading">
-    <h2 id="settlement-history-heading">Task settlement history</h2>
-    <p><small>Append-only outcomes. Reopened and resettled tasks retain earlier entries.</small></p>
+    <h2 id="settlement-history-heading">Task results</h2>
+    <details><summary>About result history</summary><p>Earlier outcomes remain visible when tasks are reopened or completed again.</p></details>
     {% if outcome_entries %}
     <ol>
         {% for entry in outcome_entries %}
@@ -309,4 +208,123 @@
     <p>No work runs for this job yet.</p>
     {% endif %}
 </section>
+{% if repository_can_inspect and work_surface_id and work_branch %}
+<p><a href="/work/surfaces/{{ work_surface_id }}/diff?base={{ work_surface_default_ref | urlencode }}&head={{ work_branch | urlencode }}">Inspect work branch diff and provider diagnostics</a>.</p>
+{% endif %}
+<section class="box">
+    <h2>Mission page &amp; saved evidence</h2>
+    {% if mission.reference %}
+    <p><a href="/cabinet/{{ mission.reference }}">{{ mission.title | e }}</a></p>
+    {% else %}
+    <p>No accessible Mission page linked.</p>
+    {% endif %}
+    {% if mission.can_edit %}
+    <details><summary>Link a Mission page or save a private copy</summary>
+    <form method="post" action="/bear/{{ bear_slug | urlencode }}/jobs/{{ job_id }}/mission">
+        <input type="hidden" name="revision" value="{{ mission.revision }}">
+        <label>Cabinet page
+            <select name="cabinet_ref">
+                <option value="">No page</option>
+                {% for page in mission_choices %}
+                <option value="{{ page.cabinet_ref }}" {% if page.cabinet_ref == mission.reference %}selected{% endif %}>{{ page.title | e }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <button type="submit">Save knowledge link</button>
+    </form>
+    {% if mission.reference and mission.version %}
+    <form method="post" action="/bear/{{ bear_slug | urlencode }}/jobs/{{ job_id }}/mission/snapshot">
+        <input type="hidden" name="revision" value="{{ mission.revision }}">
+        <input type="hidden" name="version" value="{{ mission.version }}">
+        <button type="submit">Save a private copy</button>
+        <p>Private to you: not shared with the Bear or other Job readers. This independently retained copy survives later page edits, deletion, or lost page access while your artifact access remains valid. Saving it does not change Job status.</p>
+    </form>
+    {% endif %}
+    </details>
+    {% endif %}
+    <h3>Saved document evidence</h3>
+    {% if mission.evidence %}
+    <ul>
+        {% for evidence in mission.evidence %}
+        <li>{{ evidence.title | e }} · <a href="/bear/{{ bear_slug | urlencode }}/jobs/{{ job_id }}/evidence/{{ evidence.reference }}/content">Download saved copy</a></li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p>No saved documents available.</p>
+    {% endif %}
+</section>
+
+<section aria-labelledby="job-notebook-heading">
+    <h2 id="job-notebook-heading">Job notebook</h2>
+    <details><summary>How notebook context is used</summary><p>Workers receive a bounded selection of saved decisions and context, not the full notebook.</p></details>
+    {% if notebook_entries %}
+    <ol>
+        {% for entry in notebook_entries %}
+        <li>
+            <strong>{{ entry.kind | replace("_", " ") }}</strong>: <span>{{ entry.summary }}</span>
+            {% if entry.task_route_id %} · <a href="?task={{ entry.task_route_id }}#selected-task">task <code class="entity-reference-id">{{ entry.task_display_id }}</code></a>{% endif %}
+            · by {{ entry.by_role }} · <time datetime="{{ entry.created_at }}">{{ entry.created_at }}</time>
+            {% if entry.body %}<details><summary>Details</summary><p>{{ entry.body }}</p></details>{% endif %}
+            {% if entry.tags %}<div><small>Tags: {{ entry.tags | join(", ") }}</small></div>{% endif %}
+            {% if entry.source_entry_id %}<div><small>Promoted by reference from its task journal.</small></div>{% endif %}
+        </li>
+        {% endfor %}
+    </ol>
+    {% else %}
+    <p>No notebook entries yet.</p>
+    {% endif %}
+</section>
+
+
+<details class="box" {% if edit_error or not browser_dispatch_ready %}open{% endif %}><summary>Job setup &amp; maintenance</summary>
+{% if can_manage_hat %}
+<div class="box">
+  <h3 id="job-responsibility">Responsibility for this Job</h3>
+  {% if job_hat %}
+  <p>Bound to <a href="/bear/{{ bear_slug | e }}/hats/{{ job_hat }}">{{ job_hat_name | e }}</a>. An existing Job cannot switch hats.</p>
+  {% elif can_bind_job_hat and hat_choices %}
+  <p class="form-hint">Only a draft Job with no runs can be bound. The hat must have autonomous Work enabled and include every surface assigned to the Job.</p>
+  <form method="post" action="/bear/{{ bear_slug | e }}/jobs/{{ job_id }}/hat">
+    <label>Responsibility <select name="hat_id" required>{% for hat in hat_choices %}<option value="{{ hat.id }}">{{ hat.name | e }}</option>{% endfor %}</select></label>
+    <button type="submit">Bind draft Job to hat</button>
+  </form>
+  {% else %}<p class="form-hint">No eligible hat is available for this Job. <a href="/bear/{{ bear_slug | e }}/hats">Configure a hat</a> before starting a new draft Job.</p>{% endif %}
+</div>
+{% endif %}
+{% set settings = edit_draft or {"goal": goal, "surface_id": selected_work_surface_id, "commit_policy": commit_policy, "work_branch": work_branch, "allow_default_ref": allow_default_ref} %}
+<details {% if edit_error or edit_repository_unavailable or not settings.surface_id or not dispatch_preflight.dispatchable %}open{% endif %}>
+    <summary id="job-settings">Edit Job settings</summary>
+    <form method="post" action="/bear/{{ bear_slug }}/jobs/{{ job_id }}/edit">
+        <p><label>Goal<br><input name="goal" value="{{ settings.goal }}" required size="80"></label></p>
+        <p><label>Repository<br>
+            <select name="surface_id" required>
+                {% if edit_repository_unavailable %}<option value="" selected disabled>Previous repository unavailable — choose explicitly</option>{% elif not settings.surface_id %}<option value="" selected disabled>Choose a repository…</option>{% endif %}
+                {% for surface in available_surfaces %}
+                <option value="{{ surface.id }}" {% if surface.id == settings.surface_id %}selected{% endif %}>{{ surface.name }} ({{ surface.default_ref }})</option>
+                {% endfor %}
+            </select>
+        </label></p>
+        <p><label>Output policy<br>
+            <select name="commit_policy" required>
+                {% if edit_policy_unavailable or settings.commit_policy not in ["per_task", "per_job", "none"] %}<option value="" selected disabled>Output policy unavailable — choose explicitly</option>{% endif %}
+                <option value="per_task" {% if settings.commit_policy == "per_task" %}selected{% endif %}>Publish after each task</option>
+                {% if not edit_policy_unavailable and settings.commit_policy == "per_job" %}<option value="per_job" selected>Historical: Publish to the job branch — cannot dispatch here</option>{% endif %}
+                {% if not edit_policy_unavailable and settings.commit_policy == "none" %}<option value="none" selected>Historical: No source changes expected — cannot dispatch here</option>{% endif %}
+            </select>
+        </label><br><small>Only Publish after each task supports browser repository-change dispatch. A historical selection can be retained while editing, but must be changed explicitly to repair dispatch.</small></p>
+        <p><label>Work branch <small>(blank regenerates <code>den/job-&lt;id&gt;</code> on the next publishable dispatch)</small><br><input name="work_branch" value="{{ settings.work_branch or '' }}" size="50"></label></p>
+        <p><label><input type="checkbox" name="allow_default_ref" value="true" {% if settings.allow_default_ref %}checked{% endif %}> Work directly on the surface's default branch</label><br><small>Warning: this bypasses the normal work-branch safety boundary and pushes successful work directly to the configured default branch. It is never enabled by default.</small></p>
+        <button type="submit">Save job settings</button>
+    </form>
+</details>
+<form method="post" action="/bear/{{ bear_slug }}/jobs/{{ job_id }}/duplicate">
+    <button type="submit">Duplicate job</button>
+    <small>Copies intent, criteria, repository settings and task definitions; does not start work.{% if not dispatch_preflight.dispatchable %} The historical output policy is copied too; explicitly repair it before dispatch.{% endif %}</small>
+</form>
+<form method="post" action="/bear/{{ bear_slug }}/jobs/{{ job_id }}/archive">
+    <button type="submit">{% if status == "archived" %}Unarchive job{% else %}Archive job{% endif %}</button>
+</form>
+
+</details>
+</div>
 {% endblock %}

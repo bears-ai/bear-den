@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Review page move{% endblock %}
+{% block breadcrumb %}<a href="/cabinet">Cabinet</a> / Review move{% endblock %}
+{% block content %}
+<section class="usability-work">
+  <h1>Review page move</h1>
+  <p>Moving <a href="/cabinet/{{ cabinet_ref }}">{{ page_title | e }}</a> {% if parent %}under <a href="/cabinet/{{ parent }}">{{ destination_title | e }}</a>{% else %}to the Cabinet root{% endif %} at position {{ position }}.</p>
+  <section aria-labelledby="current-audience"><h2 id="current-audience">Current audience</h2>
+    {% with audience = current_audience %}{% include "cabinet/_audience.html" %}{% endwith %}
+  </section>
+  <section aria-labelledby="target-audience"><h2 id="target-audience">After-move audience</h2>
+    {% with audience = target_audience %}{% include "cabinet/_audience.html" %}{% endwith %}
+  </section>
+  <p>This is the page audience after the move using current membership. Its own restrictions remain; old inherited restrictions are replaced by the destination's. Children keep their own restrictions and inherit the new ancestry. Moving to the root with blank local People and Bears lists makes the page open wiki.</p>
+  <p>No content or files have moved yet. Access can change before submission; Den rechecks permission and topology when applying the move.</p>
+  <form method="post" action="/cabinet/{{ cabinet_ref }}/organize">
+    <input type="hidden" name="parent" value="{{ parent or '' }}">
+    <input type="hidden" name="position" value="{{ position }}">
+    <label><input type="checkbox" name="confirm_audience" value="true" required>I reviewed the resulting audience for this page and its children.</label>
+    <button type="submit">Confirm move or reorder</button>
+    <a href="/cabinet/{{ cabinet_ref }}">Cancel</a>
+  </form>
+</section>
+{% endblock %}

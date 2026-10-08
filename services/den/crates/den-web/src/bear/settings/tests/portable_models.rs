@@ -162,9 +162,31 @@ async fn bundle_import_rejects_destination_catalog_errors_before_setup() {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        let review = response.headers()[header::LOCATION]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let reviewed = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(&review)
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reviewed.status(), StatusCode::BAD_REQUEST);
+        let body = reviewed.into_body().collect().await.unwrap().to_bytes();
         assert!(String::from_utf8_lossy(&body).contains(expected));
+        assert_eq!(
+            super::portability::confirm(&app, &cookie, &review, true)
+                .await
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
         assert!(!bears_db::bear_slug_exists(&pool, &manifest.bear.slug)
             .await
             .unwrap());
@@ -177,6 +199,7 @@ async fn bundle_import_rejects_destination_catalog_errors_before_setup() {
     let bundle =
         build_bear_bundle(&serde_yml::to_string(&manifest).unwrap(), b"not a database").unwrap();
     let response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -191,9 +214,31 @@ async fn bundle_import_rejects_destination_catalog_errors_before_setup() {
         )
         .await
         .unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let review = response.headers()[header::LOCATION]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&review)
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     let body = response.into_body().collect().await.unwrap().to_bytes();
     assert!(String::from_utf8_lossy(&body).contains("not in the Den catalog"));
+    assert_eq!(
+        super::portability::confirm(&app, &cookie, &review, true)
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
     assert!(!bears_db::bear_slug_exists(&pool, &manifest.bear.slug)
         .await
         .unwrap());
@@ -267,4 +312,47 @@ fn old_bundles_still_read_and_new_bundles_preserve_named_configurations() {
     manifest.default_model_configuration_id = Some(ModelConfigurationId::new(Uuid::new_v4()));
     let invalid = build_bear_bundle(&serde_yml::to_string(&manifest).unwrap(), &memory).unwrap();
     assert!(read_bear_bundle(&invalid).is_err());
+}
+
+#[tokio::test]
+async fn confirmation_revalidates_catalog_after_review_without_creating_a_bear() {
+    let _guard = TEST_DB_LOCK.lock().await;
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let slug = fresh_slug();
+    let bear_id = create_test_bear(&pool, &slug).await;
+    let admin = create_bear_admin_user(&pool, bear_id).await;
+    let bear = bears_db::get_bear(&pool, bear_id).await.unwrap().unwrap();
+    let model = super::model_configurations::seed_model(&pool, Some(true)).await;
+    let mut manifest = manifest_for_bear(&bear).unwrap();
+    manifest.bear.slug = format!("stale-catalog-{}", Uuid::new_v4().simple());
+    let mut configuration = configuration();
+    configuration.model_handle = model.clone();
+    manifest.model_configurations = Some(vec![configuration]);
+    let bundle =
+        build_bear_bundle(&serde_yml::to_string(&manifest).unwrap(), b"sqlite fixture").unwrap();
+    let app = test_app(pool.clone()).await;
+    let cookie = login_cookie(&app, admin).await;
+    let review = super::portability::preview(&app, &cookie, &bundle).await;
+    sqlx::query!(
+        "UPDATE model_selection_options SET selectable = FALSE WHERE handle = $1",
+        model
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let rejected = super::portability::confirm(&app, &cookie, &review, true).await;
+    assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+    let body = rejected.into_body().collect().await.unwrap().to_bytes();
+    assert!(String::from_utf8_lossy(&body).contains("Nothing was imported"));
+    assert!(!bears_db::bear_slug_exists(&pool, &manifest.bear.slug)
+        .await
+        .unwrap());
+    assert_eq!(
+        super::portability::confirm(&app, &cookie, &review, true)
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
 }

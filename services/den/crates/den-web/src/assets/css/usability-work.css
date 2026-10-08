@@ -1,0 +1,56 @@
+/* Scoped to Jobs, repositories, Cabinet and shared Connections. */
+.usability-work {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.usability-work form > label,
+.usability-work form > fieldset > label {
+    display: block;
+    margin-block: var(--spacing-unit);
+}
+
+.usability-work input:not([type="checkbox"]):not([type="hidden"]),
+.usability-work textarea,
+.usability-work select {
+    max-width: 100%;
+    box-sizing: border-box;
+}
+
+.usability-work textarea {
+    width: 100%;
+}
+
+.usability-work pre {
+    max-width: 100%;
+    overflow: auto;
+}
+
+.usability-work table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.usability-work th,
+.usability-work td {
+    vertical-align: top;
+}
+
+.usability-work summary {
+    cursor: pointer;
+    padding-block: var(--spacing-unit);
+}
+
+.usability-work .section-title {
+    font-weight: bold;
+}
+
+.usability-work details,
+.usability-work section {
+    margin-block: var(--panel-gap);
+}
+
+.usability-work .inline-form {
+    display: inline-block;
+}

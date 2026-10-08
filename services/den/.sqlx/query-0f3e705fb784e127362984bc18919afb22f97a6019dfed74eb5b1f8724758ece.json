@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT a.user_members AS \"people!\", a.bear_members AS \"bears!\"\n        FROM cabinet_items i CROSS JOIN LATERAL cabinet_ancestors(i.id) a\n        WHERE i.cabinet_ref = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "people!",
+        "type_info": "Int4Array"
+      },
+      {
+        "ordinal": 1,
+        "name": "bears!",
+        "type_info": "UuidArray"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "0f3e705fb784e127362984bc18919afb22f97a6019dfed74eb5b1f8724758ece"
+}

@@ -5,7 +5,9 @@
 {% block manage %}
 <div class="box">
 <h2>Reflections</h2>
-<p class="form-hint">Latest pair reflection runs recorded for this Bear. Close-triggered runs are logged as <code>session.closed</code>; open-session sweeps are logged as <code>session.reflected</code>.</p>
+<p class="form-hint">Latest recorded pair reflections. Open a conversation or proposal to inspect its content.</p>
+{% if message %}<p role="status">{{ message | e }}</p>{% endif %}
+{% if error %}<p class="form-errors" role="alert">{{ error | e }}</p>{% endif %}
 
 {% if reflections and reflections | length > 0 %}
 <table>
@@ -25,7 +27,9 @@
       <td>{{ reflection.event_type | e }}{% if reflection.trigger %}<br><small>{{ reflection.trigger | e }}</small>{% endif %}</td>
       <td>
         <strong>{{ reflection.status_label | e }}</strong>
-        <br><small>{{ reflection.status_explanation | e }}</small>
+        {% if reflection.status in ["failed", "error"] %}
+        <p class="form-errors">{% if reflection.error %}{{ reflection.error | e }}{% else %}Reflection failed. Inspect the recorded payload before retrying.{% endif %}</p>
+        {% elif reflection.skipped_reason or reflection.needs_attention %}<br><small>{{ reflection.status_explanation | e }}</small>{% endif %}
         {% if reflection.skipped_reason %}<br><small><code>{{ reflection.skipped_reason | e }}</code></small>{% endif %}
       </td>
       <td>
@@ -62,5 +66,6 @@
 {% else %}
 <p><em>No pair reflection events recorded yet.</em></p>
 {% endif %}
+{% include "bear/memory/_reflection_help.html" %}
 </div>
 {% endblock %}

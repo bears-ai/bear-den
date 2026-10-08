@@ -8,6 +8,8 @@ mod cleanup;
 mod knowledge;
 mod previews;
 mod uploads;
+mod usability;
+mod usability_followups;
 use axum::{
     body::Body,
     http::{header, Request, StatusCode},
@@ -134,10 +136,22 @@ async fn test_pool() -> Option<sqlx::PgPool> {
     Some(pool)
 }
 
-fn test_state(pool: sqlx::PgPool) -> AppState {
+const TEST_SECRET_ENCRYPTION_KEY: &str = "work-ui-test-encryption-key";
+
+fn work_test_config() -> Config {
     let mut config = Config::test_stub();
     config.templates_dir = format!("{}/src/templates", env!("CARGO_MANIFEST_DIR"));
-    let config = Arc::new(config);
+    config.den_secret_encryption_key = TEST_SECRET_ENCRYPTION_KEY.into();
+    config
+}
+
+#[test]
+fn work_fixture_config_can_store_encrypted_credentials() {
+    assert!(work_test_config().den_secret_encryption_key.len() >= 16);
+}
+
+fn test_state(pool: sqlx::PgPool) -> AppState {
+    let config = Arc::new(work_test_config());
     let template_env = crate::template_environment(config.as_ref());
     AppState::test_with_template_env(pool, template_env, config)
 }
@@ -167,6 +181,8 @@ async fn test_app_with_state(pool: sqlx::PgPool, state: AppState) -> axum::Route
     Router::new()
         .merge(router())
         .merge(crate::cabinet::router())
+        .merge(crate::connections::router())
+        .merge(crate::management_hub::router())
         .nest("/bear/{bear_slug}", docket_router())
         .route("/test-login/{user_id}", get(test_login))
         .with_state(state)
@@ -260,7 +276,7 @@ async fn assigned_surface_id(pool: &sqlx::PgPool, user_id: i32, bear_id: Uuid) -
             allowed_outbound_hosts: vec![],
             credential: None,
         },
-        "test-secret-key",
+        TEST_SECRET_ENCRYPTION_KEY,
     )
     .await
     .expect("create work surface");
@@ -403,7 +419,7 @@ async fn create_job_form_creates_work_job_with_tasks() {
         &app,
         &cookie,
         &format!("/bear/{bear_slug}/jobs/{}/edit", route_id(job_id)),
-        format!("goal=Ship+the+updated+site&surface_id={surface_id}&commit_policy=per_job&work_branch=feature%2Fupdated"),
+        format!("goal=Ship+the+updated+site&surface_id={surface_id}&commit_policy=per_task&work_branch=feature%2Fupdated"),
     )
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
@@ -416,7 +432,7 @@ async fn create_job_form_creates_work_job_with_tasks() {
     .expect("edited job row");
     assert_eq!(job.goal, "Ship the updated site");
     assert_job_uses_surface(&pool, job_id, surface_id).await;
-    assert_eq!(job.commit_policy.as_deref(), Some("per_job"));
+    assert_eq!(job.commit_policy.as_deref(), Some("per_task"));
     assert_eq!(job.work_branch.as_deref(), Some("feature/updated"));
 
     let response = app
@@ -458,7 +474,7 @@ async fn work_dashboard_hides_completed_jobs_until_requested() {
             &cookie,
             &format!("/bear/{bear_slug}/jobs/new"),
             format!(
-                "bear_id={bear_id}&hat_id={hat_id}&goal={}&surface_id={surface_id}&commit_policy=none&work_branch=&task_title=Check&task_criteria=done",
+                "bear_id={bear_id}&hat_id={hat_id}&goal={}&surface_id={surface_id}&commit_policy=per_task&work_branch=&task_title=Check&task_criteria=done",
                 urlencoding::encode(goal)
             ),
         )
@@ -639,7 +655,7 @@ async fn task_tree_can_add_children_and_reorder_siblings() {
         &cookie,
         &format!("/bear/{bear_slug}/jobs/new"),
         format!(
-            "bear_id={bear_id}&hat_id={hat_id}&goal=Edit+the+tree&surface_id={surface_id}&commit_policy=none\
+            "bear_id={bear_id}&hat_id={hat_id}&goal=Edit+the+tree&surface_id={surface_id}&commit_policy=per_task\
              &task_title=First+root&task_criteria=first+done"
         ),
     )
@@ -779,7 +795,7 @@ async fn job_lifecycle_can_extend_then_complete() {
         &cookie,
         &format!("/bear/{bear_slug}/jobs/new"),
         format!(
-            "bear_id={bear_id}&hat_id={hat_id}&goal=Lifecycle+job&surface_id={surface_id}&root=&commit_policy=none\
+            "bear_id={bear_id}&hat_id={hat_id}&goal=Lifecycle+job&surface_id={surface_id}&root=&commit_policy=per_task\
              &task_title=First+task&task_criteria=first+done"
         ),
     )
@@ -879,7 +895,7 @@ async fn job_scoped_surface_creation_assigns_and_attaches_surface() {
         &cookie,
         &format!("/bear/{bear_slug}/jobs/new"),
         format!(
-            "bear_id={bear_id}&hat_id={hat_id}&goal=Surface+job&surface_id={initial_surface_id}&commit_policy=none\
+            "bear_id={bear_id}&hat_id={hat_id}&goal=Surface+job&surface_id={initial_surface_id}&commit_policy=per_task\
              &task_title=Use+repo&task_criteria=repo+used"
         ),
     )
@@ -1106,9 +1122,6 @@ async fn jobs_and_runs_enforce_member_visibility_before_reads_and_mutations() {
         return;
     };
     let (owner_id, bear_id, slug, hat_id) = seed_member(&pool).await;
-    bears_db::grant_membership(&pool, owner_id, bear_id, Some("member"))
-        .await
-        .expect("demote owner to member");
     let mut other_users = Vec::new();
     for role in ["member", "admin"] {
         let unique = Uuid::new_v4().simple().to_string();
@@ -1128,6 +1141,9 @@ async fn jobs_and_runs_enforce_member_visibility_before_reads_and_mutations() {
             .expect("grant other membership");
         other_users.push(user_id);
     }
+    bears_db::grant_membership(&pool, owner_id, bear_id, Some("member"))
+        .await
+        .expect("demote owner after granting another Admin");
     let surface_id = assigned_surface_id(&pool, owner_id, bear_id).await;
     let app = test_app(pool.clone()).await;
     let owner = login_cookie(&app, owner_id).await;
@@ -1717,7 +1733,7 @@ async fn member_creates_a_job_bound_to_a_work_enabled_hat_atomically() {
         "members should be offered configured Work hats"
     );
     let endpoint = format!("/bear/{slug}/jobs/new");
-    let base = format!("goal=Check+dependencies+{nonce}&surface_id={surface}&commit_policy=none&task_title=Inspect+dependencies&task_criteria=List+outdated+packages");
+    let base = format!("goal=Check+dependencies+{nonce}&surface_id={surface}&commit_policy=per_task&task_title=Inspect+dependencies&task_criteria=List+outdated+packages");
     assert_eq!(
         post_form(&app, &cookie, &endpoint, base.clone())
             .await

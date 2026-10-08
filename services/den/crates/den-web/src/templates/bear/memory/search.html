@@ -9,9 +9,9 @@
 <div class="box">
   <h2>Search memory</h2>
   <form method="get" action="/bear/{{ bear.slug | e }}/memory/search">
-    <input type="search" name="q" value="{{ q | e }}" placeholder="Search memory content…" style="min-width: 20rem;" autofocus>
+    <input type="search" name="q" value="{{ q | e }}" placeholder="Search memory content…" class="inspection-search" autofocus>
     {% if semantic_available %}
-    <label style="margin-left: 0.5rem;"><input type="radio" name="mode" value="keyword"{% if mode_used != "semantic" %} checked{% endif %}> Keyword</label>
+    <label><input type="radio" name="mode" value="keyword"{% if mode_used != "semantic" %} checked{% endif %}> Keyword</label>
     <label><input type="radio" name="mode" value="semantic"{% if mode_used == "semantic" %} checked{% endif %}> Semantic</label>
     {% else %}
     <input type="hidden" name="mode" value="keyword">
@@ -19,9 +19,10 @@
     <button type="submit">Search</button>
   </form>
   {% if not semantic_available %}
-  <p class="form-hint">{% if can_manage_bear %}Semantic search needs the recall index (Qdrant + embeddings).{% else %}Shared and hat memory is searchable by keyword; semantic recall is not yet available for the curated library.{% endif %}</p>
+  <p class="form-hint">Semantic search is not configured in this deployment. Keyword search is available{% if not can_manage_bear %} for shared and hat memory{% endif %}.</p>
+    <details><summary>Help: search methods</summary><p>Keyword search matches canonical text. Semantic search uses a derived recall index and embeddings; curated results are checked against current library access before display.</p></details>
   {% endif %}
-  {% if notice %}<p class="form-hint">{{ notice | e }}</p>{% endif %}
+  {% if notice %}<p class="form-hint" role="status">{{ notice | e }}</p>{% endif %}
 </div>
 
 {% if q %}
@@ -30,7 +31,7 @@
   {% if results %}
   <ul>
     {% for r in results %}
-    <li style="margin-bottom: 0.6rem;">
+    <li>
       <a href="/bear/{{ bear.slug | e }}/memory/records/{{ r.memory_id | urlencode }}">{% if can_manage_bear %}<code>{{ r.logical_path or r.memory_id | e }}</code>{% else %}{{ r.kind | e }} #{{ r.sequence_no }}{% endif %}</a>
       <span class="form-hint">· {{ r.scope_label | e }}{% if r.score is not none %} · score {{ r.score | round(2) }}{% endif %}</span>
       <div class="form-hint">{{ r.snippet | e }}</div>

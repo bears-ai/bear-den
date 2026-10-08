@@ -1,17 +1,17 @@
 {% extends "bear/_manage.html" %}
 {% import "forms.jinja" as forms %}
 
-{% block title %}Edit overview · {{ bear.name | e }}{% endblock %}
+{% block title %}Edit name &amp; description · {{ bear.name | e }}{% endblock %}
 
 {% block manage %}
 <section>
-    <h2>Edit overview</h2>
-    <p><a href="/bear/{{ bear.slug | e }}/overview">Back to bear</a></p>
-    {% if runtime_sync_error %}
-    <p class="form-errors"><strong>Runtime sync failed</strong>: {{ runtime_sync_error | e }}</p>
+    <h2>Edit name &amp; description</h2>
+    <p><a href="/bear/{{ bear.slug | e }}/identity">Back to Purpose</a></p>
+    {% if provision_error %}
+    <div class="form-errors" role="alert"><p><strong>Saved, but Bear initialization failed.</strong> {{ provision_error | e }}</p><p>Your changes are saved in Den. Submit the saved values again to retry initialization, or <a href="/bear/{{ bear.slug | e }}/advanced">inspect diagnostics</a>.</p></div>
     {% endif %}
-    <form method="post" class="box full-width">
-        {{ forms.input("slug", "Slug", "text", 'required maxlength="120"', form) }}
+    <form method="post" action="/bear/{{ bear.slug | e }}/edit/overview" class="box full-width">
+        {{ forms.input("slug", "Handle", "text", 'required maxlength="120"', form, "Used in Bear URLs and editor configuration.") }}
         {{ forms.input("name", "Name", "text", 'maxlength="255"', form) }}
         {{ forms.input("description", "Description", "text", 'maxlength="2000"', form) }}
         <p><button type="submit">Save</button></p>
@@ -21,7 +21,7 @@
         <h3>Delete bear</h3>
         <p class="form-hint">This removes the bear from Den and all memberships.</p>
         <form method="post" action="/bear/{{ bear.slug | e }}/delete">
-            <label for="confirm_slug">Type the bear slug <code>{{ bear.slug | e }}</code> to confirm</label>
+            <label for="confirm_slug">Type the Bear handle <code>{{ bear.slug | e }}</code> to confirm</label>
             <input id="confirm_slug" name="confirm_slug" type="text" required autocomplete="off" />
             <p><button type="submit">Delete bear permanently</button></p>
         </form>

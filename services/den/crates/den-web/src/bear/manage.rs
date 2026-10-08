@@ -58,7 +58,7 @@ fn tool_matrix_context() -> Vec<ToolMatrixRow> {
         .filter(|descriptor| !descriptor.allowed_origins.is_empty())
         .map(|descriptor| ToolMatrixRow {
             name: descriptor.name,
-            origin: "built-in",
+            origin: "Den-hosted",
             note: descriptor.label,
             contexts: TOOL_CONTEXTS
                 .iter()
@@ -70,7 +70,7 @@ fn tool_matrix_context() -> Vec<ToolMatrixRow> {
         let descriptor = tool.descriptor();
         ToolMatrixRow {
             name: descriptor.provider_name,
-            origin: "local (armature)",
+            origin: "Local (connected armature)",
             note: descriptor.title,
             contexts: TOOL_CONTEXTS
                 .iter()
@@ -123,6 +123,13 @@ async fn identity_view(
             short_summary: hat.short_summary,
         })
         .collect::<Vec<_>>();
+    let effective_model = super::settings::model_configurations::effective_model(
+        state.sqlx_pool(),
+        BearId::new(bear.id),
+        None,
+        &state.config.default_llm_model,
+    )
+    .await?;
     web::render_template(
         &state,
         "bear/manage/identity.html",
@@ -130,6 +137,7 @@ async fn identity_view(
         context! {
             can_manage_bear,
             hats,
+            effective_model,
             manage_title => "Purpose",
             ..bear_nav_context(&bear, "identity"),
         },
@@ -210,6 +218,10 @@ async fn portability_view(
     )
     .await
 }
+
+#[cfg(test)]
+#[path = "management_ui_tests.rs"]
+mod management_ui_tests;
 
 #[cfg(test)]
 mod tests {

@@ -1,15 +1,16 @@
 {% extends "work/_manage.html" %}
 {% block title %}Jobs · {{ bear_slug | e }}{% endblock %}
 {% block manage %}
-<h2>Jobs</h2>
+<div class="usability-work">
+
 
 <section>
     {% if not provider_status.configured %}
-    <p>⚠ <strong>Docket dispatch is not configured</strong> — no sandbox provider is set (<code>SANDBOX_SERVER_URL</code>), so queued runs will not start.</p>
+    <p role="status">⚠ <strong>Dispatch unavailable.</strong> Ask a Den operator to configure the sandbox provider before starting work. Jobs can still be defined.</p>
     {% elif not provider_status.reachable %}
-    <p>⚠ <strong>Sandbox provider unreachable</strong> at <code>{{ provider_status.url }}</code>: {{ provider_status.error }}.</p>
-    {% else %}
-    <p>Sandbox provider <code>{{ provider_status.url }}</code> is reachable ({{ provider_status.active_sandboxes }} active sandbox{{ "es" if provider_status.active_sandboxes != 1 }}{% if not provider_status.backend_available %}; ⚠ its container backend is unavailable{% endif %}).</p>
+    <p role="alert">⚠ <strong>Sandbox provider unreachable.</strong> Ask a Den operator to restore it, then retry dispatch.</p><details><summary>Provider failure details</summary><p><code>{{ provider_status.url }}</code>: {{ provider_status.error }}</p></details>
+    {% elif not provider_status.backend_available %}
+    <p role="alert">⚠ <strong>Sandbox backend unavailable.</strong> Ask a Den operator to restore the container backend, then retry dispatch.</p>
     {% endif %}
 </section>
 
@@ -20,11 +21,11 @@
     {% if show_archived %}<p><a href="/bear/{{ bear_slug }}/jobs{% if show_completed %}?completed=show{% endif %}">Hide archived jobs</a></p>{% else %}<p><a href="/bear/{{ bear_slug }}/jobs?archived=show{% if show_completed %}&completed=show{% endif %}">Show archived jobs</a></p>{% endif %}
     {% if jobs %}
     <table>
-        <thead><tr><th>Job</th><th>Status</th><th>Repository</th><th>Docket run</th><th>Sandbox runs</th></tr></thead>
+        <thead><tr><th>Job</th><th>Status</th><th>Repositories</th><th>Docket run</th><th>Sandbox runs</th></tr></thead>
         <tbody>{% for job in jobs %}
             <tr>
                 <td><a href="/bear/{{ job.bear_slug }}/jobs/{{ job.route_id }}" title="UUID prefix for {{ job.full_id }}">Job <code class="entity-reference-id">{{ job.display_id }}</code>: {{ job.title }}</a></td>
-                <td>{% if job.status == "completed" %}✅ completed{% elif job.status == "blocked" %}🚫 blocked{% elif job.status == "running" %}🔄 running{% elif job.status == "cancelled" %}🚫 cancelled{% else %}⏳ {{ job.status }}{% endif %}</td><td>{{ job.work_surface_ref or "—" }}</td><td>{% if job.has_docket_run %}<code class="entity-reference-id">{{ job.docket_run_id }}</code> ({{ job.docket_run_state }}){% else %}—{% endif %}</td><td>{{ job.run_count }}</td>
+                <td>{% if job.status == "completed" %}✅ completed{% elif job.status == "blocked" %}🚫 blocked{% elif job.status == "running" %}🔄 running{% elif job.status == "cancelled" %}🚫 cancelled{% else %}⏳ {{ job.status }}{% endif %}{% if job.dispatch_blocker and job.status not in ["completed", "cancelled", "archived"] %}<p role="status">{{ job.dispatch_blocker }}. <a href="/bear/{{ job.bear_slug }}/jobs/{{ job.route_id }}#job-settings">Repair settings</a>.</p>{% endif %}</td><td>{% for repository in job.repositories %}{% if not loop.first %}, {% endif %}{% if repository.name %}{% if repository.route_id %}<a href="/work/surfaces/{{ repository.route_id }}">{{ repository.name }}</a>{% else %}{{ repository.name }}{% endif %}{% else %}Repository unavailable{% endif %}{% else %}No repository assigned{% endfor %}</td><td>{% if job.docket_run_id %}<code class="entity-reference-id">{{ job.docket_run_id }}</code> ({{ job.docket_run_state or "state unavailable" }}){% else %}—{% endif %}</td><td>{{ job.run_count }}</td>
             </tr>
         {% endfor %}</tbody>
     </table>
@@ -32,4 +33,6 @@
     <p>{% if show_completed %}No Jobs yet.{% else %}No active Jobs. <a href="/bear/{{ bear_slug }}/jobs?completed=show">Show completed jobs</a>.{% endif %}</p>
     {% endif %}
 </section>
+{% if provider_status.configured and provider_status.reachable and provider_status.backend_available %}<details><summary>Provider diagnostics</summary><p>Provider <code>{{ provider_status.url }}</code> is reachable; {{ provider_status.active_sandboxes }} active sandbox(es).</p></details>{% endif %}
+</div>
 {% endblock %}

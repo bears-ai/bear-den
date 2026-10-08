@@ -1,43 +1,23 @@
 {% extends "admin/base.html" %}
-{% macro open(tag) %}{{ ("<" ~ tag ~ ">") | safe }}{% endmacro %}
-{% macro close(tag) %}{{ ("</" ~ tag ~ ">") | safe }}{% endmacro %}
-
 {% block title %}Run diagnostics · Admin{% endblock %}
-
 {% block admin_content %}
-{{ open("h3") }}Run diagnostics{{ close("h3") }}
-{{ open("p class=\"form-hint\"") }}Inspect recent failed turn runs or look up any persisted run ID.{{ close("p") }}
-
-{{ open("form method=\"get\" action=\"/admin/runs/\"") }}
-  {{ open("label") }}Run ID
-  {{ open("input type=\"search\" name=\"run_id\" value=\"" ~ (lookup_run_id | default('')) ~ "\" required") }}
-  {{ close("label") }}
-  {{ open("button type=\"submit\"") }}Look up run{{ close("button") }}
-{{ close("form") }}
-
+<p>Inspect recent failed runs or look up a persisted run.</p>
+<form method="get" action="/admin/runs/">
+  <label>Run ID <input type="search" name="run_id" value="{{ lookup_run_id | default('') | e }}" required></label>
+  <button type="submit">Look up run</button>
+</form>
 {% if lookup_run_id %}
-{{ open("h4") }}Lookup{{ close("h4") }}
-{% if lookup_run %}
-{{ open("p") }}{{ open("a href=\"/admin/runs/" ~ (lookup_run.run_id | urlencode) ~ "\"") }}{{ open("code") }}{{ lookup_run.run_id }}{{ close("code") }}{{ close("a") }} — {{ lookup_run.state }}{{ close("p") }}
-{% else %}
-{{ open("p") }}No run found for {{ open("code") }}{{ lookup_run_id }}{{ close("code") }}.{{ close("p") }}
+<h3>Lookup result</h3>
+{% if lookup_run %}<p><a href="/admin/runs/{{ lookup_run.run_id | urlencode }}"><code>{{ lookup_run.run_id | e }}</code></a> — {{ lookup_run.state | e }}</p>
+{% else %}<p role="status">No run found for <code>{{ lookup_run_id | e }}</code>.</p>{% endif %}
 {% endif %}
-{% endif %}
-
-{{ open("h4") }}Recent failed runs{{ close("h4") }}
-{{ open("table") }}{{ open("thead") }}{{ open("tr") }}
-{{ open("th") }}Run ID{{ close("th") }}{{ open("th") }}State{{ close("th") }}{{ open("th") }}Terminal reason{{ close("th") }}{{ open("th") }}Session{{ close("th") }}{{ open("th") }}Completed{{ close("th") }}
-{{ close("tr") }}{{ close("thead") }}{{ open("tbody") }}
-{% for run in failed_runs %}
-{{ open("tr") }}
-{{ open("td") }}{{ open("a href=\"/admin/runs/" ~ (run.run_id | urlencode) ~ "\"") }}{{ open("code") }}{{ run.run_id }}{{ close("code") }}{{ close("a") }}{{ close("td") }}
-{{ open("td") }}{{ run.state }}{{ close("td") }}
-{{ open("td") }}{% if run.terminal_reason %}{{ run.terminal_reason }}{% else %}—{% endif %}{{ close("td") }}
-{{ open("td") }}{{ open("code") }}{{ run.session_id }}{{ close("code") }}{{ close("td") }}
-{{ open("td") }}{% if run.completed_at %}{{ run.completed_at }}{% else %}—{% endif %}{{ close("td") }}
-{{ close("tr") }}
-{% else %}
-{{ open("tr") }}{{ open("td colspan=\"5\"") }}No failed runs recorded.{{ close("td") }}{{ close("tr") }}
-{% endfor %}
-{{ close("tbody") }}{{ close("table") }}
+<h3>Recent failed runs</h3>
+<table>
+  <thead><tr><th>Run ID</th><th>State</th><th>Terminal reason</th><th>Session</th><th>Completed</th></tr></thead>
+  <tbody>{% for run in failed_runs %}<tr>
+    <td><a href="/admin/runs/{{ run.run_id | urlencode }}"><code>{{ run.run_id | e }}</code></a></td>
+    <td>{{ run.state | e }}</td><td>{{ run.terminal_reason | default("—", true) | e }}</td>
+    <td><code>{{ run.session_id | e }}</code></td><td>{{ run.completed_at | default("—", true) | e }}</td>
+  </tr>{% else %}<tr><td colspan="5">No failed runs recorded.</td></tr>{% endfor %}</tbody>
+</table>
 {% endblock %}

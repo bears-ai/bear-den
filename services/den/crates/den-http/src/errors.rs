@@ -6,20 +6,15 @@ use axum::{
 
 use std::fmt;
 
-/// Minimal HTML escaping for the self-contained error page.
-fn html_escape(input: &str) -> String {
-    input
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-}
+#[cfg(test)]
+mod tests;
 
 pub use den_core::DenError;
 
 /// Web-boundary error adapter for the `den` binary.
 ///
 /// `CustomError` is the HTTP-facing error: it adds `axum::IntoResponse`
-/// (rendering the `error.html` page) and the auth-layer conversions on top of
+/// (rendering a safe standalone HTML page) and the auth-layer conversions on top of
 /// the shared, web-free [`DenError`] from `den-core`. Service-layer code should
 /// prefer `DenError`; it converts here for free via [`From<DenError>`] when it
 /// bubbles up through `?` in an HTTP handler.
@@ -113,41 +108,91 @@ impl fmt::Display for CustomError {
 impl IntoResponse for CustomError {
     fn into_response(self) -> Response {
         let error_string = self.to_string();
-        let (error_name, error_message, status_code) = match self {
-            CustomError::Anyhow(cause) => (
+        let (error_name, status_code, title, summary, recovery) = match &self {
+            CustomError::Anyhow(_) => (
                 "Server",
-                format!("{cause:#}"),
                 StatusCode::INTERNAL_SERVER_ERROR,
+                "Request could not be completed",
+                "This request could not be completed.",
+                "Try opening the page again shortly.",
             ),
-            CustomError::System(message) => {
-                ("Web server", message, StatusCode::UNPROCESSABLE_ENTITY)
-            }
-            CustomError::Database(message) => {
-                ("Database", message, StatusCode::UNPROCESSABLE_ENTITY)
-            }
-            CustomError::DatabaseUnavailable(message) => (
+            CustomError::System(_) => (
+                "Web server",
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "Request could not be completed",
+                "This request could not be completed.",
+                "Try opening the page again shortly.",
+            ),
+            CustomError::Database(_) => (
+                "Database",
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "Request could not be completed",
+                "This request could not be completed.",
+                "Try opening the page again shortly.",
+            ),
+            CustomError::DatabaseUnavailable(_) => (
                 "Database Unavailable",
-                message,
                 StatusCode::SERVICE_UNAVAILABLE,
+                "Temporarily unavailable",
+                "The service is temporarily unavailable.",
+                "Try opening the page again shortly.",
             ),
-            CustomError::Session(message) => {
-                ("Session", message, StatusCode::INTERNAL_SERVER_ERROR)
-            }
-            CustomError::Authentication(message) => {
-                ("Authentication", message, StatusCode::UNAUTHORIZED)
-            }
-            CustomError::Authorization(message) => {
-                ("Authorization", message, StatusCode::FORBIDDEN)
-            }
-            CustomError::Parsing(message) => ("Parsing", message, StatusCode::UNPROCESSABLE_ENTITY),
-            CustomError::Render(message) => {
-                ("Rendering", message, StatusCode::INTERNAL_SERVER_ERROR)
-            }
-            CustomError::Email(message) => ("Email", message, StatusCode::FAILED_DEPENDENCY),
-            CustomError::NotFound(message) => ("Not Found", message, StatusCode::NOT_FOUND),
-            CustomError::ValidationError(message) => {
-                ("Validation", message, StatusCode::BAD_REQUEST)
-            }
+            CustomError::Session(_) => (
+                "Session",
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Session unavailable",
+                "Your session could not be used for this request.",
+                "Try opening the page again or sign in again.",
+            ),
+            CustomError::Authentication(_) => (
+                "Authentication",
+                StatusCode::UNAUTHORIZED,
+                "Sign in to continue",
+                "You need to sign in to continue.",
+                "Sign in, then open the page again.",
+            ),
+            CustomError::Authorization(_) => (
+                "Authorization",
+                StatusCode::FORBIDDEN,
+                "Access unavailable",
+                "You do not have access to this page or action.",
+                "Return home to choose an available action.",
+            ),
+            CustomError::Parsing(_) => (
+                "Parsing",
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "Check your submission",
+                "The submitted information could not be accepted.",
+                "Return to the form, check your entries, and try again.",
+            ),
+            CustomError::Render(_) => (
+                "Rendering",
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Page unavailable",
+                "This page could not be displayed.",
+                "Try opening the page again shortly.",
+            ),
+            CustomError::Email(_) => (
+                "Email",
+                StatusCode::FAILED_DEPENDENCY,
+                "Email request could not be completed",
+                "The email request could not be completed.",
+                "Check your inbox before trying again shortly.",
+            ),
+            CustomError::NotFound(_) => (
+                "Not Found",
+                StatusCode::NOT_FOUND,
+                "Page not found",
+                "This page or item could not be found.",
+                "Check the address or return home.",
+            ),
+            CustomError::ValidationError(_) => (
+                "Validation",
+                StatusCode::BAD_REQUEST,
+                "Check your submission",
+                "The submitted information could not be accepted.",
+                "Return to the form, check your entries, and try again.",
+            ),
         };
 
         tracing::error!("{}: {:#}", error_name, error_string);
@@ -155,18 +200,24 @@ impl IntoResponse for CustomError {
         // deliberately carries no web template tree (that lives in `den-web`), so the
         // boundary error renders standalone HTML rather than the styled `error.html`.
         let code = status_code.as_u16();
-        let name = html_escape(error_name);
-        let message = html_escape(&error_message);
+        // This boundary has no trusted viewer identity or request reference. Never render raw causes here.
+        let sign_in_link = if matches!(
+            self,
+            CustomError::Authentication(_) | CustomError::Session(_)
+        ) {
+            "<p><a href=\"/login\">Sign in</a></p>"
+        } else {
+            ""
+        };
         let body = format!(
             "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
              <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
-             <title>{name} Error</title>\
-             <style>body{{font-family:system-ui,sans-serif;margin:3rem auto;max-width:40rem;\
-             padding:0 1rem;color:#222}}h1{{font-size:1.25rem}}code{{display:block;white-space:pre-wrap;\
-             background:#f5f5f5;border:1px solid #ddd;border-radius:6px;padding:1rem;margin-top:1rem}}</style>\
-             </head><body><h1>{code} — {name} error</h1>\
-             <p>Something has gone awry. Please report this.</p>\
-             <code>{message}</code></body></html>"
+             <title>{title}</title><link rel=\"stylesheet\" href=\"/assets/css/style.css\">\
+             </head><body><main id=\"content\"><h1>{title}</h1>\
+             <p role=\"alert\">{summary}</p><p>{recovery}</p>\
+             <p>If you submitted a change, check its current state before submitting it again.</p>\
+             {sign_in_link}<p><a href=\"/\">Return home</a></p>\
+             <p class=\"caption\">HTTP {code}</p></main></body></html>"
         );
         (status_code, Html(body)).into_response()
     }

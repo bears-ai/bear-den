@@ -19,17 +19,16 @@ fn site_context(state: &AppState) -> minijinja::Value {
     }
 }
 
-const FALLBACK_404_HTML: &str = "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"/><title>Not found</title></head><body><h1>404 Not Found</h1></body></html>";
+const FALLBACK_404_HTML: &str = "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"/><title>Not found</title></head><body><h1>Page not found</h1><p>Check the address or <a href=\"/\">return home</a>.</p></body></html>";
 
 pub fn router() -> Router<AppState> {
     Router::new().fallback(get(serve_404))
 }
 
-pub async fn serve_404(State(state): State<AppState>, uri: Uri) -> (StatusCode, Html<String>) {
+pub async fn serve_404(State(state): State<AppState>, _uri: Uri) -> (StatusCode, Html<String>) {
     let html = match state.template_env.get_template("404.html") {
         Ok(template) => match template.render(context! {
             error_code => 404,
-            uri => format!("{}", uri),
             ..site_context(&state),
         }) {
             Ok(body) => body,

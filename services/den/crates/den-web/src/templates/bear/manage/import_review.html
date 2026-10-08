@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Review Bear import{% endblock %}
+{% block content %}
+<main class="den-hub">
+<section class="box">
+{% if creation_failure %}
+<h2>Import did not complete · {{ manifest.bear.name | e }}</h2>
+<p class="form-errors" role="alert">{{ creation_failure.safe_error | e }}</p>
+<p>Failing stage: <strong>{{ creation_stage | e }}</strong>.</p>
+{% if creation_failure.kind == 'retained' %}
+<p><strong>An incomplete Bear remains.</strong> Handle: <code>{{ creation_failure.slug | e }}</code> · Bear reference: <code>{{ creation_failure.bear_id }}</code>. Its SQLite files were preserved. Do not start another import, grant members, or enable Work until a Den operator repairs or removes this Bear.</p>
+{% elif creation_failure.kind == 'rolled_back' %}
+<p><strong>The incomplete Bear record was removed.</strong>{% if creation_failure.storage_cleanup_pending %} Private memory cleanup still needs a Den operator. Bear reference: <code>{{ creation_failure.bear_id }}</code>.{% else %} Repair the failing stage, then upload again for a fresh review and confirmation.{% endif %}</p>
+{% else %}<p><strong>The creation outcome is not confirmed.</strong> Ask a Den operator to check for an incomplete Bear before retrying.</p>{% endif %}
+{% else %}
+<h2>Review {{ manifest.bear.name | e }}</h2>
+<p><strong>No Bear has been created.</strong> Confirmation creates a new Bear, never overwrites an existing one. This private upload expires after 15 minutes and can be used once, in this signed-in session only.</p>
+{% endif %}
+{% if error %}<p class="form-errors" role="alert">{{ error | e }}</p>{% endif %}
+<dl><dt>Name</dt><dd>{{ manifest.bear.name | e }}</dd><dt>Requested handle</dt><dd>{{ manifest.bear.slug | e }} (a free suffix is added if needed)</dd><dt>Purpose / description</dt><dd>{{ manifest.bear.description | e }}</dd><dt>Birthday</dt><dd>{{ manifest.bear.birthdate | e }}</dd></dl>
+<h3>Bear-wide steering</h3><pre class="bear-manage-prompt-preview">{{ manifest.prompts.system_prompt | e }}</pre>
+{% if context_profile %}<details><summary>Context configuration</summary><pre class="bear-manage-prompt-preview">{{ context_profile | e }}</pre></details>{% endif %}
+<details><summary>Legacy profile data and bundle version</summary><p>Bundle version {{ manifest.version }}. Legacy profile data is shown for inspection; it is not restored as live role registrations.</p><pre class="bear-manage-prompt-preview">{{ legacy_profiles | e }}</pre></details>
+</section>
+<section class="box"><h3>Destination model compatibility</h3>
+{% if not compatibility_checked %}<p>These are the uploaded choices, not a fresh destination-catalog check. The import failed at the stage shown above.</p>{% elif compatibility_errors %}<ul class="form-errors" role="alert">{% for problem in compatibility_errors %}<li>{{ problem | e }}</li>{% endfor %}</ul><p>Import is blocked. Repair the destination catalog or upload a corrected bundle; models and effort are not silently remapped.</p>{% else %}<p>The uploaded model choices are compatible with the current destination catalog. Confirmation checks again before creation.</p>{% endif %}
+{% if manifest.model_configurations is not none %}
+<ul>{% for configuration in manifest.model_configurations %}<li><strong>{{ configuration.name | e }}</strong> · {{ configuration.model_handle | e }} · effort {{ configuration.thinking_effort | default('model default', true) | e }}{% if configuration.original_id == manifest.default_model_configuration_id %} · Bear default{% endif %}</li>{% else %}<li>Inherit this Den's deployment default.</li>{% endfor %}</ul>
+{% else %}<p>Legacy Bear default: {{ manifest.bear.default_model | default('inherit this Den’s deployment default', true) | e }} · model-default effort.</p>{% endif %}
+</section>
+<section class="box"><h3>Hats and knowledge audience</h3>
+<p><strong>The SQLite memory contents are not displayed or fully inspected here.</strong> The bundle carries canonical memory across all scopes and history, including private source-local notes. Treat the upload and exported file as private material. Import does not turn private conversation/editor notes into shared Bear knowledge or establish new identity/handle authority.</p>
+<p>Bear-wide shared knowledge is available to the new Bear's members. Hat knowledge follows the imported hat's audience; Work and automatic sharing stay off. On a completed import, only you receive Admin membership. <strong>After import, review all imported knowledge in Memory and each hat's knowledge review before granting members, enabling Work or automatic sharing.</strong></p>
+{% for hat in manifest.hats %}<section class="box"><h4>{{ hat.name | e }}</h4><p>{{ hat.purpose | e }}</p>{% if hat.short_summary %}<p>{{ hat.short_summary | e }}</p>{% endif %}<pre class="bear-manage-prompt-preview">{{ hat.identity_prompt | e }}</pre>
+<p>Work: off · automatic sharing: off · repository and web grants: not restored.</p>
+{% if hat.original_id == manifest.ide_default_hat %}<p>Imported editor default hat.</p>{% endif %}
+{% if hat.model_configuration_id %}<p>Model preference: {% for configuration in manifest.model_configurations | default([], true) %}{% if configuration.original_id == hat.model_configuration_id %}{{ configuration.name | e }} · {{ configuration.model_handle | e }} · {{ configuration.thinking_effort | default('model default', true) | e }}{% endif %}{% endfor %}</p>{% else %}<p>Model preference: inherit the Bear default.</p>{% endif %}
+<details><summary>Requested access — checklist only</summary><p>Repositories: {{ hat.repository_names | join(', ') | e }} · HTTPS hosts: {{ hat.https_hosts | join(', ') | e }}</p><p>Requested Work: {{ hat.work_requested }} · automatic sharing: {{ hat.automatic_sharing_requested }} · web fetch: {{ hat.web_fetch_requested }} · web search: {{ hat.web_search_requested }}.</p></details></section>{% else %}<p>No portable hats. Legacy memory remains available for review after import.</p>{% endfor %}
+</section>
+<section class="box"><h3>Procedure versions — disabled on import</h3>
+{% for skill in manifest.skills %}<section><h4>{{ skill.name | e }} · {{ skill.version | e }}</h4><p>{{ skill.description | e }}</p><p>Requested uses: {{ skill.profiles | join(', ') | e }}. Staged disabled for fresh review; no execution or tool authority is restored.</p><pre class="bear-manage-prompt-preview">{{ skill.content | e }}</pre><details><summary>Version fingerprint</summary><code>{{ skill.content_hash | e }}</code></details></section>{% else %}<p>No procedures included.</p>{% endfor %}
+<p>Membership, connections, credentials, approvals, Jobs, conversations and Cabinet content are not restored. Entity bindings and handles require fresh resolution.</p>
+</section>
+<section class="box"><h3>Confirm or cancel</h3>
+{% if consumed %}<p>This review has been used and cannot be replayed. <a href="/">Return to Bears</a>.</p>{% if not creation_failure or creation_failure.kind == 'rolled_back' and not creation_failure.storage_cleanup_pending %}<p>After repairing any reported problem, upload again for a new review and consent. This page does not retry creation.</p>{% endif %}{% else %}
+<form method="post" action="/bears/import/{{ nonce }}/confirm"><label><input type="checkbox" name="confirm_imported_knowledge" value="true" required>I reviewed the imported identity, prompts, model choices, procedures and knowledge audience. I understand SQLite contents were not shown, private memory remains private, and I must review all imported knowledge before granting members or enabling Work. Hats and procedures do not restore live authority automatically.</label><button type="submit"{% if not can_confirm %} disabled{% endif %}>Create new Bear from reviewed bundle</button></form>
+<form method="post" action="/bears/import/{{ nonce }}/cancel"><button type="submit">Cancel and delete staged upload</button></form>{% endif %}
+</section>
+</main>
+{% endblock %}

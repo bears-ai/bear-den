@@ -2,9 +2,11 @@
 {% block title %}{{ details.title | e }} · Cabinet{% endblock %}
 {% block breadcrumb %}<a href="/">Bears</a> / <a href="/cabinet">Cabinet</a> / <a href="{{ page_url }}">Page</a> / Attachment{% endblock %}
 {% block content %}
+<div class="usability-work">
 <section class="cabinet-attachment-preview">
     <p><a href="{{ page_url }}#attachments">← Back to page</a></p>
     <h1>{{ details.title | e }}</h1>
+    <p><strong>File audience:</strong> {{ details.visibility | e }}. Page membership does not grant additional file access.</p>
     {% if can_download %}<p class="button-row"><a class="button-link" href="{{ download_url }}">Download file</a></p>{% endif %}
     {% if preview.kind == "text" %}
     {% if preview.text.truncated %}<p role="status">Showing the first 256 KiB. Download the complete file.</p>{% endif %}
@@ -40,4 +42,5 @@
         </dl>
     </details>
 </section>
+</div>
 {% endblock %}

@@ -3,7 +3,7 @@
 {% block title %}OAuth Clients{% endblock %}
 
 {% block admin_content %}
-<h2>OAuth Clients</h2>
+
 
 <table>
   <thead>
@@ -37,10 +37,10 @@
           <span class="status-untrusted">No</span>
         {% endif %}
       </td>
-      <td>{{ client.created_at | datetimeformat(format="short") }}</td>
+      <td>{{ client.created_label | e }}</td>
       <td>
-        <a class="navigate" href="./{{ client.id }}">Details</a>
-        <a class="navigate" href="./{{ client.id }}/edit">Edit</a>
+        <a class="navigate" href="/admin/oauth_clients/{{ client.id }}">Details</a>
+        <a class="navigate" href="/admin/oauth_clients/{{ client.id }}/edit">Edit</a>
       </td>
     </tr>
     {% endfor %}
@@ -51,7 +51,7 @@
 <p>No OAuth clients registered yet.</p>
 {% endif %}
 
-<a class="action" href="./add">Add OAuth Client</a>
+<a class="action" href="/admin/oauth_clients/add">Add OAuth Client</a>
 
 <style>
 .status-active {

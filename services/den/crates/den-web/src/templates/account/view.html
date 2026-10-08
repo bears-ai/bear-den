@@ -1,11 +1,16 @@
 {% extends "base.html" %} {% import "forms.jinja" as forms %} {% block
 breadcrumb %}<a href="/settings">Settings</a> > {% endblock %} {% block title
 %}Account{% endblock %} {% block subnav %} {% endblock %} {% block content %}
+{% if account_message %}<p class="form-message" role="status">{{ account_message }}</p>{% endif %}
 <section class="two-columns">
     <div>
-        Account created {{ user.created | dateformat(format="medium") }}
+        <h3>{{ user.display_name }}</h3>
+                <p>{{ user.username }} · {{ user.email }}</p>
+                <p>{% if user.email_verified %}<span class="success">Email verified</span>{% else %}<span class="warning">Email not verified</span> · <a href="/settings/email/verify">Verify email</a>{% endif %} · <a href="/settings/email/edit">Change email</a></p>
+                <p class="caption">Account created {{ user.created | dateformat(format="medium") }}</p>
 
-        <h3>Code tokens</h3>
+        <h3>Editor tokens</h3>
+                <p class="form-hint">Tokens connect an editor to the listed Bear with the shown scopes. Revoking one stops future connections, not earlier actions.</p>
         {% if armature_tokens and armature_tokens | length > 0 %}
         <table>
             <thead>
@@ -46,10 +51,7 @@ breadcrumb %}<a href="/settings">Settings</a> > {% endblock %} {% block title
                         >{% endif %}
                     </td>
                     <td>
-                        {% if token.revoked_at %}<span class="warning"
-                            >Revoked</span
-                        >{% else %}<span class="success">Active</span>{% endif
-                        %}
+                        <span class="{{ 'success' if token.status == 'Active' else 'warning' }}">{{ token.status }}</span>
                     </td>
                     <td>
                         {% if not token.revoked_at %}
@@ -67,10 +69,16 @@ breadcrumb %}<a href="/settings">Settings</a> > {% endblock %} {% block title
         </table>
         {% else %}
         <p class="form-hint">
-            No Code tokens yet. Open a bear and choose “Code with …” to create
-            one.
+            No editor tokens yet.
         </p>
-        {% endif %} {% if invites %}
+        {% endif %}
+                {% if editor_setup_bears %}
+                <h4>Editor setup</h4>
+                <ul>{% for bear in editor_setup_bears %}<li><a href="/bear/{{ bear.slug | e }}/code-token">Set up an editor for {{ bear.name }}</a></li>{% endfor %}</ul>
+                {% else %}
+                <p><a href="/">Find or set up a Bear</a> to connect an editor.</p>
+                {% endif %}
+                {% if invites %}
         <h3>Invitations</h3>
         <ul>
             {% for invite in invites %}
@@ -93,11 +101,11 @@ breadcrumb %}<a href="/settings">Settings</a> > {% endblock %} {% block title
     </div>
     <div>
         <div class="box full-width">
-            Password set (TODO: strength, last change)
+            <h3>Password</h3>
             <ul class="button-row">
                 <li>
                     <a class="button-link" href="/account/password"
-                        >Change Password</a
+                        >Change password</a
                     >
                 </li>
             </ul>

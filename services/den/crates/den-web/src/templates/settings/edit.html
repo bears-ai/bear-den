@@ -2,18 +2,19 @@
 {% import "forms.jinja" as forms %}
 
 {% block breadcrumb %}<a href="/settings">Settings</a> > {% endblock %}
-{% block title %}Update Settings{% endblock %}
+{% block title %}Change settings{% endblock %}
 
 {% block content %}
+{% if settings_form.errors %}<p class="form-errors" role="alert">Settings were not saved. Check the fields below.</p>{% endif %}
 <div class="box">
 <form method="post">
   <div class="fields-grid">
-    {{ forms.input("display_name", "Display Name", 'text', 'required minlength="3" maxlength="100"', settings_form) }}
+    {{ forms.input("display_name", "Display name", 'text', 'required minlength="3" maxlength="100"', settings_form) }}
     {{ forms.select("theme", "Theme", theme_descriptions, 'required', settings_form) }}
-    {{ forms.select("week_start_day", "Start Week On", day_of_week_names, 'required', settings_form, hint="Weekly reports will be sent on this day") }}
+    {{ forms.select("week_start_day", "Week starts on", day_of_week_names, 'required', settings_form) }}
   </div>
   <div class="button-row">
-    <button>Save</button>
+    <button type="submit">Save settings</button>
   </div>
 </form>
 </div>

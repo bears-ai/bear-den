@@ -3,8 +3,10 @@
 {% block manage %}
 <section class="box">
   <h2>Purpose</h2>
-  <dl><dt>Name</dt><dd>{{ bear.name | e }}</dd><dt>Handle</dt><dd>{{ bear.slug | e }}</dd><dt>Description</dt><dd>{{ bear.description | default("No description yet", true) | e }}</dd><dt>Default model</dt><dd>{{ bear.default_model | default("Inherited from Den", true) | e }}</dd></dl>
-  {% if can_manage_bear %}<p class="button-row"><a class="button-link" href="/bear/{{ bear.slug | urlencode }}/edit/overview">Edit name &amp; description</a><a href="/bear/{{ bear.slug | urlencode }}/edit/prompt">Edit purpose &amp; steering</a><a href="/bear/{{ bear.slug | urlencode }}/models">Models &amp; budget</a></p>{% endif %}
+  <dl><dt>Name</dt><dd>{{ bear.name | e }}</dd><dt>Handle</dt><dd>{{ bear.slug | e }}</dd><dt>Description</dt><dd>{{ bear.description | default("No description yet", true) | e }}</dd><dt>Model configuration</dt><dd>{{ effective_model.name | default("Unnamed deployment default", true) | e }}</dd><dt>Model</dt><dd><code>{{ effective_model.model_handle | e }}</code> · <strong>{{ effective_model.status | e }}</strong></dd><dt>Reasoning effort</dt><dd>{{ effective_model.effort_label | e }}</dd><dt>Source</dt><dd>{{ effective_model.source_label | e }}</dd></dl>
+  {% if can_manage_bear %}<p class="button-row"><a class="button-link" href="/bear/{{ bear.slug | urlencode }}/edit/overview">Edit name &amp; description</a><a href="/bear/{{ bear.slug | urlencode }}/edit/prompt">Edit Bear-wide steering</a></p>{% endif %}
+    {% if effective_model.status_detail %}<p class="form-errors" role="alert">{{ effective_model.status_detail | e }}</p>{% endif %}
+    <p><a href="/bear/{{ bear.slug | urlencode }}/models">Models</a>{% if not can_manage_bear %} · Ask a Bear admin to change settings.{% endif %}</p>
 </section>
 <section class="box" id="hats">
   <h2>Hats</h2>

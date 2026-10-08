@@ -1,36 +1,46 @@
 {% extends "admin/base.html" %}
-
-{% block title %}Grant access{% endblock %}
-
+{% block title %}Grant Bear access{% endblock %}
+{% macro field_error(field) %}
+{% if errors and errors[field] %}
+<p class="form-errors" id="{{ field }}-error">{% for error in errors[field] %}{{ error.message or error.code | e }}{% if not loop.last %}; {% endif %}{% endfor %}</p>
+{% endif %}
+{% endmacro %}
 {% block admin_content %}
 <div class="box">
-<h3>Grant bear access</h3>
+{% if errors %}<p class="form-errors" role="alert">Access was not granted. Check the selections below.</p>{% endif %}
 <form method="post">
   <label for="user_id_select">User</label>
   <div class="form-field">
-    <select id="user_id_select" name="user_id" required>
+    <select id="user_id_select" name="user_id" required{% if errors and errors.user_id %} aria-invalid="true" aria-describedby="user_id-error"{% endif %}>
+      {% if form and form.user_id not in (users | map(attribute="id") | list) %}<option value="{{ form.user_id }}" selected>Unavailable user #{{ form.user_id }}</option>{% endif %}
       {% for u in users %}
-      <option value="{{ u.id }}">{{ u.username | e }} ({{ u.email | e }})</option>
+      <option value="{{ u.id }}"{% if form and form.user_id == u.id %} selected{% endif %}>{{ u.username | e }} ({{ u.email | e }})</option>
       {% endfor %}
     </select>
+    {{ field_error("user_id") }}
   </div>
   <label for="bear_id_select">Bear</label>
   <div class="form-field">
-    <select id="bear_id_select" name="bear_id" required>
+    <select id="bear_id_select" name="bear_id" required{% if errors and errors.bear_id %} aria-invalid="true" aria-describedby="bear_id-error"{% endif %}>
+      {% if form and form.bear_id not in (bears | map(attribute="id") | map("string") | list) %}<option value="{{ form.bear_id | e }}" selected>Unavailable Bear: {{ form.bear_id | e }}</option>{% endif %}
       {% for b in bears %}
-      <option value="{{ b.id }}"><code>{{ b.slug | e }}</code> — {{ b.name | e }}</option>
+      <option value="{{ b.id }}"{% if form and form.bear_id == b.id | string %} selected{% endif %}>{{ b.name | e }} — {{ b.slug | e }}</option>
       {% endfor %}
     </select>
+    {{ field_error("bear_id") }}
   </div>
-  <label for="role_select">Access</label>
+  <label for="role_select">Bear access level</label>
   <div class="form-field">
-    <select id="role_select" name="role">
-      <option value="member" selected>Member</option>
-      <option value="admin">Admin</option>
+    <select id="role_select" name="role" aria-describedby="role-effects{% if errors and errors.role %} role-error{% endif %}"{% if errors and errors.role %} aria-invalid="true"{% endif %}>
+      {% if form and form.role not in ["", "member", "admin"] %}<option value="{{ form.role | e }}" selected>Unsupported: {{ form.role | e }}</option>{% endif %}
+      <option value="member"{% if not form or form.role in ["", "member"] %} selected{% endif %}>Member</option>
+      <option value="admin"{% if form and form.role == "admin" %} selected{% endif %}>Admin</option>
     </select>
+    <p class="form-hint" id="role-effects">Member can use this Bear and read its curated library. Admin can also manage its settings, access and private memory inspection. This does not make the user a Den administrator.</p>
+    {{ field_error("role") }}
   </div>
   <button type="submit">Grant access</button>
 </form>
-<p><a href="/admin/membership/">All access grants</a></p>
+<p><a href="/admin/membership/">All Bear memberships</a></p>
 </div>
 {% endblock %}

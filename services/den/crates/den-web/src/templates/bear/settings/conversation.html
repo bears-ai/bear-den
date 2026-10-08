@@ -4,7 +4,9 @@
 
 {% block manage %}
 <div class="box">
-<h2>Conversation</h2>
+<h2>{{ conv.current_title | default("Untitled conversation", true) | e }}</h2>
+{% if message %}<p role="status">{{ message | e }}</p>{% endif %}
+{% if error %}<p class="form-errors" role="alert">{{ error | e }}</p>{% endif %}
 <p class="form-hint"><a href="/bear/{{ bear.slug | e }}/activity">Back to activity</a></p>
 {% if can_manage_bear %}
 <form method="post" action="/bear/{{ bear.slug | e }}/conversations/{{ conv.id }}/reflect">
@@ -13,7 +15,7 @@
 <form method="post" action="/bear/{{ bear.slug | e }}/conversations/{{ conv.id }}/reconsider">
   <p><button type="submit">Reconsider for memory</button></p>
 </form>
-<p class="form-hint"><strong>Manual reflection checkpoint:</strong> this forces a fresh checkpoint first, then mines that checkpoint for memory proposals. <strong>Reconsider for memory</strong> runs the same synchronous curation path and then shows the detailed output instead of returning here.</p>
+<p class="form-hint">Both actions request a fresh checkpoint and memory proposals; Reconsider also opens the detailed result. Notes remain private until reviewed and promoted.</p>
 {% endif %}
 
 <dl>
@@ -59,7 +61,8 @@
 <p><em>No reflection processing recorded yet.</em></p>
 {% endif %}
 
-<h3>Latest Context Budget</h3>
+<h3>Latest recorded context budget</h3>
+<p class="form-hint">Stored estimates from a prior turn, not a live preview or provider-exact token counts.</p>
 {% if conv.latest_context_budget %}
 <dl>
   <dt>Model</dt>
@@ -93,10 +96,10 @@
 <p><em>No context budget snapshot recorded for this conversation.</em></p>
 {% endif %}
 
-<p class="form-hint">Legacy compaction events are unavailable here because they are not keyed to a Bear. Conversation-scoped compaction artifacts appear below.</p>
+
 
 <h3>Reflection watermark</h3>
-<p class="form-hint">This shows how far pair reflection has processed the transcript, so repeated reflection runs are easier to reason about and duplicate proposal concerns are visible.</p>
+<details><summary>Help: reflection watermarks</summary><p>Watermarks show the last transcript sequence inspected and any new messages since then. Older events may carry only a timestamp.</p></details>
 <dl>
   <dt>Latest message</dt>
   <dd>{% if reflection_watermark.latest_message_sequence_no is not none %}#{{ reflection_watermark.latest_message_sequence_no }}{% else %}<em>none</em>{% endif %}</dd>
@@ -107,7 +110,7 @@
   <dt>New messages since reflection</dt>
   <dd>{% if reflection_watermark.new_message_count is not none %}{{ reflection_watermark.new_message_count }}{% else %}<em>unknown</em>{% endif %}</dd>
 </dl>
-<p class="form-hint">{{ reflection_watermark.explanation | e }}</p>
+{% if reflection_watermark.reflected_through_sequence_no is none %}<p class="form-hint">{{ reflection_watermark.explanation | e }}</p>{% endif %}
 
 <h3>Reflections</h3>
 {% if reflections and reflections | length > 0 %}
@@ -120,8 +123,10 @@
       <td>{{ reflection.event_type | e }}{% if reflection.trigger %}<br><small>{{ reflection.trigger | e }}</small>{% endif %}</td>
       <td>
         <strong>{{ reflection.status_label | e }}</strong>
-        <br><small>{{ reflection.status_explanation | e }}</small>
+        {% if reflection.status in ["failed", "error"] %}<p class="form-errors">{% if reflection.error %}{{ reflection.error | e }}{% else %}Reflection failed. Inspect the recorded payload before retrying.{% endif %}</p>
+        {% elif reflection.skipped_reason or reflection.needs_attention %}<br><small>{{ reflection.status_explanation | e }}</small>{% endif %}
         {% if reflection.skipped_reason %}<br><small><code>{{ reflection.skipped_reason | e }}</code></small>{% endif %}
+        {% if can_manage_bear and reflection.needs_attention and reflection.retry_href %}<form method="post" action="/bear/{{ bear.slug | e }}/{{ reflection.retry_href | e }}"><button type="submit">Retry now</button></form>{% endif %}
       </td>
       <td>
         {{ reflection.counts_label | e }}
@@ -144,7 +149,9 @@
 <p><em>No pair reflection events recorded for this conversation.</em></p>
 {% endif %}
 
-<h3>Agent Loop Checkpoints</h3>
+{% include "bear/memory/_reflection_help.html" %}
+
+<h3>Agent loop checkpoints</h3>
 {% if checkpoint_artifacts and checkpoint_artifacts | length > 0 %}
 <table>
   <thead><tr><th>When</th><th>Run</th><th>Reason</th><th>Level</th><th>Status</th><th>Task ref</th></tr></thead>
@@ -190,8 +197,9 @@
 <p><em>No persisted compaction artifacts for this conversation.</em></p>
 {% endif %}
 
-<h3>Memories formed</h3>
-<p class="form-hint">Linking a conversation to the memories it produced is not wired up yet — memory records do not carry a source-conversation reference in this build. Browse <a href="/bear/{{ bear.slug | e }}/memory/recent">recent memory</a> from the same period instead.</p>
+<h3>Memory review</h3>
+<p>Recorded proposal links appear with each reflection above. <a href="/bear/{{ bear.slug | e }}/memory">Open the memory review queue</a>.</p>
+<details><summary>Help: source evidence coverage</summary><p>This view lists conversation-scoped compaction artifacts and recorded proposal references. Older compaction events without a Bear key cannot be safely attributed here. It does not reconstruct a complete list of canonical memories formed from this conversation.</p></details>
 
 <h3>Messages (latest 40)</h3>
 {% if message_rows and message_rows | length > 0 %}

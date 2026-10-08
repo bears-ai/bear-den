@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT CASE WHEN g.connection_id IS NOT NULL\n            THEN c.provider <> 'github_app' OR c.github_app_write_enabled\n            ELSE g.github_app_installation_id IS NULL OR g.github_app_write_enabled\n        END AS \"publication_available!\"\n        FROM git_work_surface_details g LEFT JOIN provider_connections c ON c.id = g.connection_id\n        WHERE g.id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "publication_available!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "6456eb8939fc0e81abff6913969e501da012b6781e0fd97d492a93e1ea90e6fb"
+}

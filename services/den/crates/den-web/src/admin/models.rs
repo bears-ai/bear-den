@@ -377,6 +377,7 @@ async fn render_index(
             catalog_providers,
             catalog_source => catalog.source,
             catalog_stale => catalog.stale,
+            catalog_initialized => catalog.fetched_at.is_some(),
             catalog_fetched_at => catalog.fetched_at.map(format_time).unwrap_or_else(|| "—".to_string()),
             usage,
             default_metadata => "{}",

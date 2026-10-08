@@ -1,17 +1,21 @@
 {% extends "base.html" %}
-{% import "forms.jinja" as forms %}
 
-{% block breadcrumb %}<a href="/settings">Settings</a> > <a href="/settings/email">Email</a> > {% endblock %}
-{% block title %}Verify Email{% endblock %}
+{% block breadcrumb %}<a href="/settings">Settings</a> > {% endblock %}
+{% block title %}Verify email{% endblock %}
 
 {% block content %}
-<p>
-    You must verify your email address before you can use the site. When you click the "Send Verification Message" button below, an email will be sent to {{ email_address}} with a link you can use to complete this process.
-</p>
-<p>
-    (If this is not your correct email address, please <a href="/settings/email/edit">provide a new one</a>).
+{% if email_verified %}
+<p class="form-message" role="status"><strong>{{ email_address }}</strong> is verified.</p>
+<p><a class="button-link" href="/">Continue</a> · <a href="/settings/email/edit">Change email</a></p>
+{% else %}
+<p><strong>{{ email_address }}</strong> is not verified.</p>
+<p>Verify this address to continue setting up your Bear.</p>
 <form method="post">
     <input type="hidden" name="token" value="{{ token }}">
-    <button>Send Verification Message</button>
+    <ul class="button-row">
+        <li><button type="submit">Send verification email</button></li>
+        <li><a href="/settings/email/edit">Change email</a></li>
+    </ul>
 </form>
+{% endif %}
 {% endblock %}

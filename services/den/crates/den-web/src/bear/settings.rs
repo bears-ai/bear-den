@@ -3,7 +3,7 @@
 
 use axum::{
     body::Body,
-    extract::{Multipart, Path, Query, State},
+    extract::{Path, Query, State},
     http::{header, StatusCode},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
@@ -12,48 +12,39 @@ use axum::{
 use axum_extra::extract::Form;
 use axum_extra::routing::RouterExt;
 use axum_login::tower_sessions::Session;
-use bearwire_protocol::wire::BearWireEvent;
+
 use minijinja::context;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::io::{Cursor, Read, Write};
+
 use std::path::{Path as FsPath, PathBuf};
 use time::format_description::well_known::Rfc3339;
 use uuid::Uuid;
-use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
 use crate::{
     auth_backend::{AuthSession, SessionUser},
-    core::{user::db as user_db, web_policy},
+    core::web_policy,
     errors::CustomError,
     web::{self, AppState},
 };
-use den_core::{ids::BearId, AgentLoopControlLevel, DenError};
+use den_core::{ids::BearId, AgentLoopControlLevel};
 use den_memory::{bear_memory_admin_stats, BearMemoryAdminStats};
 use den_protocol::ContextBudgetReport;
-use den_runtime::{
-    bearwire_events,
-    pair_reflection::create_pair_reflection_proposals_from_latest_summary,
-    runtime::compaction::{prepare_turn_compaction, CompactionSource, TurnCompactionTrigger},
-    runtime::compaction_observability::RuntimeCompactionEventStatus,
-};
+
 use den_service::prompt_memory_block_store::list_prompt_memory_blocks_for_bear_profile;
 use den_service::recall::recall_watermark_for_bear;
 use den_service::{
     bears::{
-        context_profile_from_json, db as bears_db,
-        db::{role_is_bear_admin, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER},
-        get_compiled_bear_config, hats,
-        managed_blocks::BearCompiledConfigRow,
-        provision,
+        context_profile_from_json, db as bears_db, db::BEAR_ROLE_MEMBER, get_compiled_bear_config,
+        hats, managed_blocks::BearCompiledConfigRow,
     },
     conversation::persistence::{self as conversation_persistence, list_messages_page},
 };
 
 use crate::web::admin::bears::{
     bear_plan_mode_rows, bear_web_approvals, bear_web_fetches, bear_web_sources,
-    membership_role_label, AddWebApprovalForm, AddWebSourceForm, BearMemberAdminRow,
-    BearPlanModeRow, BearWebApprovalRow, BearWebFetchRow, BearWebSourceRow,
+    AddWebApprovalForm, AddWebSourceForm, BearPlanModeRow, BearWebApprovalRow, BearWebFetchRow,
+    BearWebSourceRow,
 };
 use crate::web::bear::create_support::{bear_slug_base, provision_bifrost_virtual_key_for_bear};
 
@@ -62,12 +53,16 @@ use super::member::{email_verify_redirect, load_bear_member, viewer_can_manage_b
 pub fn router() -> Router<AppState> {
     Router::new()
         .merge(model_configurations::router())
+        .merge(import_review::router())
         .route_with_tsr("/bear/{slug}/overview", get(overview_view))
         .route_with_tsr("/bear/{slug}/people", get(access_view))
         .route_with_tsr("/bear/{slug}/persona", get(persona_view))
         .route_with_tsr("/bear/{slug}/stances", get(stances_list_redirect))
         .route_with_tsr("/bear/{slug}/profiles", get(stances_list_redirect))
-        .route_with_tsr("/bear/{slug}/models", get(models_view).post(models_post))
+        .route_with_tsr(
+            "/bear/{slug}/models",
+            get(models_view).post(advanced_models::save),
+        )
         .route_with_tsr(
             "/bear/{slug}/models/provision-bifrost-key",
             post(provision_bifrost_virtual_key_action),
@@ -99,11 +94,10 @@ pub fn router() -> Router<AppState> {
             post(live_reflection_post),
         )
         .route_with_tsr("/bear/{slug}/export.bear", get(export_bear_bundle))
-        .route_with_tsr("/bears/import", post(import_bear_bundle))
-        .route_with_tsr("/bear/{slug}/members/grant", post(grant_member_action))
+        .route_with_tsr("/bear/{slug}/members/grant", post(people::grant))
         .route_with_tsr(
             "/bear/{slug}/members/{user_id}/revoke",
-            post(revoke_member_action),
+            post(people::revoke),
         )
         .route_with_tsr("/bear/{slug}/web-sources", post(add_web_source_action))
         .route_with_tsr(
@@ -125,7 +119,7 @@ struct DomainQuery {
     error: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct BearModelsForm {
     #[serde(default)]
     bear_tool_budget_multiplier: String,
@@ -180,6 +174,11 @@ struct ManualReflectionResult {
     reflection_event_id: Option<Uuid>,
     reflection_event_sequence_no: Option<i64>,
     reflection_payload_json: String,
+    failed_stage: Option<manual_reflection::Stage>,
+    error: Option<String>,
+    observability_error: Option<String>,
+    proposals_complete: bool,
+    needs_attention: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -227,12 +226,25 @@ const MODELS_FLASH_ERROR_KEY: &str = "bear_models_flash_error";
 
 const BEAR_BUNDLE_FORMAT: &str = "bear";
 const BEAR_BUNDLE_VERSION: u32 = 3;
+mod advanced_models;
+mod bundle_io;
+mod import_creation;
+mod import_jobs;
+mod import_namespace;
+mod import_outcome;
+mod import_review;
+mod import_staging;
+mod manual_reflection;
 pub(crate) mod model_configurations;
+mod people;
 pub(crate) mod portable_hats;
 mod portable_models;
+use bundle_io::build_bear_bundle;
+pub use import_namespace::{cleanup_expired_import_reviews, start_import_staging_cleanup};
+use manual_reflection::run as reflect_persisted_conversation;
 const BEAR_BUNDLE_MAX_UPLOAD_BYTES: usize = 256 * 1024 * 1024;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct BearBundleManifest {
     format: String,
     version: u32,
@@ -254,7 +266,7 @@ struct BearBundleManifest {
     default_model_configuration_id: Option<den_core::ids::ModelConfigurationId>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct BearBundleIdentity {
     slug: String,
     name: String,
@@ -266,14 +278,14 @@ struct BearBundleIdentity {
     tools_enabled: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct BearBundlePrompts {
     system_prompt: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     context_profile: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct MemberGrantForm {
     #[serde(default)]
     username: String,
@@ -281,6 +293,16 @@ struct MemberGrantForm {
     user_id: Option<i32>,
     #[serde(default)]
     role: String,
+}
+
+impl Default for MemberGrantForm {
+    fn default() -> Self {
+        Self {
+            username: String::new(),
+            user_id: None,
+            role: BEAR_ROLE_MEMBER.into(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -314,6 +336,7 @@ struct ReflectionAdminRow {
     trigger: Option<String>,
     status: Option<String>,
     skipped_reason: Option<String>,
+    error: Option<String>,
     status_label: String,
     status_explanation: String,
     counts_label: String,
@@ -321,11 +344,22 @@ struct ReflectionAdminRow {
     retry_href: Option<String>,
     candidate_count: Option<i64>,
     dropped_followup_count: Option<i64>,
+    #[serde(serialize_with = "serialize_proposal_link_count")]
     proposal_count: Option<i64>,
     proposal_links: Vec<String>,
     source_message_start_seq: Option<i64>,
     source_message_end_seq: Option<i64>,
     payload_json: String,
+}
+
+// Inspection templates compare this value numerically to decide whether to
+// offer a proposal link. Missing extraction totals stay unknown in Rust, the
+// counts label and the recorded payload; they imply no recorded links, not zero writes.
+fn serialize_proposal_link_count<S: serde::Serializer>(
+    count: &Option<i64>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.serialize_i64(count.unwrap_or(0))
 }
 
 #[derive(Debug, Serialize)]
@@ -546,71 +580,27 @@ fn json_i64(value: &serde_json::Value, key: &str) -> Option<i64> {
     })
 }
 
-fn reflection_status_copy(
+fn reflection_counts_label(
     status: Option<&str>,
     skipped_reason: Option<&str>,
     candidate_count: Option<i64>,
     proposal_count: Option<i64>,
-) -> (String, String, String) {
-    match skipped_reason {
-        Some("no_compaction_artifact") => (
-            "Not inspected".to_string(),
-            "No compaction artifact exists yet, so reflection did not inspect conversation content. Trigger manual reflection to force a checkpoint first.".to_string(),
-            "not extracted".to_string(),
-        ),
-        Some("below_compaction_threshold") => (
-            "Below threshold".to_string(),
-            "Live reflection checked this conversation, but normal compaction rules decided a summary would squeeze the transcript too aggressively right now.".to_string(),
-            "not extracted".to_string(),
-        ),
-        Some("no_uncompacted_content") => (
-            "No new content".to_string(),
-            "The latest compaction artifact already covers the available transcript; reflection is waiting for new conversation content.".to_string(),
-            "not extracted".to_string(),
-        ),
-        Some("live_reflection_disabled") => (
-            "Live reflection disabled".to_string(),
-            "This Bear is configured not to proactively spend tokens on live/open conversation reflection.".to_string(),
-            "not extracted".to_string(),
-        ),
-        Some(reason) => (
-            "Skipped".to_string(),
-            format!("Reflection skipped this run: {reason}."),
-            "not extracted".to_string(),
-        ),
-        None if matches!(status, Some("processed")) && candidate_count == Some(0) => (
-            "Inspected, no memories found".to_string(),
-            "Reflection inspected a compaction artifact and did not find durable memory candidates.".to_string(),
-            format!("candidates 0, proposals {}", proposal_count.unwrap_or(0)),
-        ),
-        None => (
-            status.unwrap_or("unknown").to_string(),
-            "Reflection inspected a compaction artifact.".to_string(),
-            format!(
-                "candidates {}, proposals {}",
-                candidate_count
-                    .map(|n| n.to_string())
-                    .unwrap_or_else(|| "—".to_string()),
-                proposal_count
-                    .map(|n| n.to_string())
-                    .unwrap_or_else(|| "—".to_string())
-            ),
-        ),
+) -> String {
+    if skipped_reason.is_some() && !matches!(status, Some("failed" | "error")) {
+        return "not extracted".into();
     }
-}
-
-fn reflection_needs_attention(status: Option<&str>, skipped_reason: Option<&str>) -> bool {
-    matches!(status, Some("failed") | Some("error"))
-        || matches!(
-            skipped_reason,
-            Some(reason)
-                if !matches!(
-                    reason,
-                    "below_compaction_threshold"
-                        | "no_uncompacted_content"
-                        | "live_reflection_disabled"
-                )
-        )
+    if status == Some("skipped") && candidate_count == Some(0) && proposal_count == Some(0) {
+        return "not extracted".into();
+    }
+    format!(
+        "candidates {}, proposals {}",
+        candidate_count
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "—".into()),
+        proposal_count
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "—".into())
+    )
 }
 
 async fn live_reflection_status_for_bear(
@@ -685,24 +675,14 @@ async fn reflection_rows_for_bear(
     conversation_id: Option<Uuid>,
     limit: i64,
 ) -> Result<Vec<ReflectionAdminRow>, CustomError> {
-    let rows = sqlx::query_as::<
-        _,
-        (
-            time::OffsetDateTime,
-            String,
-            String,
-            Option<Uuid>,
-            Option<String>,
-            serde_json::Value,
-        ),
-    >(
-        r"
+    let rows = sqlx::query!(
+        r#"
         SELECT e.created_at,
                e.event_type,
                e.session_id,
-               c.id AS conversation_id,
-               c.current_title AS conversation_title,
-               COALESCE(e.event_json->'data'->'pair_reflection', e.event_json->'data') AS payload
+               c.id AS "conversation_id?",
+               c.current_title AS "conversation_title?",
+               COALESCE(e.event_json->'data'->'pair_reflection', e.event_json->'data') AS "payload!: serde_json::Value"
         FROM bearwire_events e
         LEFT JOIN client_sessions s ON s.bear_id = e.bear_id
              AND s.user_id = e.user_id
@@ -711,9 +691,15 @@ async fn reflection_rows_for_bear(
             SELECT c.id, c.current_title
             FROM conversations c
             WHERE c.bear_id = e.bear_id
-              AND (c.source_client_session_id = e.session_id
-                   OR c.external_conversation_id = s.conversation_id
-                   OR c.external_conversation_id = s.resolved_conversation_id)
+              AND (
+                  c.id::text = e.event_json->'data'->>'conversation_id'
+                  OR (
+                      e.event_json->'data'->>'conversation_id' IS NULL
+                      AND (c.source_client_session_id = e.session_id
+                           OR c.external_conversation_id = s.conversation_id
+                           OR c.external_conversation_id = s.resolved_conversation_id)
+                  )
+              )
             ORDER BY c.updated_at DESC, c.id DESC
             LIMIT 1
         ) c ON TRUE
@@ -723,25 +709,40 @@ async fn reflection_rows_for_bear(
           AND COALESCE(e.event_json->'data'->'pair_reflection', e.event_json->'data') IS NOT NULL
         ORDER BY e.created_at DESC, e.sequence_no DESC
         LIMIT $3
-        ",
+        "#,
+        bear_id, conversation_id, limit.clamp(1, 100),
     )
-    .bind(bear_id)
-    .bind(conversation_id)
-    .bind(limit.clamp(1, 100))
     .fetch_all(pool)
     .await
     .map_err(|err| CustomError::Database(format!("list reflection events: {err}")))?;
 
-    Ok(rows
-        .into_iter()
-        .map(
-            |(created_at, event_type, session_id, conversation_id, conversation_title, payload)| {
+    Ok(
+        rows.into_iter()
+            .map(|row| {
+                let (
+                    created_at,
+                    event_type,
+                    session_id,
+                    conversation_id,
+                    conversation_title,
+                    payload,
+                ) = (
+                    row.created_at,
+                    row.event_type,
+                    row.session_id,
+                    row.conversation_id,
+                    row.conversation_title,
+                    row.payload,
+                );
                 let proposal_ids = payload
                     .get("proposal_ids")
                     .and_then(serde_json::Value::as_array)
                     .cloned()
                     .unwrap_or_default();
-                let proposal_count = i64::try_from(proposal_ids.len()).ok();
+                let proposal_count = payload
+                    .get("proposal_ids")
+                    .and_then(serde_json::Value::as_array)
+                    .and_then(|ids| i64::try_from(ids.len()).ok());
                 let status = payload
                     .get("status")
                     .and_then(serde_json::Value::as_str)
@@ -752,14 +753,28 @@ async fn reflection_rows_for_bear(
                     .map(str::to_string);
                 let candidate_count = json_i64(&payload, "candidate_count");
                 let dropped_followup_count = json_i64(&payload, "dropped_followup_count");
-                let (status_label, status_explanation, counts_label) = reflection_status_copy(
+                let feedback = super::memory::inspection::reflection_feedback(
+                    status.as_deref(),
+                    skipped_reason.as_deref(),
+                    payload.get("error").and_then(serde_json::Value::as_str),
+                );
+                let counts_label = reflection_counts_label(
                     status.as_deref(),
                     skipped_reason.as_deref(),
                     candidate_count,
                     proposal_count,
                 );
-                let needs_attention =
-                    reflection_needs_attention(status.as_deref(), skipped_reason.as_deref());
+                let status_label = if !feedback.needs_attention
+                    && status.as_deref() == Some("processed")
+                    && skipped_reason.is_none()
+                    && candidate_count == Some(0)
+                {
+                    "Inspected, no memories found".to_string()
+                } else {
+                    feedback.status_label
+                };
+                let status_explanation = feedback.status_explanation;
+                let needs_attention = feedback.needs_attention;
                 ReflectionAdminRow {
                     created_at: created_at.to_string(),
                     event_type,
@@ -772,6 +787,7 @@ async fn reflection_rows_for_bear(
                         .map(str::to_string),
                     status,
                     skipped_reason,
+                    error: feedback.error,
                     status_label,
                     status_explanation,
                     counts_label,
@@ -789,16 +805,20 @@ async fn reflection_rows_for_bear(
                     source_message_end_seq: json_i64(&payload, "source_message_end_seq"),
                     payload_json: pretty_json(payload),
                 }
-            },
-        )
-        .collect())
+            })
+            .collect(),
+    )
 }
 
 fn reflection_watermark_admin(
     latest_message_sequence_no: Option<i64>,
     reflections: &[ReflectionAdminRow],
 ) -> ReflectionWatermarkAdmin {
-    let latest_reflection = reflections.first();
+    let latest_reflection = reflections.iter().find(|row| {
+        row.status.as_deref() == Some("processed")
+            && row.skipped_reason.is_none()
+            && row.error.is_none()
+    });
     let reflected_through_sequence_no =
         latest_reflection.and_then(|row| row.source_message_end_seq);
     let new_message_count = latest_message_sequence_no
@@ -1077,116 +1097,6 @@ async fn snapshot_memory_sqlite(state: &AppState, bear_id: Uuid) -> Result<Vec<u
     Ok(bytes)
 }
 
-fn build_bear_bundle(manifest_yaml: &str, memory_sqlite: &[u8]) -> Result<Vec<u8>, CustomError> {
-    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
-    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-    writer
-        .start_file("bear.yaml", options)
-        .map_err(|err| CustomError::System(format!("start bear.yaml in bundle failed: {err}")))?;
-    writer
-        .write_all(manifest_yaml.as_bytes())
-        .map_err(|err| CustomError::System(format!("write bear.yaml to bundle failed: {err}")))?;
-    writer.start_file("memory.sqlite", options).map_err(|err| {
-        CustomError::System(format!("start memory.sqlite in bundle failed: {err}"))
-    })?;
-    writer.write_all(memory_sqlite).map_err(|err| {
-        CustomError::System(format!("write memory.sqlite to bundle failed: {err}"))
-    })?;
-    let cursor = writer
-        .finish()
-        .map_err(|err| CustomError::System(format!("finish Bear bundle failed: {err}")))?;
-    Ok(cursor.into_inner())
-}
-
-fn bear_bundle_entry_name(entries: &[String], basename: &str) -> Result<String, CustomError> {
-    if entries.iter().any(|name| name == basename) {
-        return Ok(basename.to_string());
-    }
-
-    let candidates = entries
-        .iter()
-        .filter(|name| {
-            !name.ends_with('/')
-                && !name.starts_with("__MACOSX/")
-                && !name.split('/').any(|part| part == "..")
-                && name.rsplit('/').next() == Some(basename)
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-
-    match candidates.as_slice() {
-        [single] => Ok(single.clone()),
-        [] => {
-            let sample = entries
-                .iter()
-                .take(12)
-                .cloned()
-                .collect::<Vec<_>>()
-                .join(", ");
-            Err(CustomError::ValidationError(format!(
-                ".bear bundle missing {basename}; entries include: {sample}"
-            )))
-        }
-        _ => Err(CustomError::ValidationError(format!(
-            ".bear bundle contains multiple {basename} entries: {}",
-            candidates.join(", ")
-        ))),
-    }
-}
-
-fn read_bear_bundle(bytes: &[u8]) -> Result<(BearBundleManifest, Vec<u8>), CustomError> {
-    let mut archive = ZipArchive::new(Cursor::new(bytes))
-        .map_err(|err| CustomError::ValidationError(format!("invalid .bear zip: {err}")))?;
-    let entries = (0..archive.len())
-        .map(|idx| {
-            archive
-                .by_index(idx)
-                .map(|file| file.name().to_string())
-                .map_err(|err| {
-                    CustomError::ValidationError(format!("read .bear zip entry failed: {err}"))
-                })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let manifest_name = bear_bundle_entry_name(&entries, "bear.yaml")?;
-    let memory_name = bear_bundle_entry_name(&entries, "memory.sqlite")?;
-
-    let mut manifest_yaml = String::new();
-    archive
-        .by_name(&manifest_name)
-        .map_err(|err| CustomError::ValidationError(format!("open bear.yaml failed: {err}")))?
-        .read_to_string(&mut manifest_yaml)
-        .map_err(|err| CustomError::ValidationError(format!("read bear.yaml failed: {err}")))?;
-    let mut memory_sqlite = Vec::new();
-    archive
-        .by_name(&memory_name)
-        .map_err(|err| CustomError::ValidationError(format!("open memory.sqlite failed: {err}")))?
-        .read_to_end(&mut memory_sqlite)
-        .map_err(|err| CustomError::ValidationError(format!("read memory.sqlite failed: {err}")))?;
-    let manifest: BearBundleManifest = serde_yml::from_str(&manifest_yaml)
-        .map_err(|err| CustomError::ValidationError(format!("parse bear.yaml failed: {err}")))?;
-    if manifest.format != BEAR_BUNDLE_FORMAT
-        || !(1..=BEAR_BUNDLE_VERSION).contains(&manifest.version)
-    {
-        return Err(CustomError::ValidationError(format!(
-            "unsupported .bear format {} version {}",
-            manifest.format, manifest.version
-        )));
-    }
-    portable_hats::validate(&manifest.hats, manifest.ide_default_hat)?;
-    portable_models::validate(
-        manifest.model_configurations.as_deref(),
-        manifest.default_model_configuration_id,
-        &manifest.hats,
-    )?;
-    den_service::skills::validate_portable(&manifest.skills)?;
-    if memory_sqlite.is_empty() {
-        return Err(CustomError::ValidationError(
-            "memory.sqlite is empty".to_string(),
-        ));
-    }
-    Ok((manifest, memory_sqlite))
-}
-
 async fn rewrite_imported_memory_bear_id(
     state: &AppState,
     bear_id: Uuid,
@@ -1268,201 +1178,6 @@ async fn export_bear_bundle(
         )
         .body(Body::from(bundle))
         .map_err(|err| CustomError::System(format!("build Bear export response failed: {err}")))
-}
-
-async fn import_bear_bundle(
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-    mut multipart: Multipart,
-) -> Result<Response, CustomError> {
-    let user = session_user(&auth_session).await?;
-    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user.id).await? {
-        return Ok(r.into_response());
-    }
-
-    let mut bundle_bytes: Option<Vec<u8>> = None;
-    let mut confirm_imported_knowledge = false;
-    while let Some(mut field) = multipart
-        .next_field()
-        .await
-        .map_err(|err| CustomError::ValidationError(format!("invalid .bear upload: {err}")))?
-    {
-        if field.name() == Some("confirm_imported_knowledge") {
-            confirm_imported_knowledge = field.text().await.map_err(|err| {
-                CustomError::ValidationError(format!("invalid import acknowledgement: {err}"))
-            })? == "true";
-            continue;
-        }
-        if field.name() != Some("bundle") {
-            continue;
-        }
-        if bundle_bytes.is_some() {
-            return Err(CustomError::ValidationError(
-                "select exactly one bundle".into(),
-            ));
-        }
-        let mut data = Vec::new();
-        while let Some(chunk) = field.chunk().await.map_err(|err| {
-            CustomError::ValidationError(format!("read .bear upload failed: {err}"))
-        })? {
-            if data.len() + chunk.len() > BEAR_BUNDLE_MAX_UPLOAD_BYTES {
-                return Err(CustomError::ValidationError(
-                    ".bear bundle exceeds the 256 MiB upload limit".to_string(),
-                ));
-            }
-            data.extend_from_slice(&chunk);
-        }
-        bundle_bytes = Some(data);
-    }
-
-    let bundle_bytes = bundle_bytes
-        .filter(|bytes| !bytes.is_empty())
-        .ok_or_else(|| CustomError::ValidationError("please select a .bear bundle".to_string()))?;
-    let (manifest, memory_sqlite) = read_bear_bundle(&bundle_bytes)?;
-    if !manifest.hats.is_empty() && !confirm_imported_knowledge {
-        return Err(CustomError::ValidationError(
-            "acknowledge the imported hat knowledge audience before importing".into(),
-        ));
-    }
-    portable_models::validate_catalog(
-        state.sqlx_pool(),
-        manifest.model_configurations.as_deref(),
-        manifest.bear.default_model.as_deref(),
-    )
-    .await?;
-    let portable_models = manifest.model_configurations.clone();
-    let imported_model_default = manifest.default_model_configuration_id;
-    let portable_skills = manifest.skills.clone();
-    let portable = manifest.hats.clone();
-    let imported_default = manifest.ide_default_hat;
-    let BearBundleManifest {
-        bear:
-            BearBundleIdentity {
-                slug: imported_slug,
-                name,
-                description,
-                birthdate,
-                default_model,
-                tools_enabled,
-            },
-        prompts:
-            BearBundlePrompts {
-                system_prompt,
-                context_profile,
-            },
-        ..
-    } = manifest;
-    let slug = unique_import_slug(state.sqlx_pool(), &imported_slug).await?;
-
-    let bear_id = bears_db::create_bear_with_context_profile(
-        state.sqlx_pool(),
-        bears_db::BearParams {
-            slug: &slug,
-            name: &name,
-            description: &description,
-            system_prompt: &system_prompt,
-            default_model: if portable_models.is_none() {
-                default_model.as_deref()
-            } else {
-                None
-            },
-            tools_enabled: tools_enabled.map(sqlx::types::Json),
-            context_profile: context_profile.map(sqlx::types::Json),
-        },
-    )
-    .await?;
-
-    let setup: Result<(), CustomError> = async {
-    let birthdate = birthdate.trim();
-    if !birthdate.is_empty() {
-        sqlx::query!(
-            "UPDATE bears SET birthday = $1::text::date, updated_at = NOW() WHERE id = $2",
-            birthdate,
-            bear_id
-        )
-        .execute(state.sqlx_pool())
-        .await
-        .map_err(|err| CustomError::ValidationError(format!("invalid Bear birthday: {err}")))?;
-    }
-
-    let memory_path = memory_sqlite_path(state.config.as_ref(), bear_id);
-    if let Some(parent) = memory_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|err| {
-            CustomError::System(format!("create Bear memory directory failed: {err}"))
-        })?;
-    }
-    std::fs::write(&memory_path, memory_sqlite).map_err(|err| {
-        CustomError::System(format!("write imported memory.sqlite failed: {err}"))
-    })?;
-    rewrite_imported_memory_bear_id(&state, bear_id).await?;
-    let mapping = portable_hats::import(
-        &state,
-        BearId::new(bear_id),
-        den_core::ids::UserId::new(user.id),
-        &portable,
-        imported_default,
-    )
-    .await?;
-    if let Some(configurations) = portable_models.as_deref() {
-        portable_models::import(state.sqlx_pool(), BearId::new(bear_id), configurations, imported_model_default, &portable, &mapping).await?;
-    }
-    let intent = portable.iter().map(|hat| portable_hats::ReconnectionIntent { imported_hat_id: mapping[&hat.original_id], intent: hat.clone() }).collect::<Vec<_>>();
-    sqlx::query!("INSERT INTO bear_import_receipts(bear_id,imported_by_user_id,hat_intent) VALUES($1,$2,$3)", bear_id, user.id, sqlx::types::Json(&intent) as _).execute(state.sqlx_pool()).await?;
-    let store = state.memory_stores.store_for_bear(bear_id).await?;
-    let mut tx =
-        store.pool().begin().await.map_err(|error| {
-            CustomError::System(format!("begin memory import mapping: {error}"))
-        })?;
-    for (original, imported) in mapping {
-        for (table, column) in [
-            ("memory_records", "scope_hat_id"),
-            ("memory_proposals", "target_hat_id"),
-        ] {
-            // sqlx-dynamic: import identifiers are drawn exclusively from this fixed schema whitelist.
-            sqlx::query(&format!(
-                "UPDATE {table} SET {column} = ? WHERE {column} = ? AND bear_id = ?"
-            ))
-            .bind(imported.to_string())
-            .bind(original.to_string())
-            .bind(bear_id.to_string())
-            .execute(&mut *tx)
-            .await
-            .map_err(|error| CustomError::System(format!("map imported hat knowledge: {error}")))?;
-        }
-    }
-    tx.commit().await.map_err(|error| CustomError::System(format!("commit imported hat knowledge: {error}")))?;
-        let entities = den_memory::list_entities(&store, None, 10_001).await?;
-        if entities.len() > 10_000 { return Err(CustomError::ValidationError("bundle contains too many entity bindings".into())); }
-        for entity in entities {
-            den_memory::set_resolution(&store, &entity.entity_id, den_memory::ResolutionState::Provisional, None).await?;
-            den_memory::set_canonical_ref(&store, &entity.entity_id, None).await?;
-            for handle in den_memory::list_handles(&store, &entity.entity_id).await? { den_memory::detach_handle(&store, &handle.handle_id).await?; }
-        }
-
-    if let Err(err) =
-        provision::initialize_bear_native(state.sqlx_pool(), &state.memory_stores, bear_id).await
-    {
-        tracing::warn!(%bear_id, error = %err, "initialization after Bear import failed");
-    }
-
-    bears_db::grant_membership(state.sqlx_pool(), user.id, bear_id, Some(BEAR_ROLE_ADMIN)).await?;
-    den_service::skills::stage_import(state.sqlx_pool(), BearId::new(bear_id), den_core::ids::UserId::new(user.id), &portable_skills).await?;
-    Ok(())
-    }.await;
-    if let Err(error) = setup {
-        if let Err(cleanup) = bears_db::delete_bear(state.sqlx_pool(), bear_id).await {
-            tracing::error!(%bear_id, %cleanup, "failed to remove incomplete imported Bear");
-        }
-        if let Some(directory) = memory_sqlite_path(state.config.as_ref(), bear_id).parent() {
-            let _ = std::fs::remove_dir_all(directory);
-        }
-        return Err(error);
-    }
-    Ok(Redirect::to(&format!(
-        "/bear/{slug}/overview?message={}",
-        urlencoding::encode("Bear imported. Hats restored with Work and automatic sharing off; reconnect resources and review access before enabling them.")
-    ))
-    .into_response())
 }
 
 async fn memory_stats_for_bear(
@@ -1674,29 +1389,14 @@ async fn access_view(
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
-    let members: Vec<BearMemberAdminRow> =
-        bears_db::list_members_for_bear(state.sqlx_pool(), bear.id)
-            .await?
-            .into_iter()
-            .map(|m| BearMemberAdminRow {
-                role_label: membership_role_label(m.role.as_deref()),
-                user_id: m.user_id,
-                username: m.username,
-                display_name: m.display_name,
-                role: m.role,
-            })
-            .collect();
-    web::render_template(
+    people::render(
         &state,
-        "bear/settings/access.html",
         auth_session,
-        context! {
-            members,
-            message => query.message,
-            can_manage_bear,
-            native_runtime => true,
-            ..bear_nav_context(&bear, "people"),
-        },
+        bear,
+        can_manage_bear,
+        MemberGrantForm::default(),
+        query.message,
+        query.error,
     )
     .await
 }
@@ -2046,6 +1746,31 @@ async fn render_models_page(
     error: Option<String>,
     pending: model_configurations::PendingModelsForm,
 ) -> Result<Response, CustomError> {
+    render_models_page_with_draft(
+        state,
+        auth_session,
+        bear,
+        can_manage_bear,
+        message,
+        error,
+        pending,
+        None,
+        std::collections::BTreeMap::new(),
+    )
+    .await
+}
+
+async fn render_models_page_with_draft(
+    state: AppState,
+    auth_session: AuthSession,
+    bear: den_service::bears::Bear,
+    can_manage_bear: bool,
+    message: Option<String>,
+    error: Option<String>,
+    pending: model_configurations::PendingModelsForm,
+    advanced_form: Option<advanced_models::Draft>,
+    field_errors: std::collections::BTreeMap<&'static str, String>,
+) -> Result<Response, CustomError> {
     let model_options = model_configurations::catalog_options(state.sqlx_pool()).await?;
     let bear_id = BearId::new(bear.id);
     let configurations = model_configurations::configuration_views(
@@ -2100,10 +1825,15 @@ async fn render_models_page(
             default_selection,
             new_configuration,
             effective_model,
-            bear_loop_control,
-            bear_tool_budget_multiplier,
-            bifrost_virtual_key_id => bifrost_virtual_key.as_ref().and_then(|row| row.virtual_key_id.as_deref()).unwrap_or(""),
-            bifrost_virtual_key_name => bifrost_virtual_key.as_ref().and_then(|row| row.virtual_key_name.as_deref()).unwrap_or(""),
+            stored_bear_loop_control => bear_loop_control,
+            stored_bear_tool_budget_multiplier => bear_tool_budget_multiplier,
+            bear_loop_control => advanced_form.as_ref().map(|form| form.bear_loop_control.as_str()).unwrap_or(bear_loop_control),
+            bear_tool_budget_multiplier => advanced_form.as_ref().map(|form| form.bear_tool_budget_multiplier.as_str()).unwrap_or(&bear_tool_budget_multiplier),
+            bifrost_virtual_key_id => advanced_form.as_ref().map(|form| form.bifrost_virtual_key_id.as_str()).unwrap_or_else(|| bifrost_virtual_key.as_ref().and_then(|row| row.virtual_key_id.as_deref()).unwrap_or("")),
+            bifrost_virtual_key_name => advanced_form.as_ref().map(|form| form.bifrost_virtual_key_name.as_str()).unwrap_or_else(|| bifrost_virtual_key.as_ref().and_then(|row| row.virtual_key_name.as_deref()).unwrap_or("")),
+            bifrost_virtual_key_clear => advanced_form.as_ref().is_some_and(|form| form.bifrost_virtual_key_clear),
+            advanced_form,
+            field_errors,
             bifrost_virtual_key_configured => bifrost_virtual_key.as_ref().map(|row| {
                 row.virtual_key_value_encrypted.as_deref().map(|value| !value.trim().is_empty()).unwrap_or(false)
                     || row.virtual_key_value.as_deref().map(|value| !value.trim().is_empty()).unwrap_or(false)
@@ -2141,77 +1871,6 @@ async fn models_view(
         model_configurations::PendingModelsForm::default(),
     )
     .await
-}
-
-async fn models_post(
-    Path(slug): Path<String>,
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-    Form(form): Form<BearModelsForm>,
-) -> Result<Response, CustomError> {
-    let bear = match load_session_bear_manage(&state, &auth_session, &slug).await? {
-        Ok(v) => v,
-        Err(r) => return Ok(r.into_response()),
-    };
-
-    let bear_loop_control = parse_loop_control_form_value(&form.bear_loop_control)?;
-    let bear_tool_budget_multiplier =
-        parse_tool_budget_multiplier_form_value(&form.bear_tool_budget_multiplier)?;
-
-    bears_db::set_bear_agent_loop_control_setting(state.sqlx_pool(), bear.id, bear_loop_control)
-        .await?;
-    bears_db::set_bear_tool_budget_multiplier(
-        state.sqlx_pool(),
-        bear.id,
-        bear_tool_budget_multiplier,
-    )
-    .await?;
-
-    let clear_bifrost_key = matches!(
-        form.bifrost_virtual_key_clear.trim(),
-        "on" | "true" | "1" | "yes"
-    );
-    if clear_bifrost_key {
-        bears_db::clear_bear_bifrost_virtual_key(state.sqlx_pool(), bear.id).await?;
-    } else {
-        let key_id = form.bifrost_virtual_key_id.trim();
-        let key_name = form.bifrost_virtual_key_name.trim();
-        let new_value = form.bifrost_virtual_key_value.trim();
-        if new_value.is_empty() {
-            bears_db::set_bear_bifrost_virtual_key_metadata(
-                state.sqlx_pool(),
-                bear.id,
-                (!key_id.is_empty()).then_some(key_id),
-                (!key_name.is_empty()).then_some(key_name),
-            )
-            .await?;
-        } else {
-            let client =
-                den_service::bifrost_governance::BifrostGovernanceClient::new(&state.config);
-            let validation = client.validate_virtual_key_value(new_value).await?;
-            tracing::info!(
-                bear_id = %bear.id,
-                auth_mode = validation.auth_mode.as_str(),
-                "validated manually supplied Bifrost virtual key before saving"
-            );
-            bears_db::set_bear_bifrost_virtual_key(
-                state.sqlx_pool(),
-                bear.id,
-                (!key_id.is_empty()).then_some(key_id),
-                (!key_name.is_empty()).then_some(key_name),
-                Some(new_value),
-                &state.config.den_secret_encryption_key,
-            )
-            .await?;
-        }
-    }
-
-    Ok(Redirect::to(&format!(
-        "/bear/{}/models?message={}",
-        bear.slug,
-        urlencoding::encode("Loop-control, tool-budget, and Bifrost settings saved.")
-    ))
-    .into_response())
 }
 
 async fn provision_bifrost_virtual_key_action(
@@ -2333,6 +1992,7 @@ async fn reflections_view(
 
 async fn conversation_detail_view(
     Path((slug, conversation_id)): Path<(String, Uuid)>,
+    Query(query): Query<DomainQuery>,
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
@@ -2404,6 +2064,8 @@ async fn conversation_detail_view(
             reflections,
             processing_timeline,
             reflection_watermark,
+            message => query.message,
+            error => query.error,
             can_manage_bear,
             native_runtime => true,
             live_reflection_enabled => bear.live_reflection_enabled,
@@ -2431,15 +2093,31 @@ async fn context_view(
     let id = bear.id;
 
     // Read existing snapshots only; inspection must not compile or register runtimes.
+    use super::memory::inspection::read_result;
+    let mut inspection_errors = Vec::new();
     let context_profile_enabled = bear.context_profile.is_some();
-    let template_id = context_profile_from_json(&bear.context_profile)?.and_then(|p| p.template_id);
-    let compiled: Option<BearCompiledConfigRow> =
-        get_compiled_bear_config(state.sqlx_pool(), id).await?;
+    let template_id = read_result(
+        context_profile_from_json(&bear.context_profile),
+        "Context configuration",
+        &mut inspection_errors,
+    )
+    .flatten()
+    .and_then(|profile| profile.template_id);
+    let compiled: Option<BearCompiledConfigRow> = read_result(
+        get_compiled_bear_config(state.sqlx_pool(), id).await,
+        "Compiled prompt snapshot",
+        &mut inspection_errors,
+    )
+    .flatten();
     let mut compiled_bound_prompts: Vec<CompiledRolePromptRow> = Vec::new();
     let mut compiled_roles: Vec<CompiledRolePromptRow> = Vec::new();
     if let Some(ref row) = compiled {
-        if let Ok(prompts) = serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(
-            row.rendered_prompts_json.0.clone(),
+        if let Some(prompts) = read_result(
+            serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(
+                row.rendered_prompts_json.0.clone(),
+            ),
+            "Compiled prompt snapshot decode",
+            &mut inspection_errors,
         ) {
             for (key, label) in [
                 ("bound_base", "Bear base"),
@@ -2476,9 +2154,11 @@ async fn context_view(
     let mut session_note_count: usize = 0;
     let mut inactive_note_count: usize = 0;
     for role in ["chat", "pair", "curate", "work", "watch"] {
-        let Ok(blocks) =
-            list_prompt_memory_blocks_for_bear_profile(state.sqlx_pool(), id, role).await
-        else {
+        let Some(blocks) = read_result(
+            list_prompt_memory_blocks_for_bear_profile(state.sqlx_pool(), id, role).await,
+            &format!("Standing notes ({role})"),
+            &mut inspection_errors,
+        ) else {
             continue;
         };
         for block in blocks {
@@ -2521,7 +2201,7 @@ async fn context_view(
 
     // The most recent turn's budget report: per-component attribution of the
     // assembled context, persisted per conversation on every turn.
-    let latest_budget_row: Option<(serde_json::Value, Uuid, Option<String>, String)> = sqlx::query!(
+    let latest_budget_result = sqlx::query!(
         "SELECT latest_context_budget_json AS \"latest_context_budget_json!: serde_json::Value\", \
                 id, current_title, \
                 to_char(latest_context_budget_updated_at, 'YYYY-MM-DD HH24:MI') AS \"updated_at!: String\" \
@@ -2532,7 +2212,13 @@ async fn context_view(
     )
     .fetch_optional(state.sqlx_pool())
     .await
-    .map_err(|err| CustomError::Database(format!("latest bear context budget: {err}")))?
+    .map_err(|err| CustomError::Database(format!("latest bear context budget: {err}")));
+    let latest_budget_row = read_result(
+        latest_budget_result,
+        "Latest recorded turn budget",
+        &mut inspection_errors,
+    )
+    .flatten()
     .map(|row| {
         (
             row.latest_context_budget_json,
@@ -2542,7 +2228,11 @@ async fn context_view(
         )
     });
     let latest_budget = latest_budget_row.and_then(|(value, conv_id, title, at)| {
-        let report: ContextBudgetReport = serde_json::from_value(value).ok()?;
+        let report: ContextBudgetReport = read_result(
+            serde_json::from_value(value),
+            "Turn budget snapshot decode",
+            &mut inspection_errors,
+        )?;
         let denominator: u32 = report.estimated_input_tokens.max(1);
         let mut components: Vec<serde_json::Value> = report
             .components
@@ -2586,6 +2276,8 @@ async fn context_view(
         "bear/settings/context.html",
         auth_session,
         context! {
+            inspection_errors,
+            stored_snapshots => true,
             context_profile_enabled,
             template_id,
             compiled,
@@ -2739,6 +2431,7 @@ async fn reflect_conversations_post(
     let mut compaction_skipped = 0usize;
     let mut proposals_created = 0usize;
     let mut reflection_skipped = 0usize;
+    let mut failures = Vec::new();
     for conversation_id in selected_ids.into_iter().take(25) {
         let conv = match conversation_persistence::get_conversation_by_id(
             state.sqlx_pool(),
@@ -2757,18 +2450,37 @@ async fn reflect_conversations_post(
             "manual_bulk",
         )
         .await?;
-        processed += 1;
+        if result.error.is_some() {
+            failures.push(format!(
+                "{}: {}",
+                conv.id,
+                manual_reflection::summary(&result)
+            ));
+        } else {
+            processed += 1;
+        }
         compaction_applied += usize::from(result.compaction_applied);
         compaction_skipped += usize::from(result.compaction_skipped);
         proposals_created += result.proposals_created;
         reflection_skipped += usize::from(result.skipped_reason.is_some());
     }
+    let summary = format!("Manual reflection: {processed} conversation(s) completed; {compaction_applied} checkpoint(s) created; {compaction_skipped} compaction check(s) skipped; {proposals_created} known proposal(s) created; {reflection_skipped} reflection run(s) skipped.");
+    let (key, feedback) = if failures.is_empty() {
+        ("message", summary)
+    } else {
+        (
+            "error",
+            format!(
+                "{summary} {} failure(s): {}",
+                failures.len(),
+                failures.join(" ")
+            ),
+        )
+    };
     Ok(Redirect::to(&format!(
-        "/bear/{}/conversations?message={}",
+        "/bear/{}/conversations?{key}={}",
         bear.slug,
-        urlencoding::encode(&format!(
-            "Manual reflection complete: {processed} conversation(s) processed; {compaction_applied} checkpoint(s) created; {compaction_skipped} compaction check(s) skipped; {proposals_created} proposal(s) created; {reflection_skipped} reflection run(s) skipped."
-        ))
+        urlencoding::encode(&feedback)
     ))
     .into_response())
 }
@@ -2796,22 +2508,16 @@ async fn reflect_conversation_post(
         "manual",
     )
     .await?;
+    let feedback_key = if result.error.is_some() {
+        "error"
+    } else {
+        "message"
+    };
     Ok(Redirect::to(&format!(
-        "/bear/{}/conversations/{}?message={}",
+        "/bear/{}/conversations/{}?{feedback_key}={}",
         bear.slug,
         conversation_id,
-        urlencoding::encode(&format!(
-            "Manual reflection complete: {} checkpoint; {} proposal(s) created; reflection {}.",
-            if result.compaction_applied {
-                "created"
-            } else if result.compaction_skipped {
-                "skipped"
-            } else {
-                "not needed"
-            },
-            result.proposals_created,
-            result.skipped_reason.unwrap_or("processed")
-        ))
+        urlencoding::encode(&manual_reflection::summary(&result))
     ))
     .into_response())
 }
@@ -2839,6 +2545,15 @@ async fn reconsider_conversation_post(
         "manual_reconsider",
     )
     .await?;
+    if result.error.is_some() {
+        return Ok(Redirect::to(&format!(
+            "/bear/{}/conversations/{}?error={}",
+            bear.slug,
+            conversation_id,
+            urlencoding::encode(&manual_reflection::summary(&result))
+        ))
+        .into_response());
+    }
     web::render_template(
         &state,
         "bear/settings/reconsider_result.html",
@@ -2852,204 +2567,6 @@ async fn reconsider_conversation_post(
         },
     )
     .await
-}
-
-async fn reflect_persisted_conversation(
-    state: &AppState,
-    user_id: Option<i32>,
-    bear: &den_service::bears::Bear,
-    conv: &conversation_persistence::ConversationRecord,
-    trigger: &str,
-) -> Result<ManualReflectionResult, CustomError> {
-    let conversation_external_id = conv
-        .external_conversation_id
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| {
-            CustomError::ValidationError("conversation has no external id".to_string())
-        })?;
-    let session_id = conv
-        .source_client_session_id
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(conversation_external_id);
-    let compaction_state = prepare_turn_compaction(
-        state.sqlx_pool(),
-        &state.config,
-        bear.id,
-        conversation_external_id,
-        CompactionSource::ContextMaintenance,
-        TurnCompactionTrigger::ConversationReview,
-    )
-    .await?;
-    let compaction_status = compaction_state.as_ref().map(|state| &state.event.status);
-    let memory_stores = state.memory_stores.clone();
-    let output = create_pair_reflection_proposals_from_latest_summary(
-        state.sqlx_pool(),
-        &state.config,
-        &memory_stores,
-        bear.id,
-        conversation_external_id,
-        session_id,
-    )
-    .await?;
-    let payload = json!({
-        "session_id": session_id,
-        "bear_slug": bear.slug,
-        "trigger": trigger,
-        "pair_reflection": {
-            "status": if output.skipped_reason.is_some() { "skipped" } else { "processed" },
-            "trigger": trigger,
-            "skipped_reason": output.skipped_reason,
-            "candidate_count": output.candidate_count,
-            "discarded_count": output.discarded_count,
-            "discarded_reasons": output.discarded_reasons,
-            "dropped_followup_count": output.dropped_followup_count,
-            "proposal_ids": output.created_proposal_ids,
-            "source_message_start_seq": output.source_message_start_seq,
-            "source_message_end_seq": output.source_message_end_seq,
-        }
-    });
-    let reflection_payload_json =
-        serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string());
-    let mut event = BearWireEvent::ephemeral("session.reflected", payload);
-    event.bear_id = Some(bear.id.to_string());
-    event.human_id = user_id.map(|id| id.to_string());
-    event.session_id = Some(session_id.to_string());
-    let persisted_event = bearwire_events::append_bearwire_event(
-        state.sqlx_pool(),
-        session_id,
-        Some(bear.id),
-        user_id,
-        event,
-    )
-    .await?;
-    let proposals_created = output.created_proposal_ids.len();
-    Ok(ManualReflectionResult {
-        compaction_applied: matches!(
-            compaction_status,
-            Some(RuntimeCompactionEventStatus::Applied)
-        ),
-        compaction_skipped: matches!(
-            compaction_status,
-            Some(RuntimeCompactionEventStatus::Skipped)
-        ),
-        compaction_status: compaction_status
-            .map(RuntimeCompactionEventStatus::as_str)
-            .unwrap_or("Not run")
-            .to_string(),
-        compaction_diagnostic: compaction_state
-            .as_ref()
-            .and_then(|state| state.event.diagnostic.clone()),
-        compaction_artifact_json: compaction_state
-            .as_ref()
-            .and_then(|state| state.event.artifact.as_ref())
-            .and_then(|artifact| serde_json::to_string_pretty(artifact).ok())
-            .unwrap_or_default(),
-        candidate_count: output.candidate_count,
-        discarded_count: output.discarded_count,
-        discarded_reasons: output.discarded_reasons,
-        dropped_followup_count: output.dropped_followup_count,
-        proposals_created,
-        proposal_ids: output.created_proposal_ids,
-        skipped_reason: output.skipped_reason,
-        source_message_start_seq: output.source_message_start_seq,
-        source_message_end_seq: output.source_message_end_seq,
-        reflection_event_id: Some(persisted_event.id),
-        reflection_event_sequence_no: Some(persisted_event.sequence_no),
-        reflection_payload_json,
-    })
-}
-
-async fn grant_member_action(
-    Path(slug): Path<String>,
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-    Form(form): Form<MemberGrantForm>,
-) -> Result<Response, CustomError> {
-    let bear = match load_session_bear_manage(&state, &auth_session, &slug).await? {
-        Ok(b) => b,
-        Err(r) => return Ok(r.into_response()),
-    };
-    let target_id = if let Some(user_id) = form.user_id.filter(|id| *id > 0) {
-        user_id
-    } else {
-        let uname = form.username.trim();
-        if uname.is_empty() {
-            return Ok(Redirect::to(&format!(
-                "/bear/{}/people?message={}",
-                bear.slug,
-                urlencoding::encode("Username is required.")
-            ))
-            .into_response());
-        }
-        match user_db::get_user_by_username(state.sqlx_pool(), uname).await? {
-            Some(u) => u.id,
-            None => {
-                return Ok(Redirect::to(&format!(
-                    "/bear/{}/people?message={}",
-                    bear.slug,
-                    urlencoding::encode("User not found.")
-                ))
-                .into_response());
-            }
-        }
-    };
-    let role = form.role.trim();
-    let role_opt = match role {
-        "" | "member" => Some(BEAR_ROLE_MEMBER),
-        "admin" => Some(BEAR_ROLE_ADMIN),
-        other => Some(other),
-    };
-    bears_db::grant_membership(state.sqlx_pool(), target_id, bear.id, role_opt).await?;
-    Ok(Redirect::to(&format!(
-        "/bear/{}/people?message={}",
-        bear.slug,
-        urlencoding::encode("Access granted.")
-    ))
-    .into_response())
-}
-
-async fn revoke_member_action(
-    Path((slug, user_id)): Path<(String, i32)>,
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-) -> Result<Response, CustomError> {
-    let bear = match load_session_bear_manage(&state, &auth_session, &slug).await? {
-        Ok(b) => b,
-        Err(r) => return Ok(r.into_response()),
-    };
-    if role_is_bear_admin(
-        bears_db::membership_role_for_user(state.sqlx_pool(), user_id, bear.id)
-            .await?
-            .flatten()
-            .as_deref(),
-    ) {
-        let n = bears_db::count_bear_admins(state.sqlx_pool(), bear.id).await?;
-        if n <= 1 {
-            return Ok(Redirect::to(&format!(
-                "/bear/{}/people?message={}",
-                bear.slug,
-                urlencoding::encode("Cannot remove the last bear admin.")
-            ))
-            .into_response());
-        }
-    }
-    match bears_db::revoke_membership(state.sqlx_pool(), user_id, bear.id).await {
-        Ok(()) => Ok(Redirect::to(&format!(
-            "/bear/{}/people?message={}",
-            bear.slug,
-            urlencoding::encode("Access removed.")
-        ))
-        .into_response()),
-        Err(DenError::NotFound(_)) => Ok(Redirect::to(&format!(
-            "/bear/{}/people?message={}",
-            bear.slug,
-            urlencoding::encode("Membership not found.")
-        ))
-        .into_response()),
-        Err(err) => Err(err.into()),
-    }
 }
 
 async fn add_web_source_action(

@@ -1,11 +1,15 @@
 {% extends "base.html" %}
-{% import "forms.jinja" as forms %}
 
-{% block breadcrumb %}<a href="/settings">Settings</a> > <a href="/settings/email">Email</a> > {% endblock %}
-{% block title %}Verify Email{% endblock %}
+{% block title %}Check your email{% endblock %}
 
 {% block content %}
-<p>
-    An email has been sent to <strong>{{ email_sent_to }}</strong>. Please check your inbox and follow the instructions to verify this as your email address.
-</p>
+<p class="form-message" role="status">Verification email sent to <strong>{{ email_sent_to }}</strong>.</p>
+<p>Open the verification link in your inbox. If it has not arrived, check your spam folder.</p>
+{% if session is not defined or session.username is not defined %}
+<p><a class="button-link" href="/login">Sign in</a> to verify your email or change the address.</p>
+{% endif %}
+<ul class="button-row">
+    <li><a href="/settings/email/verify">Send another verification email</a></li>
+    <li><a href="/settings/email/edit">Change email</a></li>
+</ul>
 {% endblock %}

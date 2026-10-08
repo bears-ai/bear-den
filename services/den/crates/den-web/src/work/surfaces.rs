@@ -205,6 +205,12 @@ async fn index(
             })
             .collect();
 
+    let linked_accounts = super::connection_view::linked_accounts(
+        state.sqlx_pool(),
+        den_core::ids::UserId::new(user_id),
+        &managed.iter().map(|surface| surface.id).collect::<Vec<_>>(),
+    )
+    .await?;
     let managed: Vec<serde_json::Value> = managed
         .into_iter()
         .map(|surface| {
@@ -216,6 +222,8 @@ async fn index(
                 "upstream_url": surface.upstream_url,
                 "default_ref": surface.default_ref,
                 "credential_kind": surface.credential_kind,
+                "github_app_configured": surface.github_app_installation_id.is_some(),
+                "linked_account": linked_accounts.iter().find(|account| account.surface_id == surface.id),
             })
         })
         .collect();
@@ -441,30 +449,67 @@ async fn detail(
     let user_id = require_user(&auth_session)?;
     let surface_id = resolve_work_surface_prefix(state.sqlx_pool(), &surface_ref).await?;
     let surface = load_managed_surface(&state, &auth_session, surface_id).await?;
+    let linked_account = super::connection_view::linked_accounts(
+        state.sqlx_pool(),
+        den_core::ids::UserId::new(user_id),
+        &[surface_id],
+    )
+    .await?
+    .into_iter()
+    .next();
     let managers = work_surfaces::list_managers(state.sqlx_pool(), surface_id).await?;
     let assigned = work_surfaces::list_assigned_bears(state.sqlx_pool(), surface_id).await?;
     let images = work_surfaces::list_catalog_images(state.sqlx_pool()).await?;
+    let mut readiness_error = None;
     let provider_root_status = match state.config.sandbox_server_url.as_deref() {
         Some(url) if !url.trim().is_empty() => {
-            SandboxClient::new(url.trim(), &state.config.sandbox_server_token)
+            match SandboxClient::new(url.trim(), &state.config.sandbox_server_token)
                 .health()
                 .await
-                .ok()
-                .and_then(|health| {
-                    health
+            {
+                Ok(health) => {
+                    if !health.backend_available {
+                        readiness_error = Some("The sandbox provider's container backend is unavailable. Ask a Den operator to restore it, then Test & prepare.".to_owned());
+                    }
+                    let root = health
                         .roots
                         .into_iter()
-                        .find(|root| root.name == surface.name)
-                })
+                        .find(|root| root.name == surface.name);
+                    if root.is_none() && readiness_error.is_none() {
+                        readiness_error = Some(
+                            "This repository is not prepared on the provider. Use Test & prepare."
+                                .to_owned(),
+                        );
+                    }
+                    root
+                }
+                Err(error) => {
+                    readiness_error = Some(format!("Sandbox provider could not be reached: {error}. Ask a Den operator to restore it, then Test & prepare."));
+                    None
+                }
+            }
         }
-        _ => None,
+        _ => {
+            readiness_error = Some("Sandbox dispatch is not configured. Ask a Den operator to configure a provider before preparing this repository.".to_owned());
+            None
+        }
     };
     let provider_root_inspection = match state.config.sandbox_server_url.as_deref() {
         Some(url) if !url.trim().is_empty() => {
-            SandboxClient::new(url.trim(), &state.config.sandbox_server_token)
+            match SandboxClient::new(url.trim(), &state.config.sandbox_server_token)
                 .inspect_root(&surface.name)
                 .await
-                .ok()
+            {
+                Ok(inspection) => Some(inspection),
+                Err(error) => {
+                    if readiness_error.is_none() {
+                        readiness_error = Some(format!(
+                            "Repository inspection failed: {error}. Use Test & prepare and retry."
+                        ));
+                    }
+                    None
+                }
+            }
         }
         _ => None,
     };
@@ -519,6 +564,8 @@ async fn detail(
             default_image => surface.default_image,
             allowed_outbound_hosts => surface.allowed_outbound_hosts.join("\n"),
             credential_kind => surface.credential_kind,
+            linked_account,
+            readiness_error,
             github_app_installation_id => surface.github_app_installation_id,
             github_app_write_enabled => surface.github_app_write_enabled,
             managers => managers,

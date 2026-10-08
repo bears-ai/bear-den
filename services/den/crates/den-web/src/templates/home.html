@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 
-{% block title %}Home{% endblock %}
+{% block title %}Your Bears, together in Den{% endblock %}
 
 {% block content %}
-    <p>
-        <strong>This project</strong> is a Rust web application starter: Axum, PostgreSQL, SQLx, MiniJinja, session auth, optional standalone API with an OAuth2 provider, and in-process workers—toggled with <code>RUN_WEB</code>, <code>RUN_API</code>, and <code>RUN_WORKERS</code>.
-    </p>
-    <div>
-        <a class="button-link" href="/account/register">Get started</a>
-    </div>
+<p>Bears are AI collaborators with a lasting purpose. Use Den to chat with them, share knowledge, and manage what they can do.</p>
+<ul class="button-row">
+    <li><a class="button-link" href="/login">Sign in</a></li>
+    <li><a class="button-link" href="/account/register">Create account</a></li>
+</ul>
+<p class="form-hint">An invitation is required to create an account.</p>
 {% endblock %}

@@ -1,10 +1,10 @@
 {% extends "admin/base.html" %}
 
-{% block title %}Bear access{% endblock %}
+{% block title %}Bear membership{% endblock %}
 
 {% block admin_content %}
-<h3>Bear access</h3>
-<p class="form-hint"><strong>Admin</strong> manages settings; <strong>Member</strong> can use the bear.</p>
+
+<p class="form-hint"><strong>Member</strong> can use the Bear and its curated library. <strong>Admin</strong> can also manage settings, access and inspect private memory. These are Bear roles, not Den administrator status.</p>
 <p><a class="action" href="./grant">Grant access</a></p>
 {% if memberships and memberships | length > 0 %}
 <table>

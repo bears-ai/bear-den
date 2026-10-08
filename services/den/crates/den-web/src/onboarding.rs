@@ -219,7 +219,8 @@ async fn first_bear_post(
     if bears_db::bear_slug_exists(state.sqlx_pool(), form.slug.trim()).await? {
         validation_errors.add(
             "slug",
-            ValidationError::new("A bear with this slug already exists."),
+            ValidationError::new("handle_taken")
+                .with_message("A Bear with this handle already exists.".into()),
         );
     }
 
@@ -254,6 +255,7 @@ async fn first_bear_post(
     if let Err(e) =
         provision_bifrost_virtual_key_for_bear(&state, id, new_bear_form.slug.trim()).await
     {
+        tracing::warn!(bear_id = %id, error = %e, "model access setup failed during first-bear onboarding");
         if let Err(rollback_err) = bears_db::delete_bear(state.sqlx_pool(), id).await {
             tracing::warn!(
                 bear_id = %id,
@@ -267,7 +269,10 @@ async fn first_bear_post(
             auth_session,
             form,
             None,
-            Some(format!("Bifrost virtual key provisioning failed: {e}")),
+            Some(
+                "Model access could not be set up. Check your Bears before trying again."
+                    .to_string(),
+            ),
             None,
         )
         .await;
@@ -279,8 +284,15 @@ async fn first_bear_post(
         provision::initialize_bear_native(state.sqlx_pool(), &state.memory_stores, id).await
     {
         tracing::warn!(%id, "Bear initialization failed during first-bear onboarding: {e}");
-        return render_first_bear_form(&state, auth_session, form, None, Some(e.to_string()), None)
-            .await;
+        return render_first_bear_form(
+            &state,
+            auth_session,
+            form,
+            None,
+            None,
+            Some("Your Bear was created, but runtime setup could not finish.".to_string()),
+        )
+        .await;
     }
 
     let bear = bears_db::get_bear(state.sqlx_pool(), id)

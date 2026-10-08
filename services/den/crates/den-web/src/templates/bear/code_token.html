@@ -40,11 +40,14 @@ endblock %} {% block manage %}
 {{ raw_token | e }}</textarea
             >
             <p class="form-hint">
-                After copying it, store it in your shell or password manager as
-                <code>DEN_TOKEN</code>.
+                Keep it secret. Zed must receive <code>DEN_TOKEN</code> in its
+                process environment so the armature can read it. Saving the token
+                in a password manager alone does not configure Zed. Relaunch Zed
+                from the environment where the variable is set; never commit the
+                token to workspace settings.
             </p>
             <p>
-                <a class="button-link" href="/account">View your Code tokens</a>
+                <a class="button-link" href="/account">View or revoke your Code tokens</a>
             </p>
             {% else %}
             <form
@@ -74,7 +77,9 @@ endblock %} {% block manage %}
             <h3>Zed configuration</h3>
             <p class="form-hint">
                 Use your public Den API origin for <code>DEN_API_URL</code>.
-                This can be a subdomain, another hostname, or a host+port URL.
+                Replace the command path with your installed <code>bear-armature</code>.
+                The configuration below does not set <code>DEN_TOKEN</code>;
+                provide it in Zed's process environment, not in this shared snippet.
             </p>
             <pre>
 {

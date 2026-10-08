@@ -10,7 +10,7 @@ use axum::{
 use axum_extra::extract::Form;
 use den_core::ids::UserId;
 use den_service::connections::{self, ConnectionId, Material, Provider};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Deserialize)]
@@ -24,13 +24,49 @@ struct NewConnection {
     #[serde(default)]
     allow_write: bool,
 }
+#[derive(Serialize)]
+pub(crate) struct ConnectionDraft {
+    pub name: String,
+    pub provider: Provider,
+    pub installation: String,
+    pub allow_write: bool,
+}
+
+#[derive(Serialize)]
+pub(crate) struct AttachmentFeedback {
+    pub account_id: ConnectionId,
+    pub surface_id: Uuid,
+    pub error: String,
+}
+
 #[derive(Deserialize)]
 struct Revision {
     revision: i64,
+    #[serde(default)]
+    confirmed: bool,
 }
 #[derive(Deserialize)]
 struct Repository {
     surface_id: Uuid,
+    #[serde(default)]
+    confirmed: bool,
+}
+
+#[derive(Default, Deserialize)]
+struct Confirmation {
+    #[serde(default)]
+    confirmed: bool,
+}
+
+fn require_confirmation(confirmed: bool) -> Result<(), CustomError> {
+    if confirmed {
+        Ok(())
+    } else {
+        Err(CustomError::ValidationError(
+            "Review the affected repositories and confirm the connection change before submitting."
+                .into(),
+        ))
+    }
 }
 
 pub fn router() -> Router<AppState> {
@@ -70,9 +106,43 @@ async fn create(
     session: AuthSession,
     Form(form): Form<NewConnection>,
 ) -> Result<Response, CustomError> {
-    let actor = owner(&state, &session).await?;
+    let draft = ConnectionDraft {
+        name: form.name.clone(),
+        provider: form.provider,
+        installation: form.installation.clone(),
+        allow_write: form.allow_write,
+    };
+    match create_inner(&state, &session, form).await {
+        Err(CustomError::ValidationError(message)) => {
+            let mut response = crate::management_hub::render_connections(
+                &state,
+                session,
+                false,
+                Some(&draft),
+                Some(&message),
+                None,
+            )
+            .await?;
+            *response.status_mut() = axum::http::StatusCode::BAD_REQUEST;
+            Ok(response)
+        }
+        result => result,
+    }
+}
+
+async fn create_inner(
+    state: &AppState,
+    session: &AuthSession,
+    form: NewConnection,
+) -> Result<Response, CustomError> {
+    let actor = owner(state, session).await?;
     if form.secret.len() > 128_000 {
         return Err(CustomError::ValidationError("secret too large".into()));
+    }
+    if matches!(form.provider, Provider::GitHttps | Provider::GitSsh)
+        && form.secret.trim().is_empty()
+    {
+        return Err(CustomError::ValidationError("Enter the HTTPS access token or SSH private key for the selected provider; no account was created.".into()));
     }
     let material = match form.provider {
         Provider::GitHttps => Material::HttpsToken(form.secret),
@@ -100,6 +170,7 @@ async fn revoke(
     Path(id): Path<ConnectionId>,
     Form(form): Form<Revision>,
 ) -> Result<Response, CustomError> {
+    require_confirmation(form.confirmed)?;
     connections::revoke(
         state.sqlx_pool(),
         owner(&state, &session).await?,
@@ -115,20 +186,69 @@ async fn attach(
     Path(id): Path<ConnectionId>,
     Form(form): Form<Repository>,
 ) -> Result<Response, CustomError> {
-    connections::attach(
-        state.sqlx_pool(),
-        owner(&state, &session).await?,
-        id,
-        form.surface_id,
-    )
-    .await?;
-    Ok(synced(&state).await)
+    let actor = owner(&state, &session).await?;
+    let result = attach_inner(&state, actor, id, &form).await;
+    match result {
+        Err(CustomError::ValidationError(error)) => {
+            let feedback = AttachmentFeedback {
+                account_id: id,
+                surface_id: form.surface_id,
+                error,
+            };
+            let mut response = crate::management_hub::render_connections(
+                &state,
+                session,
+                false,
+                None,
+                None,
+                Some(&feedback),
+            )
+            .await?;
+            *response.status_mut() = axum::http::StatusCode::BAD_REQUEST;
+            Ok(response)
+        }
+        Err(error) => Err(error),
+        Ok(()) => Ok(synced(&state).await),
+    }
+}
+
+async fn attach_inner(
+    state: &AppState,
+    actor: UserId,
+    id: ConnectionId,
+    form: &Repository,
+) -> Result<(), CustomError> {
+    require_confirmation(form.confirmed)?;
+    if !connections::list(state.sqlx_pool(), actor)
+        .await?
+        .iter()
+        .any(|account| account.id == id && !account.revoked)
+    {
+        return Err(CustomError::ValidationError("Selected account is unavailable or no longer yours to attach. Choose a current account.".into()));
+    }
+    if !den_service::work_surfaces::list_surfaces_managed_by(state.sqlx_pool(), actor.get())
+        .await?
+        .iter()
+        .any(|surface| surface.id == form.surface_id)
+    {
+        return Err(CustomError::ValidationError("Selected repository is unavailable or no longer yours to manage. Choose a currently managed repository.".into()));
+    }
+    match connections::attach(state.sqlx_pool(), actor, id, form.surface_id).await {
+        Ok(()) => Ok(()),
+        Err(den_core::DenError::NotFound(_)) => Err(CustomError::ValidationError(
+            "Account or repository access changed. Review current choices and confirm again."
+                .into(),
+        )),
+        Err(error) => Err(error.into()),
+    }
 }
 async fn detach(
     State(state): State<AppState>,
     session: AuthSession,
     Path(id): Path<Uuid>,
+    Form(form): Form<Confirmation>,
 ) -> Result<Response, CustomError> {
+    require_confirmation(form.confirmed)?;
     connections::detach(state.sqlx_pool(), owner(&state, &session).await?, id).await?;
     Ok(synced(&state).await)
 }

@@ -1,104 +1,97 @@
 {% extends "bear/_manage.html" %}
 {% set bear = {"name": "Atlas preview", "slug": "ui-preview"} %}
 {% set can_manage_bear = false %}
-{% set bear_nav_active = "chat" %} {% block title %}Design Chat{% endblock %} {% block
-subnav %}
+{% set bear_nav_active = "chat" %}
+{% block title %}Design Chat{% endblock %}
+{% block subnav %}
 <li><a class="button-link" href="/design">Design index</a></li>
-{% endblock %} {% block manage %}
+{% endblock %}
+{% block manage %}
 <div class="den-design-chat-shell">
     <div class="den-design-chat-toolbar">
         <div class="den-design-conversation-picker menu-item-submenu">
-            <input
-                id="den-design-conv-toggle"
-                class="den-conv-toggle"
-                type="checkbox"
-            />
-            <label
-                class="den-design-conversation-current den-conv-button-container"
-                for="den-design-conv-toggle"
-            >
+            <input id="den-design-conv-toggle" class="den-conv-toggle" type="checkbox" />
+            <label class="den-design-conversation-current den-conv-button-container" for="den-design-conv-toggle">
                 <span>Product direction</span>
             </label>
             <ul class="submenu den-conv-menu" aria-label="Conversations">
                 <li class="den-conv-menu-row den-conv-menu-row-selected">
-                    <a class="den-conv-menu-main" href="/design/chat"
-                        >Product direction</a
-                    >
-                    <button class="den-conv-menu-action" type="button">
-                        Rename
-                    </button>
-                    <button class="den-conv-menu-action" type="button">
-                        Archive
-                    </button>
+                    <a class="den-conv-menu-main" href="/design/chat">Product direction</a>
+                    <button class="den-conv-menu-action" type="button">Rename</button>
+                    <button class="den-conv-menu-action" type="button">Archive</button>
                 </li>
                 <li class="den-conv-menu-row">
-                    <a class="den-conv-menu-main" href="/design/chat"
-                        >Launch plan</a
-                    >
-                    <button class="den-conv-menu-action" type="button">
-                        Rename
-                    </button>
-                    <button class="den-conv-menu-action" type="button">
-                        Archive
-                    </button>
+                    <a class="den-conv-menu-main" href="/design/chat">Launch plan</a>
+                    <button class="den-conv-menu-action" type="button">Rename</button>
+                    <button class="den-conv-menu-action" type="button">Archive</button>
                 </li>
                 <li class="den-conv-menu-row">
-                    <a class="den-conv-menu-main" href="/design/chat"
-                        >Support notes</a
-                    >
-                    <button class="den-conv-menu-action" type="button">
-                        Rename
-                    </button>
-                    <button class="den-conv-menu-action" type="button">
-                        Archive
-                    </button>
+                    <a class="den-conv-menu-main" href="/design/chat">Support notes</a>
+                    <button class="den-conv-menu-action" type="button">Rename</button>
+                    <button class="den-conv-menu-action" type="button">Archive</button>
                 </li>
                 <li class="den-conv-menu-row den-conv-menu-new-row">
-                    <a class="den-conv-menu-main" href="/design/chat"
-                        >New conversation</a
-                    >
+                    <a class="den-conv-menu-main" href="/design/chat">New chat</a>
                 </li>
             </ul>
         </div>
-        <a class="button-link" href="/design">Overview</a>
+        <label class="form-hint" for="den-model-select">Model</label>
+        <select id="den-model-select" class="den-model-select" aria-label="Conversation model">
+            <option value="auto">Inherit default · Bear default: Preview model · reasoning model default</option>
+        </select>
+        <button id="den-current-task" type="button" class="button-link" aria-controls="den-task-picker" aria-expanded="false" disabled>Current task</button>
+        <button id="den-create-current-task" type="button" class="button-link" aria-controls="den-task-picker" disabled>New task</button>
+        <button id="den-clear-current-task" type="button" class="button-link" hidden>Clear task</button>
     </div>
+
+    <p id="den-task-feedback" class="form-errors" role="status" hidden></p>
+    <details id="den-task-picker" hidden>
+        <summary>Choose current task</summary>
+        <label for="den-task-search">Search tasks</label>
+        <input id="den-task-search" type="search" placeholder="Title or status" />
+        <p id="den-task-status" role="status"></p>
+        <ul id="den-task-list" aria-label="Tasks for this conversation"></ul>
+        <form id="den-task-create-form" hidden>
+            <label for="den-task-title">Task title</label>
+            <input id="den-task-title" type="text" required />
+            <button id="den-task-create-submit" type="submit">Create task</button>
+        </form>
+        <form id="den-task-confirm-form" hidden>
+            <p id="den-task-confirm-title"></p>
+            <button id="den-task-confirm-submit" type="submit">Confirm current task</button>
+            <button id="den-task-confirm-cancel" type="button" class="button-link">Cancel selection</button>
+        </form>
+        <button id="den-task-retry" type="button" class="button-link">Refresh tasks</button>
+        <button id="den-task-cancel" type="button" class="button-link">Close</button>
+    </details>
+    <noscript><p>Task selection requires JavaScript.</p></noscript>
 
     <section class="den-design-activity-strip" aria-label="Agent activity">
         <p class="caption">Activity</p>
         <ul>
             <li>Started cabinet.search</li>
             <li>Finished cabinet.search: 3 references</li>
-            <li>Started sub-agent reflection</li>
+            <li>Updated task status</li>
         </ul>
     </section>
 
     <section class="den-design-chat-panel" aria-label="Dummy chat transcript">
         <div class="den-design-message den-design-message-user">
-            <p>
-                I want the chat view to feel more deliberate and easier to scan.
-            </p>
+            <p>I want the chat view to feel more deliberate and easier to scan.</p>
         </div>
         <div class="den-design-message den-design-message-assistant">
-            <p>
-                We can tighten the line length, make the composer feel anchored,
-                and keep utility controls visually secondary.
-            </p>
+            <p>We can tighten the line length, make the composer feel anchored, and keep utility controls visually secondary.</p>
         </div>
         <div class="den-design-message den-design-message-user">
             <p>Show me how thinking or status messages might appear.</p>
         </div>
         <div class="den-design-message den-design-message-system">
             <p class="caption">Thinking</p>
-            <p>
-                Comparing the current Deep Chat surface against the BEARS base
-                navigation and form controls.
-            </p>
+            <p>Comparing the current Deep Chat surface against the BEARS base navigation and form controls.</p>
         </div>
         <details class="den-runtime-card">
             <summary class="den-runtime-card-summary">Read src/main.rs</summary>
-            <p class="den-runtime-card-meta">
-                Persisted: true · Sent to model: false · Redaction: none
-            </p>
+            <p class="den-runtime-card-meta">Persisted: true · Sent to model: false · Redaction: none</p>
             <pre class="den-runtime-card-detail">{
   "event_kind": "tool_activity",
   "source": "den_runtime",
@@ -106,22 +99,50 @@ subnav %}
 }</pre>
         </details>
         <div class="den-design-message den-design-message-assistant">
-            <p>
-                This is a static design fixture. Later, we can point the real
-                chat template at these same classes once the shape is right.
-            </p>
+            <p>The task picker above is an interactive preview; changes stay on this page.</p>
         </div>
     </section>
 
     <form class="den-design-composer" method="get" action="/design/chat">
         <label for="design-chat-input" class="caption">Message</label>
-        <textarea
-            id="design-chat-input"
-            name="message"
-            rows="3"
-            placeholder="Message your bear..."
-        ></textarea>
+        <textarea id="design-chat-input" name="message" rows="3" placeholder="Message your bear..."></textarea>
         <button type="submit">Send</button>
     </form>
 </div>
+<script src="/assets/js/task-selector.js"></script>
+<script>
+    (function () {
+        var tasks = [
+            { id: "preview-direction", title: "Review product direction", status: "in_progress" },
+            { id: "preview-launch", title: "Prepare launch plan", status: "pending" },
+            { id: "preview-support", title: "Review support notes", status: "blocked" },
+        ];
+        var current = tasks[0].id;
+        DenTaskSelector({
+            document: document,
+            bearId: "ui-preview",
+            getContext: function () { return { id: "conv-preview", readOnly: false }; },
+            fetch: function (url, init) {
+                var body = init.body ? JSON.parse(init.body) : {};
+                var data;
+                if (!init.method) data = { tasks: tasks, current_task_id: current };
+                else if (url.endsWith("/selection-request")) {
+                    var task = tasks.find(function (task) { return task.id === body.task_id; });
+                    data = { task_id: task.id, title: task.title, confirmation_required: true };
+                } else if (url.endsWith("/select")) {
+                    current = body.task_id;
+                    data = { ok: true, current_task_id: current };
+                } else if (url.endsWith("/clear")) {
+                    current = null;
+                    data = { ok: true, current_task_id: null };
+                } else {
+                    var created = { id: "preview-" + (tasks.length + 1), title: body.title, status: "pending" };
+                    tasks.push(created);
+                    data = { task: created };
+                }
+                return Promise.resolve({ ok: true, json: function () { return Promise.resolve(data); } });
+            },
+        }).load();
+    })();
+</script>
 {% endblock %}

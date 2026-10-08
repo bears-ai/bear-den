@@ -31,6 +31,7 @@
         <dt>Artifacts loaded</dt>
         <dd>{{ evidence.artifacts | length }}</dd>
     </dl>
+    {% if evidence.detail.run.error %}<p class="form-errors" role="alert">{{ evidence.detail.run.error | e }}</p>{% endif %}
 </div>
 
 <div class="box">

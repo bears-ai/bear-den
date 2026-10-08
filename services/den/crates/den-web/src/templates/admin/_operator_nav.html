@@ -1,0 +1,36 @@
+{% set page = template_tag | default("") %}
+{% macro destination(href, label, tags) %}
+<li><a href="{{ href }}"{% if page in tags %} aria-current="page"{% endif %}>{{ label }}</a></li>
+{% endmacro %}
+<nav class="bear-manage-nav" aria-label="Operator navigation">
+  {% if session.is_admin %}
+  <p class="bear-manage-nav-title"><strong>Operator console</strong></p>
+  <ul>{{ destination("/admin", "Operator home", ["admin-menu"]) }}</ul>
+  <h3>Identity &amp; access</h3>
+  <ul>
+    {{ destination("/admin/users/", "Users", ["admin-users-list", "admin-users-view", "admin-users-edit", "admin-users-add", "admin-users-change_password"]) }}
+    {{ destination("/admin/bears/", "Bears", ["admin-bears-list", "admin-bears-new", "admin-bears-edit"]) }}
+    {{ destination("/admin/membership/", "Bear membership", ["admin-membership-list", "admin-membership-grant"]) }}
+  </ul>
+  <h3>Runtime</h3>
+  <ul>
+    {{ destination("/admin/models", "Models", ["admin-models-index"]) }}
+    {{ destination("/admin/workers/", "Workers", ["admin-workers-index"]) }}
+    {{ destination("/admin/loop-control/", "Loop control", ["admin-loop_control-index"]) }}
+    {{ destination("/admin/runs/", "Run diagnostics", ["admin-runs-index", "admin-runs-detail"]) }}
+    {{ destination("/admin/sandbox", "Sandbox images", ["admin-sandbox-index", "admin-sandbox-operation"]) }}
+    {{ destination("/admin/oauth_clients/", "OAuth clients", ["admin-oauth_clients-list", "admin-oauth_clients-view", "admin-oauth_clients-add", "admin-oauth_clients-edit", "admin-oauth_clients-pkce_test"]) }}
+    {{ destination("/admin/oauth_tokens/", "OAuth tokens", ["admin-oauth_tokens-list", "admin-oauth_tokens-view", "admin-oauth_tokens-generate"]) }}
+  </ul>
+  {% endif %}
+  <h3>This Den</h3>
+  <ul>
+    <li><a href="/">Bears</a></li>
+    <li><a href="/cabinet">Cabinet</a></li>
+    <li><a href="/connections">Connections</a></li>
+    <li><a href="/reviews">Reviews</a></li>
+    <li><a href="/work/surfaces">Repositories</a></li>
+    <li><a href="/settings">Settings</a></li>
+    <li><a href="/status">Stack status</a></li>
+  </ul>
+</nav>

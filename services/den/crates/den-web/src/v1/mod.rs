@@ -34,7 +34,7 @@ use den_core::{
 };
 use den_docket::{
     DocketEffortHint, DocketService, DocketTaskCreate, DocketTaskDifficulty, DocketTaskKind,
-    DocketTaskListFilter, DocketTaskScope, PgDocketService, RoutingStrategy,
+    DocketTaskScope, PgDocketService, RoutingStrategy,
 };
 use den_llm::ModelOption;
 use den_protocol::{
@@ -55,6 +55,8 @@ use den_service::{
     client_sessions,
     conversation::{persistence as conversation_persistence, viewer::ConversationViewer},
 };
+
+mod current_task_choices;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -523,6 +525,20 @@ async fn browser_client_session(
     }
     let (_, conversation_id) =
         checked_chat_id(state.sqlx_pool(), bear.id, user_id, conversation_id).await?;
+    // Transcript inspection never grants task execution, including to Bear admins.
+    den_service::conversation::viewer::require_ordinary_tool_source(
+        state.sqlx_pool(),
+        BearId::new(bear.id),
+        UserId::new(user_id),
+        &conversation_id,
+    )
+    .await
+    .map_err(|error| match error {
+        DenError::NotFound(_) => CustomError::Authorization(
+            "this conversation is read-only; start a new chat with a hat to use tasks".into(),
+        ),
+        error => error.into(),
+    })?;
     let session_id = browser_client_session_id(user_id, bear.id, &conversation_id);
     client_sessions::upsert_session(
         state.sqlx_pool(),
@@ -570,7 +586,7 @@ async fn chat_current_task_get(
     State(state): State<AppState>,
     auth: AuthSession,
     Query(q): Query<ChatCurrentTaskQuery>,
-) -> Result<Json<Value>, CustomError> {
+) -> Result<Json<Value>, current_task_choices::ChatTaskError> {
     let user_id = auth
         .user
         .as_ref()
@@ -580,21 +596,12 @@ async fn chat_current_task_get(
     let bear = current_task_bear(&state, user_id, q.bear_id).await?;
     let session = browser_client_session(&state, user_id, &bear, &conversation_id).await?;
     let tasks = PgDocketService::from_pool(state.sqlx_pool())
-        .list_tasks(
-            bear.id,
-            DocketTaskListFilter {
-                job_id: None,
-                session_anchor_id: Some(session.id),
-                parent_task_id: None,
-                include_descendants: false,
-                limit: 500,
-            },
-        )
+        .list_session_tasks_for_human(bear.id, session.id, user_id)
         .await?;
     Ok(Json(json!({
         "session_id": session.client_session_id,
         "current_task_id": session.current_task_id,
-        "tasks": tasks,
+        "tasks": current_task_choices::task_choices(bear.id, &session, &tasks),
     })))
 }
 
@@ -602,7 +609,7 @@ async fn chat_current_task_create(
     State(state): State<AppState>,
     auth: AuthSession,
     Json(body): Json<ChatCurrentTaskCreate>,
-) -> Result<Json<Value>, CustomError> {
+) -> Result<Json<Value>, current_task_choices::ChatTaskError> {
     let user_id = auth
         .user
         .as_ref()
@@ -612,13 +619,12 @@ async fn chat_current_task_create(
     if conversation_id.starts_with("new-") {
         return Err(CustomError::ValidationError(
             "create a task after the conversation is created".to_string(),
-        ));
+        )
+        .into());
     }
     let title = body.title.trim();
     if title.is_empty() {
-        return Err(CustomError::ValidationError(
-            "task title is required".to_string(),
-        ));
+        return Err(CustomError::ValidationError("task title is required".to_string()).into());
     }
     let bear = current_task_bear(&state, user_id, body.bear_id).await?;
     let session = browser_client_session(&state, user_id, &bear, &conversation_id).await?;
@@ -654,7 +660,7 @@ async fn chat_current_task_selection_request(
     State(state): State<AppState>,
     auth: AuthSession,
     Json(body): Json<ChatCurrentTaskMutation>,
-) -> Result<Json<Value>, CustomError> {
+) -> Result<Json<Value>, current_task_choices::ChatTaskError> {
     let user_id = auth
         .user
         .as_ref()
@@ -686,7 +692,7 @@ async fn chat_current_task_select(
     State(state): State<AppState>,
     auth: AuthSession,
     Json(body): Json<ChatCurrentTaskMutation>,
-) -> Result<Json<Value>, CustomError> {
+) -> Result<Json<Value>, current_task_choices::ChatTaskError> {
     let user_id = auth
         .user
         .as_ref()
@@ -720,7 +726,7 @@ async fn chat_current_task_clear(
     State(state): State<AppState>,
     auth: AuthSession,
     Json(body): Json<ChatCurrentTaskMutation>,
-) -> Result<Json<Value>, CustomError> {
+) -> Result<Json<Value>, current_task_choices::ChatTaskError> {
     let user_id = auth
         .user
         .as_ref()
@@ -1983,6 +1989,8 @@ async fn chat_send_inner(
 
 #[cfg(test)]
 mod access_tests;
+#[cfg(test)]
+mod current_task_tests;
 #[cfg(test)]
 mod model_configuration_tests;
 #[cfg(test)]

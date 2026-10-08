@@ -5,10 +5,11 @@
 
 {% block manage %}
 <section>
-    <h2>Configuration</h2>
-    <p><a href="/bear/{{ bear.slug | e }}/overview">Back to bear</a></p>
+    <h2>Legacy model selection</h2>
+    <p><a class="button-link" href="/bear/{{ bear.slug | e }}/models">Open Models</a> · <a href="/bear/{{ bear.slug | e }}/identity">Back to Purpose</a></p>
+    <p class="form-hint">This form is retained for earlier submissions. Use Models to manage the effective Bear default, named configurations, and reasoning effort.</p>
     {% if provision_error %}
-    <p class="form-errors"><strong>Profile reconcile failed</strong>: {{ provision_error | e }}</p>
+    <p class="form-errors" role="alert"><strong>Saved, but Bear initialization failed</strong>: {{ provision_error | e }}</p>
     {% endif %}
     <form method="post" class="box full-width">
         {% if model_catalog_configured and model_options and model_options | length > 0 %}

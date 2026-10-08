@@ -1,7 +1,7 @@
 {% extends "bear/_manage.html" %}
 {% block title %}Connections · {{ bear.name | e }}{% endblock %}
 {% block manage %}
-<section class="box"><h2>Connections</h2><p class="button-row"><a class="button-link" href="/connections">Connections on this Den</a><a href="/bear/{{ bear.slug | urlencode }}/resources">What this Bear can use</a></p></section>
+<section class="box"><p class="button-row"><a class="button-link" href="/connections">Connections on this Den</a><a href="/bear/{{ bear.slug | urlencode }}/resources">What this Bear can use</a></p></section>
 <section class="box"><h2>Editor access</h2>{% if can_manage_bear %}<p><a class="button-link" href="/bear/{{ bear.slug | urlencode }}/code-token">Manage editor token</a></p>{% else %}<p>A Bear admin manages editor access.</p>{% endif %}<details><summary>What the token permits</summary><p>The code token authenticates the human and editor. It does not choose a hat or grant tools, credentials or Job authority.</p></details></section>
-<details class="box"><summary>Provider accounts</summary><p>Repository credentials are managed on their existing <a href="/connections">Den connection records</a>. Reusable provider-account catalogs are not available yet. Secrets stay on this Den and are never displayed.</p></details>
+<details class="box"><summary>Provider accounts</summary><p>Manage reusable HTTPS tokens, SSH keys and GitHub App installations in <a href="/connections">Connections on this Den</a>. Repository assignment and hat grants are separate from account authentication. Secrets stay on this Den and are never displayed.</p></details>
 {% endblock %}

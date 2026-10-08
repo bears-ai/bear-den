@@ -22,6 +22,13 @@ fn render(name: &str, values: Value) -> String {
         .render(context! {
             app_display_name => "Bears",
             bear,
+            effective_model => context! {
+                name => Option::<String>::None, model_handle => "openai/gpt-4.1",
+                status => "available", status_detail => Option::<String>::None,
+                effort_label => "Model default", source_label => "Deployment default",
+            },
+            draft => context! { name => "", provider => "", installation => "", allow_write => false },
+            attachment_feedback => Option::<String>::None,
             ..values
         })
         .unwrap_or_else(|error| panic!("render {name}: {error:#}"))

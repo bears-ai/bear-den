@@ -8,6 +8,15 @@
   {% if can_manage_bear %}
   <p>{% if pending_reviews is none %}<a href="/reviews?bear={{ bear.slug | urlencode }}">Reviews</a> · Count unavailable{% elif pending_reviews > 0 %}<a class="button-link" href="/reviews?bear={{ bear.slug | urlencode }}">{{ pending_reviews }} memory proposal{% if pending_reviews != 1 %}s{% endif %} to review</a>{% else %}No memory proposals awaiting review.{% endif %}</p>
   {% endif %}
+  {% if can_manage_bear and (not recall_health or recall_health.status in ['degraded', 'unknown'] or not memory_stats) %}
+  <div role="status">
+    <h3>Needs attention</h3>
+    {% if recall_health and recall_health.status in ['degraded', 'unknown'] %}<p>Derived search: <strong>{{ recall_health.status | e }}</strong> · {{ recall_health.detail | e }}</p>{% elif not recall_health %}<p>Recall health could not be checked.</p>{% endif %}
+    {% if not memory_stats %}<p>Memory statistics unavailable.</p>{% endif %}
+    <p><a href="/bear/{{ bear.slug | urlencode }}/memory">Open Memory</a> · <a href="/bear/{{ bear.slug | urlencode }}/advanced">Inspect diagnostics</a> · <a href="/bear/{{ bear.slug | urlencode }}/overview">Refresh status</a></p>
+  </div>
+  {% endif %}
+  {% if can_manage_bear and recall_health and recall_health.status == 'unavailable' %}<p>Search uses the keyword fallback. {{ recall_health.detail | e }}</p>{% endif %}
   <div class="bear-overview-actions">
     <a href="/bear/{{ bear.slug | urlencode }}"><strong>Chat</strong><span>Start or resume a conversation</span></a>
     <a href="/bear/{{ bear.slug | urlencode }}/memory"><strong>Memory</strong><span>Inspect what it knows</span></a>
@@ -39,7 +48,7 @@
 </section>
 <details class="box">
   <summary>Memory &amp; health</summary>
-  {% if recall_health %}<p>Derived search: <strong>{{ recall_health.status | e }}</strong> · {{ recall_health.detail | e }}</p>{% endif %}
+  {% if recall_health and recall_health.status == 'healthy' %}<p>Derived search: <strong>{{ recall_health.status | e }}</strong> · {{ recall_health.detail | e }}</p>{% endif %}
   {% if memory_stats %}<dl><dt>Canonical memory records</dt><dd>{{ memory_stats.record_count }}</dd><dt>Shared records</dt><dd>{{ memory_stats.shared_count }}</dd><dt>Historical profile-local records</dt><dd>{{ memory_stats.profile_local_count }}</dd></dl>{% else %}<p>Memory statistics unavailable.</p>{% endif %}
   <p>{{ member_count }} member{% if member_count != 1 %}s{% endif %} · {{ conversation_count }} conversation{% if conversation_count != 1 %}s{% endif %}</p>
   {% if weekly_activity %}<table><caption>Conversation activity over time</caption><thead><tr><th>Week of</th><th>Conversations</th></tr></thead><tbody>{% for row in weekly_activity %}<tr><td>{{ row.week | e }}</td><td>{{ row.count }}</td></tr>{% endfor %}</tbody></table>{% endif %}

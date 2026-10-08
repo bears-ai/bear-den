@@ -5,19 +5,27 @@ pub mod loop_control;
 pub mod membership;
 pub mod models;
 pub mod oauth_clients;
+mod oauth_feedback;
+mod oauth_tokens;
+
+#[cfg(test)]
+mod oauth_route_tests;
 pub mod reflections;
 pub mod runs;
 pub mod sandbox_images;
 pub mod users;
 pub mod workers;
 
+#[cfg(test)]
+pub(crate) mod usability_tests;
+
 use axum::response::Response;
 use axum::{extract::State, routing::get, Router};
 use minijinja::context;
 
+use crate::auth_backend::AuthSession;
 use crate::errors::CustomError;
 use crate::web::{self, AppState};
-use crate::{auth_backend::AuthSession, core::user};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -38,14 +46,12 @@ async fn admin_home(
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
-    let users = user::db::get_users(&state.sqlx_pool).await?;
-
     web::render_template(
         &state,
         "admin/menu.html",
         auth_session,
         context! {
-            users => users,
+
             native_runtime => true,
         },
     )

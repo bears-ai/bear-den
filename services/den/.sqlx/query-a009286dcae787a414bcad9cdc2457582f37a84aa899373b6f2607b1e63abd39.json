@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO email_configs (user_id, email_address, active, verified_at) SELECT id, email, true, NOW() FROM users WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a009286dcae787a414bcad9cdc2457582f37a84aa899373b6f2607b1e63abd39"
+}

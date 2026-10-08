@@ -5,7 +5,7 @@
 //! SQLite (ADR-0031). Qdrant passages are not an authorization source.
 
 use axum::{
-    extract::{Multipart, Path, Query, State},
+    extract::{DefaultBodyLimit, Multipart, Path, Query, State},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
     Router,
@@ -55,6 +55,14 @@ use den_service::{
 
 use super::member::{email_verify_redirect, load_bear_member, viewer_can_manage_bear};
 
+mod browse_feedback;
+pub(crate) mod inspection;
+mod migration;
+mod proposal_feedback;
+
+#[cfg(test)]
+mod usability_tests;
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route_with_tsr("/bear/{slug}/memory", get(dashboard_view))
@@ -64,7 +72,9 @@ pub fn router() -> Router<AppState> {
         )
         .route_with_tsr(
             "/bear/{slug}/memory/import-legacy",
-            post(import_legacy_memory_post),
+            post(import_legacy_memory_post).layer(DefaultBodyLimit::max(
+                LEGACY_IMPORT_MAX_UPLOAD_BYTES + 64 * 1024,
+            )),
         )
         .route_with_tsr("/bear/{slug}/memory/recent", get(recent_view))
         .route_with_tsr("/bear/{slug}/memory/search", get(search_view))
@@ -93,7 +103,7 @@ pub fn router() -> Router<AppState> {
 // Query / form types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 struct DashboardQuery {
     #[serde(default)]
     import_notice: Option<String>,
@@ -135,8 +145,9 @@ struct EntitiesQuery {
     r#type: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct MemoryDeleteForm {
+    #[serde(default)]
     role: String,
     #[serde(default)]
     paths: Vec<String>,
@@ -158,7 +169,7 @@ struct MemoryDeleteForm {
     requires_human: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct MemoryProposalResolutionForm {
     status: String,
     #[serde(default)]
@@ -345,10 +356,17 @@ struct ReflectionEvidenceView {
     conversation_ref_count: usize,
 }
 
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum MemoryProposalStore {
+    Postgres,
+    Sqlite,
+}
+
 #[derive(Debug, Serialize, Clone)]
 struct MemoryProposalView {
     id: String,
-    store: String,
+    store: MemoryProposalStore,
     source_profile: String,
     source_agent_id: Option<String>,
     source_paths: Vec<String>,
@@ -815,7 +833,7 @@ async fn list_recent_reflection_runs(
     lane_filter: Option<&str>,
     status_filter: Option<&str>,
     attention_filter: Option<&str>,
-) -> Vec<ReflectionRunView> {
+) -> Result<Vec<ReflectionRunView>, CustomError> {
     let rows = sqlx::query_as::<
         _,
         (
@@ -863,10 +881,10 @@ async fn list_recent_reflection_runs(
     .bind(status_filter)
     .bind(attention_filter)
     .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+    .await?;
 
-    rows.into_iter()
+    Ok(rows
+        .into_iter()
         .map(
             |(
                 id,
@@ -925,13 +943,13 @@ async fn list_recent_reflection_runs(
                 }
             },
         )
-        .collect()
+        .collect())
 }
 
 async fn reflection_performance_slo(
     pool: &sqlx::PgPool,
     bear_id: Uuid,
-) -> ReflectionPerformanceSloView {
+) -> Result<ReflectionPerformanceSloView, CustomError> {
     let (oldest_queued_at, runs_24h, failed_24h) = sqlx::query_as::<
         _,
         (Option<OffsetDateTime>, i64, i64),
@@ -948,8 +966,7 @@ async fn reflection_performance_slo(
     )
     .bind(bear_id)
     .fetch_one(pool)
-    .await
-    .unwrap_or((None, 0, 0));
+    .await?;
 
     let oldest_queued_ms = oldest_queued_at
         .map(|created_at| (OffsetDateTime::now_utc() - created_at).whole_milliseconds());
@@ -982,10 +999,9 @@ async fn reflection_performance_slo(
     )
     .bind(bear_id)
     .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+    .await?;
 
-    ReflectionPerformanceSloView {
+    Ok(ReflectionPerformanceSloView {
         oldest_queued_label: duration_label(oldest_queued_ms),
         oldest_queued_attention: oldest_queued_ms
             .map(|ms| ms >= Duration::minutes(10).whole_milliseconds())
@@ -1005,7 +1021,7 @@ async fn reflection_performance_slo(
                 },
             )
             .collect(),
-    }
+    })
 }
 
 async fn get_reflection_run_detail(
@@ -1422,7 +1438,7 @@ fn proposal_view_from_postgres(row: memory_proposals::MemoryProposalRow) -> Memo
     let extraction = proposal_extraction_view(&row.source_refs, &row.refs);
     MemoryProposalView {
         id: row.id.to_string(),
-        store: "postgres".to_string(),
+        store: MemoryProposalStore::Postgres,
         source_profile: row.source_profile,
         source_agent_id: row.source_agent_id,
         source_paths: row.source_paths,
@@ -1475,7 +1491,7 @@ fn proposal_view_from_sqlite(row: SqliteMemoryProposal) -> MemoryProposalView {
         .unwrap_or_default();
     MemoryProposalView {
         id: row.proposal_id,
-        store: "sqlite".to_string(),
+        store: MemoryProposalStore::Sqlite,
         source_profile: string_field("source_profile", "curate"),
         source_agent_id: payload
             .get("source_agent_id")
@@ -1534,26 +1550,28 @@ async fn list_dashboard_proposals(
     bear_id: Uuid,
     status: Option<&str>,
     limit: i64,
-) -> Vec<MemoryProposalView> {
-    let mut proposals: Vec<MemoryProposalView> =
-        memory_proposals::list_for_bear(state.sqlx_pool(), bear_id, status, limit)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .map(proposal_view_from_postgres)
-            .collect();
-
-    if let Ok(store) = manager.store_for_bear(bear_id).await {
-        proposals.extend(
-            list_sqlite_memory_proposals(&store, status, limit)
-                .await
-                .unwrap_or_default()
-                .into_iter()
-                .map(proposal_view_from_sqlite),
-        );
+    errors: &mut Vec<String>,
+) -> inspection::PartialList<MemoryProposalView> {
+    let postgres = memory_proposals::list_for_bear(state.sqlx_pool(), bear_id, status, limit)
+        .await
+        .map(|rows| rows.into_iter().map(proposal_view_from_postgres).collect())
+        .map_err(CustomError::from);
+    let sqlite = async {
+        let store = manager.store_for_bear(bear_id).await?;
+        let rows = list_sqlite_memory_proposals(&store, status, limit).await?;
+        Ok::<_, CustomError>(rows.into_iter().map(proposal_view_from_sqlite).collect())
     }
-    proposals.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-    proposals.truncate(limit.clamp(1, 200) as usize);
+    .await;
+    let mut proposals = inspection::PartialList::combine(
+        postgres,
+        sqlite,
+        ["Postgres proposals", "SQLite proposals"],
+        errors,
+    );
+    proposals
+        .items
+        .sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    proposals.items.truncate(limit.clamp(1, 200) as usize);
     proposals
 }
 
@@ -1562,19 +1580,12 @@ async fn count_dashboard_proposals(
     manager: &MemoryStoreManager,
     bear_id: Uuid,
     status: &str,
-) -> i64 {
+) -> Result<i64, CustomError> {
     let postgres_count =
-        memory_proposals::count_for_bear_status(state.sqlx_pool(), bear_id, status)
-            .await
-            .unwrap_or(0);
-    let sqlite_count = if let Ok(store) = manager.store_for_bear(bear_id).await {
-        count_memory_proposals(&store, Some(status))
-            .await
-            .unwrap_or(0)
-    } else {
-        0
-    };
-    postgres_count + sqlite_count
+        memory_proposals::count_for_bear_status(state.sqlx_pool(), bear_id, status).await?;
+    let store = manager.store_for_bear(bear_id).await?;
+    let sqlite_count = count_memory_proposals(&store, Some(status)).await?;
+    Ok(postgres_count + sqlite_count)
 }
 
 // Labels are presentation only. Read the stored scope columns, not a logical path or
@@ -2005,22 +2016,38 @@ async fn dashboard_view(
         .await;
     }
 
-    let stats = bear_memory_admin_stats(&manager, config, id).await.ok();
+    let mut inspection_errors = Vec::new();
+    let stats = inspection::read_result(
+        bear_memory_admin_stats(&manager, config, id).await,
+        "Memory statistics",
+        &mut inspection_errors,
+    );
     let legacy_import_locked = stats.as_ref().map(|s| s.record_count > 0).unwrap_or(true);
-    let head_count = head_entry_count(&manager, id).await.unwrap_or(0);
-    let by_kind = count_records_by_kind(&manager, id)
-        .await
-        .unwrap_or_default();
-    let by_profile = count_records_by_profile(&manager, id)
-        .await
-        .unwrap_or_default();
+    let head_count = inspection::read_result(
+        head_entry_count(&manager, id).await,
+        "Current entry count",
+        &mut inspection_errors,
+    );
+    let by_kind = inspection::read_result(
+        count_records_by_kind(&manager, id).await,
+        "Kind counts",
+        &mut inspection_errors,
+    );
+    let by_profile = inspection::read_result(
+        count_records_by_profile(&manager, id).await,
+        "Scope counts",
+        &mut inspection_errors,
+    );
 
     // Derived recall coverage (Postgres registry). Only meaningful when recall is configured.
     let recall = if config.qdrant_url.is_some() {
-        let (passages, memories) =
-            recall_registry::passage_stats(state.sqlx_pool(), id, &config.embedding_standard)
-                .await
-                .unwrap_or((0, 0));
+        let passage_stats = inspection::read_result(
+            recall_registry::passage_stats(state.sqlx_pool(), id, &config.embedding_standard).await,
+            "Recall coverage",
+            &mut inspection_errors,
+        );
+        let passages = passage_stats.map(|(passages, _)| passages);
+        let memories = passage_stats.map(|(_, memories)| memories);
         // Recall consistency watermark (ADR-0038 §8): lag + last-run failure summary.
         let watermark = match den_service::recall::recall_watermark_for_bear(
             state.sqlx_pool(),
@@ -2047,53 +2074,100 @@ async fn dashboard_view(
 
     // Entity layer summary (ADR-0042). Populated as the Bear resolves entities (Phase 6+);
     // empty for most Bears today.
-    let entity_summary = entity_summary(&manager, id)
-        .await
-        .unwrap_or_else(|_| json!({ "total": 0, "by_type": [], "by_resolution": [] }));
-
-    let recent: Vec<RecordListItem> = list_recent_memory_records(&manager, id, 8)
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .map(|r| record_list_item(r, None))
-        .collect();
-
-    let proposals = list_dashboard_proposals(&state, &manager, id, None, 10).await;
-    let pending_review_count = count_dashboard_proposals(&state, &manager, id, "pending").await;
-    let needs_human_review_count =
-        count_dashboard_proposals(&state, &manager, id, "needs_human_review").await;
-    let reviewable_proposal_count = pending_review_count + needs_human_review_count;
-    let mut pending_proposals =
-        list_dashboard_proposals(&state, &manager, id, Some("pending"), 10).await;
-    pending_proposals.extend(
-        list_dashboard_proposals(&state, &manager, id, Some("needs_human_review"), 10).await,
+    let entity_summary = inspection::read_result(
+        entity_summary(&manager, id).await,
+        "Entity summary",
+        &mut inspection_errors,
     );
+
+    let recent = inspection::read_result(
+        list_recent_memory_records(&manager, id, 8).await,
+        "Recent additions",
+        &mut inspection_errors,
+    )
+    .map(|rows| {
+        rows.into_iter()
+            .map(|r| record_list_item(r, None))
+            .collect::<Vec<_>>()
+    });
+
+    let proposal_list =
+        list_dashboard_proposals(&state, &manager, id, None, 10, &mut inspection_errors).await;
+    let proposals_complete = proposal_list.complete;
+    let proposals = proposal_list.items;
+    let pending_review_count = inspection::read_result(
+        count_dashboard_proposals(&state, &manager, id, "pending").await,
+        "Pending proposal count",
+        &mut inspection_errors,
+    );
+    let needs_human_review_count = inspection::read_result(
+        count_dashboard_proposals(&state, &manager, id, "needs_human_review").await,
+        "Human review count",
+        &mut inspection_errors,
+    );
+    let reviewable_proposal_count = pending_review_count
+        .zip(needs_human_review_count)
+        .map(|(pending, human)| pending + human);
+    let pending = list_dashboard_proposals(
+        &state,
+        &manager,
+        id,
+        Some("pending"),
+        10,
+        &mut inspection_errors,
+    )
+    .await;
+    let human = list_dashboard_proposals(
+        &state,
+        &manager,
+        id,
+        Some("needs_human_review"),
+        10,
+        &mut inspection_errors,
+    )
+    .await;
+    let pending_proposals_complete = pending.complete && human.complete;
+    let mut pending_proposals = pending.items;
+    pending_proposals.extend(human.items);
     pending_proposals.sort_by(|a, b| b.created_at.cmp(&a.created_at));
     pending_proposals.truncate(10);
-    let pair_reflection_runs = pair_reflection::list_recent_for_bear(state.sqlx_pool(), id, 8)
-        .await
-        .unwrap_or_default();
+    let pair_reflection_runs = inspection::read_result(
+        pair_reflection::list_recent_for_bear(state.sqlx_pool(), id, 8).await,
+        "Pair reflection runs",
+        &mut inspection_errors,
+    );
     let reflection_lane = valid_reflection_lane(query.reflection_lane.as_deref());
     let reflection_status = valid_reflection_status(query.reflection_status.as_deref());
     let reflection_attention = valid_reflection_attention(query.reflection_attention.as_deref());
-    let reflection_runs = list_recent_reflection_runs(
-        state.sqlx_pool(),
-        id,
-        25,
-        reflection_lane.as_deref(),
-        reflection_status.as_deref(),
-        reflection_attention.as_deref(),
-    )
-    .await;
-    let reflection_run_summary = reflection_summary(
-        &list_recent_reflection_runs(state.sqlx_pool(), id, 100, None, None, None).await,
+    let reflection_runs = inspection::read_result(
+        list_recent_reflection_runs(
+            state.sqlx_pool(),
+            id,
+            25,
+            reflection_lane.as_deref(),
+            reflection_status.as_deref(),
+            reflection_attention.as_deref(),
+        )
+        .await,
+        "Reflection runs",
+        &mut inspection_errors,
     );
+    let reflection_run_summary = inspection::read_result(
+        list_recent_reflection_runs(state.sqlx_pool(), id, 100, None, None, None).await,
+        "Reflection summary",
+        &mut inspection_errors,
+    )
+    .map(|rows| reflection_summary(&rows));
     let reflection_run_filters = reflection_run_filter_view(
         reflection_lane.as_deref(),
         reflection_status.as_deref(),
         reflection_attention.as_deref(),
     );
-    let reflection_slo = reflection_performance_slo(state.sqlx_pool(), id).await;
+    let reflection_slo = inspection::read_result(
+        reflection_performance_slo(state.sqlx_pool(), id).await,
+        "Reflection performance",
+        &mut inspection_errors,
+    );
 
     web::render_template(
         &state,
@@ -2101,6 +2175,7 @@ async fn dashboard_view(
         auth_session,
         context! {
             stats,
+            inspection_errors,
             own_notes,
             head_count,
             by_kind,
@@ -2109,7 +2184,9 @@ async fn dashboard_view(
             entity_summary,
             recent,
             proposals,
+            proposals_complete,
             pending_proposals,
+            pending_proposals_complete,
             pending_review_count,
             needs_human_review_count,
             reviewable_proposal_count,
@@ -2220,9 +2297,11 @@ async fn search_view(
     let want_semantic = query.mode.as_deref() == Some("semantic") && semantic_available;
 
     let mut mode_used = "keyword";
-    let mut notice: Option<String> = (query.mode.as_deref() == Some("semantic")
-        && !semantic_available)
-        .then(|| "Semantic search is unavailable; showing curated keyword results.".to_string());
+    let mut notice: Option<String> =
+        (query.mode.as_deref() == Some("semantic") && !semantic_available).then(|| {
+            "Semantic search is not configured in this deployment; showing keyword results."
+                .to_string()
+        });
     let mut results: Vec<RecordListItem> = Vec::new();
 
     if let Some(q) = q {
@@ -2283,7 +2362,7 @@ async fn search_view(
                     }
                     if results.is_empty() {
                         notice = Some(
-                            "No current curated semantic matches; showing curated keyword results."
+                            "No current semantic matches in the accessible library; showing keyword results."
                                 .into(),
                         );
                     } else {
@@ -2292,14 +2371,13 @@ async fn search_view(
                 }
                 Ok(_) => {
                     notice = Some(
-                        "Semantic search returned no matches; showing curated keyword results."
-                            .to_string(),
+                        "Semantic search returned no matches; showing keyword results.".to_string(),
                     );
                 }
                 Err(err) => {
                     tracing::warn!(bear_id = %bear.id, error = %err, "semantic search failed; keyword fallback");
                     notice = Some(
-                        "Semantic search is unavailable; showing curated keyword results."
+                        "Semantic search failed; showing keyword results. Retry semantic search or inspect recall status on the Memory page."
                             .to_string(),
                     );
                 }
@@ -2352,66 +2430,7 @@ async fn browse_view(
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
-    let manager = state.memory_stores.clone();
-    let viewer = MemoryLibraryViewer::resolve(&state, bear.id, can_manage_bear).await?;
-    let summaries = viewer.browse(&manager, bear.id).await?;
-    let hat_names: HashMap<HatId, String> = if can_manage_bear {
-        HashMap::new()
-    } else {
-        hats::list_hats(state.sqlx_pool(), BearId::new(bear.id))
-            .await?
-            .into_iter()
-            .map(|hat| (hat.id, hat.name))
-            .collect()
-    };
-
-    // Admin inspection groups by path; member presentation uses canonical scope.
-    let mut groups: Vec<PathGroup> = Vec::new();
-    for summary in summaries {
-        let label = if can_manage_bear {
-            path_group_label(&summary.logical_path)
-        } else {
-            match store::MemoryScopeType::parse(&summary.scope_type) {
-                Some(store::MemoryScopeType::Shared) => "Bear-wide".to_string(),
-                Some(store::MemoryScopeType::Hat) => {
-                    let Some(name) = summary.scope_hat_id.and_then(|id| hat_names.get(&id)) else {
-                        continue;
-                    };
-                    format!("Hat: {name}")
-                }
-                _ => continue,
-            }
-        };
-        if let Some(group) = groups.iter_mut().find(|g| g.label == label) {
-            group.paths.push(summary);
-        } else {
-            groups.push(PathGroup {
-                label,
-                paths: vec![summary],
-            });
-        }
-    }
-    groups.sort_by(|a, b| {
-        group_rank(&a.label)
-            .cmp(&group_rank(&b.label))
-            .then(a.label.cmp(&b.label))
-    });
-
-    web::render_template(
-        &state,
-        "bear/memory/browse.html",
-        auth_session,
-        context! {
-            groups,
-            delete_notice => query.deleted,
-            review_notice => query.review_requested,
-            delete_error => query.error.as_deref().map(str::trim).filter(|s| !s.is_empty()),
-            can_manage_bear,
-            native_runtime => true,
-            ..bear_nav_context(&bear, "memory"),
-        },
-    )
-    .await
+    browse_feedback::render(&state, auth_session, &bear, can_manage_bear, query, None).await
 }
 
 /// Canonical-first ordering for the browse groups (`core` shared memory before role branches).
@@ -2449,11 +2468,8 @@ async fn import_legacy_memory_post(
         Ok(field) => field,
         Err(err) => {
             tracing::warn!(bear_id = %bear.id, error = %err, "invalid legacy bundle multipart upload");
-            return Ok(dashboard_redirect_with_query(
-                &bear.slug,
-                "import_error",
-                "Invalid multipart upload.",
-            ));
+            return migration::failure(state, auth_session, &bear.slug,
+                format!("Could not read the upload: {err}. Select a bundle again; the file limit is 128 MiB.")).await;
         }
     } {
         if field.name() != Some("bundle") {
@@ -2464,19 +2480,13 @@ async fn import_legacy_memory_post(
             Ok(chunk) => chunk,
             Err(err) => {
                 tracing::warn!(bear_id = %bear.id, error = %err, "failed reading legacy bundle upload field");
-                return Ok(dashboard_redirect_with_query(
-                    &bear.slug,
-                    "import_error",
-                    "Failed reading uploaded bundle.",
-                ));
+                return migration::failure(state, auth_session, &bear.slug,
+                    format!("Could not read the uploaded bundle: {err}. Select the file again; the limit is 128 MiB.")).await;
             }
         } {
             if data.len() + chunk.len() > LEGACY_IMPORT_MAX_UPLOAD_BYTES {
-                return Ok(dashboard_redirect_with_query(
-                    &bear.slug,
-                    "import_error",
-                    "Bundle exceeds the 128 MiB upload limit.",
-                ));
+                return migration::failure(state, auth_session, &bear.slug,
+                    "Bundle exceeds the 128 MiB upload limit. Choose a smaller self-contained bundle.".into()).await;
             }
             data.extend_from_slice(&chunk);
         }
@@ -2487,58 +2497,66 @@ async fn import_legacy_memory_post(
     let bundle_bytes = match bundle_bytes {
         Some(bytes) if !bytes.is_empty() => bytes,
         _ => {
-            return Ok(dashboard_redirect_with_query(
+            return migration::failure(
+                state,
+                auth_session,
                 &bear.slug,
-                "import_error",
-                "Please select a bundle file.",
-            ));
+                "Please select a self-contained git bundle file.".into(),
+            )
+            .await;
         }
     };
 
     if !looks_like_git_bundle(&bundle_bytes) {
-        return Ok(dashboard_redirect_with_query(
-            &bear.slug,
-            "import_error",
-            "Upload must be a git bundle.",
-        ));
+        return migration::failure(state, auth_session, &bear.slug,
+            "Upload must be a self-contained git bundle, not a .bear archive or an incremental bundle.".into()).await;
     }
 
     let stores = state.memory_stores.clone();
-    let store = stores.store_for_bear(bear.id).await?;
-    let record_count: i64 =
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM memory_records WHERE bear_id = ?")
-            .bind(bear.id.to_string())
-            .fetch_one(store.pool())
-            .await?;
-    if record_count > 0 {
-        return Ok(dashboard_redirect_with_query(
-            &bear.slug,
-            "import_error",
-            "Legacy memory import is disabled for Bears that already have memory records.",
-        ));
+    let empty_store = async {
+        let store = stores.store_for_bear(bear.id).await?;
+        let record_count: i64 =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM memory_records WHERE bear_id = ?")
+                .bind(bear.id.to_string())
+                .fetch_one(store.pool())
+                .await?;
+        Ok::<_, CustomError>(record_count == 0)
+    }
+    .await;
+    match empty_store {
+        Ok(true) => {},
+        Ok(false) => return migration::failure(state, auth_session, &bear.slug,
+            "Legacy migration requires an empty memory store. This Bear already has records; inspect its library before continuing.".into()).await,
+        Err(err) => return migration::failure(state, auth_session, &bear.slug,
+            format!("Could not verify the destination memory store: {err}. Reload to retry before uploading.")).await,
     }
 
     let import_dir = import_dir_for_bear(state.config.as_ref(), bear.id);
-    std::fs::create_dir_all(&import_dir).map_err(|err| {
-        CustomError::System(format!("failed to create legacy import directory: {err}"))
-    })?;
+    if let Err(err) = std::fs::create_dir_all(&import_dir) {
+        return migration::failure(state, auth_session, &bear.slug,
+            format!("Could not create the import directory: {err}. Repair Den's memory-volume permissions, then select the bundle again.")).await;
+    }
 
     let file_path = import_dir.join(format!("legacy-memory-{}.bundle", Uuid::new_v4()));
-    std::fs::write(&file_path, &bundle_bytes)
-        .map_err(|err| CustomError::System(format!("failed to stage legacy bundle: {err}")))?;
+    if let Err(err) = std::fs::write(&file_path, &bundle_bytes) {
+        let _ = std::fs::remove_file(&file_path);
+        return migration::failure(state, auth_session, &bear.slug,
+            format!("Could not stage the bundle: {err}. Check available disk space and memory-volume permissions, then select the file again.")).await;
+    }
 
     let report = match import_staged_bundle(&state, bear.id, &file_path).await {
         Ok(report) => report,
         Err(err) => {
             tracing::warn!(bear_id = %bear.id, error = %err, path = %file_path.display(), "legacy bundle import failed after staging");
-            if let Err(delete_err) = std::fs::remove_file(&file_path) {
-                tracing::warn!(bear_id = %bear.id, error = %delete_err, path = %file_path.display(), "failed to discard staged legacy bundle after import failure");
-            }
-            return Ok(dashboard_redirect_with_query(
-                &bear.slug,
-                "import_error",
-                "Bundle upload succeeded, but importing into SQLite failed. The failed upload was discarded; check Den logs for the importer error.",
-            ));
+            let cleanup = match std::fs::remove_file(&file_path) {
+                Ok(()) => "The staged upload was discarded.",
+                Err(delete_err) => {
+                    tracing::warn!(bear_id = %bear.id, error = %delete_err, path = %file_path.display(), "failed to discard staged legacy bundle after import failure");
+                    "The staged upload could not be removed; ask the operator to clean up the import directory."
+                }
+            };
+            return migration::failure(state, auth_session, &bear.slug,
+                format!("Import failed: {err}. {cleanup} Some records may already have been imported; inspect the library before retrying. Verify a self-contained bundle, Git availability and writable temporary storage.")).await;
         }
     };
 
@@ -2568,117 +2586,30 @@ async fn browse_delete_post(
             "bear admin role required".to_string(),
         ));
     }
-    let role = form
-        .role
-        .parse::<RuntimeContextLabel>()
-        .map_err(CustomError::ValidationError)?;
-    let action = form.action.as_deref().unwrap_or("delete").trim();
-    let confirm = form.confirm.trim();
-    let mut paths = form
-        .paths
-        .into_iter()
-        .map(|path| path.trim().to_string())
-        .filter(|path| !path.is_empty())
-        .collect::<Vec<_>>();
-    paths.sort();
-    paths.dedup();
-    let browse_base = format!("/bear/{}/memory/browse", bear.slug);
-    if paths.is_empty() {
-        return Ok(Redirect::to(&format!(
-            "{browse_base}?error={}",
-            urlencoding::encode("Select at least one memory path.")
+    match browse_feedback::apply(&state, &bear, &form).await {
+        Ok(browse_feedback::Saved::ReviewRequested) => Ok(Redirect::to(&format!(
+            "/bear/{}/memory/browse?review_requested=1",
+            bear.slug
         ))
-        .into_response());
-    }
-    if action == "request_review" {
-        let title = form
-            .review_title
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or("Review selected memory");
-        let summary = form
-            .review_summary
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or("Selected memory paths were marked for Reflection/curate review from the Bear memory UI.");
-        let proposal = memory_proposals::create(
-            state.sqlx_pool(),
-            CreateMemoryProposal {
-                bear_id: bear.id,
-                source_profile: role,
-                source_agent_id: bears_db::profile_binding_id(state.sqlx_pool(), bear.id, role)
-                    .await?,
-                source_paths: paths,
-                source_refs: serde_json::json!([]),
-                suggested_action: form
-                    .suggested_action
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("unspecified"),
-                target_ref: None,
-                title,
-                summary,
-                rationale: form
-                    .review_rationale
-                    .as_deref()
-                    .map(str::trim)
-                    .unwrap_or(""),
-                proposed_content: None,
-                proposed_patch: None,
-                refs: serde_json::json!({}),
-                sensitivity: form
-                    .sensitivity
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("normal"),
-                requires_human: form.requires_human.as_deref() == Some("on"),
-                project_to_conversation: true,
-            },
-        )
-        .await?;
-        return Ok(Redirect::to(&format!(
-            "{browse_base}?review_requested=1&path={}",
-            urlencoding::encode(
-                proposal
-                    .source_paths
-                    .first()
-                    .map(String::as_str)
-                    .unwrap_or("")
+        .into_response()),
+        Ok(browse_feedback::Saved::Deleted(count)) => Ok(Redirect::to(&format!(
+            "/bear/{}/memory/browse?deleted={count}",
+            bear.slug
+        ))
+        .into_response()),
+        Err(error) => {
+            browse_feedback::error(
+                &state,
+                auth_session,
+                &bear,
+                form,
+                format!(
+                    "Action was not completed. Your selections and draft are preserved. {error}"
+                ),
             )
-        ))
-        .into_response());
-    }
-    if confirm != role.as_str() && confirm != bear.slug {
-        return Ok(Redirect::to(&format!(
-            "{browse_base}?error={}",
-            urlencoding::encode("Type the profile name or Bear slug to confirm deletion.")
-        ))
-        .into_response());
-    }
-    let manager = state.memory_stores.clone();
-    let store = manager.store_for_bear(bear.id).await?;
-    let mut deleted = 0usize;
-    for path in &paths {
-        // Per-Bear canonical memory is SQLite; the workspace SQLx prepare URL is
-        // Postgres, so this SQLite statement remains typed at the store boundary.
-        let result = sqlx::query(
-            "DELETE FROM memory_records WHERE bear_id = ? AND scope_profile = ? AND logical_path = ?",
-        )
-        .bind(bear.id.to_string())
-        .bind(role.as_str())
-        .bind(path)
-        .execute(store.pool())
-        .await
-        .map_err(|err| CustomError::System(format!("delete memory records failed: {err}")))?;
-        if result.rows_affected() > 0 {
-            deleted += 1;
+            .await
         }
     }
-    Ok(Redirect::to(&format!("{browse_base}?deleted={deleted}")).into_response())
 }
 
 // ---------------------------------------------------------------------------
@@ -2747,17 +2678,25 @@ async fn record_view(
     }
 
     // Referenced entities (descriptive + access-bearing) via the relation view.
+    let mut inspection_errors = Vec::new();
+    let relations = inspection::read_result(
+        list_relations_for_source(&store, &memory_id, 50).await,
+        "Referenced entities",
+        &mut inspection_errors,
+    );
+    let entities_available = relations.is_some();
     let mut entities: Vec<LinkedEntity> = Vec::new();
-    for rel in list_relations_for_source(&store, &memory_id, 50)
-        .await
-        .unwrap_or_default()
-    {
+    for rel in relations.into_iter().flatten() {
         let (display_name, entity_type) = match store::get_entity(&store, &rel.entity_id).await {
             Ok(Some(e)) => (
                 e.display_name.unwrap_or_else(|| e.entity_id.clone()),
                 e.entity_type,
             ),
-            _ => (rel.entity_id.clone(), "unknown".to_string()),
+            Ok(None) => (rel.entity_id.clone(), "missing entity".to_string()),
+            Err(error) => {
+                inspection_errors.push(format!("Entity {} unavailable: {error}", rel.entity_id));
+                (rel.entity_id.clone(), "unavailable".to_string())
+            }
         };
         entities.push(LinkedEntity {
             entity_id: rel.entity_id,
@@ -2770,15 +2709,18 @@ async fn record_view(
 
     // Recall coverage for this record.
     let recall = if config.qdrant_url.is_some() {
-        let passages = recall_registry::list_passages(
-            state.sqlx_pool(),
-            bear.id,
-            &memory_id,
-            &config.embedding_standard,
+        let passages = inspection::read_result(
+            recall_registry::list_passages(
+                state.sqlx_pool(),
+                bear.id,
+                &memory_id,
+                &config.embedding_standard,
+            )
+            .await,
+            "Recall coverage",
+            &mut inspection_errors,
         )
-        .await
-        .map(|p| p.len())
-        .unwrap_or(0);
+        .map(|p| p.len());
         Some(json!({ "enabled": true, "passages": passages }))
     } else {
         None
@@ -2793,7 +2735,9 @@ async fn record_view(
             is_head,
             history,
             entities,
+            entities_available,
             recall,
+            inspection_errors,
             can_manage_bear,
             native_runtime => true,
             ..bear_nav_context(&bear, "memory"),
@@ -2826,31 +2770,38 @@ async fn entities_view(
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty());
-    let rows = store::list_entities(&store, type_filter, 200)
-        .await
-        .unwrap_or_default();
+    let mut inspection_errors = Vec::new();
+    let rows = inspection::read_result(
+        store::list_entities(&store, type_filter, 200).await,
+        "Entity list",
+        &mut inspection_errors,
+    );
 
     // Distinct types present, for the filter chips.
-    let mut types: Vec<String> = store::list_entities(&store, None, 500)
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .map(|e| e.entity_type)
-        .collect();
+    let mut types: Vec<String> = inspection::read_result(
+        store::list_entities(&store, None, 500).await,
+        "Entity types",
+        &mut inspection_errors,
+    )
+    .into_iter()
+    .flatten()
+    .map(|e| e.entity_type)
+    .collect();
     types.sort();
     types.dedup();
 
-    let entities: Vec<EntityListItem> = rows
-        .into_iter()
-        .map(|e| EntityListItem {
-            display_name: e.display_name.unwrap_or_else(|| e.entity_id.clone()),
-            entity_id: e.entity_id,
-            entity_type: e.entity_type,
-            resolution: e.resolution.as_str().to_string(),
-            trust: e.trust.as_str().to_string(),
-            created_at: e.created_at,
-        })
-        .collect();
+    let entities = rows.map(|rows| {
+        rows.into_iter()
+            .map(|e| EntityListItem {
+                display_name: e.display_name.unwrap_or_else(|| e.entity_id.clone()),
+                entity_id: e.entity_id,
+                entity_type: e.entity_type,
+                resolution: e.resolution.as_str().to_string(),
+                trust: e.trust.as_str().to_string(),
+                created_at: e.created_at,
+            })
+            .collect::<Vec<_>>()
+    });
 
     web::render_template(
         &state,
@@ -2858,6 +2809,7 @@ async fn entities_view(
         auth_session,
         context! {
             entities,
+            inspection_errors,
             types,
             type_filter => type_filter.unwrap_or(""),
             can_manage_bear,
@@ -2900,31 +2852,40 @@ async fn entity_detail_view(
         metadata_json: row.metadata_json,
         created_at: row.created_at,
     };
-    let handles: Vec<HandleItem> = store::list_handles(&store, &entity_id)
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .map(|h| HandleItem {
-            handle_type: h.handle_type,
-            handle_value: h.handle_value,
-            source: h.source,
-            trust: h.trust.as_str().to_string(),
-            state: h.state,
-        })
-        .collect();
+    let mut inspection_errors = Vec::new();
+    let handles = inspection::read_result(
+        store::list_handles(&store, &entity_id).await,
+        "Entity handles",
+        &mut inspection_errors,
+    )
+    .map(|rows| {
+        rows.into_iter()
+            .map(|h| HandleItem {
+                handle_type: h.handle_type,
+                handle_value: h.handle_value,
+                source: h.source,
+                trust: h.trust.as_str().to_string(),
+                state: h.state,
+            })
+            .collect::<Vec<_>>()
+    });
 
-    let related: Vec<LinkedRecord> = list_relations_for_entity(&store, &entity_id, 100)
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .map(|rel| LinkedRecord {
-            src_memory_id: rel.src_memory_id,
-            relation_label: relation_label(&rel.relation),
-            class_label: class_label(&rel.class).to_string(),
-            author_profile: rel.author_profile,
-            created_at: rel.created_at,
-        })
-        .collect();
+    let related = inspection::read_result(
+        list_relations_for_entity(&store, &entity_id, 100).await,
+        "Linked memory records",
+        &mut inspection_errors,
+    )
+    .map(|rows| {
+        rows.into_iter()
+            .map(|rel| LinkedRecord {
+                src_memory_id: rel.src_memory_id,
+                relation_label: relation_label(&rel.relation),
+                class_label: class_label(&rel.class).to_string(),
+                author_profile: rel.author_profile,
+                created_at: rel.created_at,
+            })
+            .collect::<Vec<_>>()
+    });
 
     web::render_template(
         &state,
@@ -2934,6 +2895,7 @@ async fn entity_detail_view(
             entity,
             handles,
             related,
+            inspection_errors,
             can_manage_bear,
             native_runtime => true,
             ..bear_nav_context(&bear, "memory"),
@@ -3021,6 +2983,7 @@ async fn reflection_evidence_get(
 
 async fn proposal_get(
     Path((slug, proposal_id)): Path<(String, Uuid)>,
+    Query(query): Query<proposal_feedback::ProposalQuery>,
     State(state): State<AppState>,
     auth_session: crate::auth_backend::AuthSession,
 ) -> Result<Response, CustomError> {
@@ -3033,18 +2996,7 @@ async fn proposal_get(
     MemoryLibraryViewer::resolve(&state, bear.id, can_manage_bear)
         .await?
         .require_admin_review()?;
-    let proposal = if let Some(proposal) =
-        memory_proposals::get_for_bear(state.sqlx_pool(), bear.id, proposal_id).await?
-    {
-        proposal_view_from_postgres(proposal)
-    } else {
-        let manager = state.memory_stores.clone();
-        let store = manager.store_for_bear(bear.id).await?;
-        get_sqlite_memory_proposal(&store, &proposal_id.to_string())
-            .await?
-            .map(proposal_view_from_sqlite)
-            .ok_or_else(|| CustomError::NotFound("memory proposal not found".to_string()))?
-    };
+    let proposal = proposal_feedback::load_proposal(&state, bear.id, proposal_id).await?;
     web::render_template(
         &state,
         "bear/memory_proposal.html",
@@ -3054,6 +3006,7 @@ async fn proposal_get(
             proposal,
             can_manage_bear,
             errors => None::<String>,
+            saved => query.saved,
             ..bear_nav_context(&bear, "memory"),
         },
     )
@@ -3076,59 +3029,81 @@ async fn proposal_post(
             "bear admin role required".to_string(),
         ));
     }
+    let proposal = proposal_feedback::load_proposal(&state, bear.id, proposal_id).await?;
     let status = form.status.trim();
     if !matches!(
         status,
         "rejected" | "retained_local" | "deferred" | "superseded" | "needs_human_review"
     ) {
-        return Err(CustomError::ValidationError(
-            "invalid memory proposal status".to_string(),
-        ));
+        return proposal_feedback::render_error(
+            &state, auth_session, &bear, proposal, form,
+            "Resolution was not saved. Choose one of the supported resolutions; your draft is preserved below.".to_string(),
+        ).await;
     }
-    if memory_proposals::get_for_bear(state.sqlx_pool(), bear.id, proposal_id)
-        .await?
-        .is_some()
-    {
-        memory_proposals::resolve_for_bear(
-            state.sqlx_pool(),
-            memory_proposals::ProposalResolutionParams {
-                bear_id: bear.id,
-                proposal_id,
-                reviewer_profile: RuntimeContextLabel::Curation,
-                reviewer_agent_id: None,
+    let resolution = async {
+        if matches!(proposal.store, MemoryProposalStore::Postgres) {
+            memory_proposals::resolve_for_bear(
+                state.sqlx_pool(),
+                memory_proposals::ProposalResolutionParams {
+                    bear_id: bear.id,
+                    proposal_id,
+                    reviewer_profile: RuntimeContextLabel::Curation,
+                    reviewer_agent_id: None,
+                    status,
+                    review_notes: form.review_notes.as_deref(),
+                    decision_summary: form.decision_summary.as_deref(),
+                    result_path: None,
+                    result_commit: None,
+                    project_to_conversation: true,
+                },
+            )
+            .await
+            .map(|_| ())
+            .map_err(CustomError::from)
+        } else {
+            let manager = state.memory_stores.clone();
+            let store = manager.store_for_bear(bear.id).await?;
+            let review_payload = json!({
+                "reviewer_profile": RuntimeContextLabel::Curation.as_str(),
+                "reviewer_agent_id": Value::Null,
+                "review_notes": &form.review_notes,
+                "decision_summary": &form.decision_summary,
+                "result_path": Value::Null,
+                "result_commit": Value::Null,
+            });
+            resolve_sqlite_memory_proposal(
+                &store,
+                &proposal_id.to_string(),
                 status,
-                review_notes: form.review_notes.as_deref(),
-                decision_summary: form.decision_summary.as_deref(),
-                result_path: None,
-                result_commit: None,
-                project_to_conversation: true,
-            },
-        )
-        .await?;
-    } else {
-        let manager = state.memory_stores.clone();
-        let store = manager.store_for_bear(bear.id).await?;
-        let review_payload = json!({
-            "reviewer_profile": RuntimeContextLabel::Curation.as_str(),
-            "reviewer_agent_id": Value::Null,
-            "review_notes": form.review_notes,
-            "decision_summary": form.decision_summary,
-            "result_path": Value::Null,
-            "result_commit": Value::Null,
-        });
-        resolve_sqlite_memory_proposal(&store, &proposal_id.to_string(), status, &review_payload)
-            .await?;
+                &review_payload,
+            )
+            .await
+            .map(|_| ())
+            .map_err(CustomError::from)
+        }
+    }
+    .await;
+    if let Err(error) = resolution {
+        return proposal_feedback::render_error(
+            &state, auth_session, &bear, proposal, form,
+            format!("Could not confirm the resolution was saved. Your draft is preserved; inspect the proposal state before retrying. {error}"),
+        ).await;
     }
     if form.after_save.as_deref() == Some("next") {
         let manager = state.memory_stores.clone();
         if let Some(next) = next_review_proposal(&state, &manager, bear.id, proposal_id).await {
-            return Ok(
-                Redirect::to(&format!("/bear/{}/memory/proposals/{}", bear.slug, next.id))
-                    .into_response(),
-            );
+            return Ok(Redirect::to(&format!(
+                "/bear/{}/memory/proposals/{}?saved=true",
+                bear.slug, next.id
+            ))
+            .into_response());
         }
     }
-    Ok(Redirect::to(&format!("/bear/{}/memory", bear.slug)).into_response())
+    Ok(dashboard_redirect_with_query(
+        &bear.slug,
+        "review_notice",
+        "Proposal resolution saved.",
+    ))
 }
 
 async fn next_review_proposal(
@@ -3139,11 +3114,20 @@ async fn next_review_proposal(
 ) -> Option<MemoryProposalView> {
     let current_id = current_id.to_string();
     // ponytail: scans the first 200 reviewable proposals; upgrade to a cursor query if queues grow.
-    let mut proposals =
-        list_dashboard_proposals(state, manager, bear_id, Some("pending"), 200).await;
-    proposals.extend(
-        list_dashboard_proposals(state, manager, bear_id, Some("needs_human_review"), 200).await,
-    );
+    let mut errors = Vec::new();
+    let pending =
+        list_dashboard_proposals(state, manager, bear_id, Some("pending"), 200, &mut errors).await;
+    let human = list_dashboard_proposals(
+        state,
+        manager,
+        bear_id,
+        Some("needs_human_review"),
+        200,
+        &mut errors,
+    )
+    .await;
+    let mut proposals = pending.items;
+    proposals.extend(human.items);
     proposals.sort_by(|a, b| b.created_at.cmp(&a.created_at));
     proposals
         .into_iter()

@@ -15,6 +15,7 @@ use validator::Validate;
 
 use serde::{Deserialize, Serialize};
 
+use super::form_feedback::validation_messages;
 use crate::web::{self, AppState};
 use crate::{
     auth_backend::{AuthSession, Credentials},
@@ -39,9 +40,14 @@ pub fn router() -> Router<AppState> {
 
 #[derive(Validate, Serialize, Deserialize)]
 pub struct LoginForm {
-    #[validate(length(min = 1, max = 255))]
+    #[validate(length(
+        min = 1,
+        max = 255,
+        message = "Enter your username or email (up to 255 characters)."
+    ))]
     username: String,
-    #[validate(length(min = 8))]
+    #[serde(skip_serializing)]
+    #[validate(length(min = 8, message = "Enter your password (at least 8 characters)."))]
     password: String,
     next: Option<String>,
 }
@@ -73,6 +79,7 @@ pub async fn login_password_action(
     Form(form): Form<LoginForm>,
 ) -> impl IntoResponse {
     let next = form.next.clone();
+    let username = form.username.clone();
 
     if let Err(form_validation_errors) = form.validate() {
         return web::render_template(
@@ -81,7 +88,7 @@ pub async fn login_password_action(
             auth_session,
             context! {
                 next => next.unwrap_or_default(),
-                errors => form_validation_errors
+                form_data => context! { username, errors => validation_messages(&form_validation_errors) }
             },
         )
         .await
@@ -98,7 +105,8 @@ pub async fn login_password_action(
                 auth_session,
                 context! {
                     next => next.unwrap_or_default(),
-                    message => "Invalid username or password, try again",
+                    message => "Username or password was not recognized. Try again.",
+                                        form_data => context! { username },
                 },
             )
             .await
@@ -115,7 +123,8 @@ pub async fn login_password_action(
             auth_session,
             context! {
                 next => next.unwrap_or_default(),
-                message => "Server error, please try again later",
+                message => "Sign-in could not be completed. Try again shortly.",
+                                form_data => context! { username },
             },
         )
         .await

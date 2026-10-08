@@ -5,6 +5,7 @@
 {% include "bear/memory/_memory_nav.html" %}
 <div class="box">
   <h2>Shared memory entry</h2>
+  <p>{% if is_head %}Current version{% else %}Superseded version{% endif %} · {{ scope_label | e }}</p>
   <p><a href="/bear/{{ bear.slug | e }}/memory/browse">← Back to library</a></p>
   <p>{{ scope_label | e }} · {{ record.kind | e }} · {{ record.created_at | e }}</p>
   <pre style="white-space: pre-wrap; max-height: 32rem; overflow: auto;">{{ record.content_text | e }}</pre>

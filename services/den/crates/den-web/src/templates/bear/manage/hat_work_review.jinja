@@ -4,21 +4,23 @@
 <p><a href="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}">← {{ hat.name | e }}</a></p>
 <div class="box">
   <h2>Before this hat may do autonomous Work</h2>
+  {% if error %}<p class="form-errors" role="alert">{{ error | e }}</p><p><a href="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/work-review">Restart review at page 1</a></p>{% endif %}
+  {% if review_draft %}<label>Your previous rationale (not submitted)<textarea readonly rows="4">{{ review_draft.rationale | e }}</textarea></label>{% endif %}
   <p>Enabling Work changes the audience for this hat's identity text and existing reviewed memory. Future authorized Jobs wearing it may read both while processing untrusted workspace content. A sandbox does not hide knowledge already given to that run's model. This review does not assess Bear-wide <code>core/</code> memory.</p>
   <p>Review the hat identity below and <strong>all {{ snapshot.total_records }}</strong> historical hat record{% if snapshot.total_records != 1 %}s{% endif %}, including superseded or archived entries. If an entry is unsuitable, do not enable Work; have it corrected or archived through curation and restart at page 1.</p>
   {% if hat.work_enabled %}<p><strong>Work is already enabled.</strong> New promotions to this hat require an explicit Work-audience review.</p>{% endif %}
-  <p><strong>Page {{ snapshot.page }} of {{ snapshot.page_count }}</strong> — review each page in order. Den fingerprints the entire history for each page while showing only this page's records. If memory changes between pages, restart at page 1. Only the final page offers the Work decision.</p>
-  {% if snapshot.total_records == 0 %}<p>This hat has no historical memory. Use the empty-hat Work control on the hat page instead.</p>{% endif %}
+  <p><strong>Page {{ snapshot.page }} of {{ snapshot.page_count }}</strong> — review each page in order. If memory or identity changes, restart at page 1. Only the final page offers the Work decision.</p>
+  {% if not snapshot.complete %}<p class="form-errors" role="alert">The full history could not be verified. Work cannot be enabled from this snapshot. <a href="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/work-review">Restart review</a>.</p>{% endif %}
+  {% if grant_count is defined and grant_count == 0 %}<p class="form-errors" role="status">Work is blocked: <a href="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}#hat-resources">permit a repository for this hat</a> first.</p>{% endif %}
+  {% if snapshot.total_records == 0 %}<p>This hat has no historical memory. <a href="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}#work">Open the empty-hat Work control</a> instead.</p>{% endif %}
 </div>
 <div class="box"><h3>Hat identity shared with Work</h3><pre>{{ identity_preview | e }}</pre></div>
 {% for record in snapshot.records %}
 <div class="box">
-  <details>
-    <summary><code>{{ record.kind | e }}</code> · #{{ record.sequence_no }} · {{ record.created_at | e }}{% if record.invalid_at %} · superseded/invalidated{% endif %}</summary>
+    <h3>{{ record.kind | e }} · {{ record.created_at | e }}{% if record.invalid_at %} · superseded/invalidated{% endif %}</h3>
     <p><a href="/bear/{{ bear.slug | e }}/memory/records/{{ record.memory_id | urlencode }}">Inspect canonical record</a> · visibility {{ record.visibility | e }}</p>
     <pre>{{ record.content_text | e }}</pre>
-    <p class="form-hint">Metadata: <code>{{ record.metadata_json | e }}</code></p>
-  </details>
+    <details><summary>Record details</summary><p>Sequence #{{ record.sequence_no }} · metadata <code>{{ record.metadata_json | e }}</code></p></details>
 </div>
 {% endfor %}
 {% if snapshot.complete and snapshot.page > 1 %}
@@ -42,11 +44,13 @@
     <input type="hidden" name="expected_sha256" value="{{ snapshot.sha256 | e }}">
     <input type="hidden" name="expected_record_count" value="{{ snapshot.total_records }}">
     <input type="hidden" name="expected_identity_sha256" value="{{ snapshot.identity_sha256 | e }}">
-    <label>What did you check about the hat's identity, memory, and Work audience? <textarea name="rationale" required rows="4" maxlength="4000"></textarea></label>
+    <label>What did you check about the hat's identity, memory, and Work audience? <textarea name="rationale" required rows="4" minlength="12" maxlength="4000">{{ review_draft.rationale | default('') | e }}</textarea></label>
+    <p class="form-hint">Rationale: 12–4000 characters.</p>
     <label><input type="checkbox" name="confirm_work_audience" value="true" required> I reviewed this hat's identity and every page of memory for autonomous Work, including the risks of untrusted workspace content, tool actions, and egress.</label>
-    <button type="submit">Record review and enable Work</button>
+    <button type="submit"{% if grant_count is defined and grant_count == 0 %} disabled{% endif %}>Record review and enable Work</button>
   </form>
   <p class="form-hint">If a record changes while you review it, Den rejects this decision and asks you to inspect the new snapshot. Each later Work run still needs its own authorized Job and surfaces.</p>
 </div>
 {% endif %}
+<details class="box"><summary>Snapshot details</summary><p>Den fingerprints the whole historical snapshot on every page. Complete: {{ snapshot.complete }} · memory fingerprint <code>{{ snapshot.sha256 | e }}</code> · identity fingerprint <code>{{ snapshot.identity_sha256 | e }}</code>.</p></details>
 {% endblock %}

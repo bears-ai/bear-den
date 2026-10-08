@@ -5,7 +5,7 @@ block head %} {{ super() }}
 {% endblock %} {% block manage %}
 <div class="den-wrap">
     {# Keep this real chat toolbar/dropdown in sync with the design fixture at
-    src/web/templates/design/chat.html. #}
+    src/templates/design/chat.html. #}
     <div class="den-design-chat-toolbar den-chat-toolbar">
         <div
             class="den-design-conversation-picker den-conv-nav-item menu-item-submenu"
@@ -35,23 +35,41 @@ block head %} {{ super() }}
         >
             <option value="auto">Inherit default</option>
         </select>
-        <button id="den-current-task" type="button" class="button-link">
+        <button id="den-current-task" type="button" class="button-link" aria-controls="den-task-picker" aria-expanded="false" disabled>
             Current task
         </button>
-        <button id="den-create-current-task" type="button" class="button-link">
+        <button id="den-create-current-task" type="button" class="button-link" aria-controls="den-task-picker" disabled>
             New task
         </button>
         <button id="den-clear-current-task" type="button" class="button-link" hidden>
             Clear task
         </button>
-        <a class="button-link" href="/bear/{{ bear_slug | e }}/overview"
-            >Overview</a
-        >
     </div>
+    <p id="den-task-feedback" class="form-errors" role="status" hidden></p>
+    <details id="den-task-picker" hidden>
+        <summary>Choose current task</summary>
+        <label for="den-task-search">Search tasks</label>
+        <input id="den-task-search" type="search" placeholder="Title or status" />
+        <p id="den-task-status" role="status"></p>
+        <ul id="den-task-list" aria-label="Tasks for this conversation"></ul>
+        <form id="den-task-create-form" hidden>
+            <label for="den-task-title">Task title</label>
+            <input id="den-task-title" type="text" required />
+            <button id="den-task-create-submit" type="submit">Create task</button>
+        </form>
+        <form id="den-task-confirm-form" hidden>
+            <p id="den-task-confirm-title"></p>
+            <button id="den-task-confirm-submit" type="submit">Confirm current task</button>
+            <button id="den-task-confirm-cancel" type="button" class="button-link">Cancel selection</button>
+        </form>
+        <button id="den-task-retry" type="button" class="button-link">Refresh tasks</button>
+        <button id="den-task-cancel" type="button" class="button-link">Close</button>
+    </details>
+    <noscript><p>Task selection requires JavaScript.</p></noscript>
     <p id="den-model-error" class="form-errors" role="status" hidden></p>
-    <p id="err" class="den-err" hidden></p>
+    <p id="err" class="den-err" role="status" hidden></p>
     <p id="den-legacy-conversation-notice" role="status" hidden>
-        Legacy conversation — read-only now that this Bear uses hats. You can review its history here; choose a hat under “+ New conversation” to continue chatting.
+        Read-only legacy chat. Choose a hat under “+ New chat” to continue.
     </p>
     <details id="den-private-notes" hidden>
         <summary>Private conversation notes</summary>
@@ -70,6 +88,7 @@ block head %} {{ super() }}
         ></deep-chat>
     </div>
 </div>
+<script src="/assets/js/task-selector.js"></script>
 <script>
     var BEAR_ID = "{{ bear_id | e }}";
     var BEAR_NAME = "{{ bear_name | e }}";
@@ -105,99 +124,25 @@ block head %} {{ super() }}
         errEl.hidden = false;
     }
 
+    var taskSelector = DenTaskSelector({
+        document: document,
+        bearId: BEAR_ID,
+        fetch: function (url, init) { return fetch(url, init); },
+        getContext: function () {
+            var row = DEN_CONVERSATIONS.find(function (row) { return row.id === CONVERSATION_ID; });
+            var pending = String(CONVERSATION_ID).indexOf("new-") === 0 || (row && row.pending);
+            return {
+                id: CONVERSATION_ID || "default",
+                readOnly: !row || !!pending || !row.hat_id || !row.own_notes_available,
+                reason: pending ? "Create this chat before choosing a task." :
+                    !row || !row.hat_id ? "" : "Read-only chat. Start a New chat with a hat to use tasks.",
+            };
+        },
+    });
+
     function loadCurrentTask() {
-        if (!BEAR_ID || String(CONVERSATION_ID).indexOf("new-") === 0)
-            return Promise.resolve();
-        var params = new URLSearchParams({
-            bear_id: BEAR_ID,
-            conversation_id: CONVERSATION_ID || "default",
-        });
-        return fetch("/v1/chat/current-task?" + params.toString(), {
-            credentials: "same-origin",
-        })
-            .then(function (response) {
-                if (!response.ok) throw new Error("Could not load current task");
-                return response.json();
-            })
-            .then(function (data) {
-                var current = data.current_task_id;
-                var task = (data.tasks || []).filter(function (item) {
-                    return item.id === current;
-                })[0];
-                var select = document.getElementById("den-current-task");
-                var clear = document.getElementById("den-clear-current-task");
-                select.textContent = task ? "Task: " + task.title : "Current task";
-                clear.hidden = !current;
-            })
-            .catch(function (err) { showErr(String(err.message || err)); });
+        return taskSelector.load();
     }
-
-    function selectCurrentTask() {
-        loadCurrentTask().then(function () {
-            var taskId = window.prompt("Task UUID to select for this conversation:");
-            if (!taskId) return;
-            var body = { bear_id: BEAR_ID, conversation_id: CONVERSATION_ID || "default", task_id: taskId };
-            fetch("/v1/chat/current-task/selection-request", {
-                method: "POST", credentials: "same-origin",
-                headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-            }).then(function (response) { return response.json().then(function (data) { if (!response.ok) throw new Error(data.message || "Could not preview task"); return data; }); })
-              .then(function (preview) {
-                  if (!window.confirm("Make ‘" + preview.title + "’ the current task?")) return;
-                  return fetch("/v1/chat/current-task/select", {
-                      method: "POST", credentials: "same-origin",
-                      headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-                  });
-              }).then(function (response) {
-                  if (!response) return;
-                  if (!response.ok) throw new Error("Could not select current task");
-                  return loadCurrentTask();
-              }).catch(function (err) { showErr(String(err.message || err)); });
-        });
-    }
-
-    function clearCurrentTask() {
-        fetch("/v1/chat/current-task/clear", {
-            method: "POST", credentials: "same-origin",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ bear_id: BEAR_ID, conversation_id: CONVERSATION_ID || "default" }),
-        }).then(function (response) {
-            if (!response.ok) throw new Error("Could not clear current task");
-            return loadCurrentTask();
-        }).catch(function (err) { showErr(String(err.message || err)); });
-    }
-
-    function createCurrentTask() {
-        var title = window.prompt("Task title:");
-        if (!title || !title.trim()) return;
-        fetch("/v1/chat/current-task", {
-            method: "POST", credentials: "same-origin",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ bear_id: BEAR_ID, conversation_id: CONVERSATION_ID || "default", title: title.trim() }),
-        }).then(function (response) { return response.json().then(function (data) { if (!response.ok) throw new Error(data.message || "Could not create task"); return data; }); })
-          .then(function (data) {
-              var taskId = data.task && data.task.id;
-              if (!taskId) throw new Error("Task creation returned no task id");
-              var body = { bear_id: BEAR_ID, conversation_id: CONVERSATION_ID || "default", task_id: taskId };
-              return fetch("/v1/chat/current-task/selection-request", {
-                  method: "POST", credentials: "same-origin",
-                  headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-              }).then(function (response) { return response.json().then(function (preview) { if (!response.ok) throw new Error(preview.message || "Could not preview task"); return { body: body, preview: preview }; }); });
-          }).then(function (selection) {
-              if (!selection || !window.confirm("Make ‘" + selection.preview.title + "’ the current task?")) return;
-              return fetch("/v1/chat/current-task/select", {
-                  method: "POST", credentials: "same-origin",
-                  headers: { "Content-Type": "application/json" }, body: JSON.stringify(selection.body),
-              });
-          }).then(function (response) {
-              if (!response) return;
-              if (!response.ok) throw new Error("Could not select current task");
-              return loadCurrentTask();
-          }).catch(function (err) { showErr(String(err.message || err)); });
-    }
-
-    document.getElementById("den-current-task").addEventListener("click", selectCurrentTask);
-    document.getElementById("den-create-current-task").addEventListener("click", createCurrentTask);
-    document.getElementById("den-clear-current-task").addEventListener("click", clearCurrentTask);
 
     function currentModelSelect() {
         return document.getElementById("den-model-select");
@@ -1162,7 +1107,7 @@ block head %} {{ super() }}
         errEl.hidden = true;
         var selected = DEN_CONVERSATIONS.find(function (row) { return row.id === CONVERSATION_ID; });
         if (DEN_HATS.length && (!selected || !selected.hat_id)) {
-            denChatSignalError(signals, "This conversation is read-only. Choose a hat under + New conversation to continue.");
+            denChatSignalError(signals, "This conversation is read-only. Choose a hat under + New chat to continue.");
             return;
         }
 
@@ -1531,6 +1476,7 @@ block head %} {{ super() }}
         syncConversationUrl(CONVERSATION_ID);
         renderConversationTabs();
         loadConversationModel();
+        loadCurrentTask();
         var notes = document.getElementById("den-private-notes");
         if (notes && notes.open && !notes.hidden) loadPrivateNotes();
         if (shouldRemount !== false) remountDeepChat();
@@ -1578,8 +1524,9 @@ block head %} {{ super() }}
         var list = DEN_CONVERSATIONS.slice();
         var currentTitle = DEN_HATS.length ? "Choose a hat to start" : "Conversation";
         var selected = list.find(function (row) { return row.id === CONVERSATION_ID; });
+        taskSelector.sync();
         var notice = document.getElementById("den-legacy-conversation-notice");
-        if (notice) notice.hidden = !(DEN_HATS.length && selected && !selected.hat_id);
+        if (notice) notice.hidden = !(selected && !selected.pending && !selected.hat_id);
         var notes = document.getElementById("den-private-notes");
         if (notes) notes.hidden = !(selected && selected.own_notes_available);
         menu.innerHTML = "";
@@ -1698,7 +1645,7 @@ block head %} {{ super() }}
         var newBtn = document.createElement("button");
         newBtn.type = "button";
         newBtn.className = "den-conv-menu-main";
-        newBtn.textContent = "+ New conversation";
+        newBtn.textContent = "+ New chat";
         var hatSelect = document.createElement("select");
         hatSelect.setAttribute("aria-label", "Hat for new conversation");
         if (DEN_HATS.length) {

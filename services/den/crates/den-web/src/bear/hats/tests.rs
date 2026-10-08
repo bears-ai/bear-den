@@ -15,6 +15,9 @@ use tower_sessions_sqlx_store::PostgresStore;
 
 use crate::{auth_backend::Backend, config::Config};
 
+#[path = "usability_tests.rs"]
+mod usability_tests;
+
 async fn login(Path(user_id): Path<i32>, mut auth: AuthSession) -> StatusCode {
     let user = auth.backend.get_user(&user_id).await.unwrap().unwrap();
     auth.login(&user).await.unwrap();
@@ -1041,7 +1044,14 @@ async fn hat_web_grants_are_admin_managed_and_revoke_immediately(pool: PgPool) {
     let (status, page, _) = request(&app, &admin_cookie, "GET", &detail, "").await;
     assert_eq!(status, StatusCode::OK, "{page}");
     assert!(page.contains("Den web tool and host policy"));
-    assert!(page.contains("skip the ACP prompt only while"));
+    assert!(page.contains(
+        "Editor web-fetch approvals can be reused only with both tool and exact-host grants"
+    ));
+    assert!(page.contains(
+        "Persistent editor grants require a Bear admin; one-time approval remains separate"
+    ));
+    assert!(page
+        .contains("These grants cannot enable disconnected local editor tools or authorize a Job"));
     assert_eq!(
         request(
             &app,

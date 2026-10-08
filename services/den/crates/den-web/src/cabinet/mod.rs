@@ -30,6 +30,7 @@ use den_cabinet::{
 use den_core::ids::UserId;
 use den_service::cabinet as cabinet_service;
 mod attachments;
+mod audience;
 pub(crate) mod cleanup;
 mod pages;
 mod previews;
@@ -163,6 +164,11 @@ async fn new_form(
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
     let scope = require_user_scope(&auth_session)?;
+    let audience = if let Some(parent) = query.parent.as_deref() {
+        audience::for_page(state.sqlx_pool(), &scope, &parse_item_ref(parent)?).await?
+    } else {
+        audience::Audience::OpenWiki
+    };
     if let Some(parent) = query.parent.as_deref() {
         if !cabinet_service::pages::metadata(state.sqlx_pool(), &scope, &parse_item_ref(parent)?)
             .await
@@ -178,7 +184,7 @@ async fn new_form(
         &state,
         "cabinet/new.html",
         auth_session,
-        context! { title => "New Cabinet page", parent => query.parent },
+        context! { title => "New Cabinet page", parent => query.parent, audience },
     )
     .await
 }
@@ -255,6 +261,7 @@ async fn item(
     let page = cabinet_service::pages::metadata(state.sqlx_pool(), &scope, &cabinet_ref)
         .await
         .map_err(cabinet_error)?;
+    let audience = audience::for_page(state.sqlx_pool(), &scope, &cabinet_ref).await?;
     let attachments = cabinet_service::attachments::list(state.sqlx_pool(), &scope, &cabinet_ref)
         .await
         .map_err(cabinet_error)?;
@@ -314,6 +321,7 @@ async fn item(
             authored_at => view.version.authored_at(),
             sources => sources,
             page,
+            audience,
             children,
             attachments,
             byte_storage_enabled => state.media.is_some(),
@@ -377,6 +385,8 @@ async fn render_edit_form(
     base_version: &str,
     error: Option<&str>,
 ) -> Result<Response, CustomError> {
+    let scope = require_user_scope(&auth_session)?;
+    let audience = audience::for_page(state.sqlx_pool(), &scope, cabinet_ref).await?;
     web::render_template(
         state,
         "cabinet/edit.html",
@@ -387,6 +397,7 @@ async fn render_edit_form(
             item_title => title,
             content => content,
             base_version => base_version,
+            audience,
             error => error,
         },
     )

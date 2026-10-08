@@ -4,18 +4,18 @@
 <p><a href="/bear/{{ bear.slug | e }}/hats">← All hats</a></p>
 <div class="box">
   <h2>{{ hat.name | e }}</h2>
-  {% if message %}<p>{{ message | e }}</p>{% endif %}
+  {% if message %}<p role="status">{{ message | e }}</p>{% endif %}
   <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}">
     <label>Responsibility <input name="name" value="{{ hat.name | e }}" required maxlength="120"></label>
     <label>Purpose <textarea name="purpose" required rows="3">{{ hat.purpose | e }}</textarea></label>
     <label>Hat identity text <textarea name="identity_prompt" required rows="5" maxlength="4000">{{ hat.identity_prompt | e }}</textarea></label>
-    <p class="form-hint">Hat-specific identity for future conversations and authorized Work wearing this hat. It does not grant tools, credentials, or permissions; Bear-wide identity and execution rules stay separate. Earlier custom stance instructions are not automatically copied into hats; review them before relying on a new identity.</p>
+    <p class="form-hint">Used only while wearing this hat, on future turns. Identity text grants no tools, credentials, or permissions.</p>
     {% if hat.work_enabled %}<label><input type="checkbox" name="confirm_work_audience" value="true" required> I understand future approved autonomous Work will also receive this hat identity text.</label>{% endif %}
     <button type="submit">Save hat description and identity</button>
   </form>
   <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/summary">
     <label>Short role summary <input name="short_summary" maxlength="160" value="{{ (hat.short_summary or '') | e }}" placeholder="Describe this role in one sentence"></label>
-    <p class="form-hint">Shown alongside this hat's name to all conversations and authorized Work wearing <em>any</em> hat. Existing purposes were not copied into this field. Leave it empty to remove it; this summary is descriptive, not an instruction or permission.</p>
+    <p class="form-hint">Visible to every hat's conversations and authorized Work. Keep private context out; leave blank to remove it. A summary grants no authority.</p>
     <label><input type="checkbox" name="confirm_bear_audience" value="true" required> I understand every hat and authorized Work can see this short summary.</label>
     <button type="submit">Save short summary</button>
   </form>
@@ -32,10 +32,10 @@
     {% endfor %}
   </details>
   {% endif %}
-  <p class="form-hint">The hat limits the Bear's work; it does not grant authority. An IDE conversation can choose a different hat only before its first interaction; after that, its hat is fixed.</p>
+
   <p><strong>IDE default for this Bear:</strong> {% if ide_default_hat_name %}{{ ide_default_hat_name | e }}{% else %}None selected{% endif %}</p>
   {% if not is_ide_default %}<form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/ide-default"><button type="submit">Make IDE default</button></form>{% endif %}
-  <p class="form-hint">New IDE conversations wear the default before their first turn; existing conversations and Jobs are unchanged. /hat can choose another hat only as the first interaction.</p>
+  <p class="form-hint">Applies to new editor conversations only. Choose another hat with /hat before the first interaction; existing conversations and Jobs stay bound.</p>
   <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/conversations">
     <button type="submit">Start a conversation wearing this hat</button>
   </form>
@@ -62,21 +62,24 @@
   <p class="form-hint">Overrides the whole primary configuration, including reasoning effort. A conversation model pin replaces this choice. This does not change identity or grants.</p>
   <p><a href="/bear/{{ bear.slug | e }}/models">Manage named configurations →</a></p>
 </div>
-<div class="box">
-  <h3>Permitted work surfaces</h3>
-  <p class="form-hint">Only surfaces already assigned to this Bear are available. A hat narrows that grant; the person, channel or armature, and Job must still be authorized. Removing a surface also revokes that hat's Work eligibility for existing runs.</p>
+<div class="box" id="hat-resources">
+  <h3>What this hat can use</h3>
+  <p class="form-hint">Choose from repositories already assigned to this Bear. Separate person and Job permissions still apply. Removing a repository also removes this hat's Work eligibility for existing runs.</p>
+  {% if hat.work_enabled %}<p>To add repositories, <a href="#work">disable Work</a> first, then review this hat again.</p>{% endif %}
   {% if choices %}
   <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/surfaces">
     {% for surface in choices %}
     <label><input type="checkbox" name="surface_ids" value="{{ surface.id }}"{% if surface.selected %} checked{% endif %}> {{ surface.name | e }}{% if surface.description %} — {{ surface.description | e }}{% endif %}</label>
     {% endfor %}
-    <button type="submit">Save permitted surfaces</button>
+    <button type="submit">Save permitted repositories</button>
   </form>
-  {% else %}<p>No work surfaces are assigned to this Bear yet.</p>{% endif %}
+  {% else %}<p>No repositories are assigned to this Bear yet. <a href="/bear/{{ bear.slug | e }}/resources">Open What it can use</a> to assign one, then return here to permit it.</p>{% endif %}
 </div>
 <div class="box">
   <h3>Den web tool and host policy</h3>
-  <p class="form-hint">A conversation wearing this hat can fetch an exact HTTPS host only when both the web-fetch tool and that host are granted. The current human must own the conversation; Den still applies block rules and public-DNS checks. Native Pair web fetches skip the ACP prompt only while this hat has both the fetch-tool and exact-host grants; an authorized Bear admin can also create that pair from a persistent ACP exact-host option, while others may choose a one-time approval. For a newly provisioned eligible Job sandbox, this hat's host grants are intersected with its assigned work surface's hosts by a provider that supports per-run ceilings; old or unreachable providers prevent hat-bound Work from starting; this does not authorize or start a Job, add a credential, or let a disconnected armature use local tools. Den requests cancellation of an active Work run on its next worker poll when this grant is revoked and retries provider teardown if it fails. Existing relays may remain reachable until that teardown succeeds; stop the run and check provider health if immediate isolation is needed. Old Bear-wide approvals do not carry into this hat. Search sends the query to an external provider: it requires its own tool grant and the exact provider host <code>api.search.brave.com</code>, not a web-fetch tool grant. Search uses a separately configured server-side provider key and may incur network, privacy, and usage costs; Jobs and other providers do not inherit this permission.</p>
+  <p class="form-hint">Fetching requires both the web-fetch tool and an exact HTTPS host grant. These grants are shared by future conversations and eligible Jobs wearing this hat, subject to their separate policies; they do not start a Job or supply credentials.</p>
+  <p class="form-hint">Revoking web access requests cancellation on the next Work worker poll. Existing relays may remain reachable until provider teardown succeeds. For immediate isolation, <a href="/bear/{{ bear.slug | e }}/jobs">stop the run</a> and have an operator check provider health.</p>
+  <details><summary>Help: how access is enforced</summary><p>Den checks the current human and conversation owner, hat grants, block rules, and public DNS. Editor web-fetch approvals can be reused only with both tool and exact-host grants; older Bear-wide approvals do not carry into this hat. Persistent editor grants require a Bear admin; one-time approval remains separate.</p><p>Eligible Job sandboxes intersect hat hosts with repository hosts. The provider must support per-run network ceilings; an old or unreachable provider blocks hat-bound Work. Revocation retries provider teardown after failure. These grants cannot enable disconnected local editor tools or authorize a Job.</p></details>
   {% if web_grants.fetch_tool_grant_id %}
   <p>Web-fetch tool: granted</p>
   <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/access">
@@ -90,6 +93,7 @@
     <button type="submit" name="action" value="enable_fetch">Grant web-fetch tool to this hat</button>
   </form>
   {% endif %}
+  <p class="form-hint">Search sends queries to an external provider using its server-side key, with privacy, network, and usage costs. It requires its own tool grant and the exact provider host <code>api.search.brave.com</code>. It does not inherit web-fetch permission or grant other providers access.</p>
   {% if web_grants.search_tool_grant_id %}
   <p>Web-search tool: granted</p>
   <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/access">
@@ -123,7 +127,8 @@
 </div>
 <div class="box">
   <h3>Editor workspace read permissions</h3>
-  <p class="form-hint">A grant here covers only the selected read-only file action in the exact editor workspace root. It can be reused by future conversations wearing this hat, including other Bear members. Den checks the current member, conversation owner, hat, and grant on each use; the connected editor must also keep the requested path inside its live workspace and apply local sensitive-file rules. It does not grant terminal commands, writes, credentials, web access, or a Job. Work sessions cannot use this permission today; future Job support would still require a separately authorized connected armature and bounded work surface.</p>
+  <p class="form-hint">Only the selected read action in this exact editor workspace. Every authorized member's future editor conversations wearing this hat may reuse it. It grants no writes, terminal, credentials, web access, or Job access; Work cannot use it today.</p>
+  <details><summary>Help: how workspace access is enforced</summary><p>Den rechecks membership, conversation ownership, hat, and grant on each use. The connected editor also enforces the live workspace boundary and sensitive-file rules. A saved permission does not override local filesystem policy or match another root.</p></details>
   {% if workspace_read_grants %}
   <ul>{% for grant in workspace_read_grants %}
     <li>{{ grant.title | e }} in <code>{{ grant.workspace_root | e }}</code>
@@ -139,14 +144,16 @@
       {% for choice in workspace_read_choices %}<option value="{{ choice.provider_name | e }}">{{ choice.title | e }}</option>{% endfor %}
     </select></label>
     <label>Exact editor workspace root <input name="workspace_root" placeholder="/workspace/project" required maxlength="2000" autocomplete="off"></label>
-    <p class="form-hint">Use the absolute, normalized root reported by the connected editor. The saved permission applies only to the selected action in that root and does not override local filesystem policy. Do not include <code>..</code>, wildcards, a home-directory shortcut, or a trailing slash. An existing approval for a different root will not match.</p>
+    <p class="form-hint">Use the editor's absolute, normalized root. No <code>..</code>, wildcards, home shortcut, or trailing slash.</p>
     <label><input type="checkbox" name="confirm_future_job_audience" value="true" required> I understand every authorized member's future editor conversations wearing this hat can reuse it, and eligible Jobs may become readers only if Den later authorizes a separate connected, bounded Work armature.</label>
     <button type="submit" name="action" value="grant_workspace_read">Grant workspace read action</button>
   </form>
 </div>
-<div class="box">
+<div class="box" id="sharing">
   <h3>Automatic memory sharing for this hat: {{ hat.auto_curate_enabled and "on" or "off" }}</h3>
-  <p class="form-hint">When enabled, Curate may read a private note from a conversation wearing this hat, send it through this Bear's configured model provider, and publish a newly written fact to the hat. All Bear members and eligible Job runs wearing the hat, now or in the future, may read it. Model inference may have privacy, network, and usage costs. Curate does not publish the note verbatim, but its rewrite cannot guarantee that sensitive details or prompt injections are removed. Shared knowledge remains untrusted data; this setting grants no tools, credentials, permissions, or Job authority.</p>
+  <p>Private notes may be sent to this Bear's configured model provider, with privacy, network, and usage costs. Rewritten knowledge is shared with all members and eligible Jobs wearing this hat, now and in the future. Rewriting cannot guarantee removal of sensitive details or prompt injections.</p>
+  <p class="form-hint">Disabling automatic sharing stops future automatic publication; it does not withdraw knowledge already shared.</p>
+  <details><summary>Help: how automatic sharing works</summary><p>Curate writes a new fact rather than publishing the source note verbatim. Shared knowledge remains untrusted data and grants no tools, credentials, permissions, or Job authority.</p></details>
   {% if hat.auto_curate_enabled %}
   <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/auto-curate"><button type="submit" name="action" value="disable">Disable automatic sharing</button></form>
   {% else %}
@@ -156,9 +163,11 @@
   </form>
   {% endif %}
 </div>
-<div class="box">
+<div class="box" id="work">
   <h3>Use in Jobs: {{ hat.work_enabled and "on" or "off" }}</h3>
-  <p class="form-hint">When enabled, eligible Job runs wearing this hat can use its identity and curated memory, including facts learned later. Enabling Job use does not start a run or grant tools, credentials, or access; each run still needs an authorized Job and permitted surfaces. Existing hat memory is reviewed when enabling Job use, not before every run or new fact.</p>
+  <p>Eligible Jobs wearing this hat may read its identity and shared knowledge, including facts learned later. Enabling Work does not start a run or grant tools, credentials, or access; each run needs its own authorization and permitted repositories.</p>
+  <details><summary>Help: when Work memory is reviewed</summary><p>Enablement reviews the hat's entire historical memory and current identity. It is not a review before every run or each later fact.</p></details>
+  {% if grant_count == 0 %}<p class="form-errors" role="status"><strong>Work is blocked: no repositories are permitted.</strong> {% if hat.work_enabled %}Disable Job use below before adding repositories, then review and enable Work again. {% endif %}{% if choices %}<a href="#hat-resources">Select and save a permitted repository above</a>.{% else %}<a href="/bear/{{ bear.slug | e }}/resources">Assign a repository to this Bear</a>, then <a href="#hat-resources">permit it for this hat</a>.{% endif %}</p>{% endif %}
   {% if hat.work_enabled %}
   <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/work"><button type="submit" name="action" value="disable">Disable Job use</button></form>
   {% else %}
@@ -169,7 +178,7 @@
     <button type="submit" name="action" value="enable"{% if grant_count == 0 or historical_hat_records > 0 %} disabled{% endif %}>Enable Work for an empty hat</button>
   </form>
   {% endif %}
-  {% if historical_hat_records > 0 %}<p><a href="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/work-review">Review {{ historical_hat_records }} historical hat record{% if historical_hat_records != 1 %}s{% endif %} before enabling Work →</a></p>{% endif %}
+  {% if historical_hat_records > 0 and not hat.work_enabled %}<p><a href="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/work-review">Review {{ historical_hat_records }} historical hat record{% if historical_hat_records != 1 %}s{% endif %} before enabling Work →</a></p>{% endif %}
   {% if work_reviews %}
   <details><summary>Past Work memory reviews ({{ work_reviews | length }})</summary>
     <ul>{% for review in work_reviews %}

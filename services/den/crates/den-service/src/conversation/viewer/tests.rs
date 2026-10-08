@@ -194,7 +194,10 @@ async fn list_filters_before_limit_and_rechecks_membership(pool: PgPool) {
     assert!(!viewer.may_access_id(&pool, foreign).await.unwrap());
     assert!(!viewer.may_access_id(&pool, unowned).await.unwrap());
 
-    // A resolved admin cannot retain access after a role change or revocation.
+    // Role changes retain another Admin while revoking the resolved viewer's authority.
+    grant_membership(&pool, two.get(), bear.as_uuid(), Some(BEAR_ROLE_ADMIN))
+        .await
+        .unwrap();
     grant_membership(&pool, admin.get(), bear.as_uuid(), Some(BEAR_ROLE_MEMBER))
         .await
         .unwrap();

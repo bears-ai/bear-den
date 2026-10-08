@@ -1,0 +1,53 @@
+/* Operator and inspection surfaces; imported by the parent stylesheet. */
+.operator-console,
+.inspection-summary-grid,
+.inspection-evidence {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+.inspection-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr));
+    gap: var(--panel-gap);
+    margin-block: calc(var(--spacing-unit) * 2);
+}
+.inspection-summary-grid > .box {
+    margin: 0;
+}
+.inspection-summary-grid strong {
+    font-size: 1.4rem;
+}
+.inspection-evidence {
+    white-space: pre-wrap;
+    max-height: 28rem;
+    overflow: auto;
+}
+.inspection-clear-confirm {
+    border: var(--thin-line-unit) solid var(--border-color);
+    padding: calc(var(--spacing-unit) * 2);
+    margin-block: var(--spacing-unit);
+}
+.inspection-search {
+    width: min(100%, 28rem);
+}
+.inspection-sort-order {
+    width: 6em;
+}
+.bear-manage-main :is(input, select, textarea),
+.operator-console :is(input, select, textarea),
+.inspection-search {
+    max-width: 100%;
+    box-sizing: border-box;
+}
+.bear-manage-main textarea,
+.operator-console textarea {
+    width: 100%;
+}
+.operator-console .button-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-unit);
+}
+.bear-manage-nav[aria-label="Operator navigation"] h3 {
+    font-size: 1rem;
+}

@@ -3,25 +3,17 @@
 {% block title %}Models{% endblock %}
 
 {% block admin_content %}
-<h3>Models</h3>
 
 {% if message %}
-<p><strong>{{ message }}</strong></p>
+<p role="status"><strong>{{ message }}</strong></p>
 {% endif %}
 
-<p>
-    Bifrost owns model identity and capability metadata. Den stores the local
-    overlay: whether the model is selectable, recommendation status, ordering,
-    and notes.
-</p>
+<details><summary>Help: model catalog and Den settings</summary>
+<p>Bifrost supplies model identity and capabilities. Den controls selectability, recommendations, ordering and notes.</p>
+</details>
 
 <h4>Usage and cost</h4>
-<p>
-    Rolling 30-day aggregate from Bifrost. This view can identify a model and
-    provider, but not the Bear, conversation, background operation, or exact
-    week that produced a request. Bifrost’s aggregate rankings endpoint does
-    not provide request-level timestamps or Den attribution metadata.
-</p>
+<p class="form-hint">Rolling 30-day usage by model and provider.</p>
 {% if usage.status == "ok" and usage.has_rows %}
 <table>
     <thead>
@@ -48,14 +40,19 @@
 {% elif usage.status == "ok" %}
 <p>No usage rows returned.</p>
 {% else %}
-<p>Usage unavailable.</p>
+<p class="form-errors" role="alert">Usage unavailable.{% if usage.error %} {{ usage.error | e }}{% endif %}</p>
 {% endif %}
+
+<details><summary>Help: usage attribution</summary>
+<p>These aggregates do not identify a Bear, conversation, background operation or exact week. Bifrost does not supply request timestamps or Den attribution in this result.</p>
+</details>
 
 <h4>Add from Bifrost catalog</h4>
 <p>
     Source: {{ catalog_source }}; fetched: {{ catalog_fetched_at }};
     {{ catalog_row_count }} unconfigured models{% if catalog_stale %}; <strong>stale</strong>{% endif %}
 </p>
+{% if catalog_stale %}<p class="form-errors">Catalog snapshot is stale. <a href="/status">Inspect gateway status</a> and reload after the catalog refreshes.</p>{% elif catalog_initialized is defined and not catalog_initialized %}<p class="form-errors">No catalog fetch has been recorded. <a href="/status">Inspect gateway status</a> and reload after a fetch completes.</p>{% endif %}
 {% if catalog_rows %}
 <p>
     <label>
@@ -98,7 +95,7 @@
             <td>
                 <form method="post" action="/admin/models/add-from-catalog">
                     <input type="hidden" name="handle" value="{{ row.handle }}">
-                    <input type="number" name="sort_order" placeholder="sort" style="width: 6em">
+                    <input type="number" name="sort_order" placeholder="sort" class="inspection-sort-order" aria-label="Sort order">
                     <label><input type="checkbox" name="selectable" checked> selectable</label>
                     <label><input type="checkbox" name="recommended"> recommended</label>
                     <br>
@@ -142,7 +139,7 @@
 })();
 </script>
 {% else %}
-<p>No unconfigured catalog models. If the source is uninitialized or stale, check Bifrost management authentication.</p>
+<p>No unconfigured catalog models.</p>
 {% endif %}
 
 <details>
@@ -155,7 +152,7 @@
         <p>
             <input type="text" name="handle" placeholder="provider/model" size="28" required>
             <input type="text" name="display_name" placeholder="Display name" size="28" required>
-            <input type="number" name="sort_order" placeholder="sort" style="width: 6em">
+            <input type="number" name="sort_order" placeholder="sort" class="inspection-sort-order" aria-label="Sort order">
             <label><input type="checkbox" name="selectable" checked> selectable</label>
             <label><input type="checkbox" name="recommended"> recommended</label>
         </p>
@@ -184,7 +181,7 @@
                     <input type="hidden" name="handle" value="{{ model.handle }}">
                     <p>
                         <input type="text" name="display_name" value="{{ model.display_name }}" size="28" required>
-                        <input type="number" name="sort_order" value="{{ model.sort_order or '' }}" style="width: 6em">
+                        <input type="number" name="sort_order" value="{{ model.sort_order if model.sort_order is not none else '' }}" class="inspection-sort-order" aria-label="Sort order">
                         <label><input type="checkbox" name="selectable" {% if model.selectable %}checked{% endif %}> selectable</label>
                         <label><input type="checkbox" name="recommended" {% if model.recommended %}checked{% endif %}> recommended</label>
                     </p>

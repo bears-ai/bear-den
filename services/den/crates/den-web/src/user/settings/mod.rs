@@ -14,6 +14,7 @@ use minijinja::context;
 use serde::{Deserialize, Serialize};
 use validator::{Validate, ValidationError};
 
+use super::form_feedback::validation_messages;
 use crate::core::user::{self, UserSettings};
 use crate::{
     auth_backend::AuthSession,
@@ -30,7 +31,7 @@ pub fn router() -> Router<AppState> {
 
 #[derive(Serialize, Deserialize, Validate)]
 struct SettingsForm {
-    #[validate(length(min = 3, max = 100))]
+    #[validate(length(min = 3, max = 100, message = "Use 3–100 characters."))]
     display_name: String,
     #[validate(custom(function = "validate_theme"))]
     theme: String,
@@ -148,8 +149,8 @@ async fn settings_form_action(
                 theme_descriptions => web::theme_descriptions(),
                 day_of_week_names => web::day_of_week_names(),
                 settings_form => context! {
-                    errors => form_validation_errors,
-                    ..context! {settings_form}
+                    errors => validation_messages(&form_validation_errors),
+                    ..minijinja::Value::from_serialize(&settings_form)
                 }
             },
         )

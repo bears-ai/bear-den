@@ -12,10 +12,7 @@
         <a href="/bear/{{ bear.slug | e }}/memory/reflection/{{ detail.run.id }}/evidence">Evidence</a>
     </p>
     <h2>Reflection run {{ detail.run.short_id | e }}</h2>
-    <p class="form-hint">
-        This page explains one sleep-time reflection job: what lane ran, what it consumed,
-        what it produced, and which proposals require review.
-    </p>
+    <p class="form-hint">Recorded run, inputs, output and linked proposals.</p>
 
     <dl class="fields-grid">
         <dt>Run id</dt>
@@ -69,7 +66,7 @@
 
     {% if detail.run.error %}
     <h3>Error</h3>
-    <pre class="form-errors" style="white-space: pre-wrap; max-height: 16rem; overflow: auto;">{{ detail.run.error | e }}</pre>
+    <pre class="form-errors inspection-evidence" role="alert">{{ detail.run.error | e }}</pre>
     {% endif %}
 </div>
 
@@ -79,7 +76,7 @@
         {% if detail.run.proposal_count is not none %}
         <strong>{{ detail.run.proposal_count }}</strong> proposal{{ detail.run.proposal_count == 1 and "" or "s" }}
         {% else %}
-        <strong>0</strong> proposals
+        Proposal count not recorded
         {% endif %}
         {% if detail.run.scanned_artifacts is not none %}
         · <strong>{{ detail.run.scanned_artifacts }}</strong> artifact{{ detail.run.scanned_artifacts == 1 and "" or "s" }} scanned

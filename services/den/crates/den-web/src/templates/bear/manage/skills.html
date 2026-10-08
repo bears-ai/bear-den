@@ -1,13 +1,60 @@
 {% extends "bear/_manage.html" %}
 {% block title %}Skills · {{ bear.name | e }}{% endblock %}
 {% block manage %}
-<section class="box"><h2>Reviewed procedures</h2><p class="form-hint">Instruction-only procedures. No skill installs code or grants tools or account access.</p>
-{% if catalog %}{% for skill in catalog %}<details class="box"><summary>{{ skill.name | e }} · {{ skill.version | e }} · {% if skill.disabled %}disabled{% elif skill.approved %}approved{% else %}draft{% endif %}{% if skill.attached %} · attached{% endif %}</summary><p>{{ skill.description | e }}</p><pre class="bear-manage-prompt-preview">{{ skill.content | e }}</pre><p><code>{{ skill.content_hash | e }}</code> · uses {{ skill.profiles | join(", ") | e }}</p>
+{% if error %}<p class="form-errors" role="alert">{{ error | e }}</p>{% endif %}
+{% macro skill_card(skill) %}
+<article class="box" id="skill-{{ skill.id }}">
+  <h3>{{ skill.name | e }} · {{ skill.version | e }}</h3>
+  <p><strong>{% if skill.disabled %}Disabled{% elif skill.approved %}Approved{% else %}Draft — awaiting review{% endif %}</strong> · {% if skill.attached %}Attached to this Bear{% else %}Not attached{% endif %} · {% if skill.owned %}Owned by you{% else %}Den catalog{% endif %}</p>
+  <p>{{ skill.description | e }}</p>
+  {% if skill.attached %}<p><strong>Current permitted uses:</strong> {% for profile in skill.profiles %}{% if profile == 'chat' %}Browser Chat{% elif profile == 'pair' %}Editor{% elif profile == 'work' %}Autonomous Work{% elif profile == 'curate' %}Curation{% elif profile == 'watch' %}Observation{% else %}{{ profile | e }}{% endif %}{% if not loop.last %}, {% endif %}{% else %}None{% endfor %}{% if skill.disabled %} — disabled; not used in model requests{% endif %}</p>{% endif %}
+  <details><summary>Review procedure</summary><pre class="bear-manage-prompt-preview">{{ skill.content | e }}</pre></details>
+  <details><summary>Version details</summary><p>Content fingerprint: <code>{{ skill.content_hash | e }}</code>. Approved versions are immutable; to change content, propose a new version.</p></details>
+  {% if can_manage_bear %}
+  {% if not skill.approved and not skill.disabled and skill.owned %}
+  <form method="post" action="/bear/{{ bear.slug | urlencode }}/skills/{{ skill.id }}">
+    <input type="hidden" name="operation" value="approve"><input type="hidden" name="content_hash" value="{{ skill.content_hash | e }}">
+    <p>Approval publishes this exact procedure in the Den catalog; it does not attach it to a Bear.</p>
+    <label><input type="checkbox" name="confirm_public" value="true" required>I reviewed this exact procedure and approve publishing it in the Den catalog.</label>
+    <button type="submit">Approve version</button>
+  </form>
+  {% endif %}
+  {% if skill.approved and not skill.disabled %}
+  {% set selected_profiles = pending_profiles if pending_skill_id == skill.id | string else (skill.profiles if skill.attached else []) %}
+  <form method="post" action="/bear/{{ bear.slug | urlencode }}/skills/{{ skill.id }}">
+    <input type="hidden" name="operation" value="attach"><input type="hidden" name="content_hash" value="{{ skill.content_hash | e }}">
+    <fieldset><legend>Permitted uses for this Bear</legend>
+      <label><input type="checkbox" name="profiles" value="chat"{% if 'chat' in selected_profiles %} checked{% endif %}>Browser Chat</label>
+      <label><input type="checkbox" name="profiles" value="pair"{% if 'pair' in selected_profiles %} checked{% endif %}>Editor</label>
+      <label><input type="checkbox" name="profiles" value="work"{% if 'work' in selected_profiles %} checked{% endif %}>Autonomous Work</label>
+      {% if 'curate' in skill.profiles %}<label><input type="checkbox" name="profiles" value="curate"{% if 'curate' in selected_profiles %} checked{% endif %}>Curation (existing permitted use)</label>{% endif %}
+      {% if 'watch' in skill.profiles %}<label><input type="checkbox" name="profiles" value="watch"{% if 'watch' in selected_profiles %} checked{% endif %}>Observation (existing permitted use)</label>{% endif %}
+    </fieldset>
+    <p class="form-hint">Choose at least one use. Saving replaces this Bear's current permitted uses for the pinned version, on future turns. Work still needs its own Job authorization.</p>
+    <label><input type="checkbox" name="confirm_work" value="true">I approve this procedure for autonomous Work if selected.</label>
+    <button type="submit">{% if skill.attached %}Save permitted uses{% else %}Attach reviewed version{% endif %}</button>
+  </form>
+  {% endif %}
+  {% if skill.attached %}<form method="post" action="/bear/{{ bear.slug | urlencode }}/skills/{{ skill.id }}"><input type="hidden" name="operation" value="detach"><p class="form-hint">Detaching stops this Bear using the procedure on future turns; the catalog version remains.</p><button type="submit">Detach from Bear</button></form>{% endif %}
+  {% if not skill.disabled and skill.owned %}<form method="post" action="/bear/{{ bear.slug | urlencode }}/skills/{{ skill.id }}"><input type="hidden" name="operation" value="disable"><p class="form-hint">Disabling makes this catalog version unavailable to every attached Bear, not just this one.</p><button type="submit">Disable catalog version</button></form>{% endif %}
+  {% endif %}
+</article>
+{% endmacro %}
+<section class="box">
+  <h2>Attached procedures</h2>
+  <p class="form-hint">Instruction-only. Skills install no code and grant no tools, credentials, or account access.</p>
+  {% for skill in catalog if skill.attached %}{{ skill_card(skill) }}{% else %}<p>No procedures attached to this Bear.</p>{% endfor %}
+</section>
 {% if can_manage_bear %}
-{% if not skill.approved and not skill.disabled and skill.owned %}<form method="post" action="/bear/{{ bear.slug | urlencode }}/skills/{{ skill.id }}"><input type="hidden" name="operation" value="approve"><input type="hidden" name="content_hash" value="{{ skill.content_hash }}"><label><input type="checkbox" name="confirm_public" value="true" required>I reviewed this exact procedure and approve publishing it in the Den catalog.</label><button type="submit">Approve version</button></form>{% endif %}
-{% if skill.approved %}<form method="post" action="/bear/{{ bear.slug | urlencode }}/skills/{{ skill.id }}"><input type="hidden" name="operation" value="attach"><input type="hidden" name="content_hash" value="{{ skill.content_hash }}"><fieldset><legend>Permitted uses for this Bear</legend><label><input type="checkbox" name="profiles" value="chat">Browser Chat</label><label><input type="checkbox" name="profiles" value="pair">Editor</label><label><input type="checkbox" name="profiles" value="work">Autonomous Work</label></fieldset><label><input type="checkbox" name="confirm_work" value="true">I approve this procedure for autonomous Work if selected.</label><button type="submit">Attach reviewed version</button></form>{% endif %}
-{% if skill.attached %}<form method="post" action="/bear/{{ bear.slug | urlencode }}/skills/{{ skill.id }}"><input type="hidden" name="operation" value="detach"><button type="submit">Detach from Bear</button></form>{% endif %}
-{% if not skill.disabled and skill.owned %}<form method="post" action="/bear/{{ bear.slug | urlencode }}/skills/{{ skill.id }}"><input type="hidden" name="operation" value="disable"><button type="submit">Disable catalog version</button></form>{% endif %}
-{% endif %}</details>{% endfor %}{% else %}<p>No approved procedures attached.</p>{% endif %}</section>
-{% if can_manage_bear %}<section class="box"><h2>Propose a procedure</h2><form method="post" action="/bear/{{ bear.slug | urlencode }}/skills"><label>Name <input name="name" maxlength="120" required></label><label>Version <input name="version" maxlength="60" required></label><label>Description <input name="description" maxlength="2000" required></label><label>Procedure (Markdown) <textarea name="content" rows="10" maxlength="32000" required></textarea></label><p>A draft is not added to a model request. Approved versions are immutable; editing means proposing a new version.</p><button type="submit">Save draft for review</button></form></section>{% endif %}
+<section class="box"><h2>Your drafts &amp; catalog versions</h2>{% for skill in catalog if skill.owned and not skill.attached %}{{ skill_card(skill) }}{% else %}<p>No unattached procedures owned by you.</p>{% endfor %}</section>
+<section class="box"><h2>Other approved catalog procedures</h2>{% for skill in catalog if not skill.owned and not skill.attached %}{{ skill_card(skill) }}{% else %}<p>No other approved procedures available.</p>{% endfor %}</section>
+<section class="box"><h2>Propose a procedure</h2><form method="post" action="/bear/{{ bear.slug | urlencode }}/skills">
+  <label>Name <input name="name" maxlength="120" value="{{ draft.name | default('') | e }}" required></label>
+  <label>Version <input name="version" maxlength="60" value="{{ draft.version | default('') | e }}" required></label>
+  <label>Description <input name="description" maxlength="2000" value="{{ draft.description | default('') | e }}" required></label>
+  <label>Procedure (Markdown) <textarea name="content" rows="10" maxlength="32000" required>{{ draft.content | default('') | e }}</textarea></label>
+  <p class="form-hint">A draft is not used in model requests. Review, approve, and attach it before use.</p>
+  <button type="submit">Save draft for review</button>
+</form></section>
+{% endif %}
 {% endblock %}

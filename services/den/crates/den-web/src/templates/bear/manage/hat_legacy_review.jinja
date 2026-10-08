@@ -4,6 +4,7 @@
 <p><a href="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}">← {{ hat.name | e }}</a></p>
 <div class="box">
   <h2>Unattributed legacy memory</h2>
+  {% if error %}<p class="form-errors" role="alert">{{ error | e }}</p><p>No entry was published. Your draft is preserved below. Review the current source and target again, then acknowledge the audience before resubmitting.</p>{% endif %}
   <p>These old profile-local notes have no verified conversation owner, even if a path or imported metadata resembles a session. They remain private to Bear-admin inspection. Reauthoring writes a <em>new</em> hat entry and an auditable link; it never assigns the original to a person or copies it into another session.</p>
   <p>Reviewable entries exclude hidden, archived, superseded, and access-restricted material. Other historical records remain available in admin memory inspection, not for this sharing route.</p>
   {% if page.inventory %}<ul>{% for bucket in page.inventory %}
@@ -17,16 +18,17 @@
 {% if selected %}
 <div class="box">
   <h3>Original legacy note (untrusted and unattributed)</h3>
-  <p><code>{{ selected.memory_id | e }}</code> · {{ (selected.scope_profile or 'unknown') | e }}{% if selected.logical_path %} · <code>{{ selected.logical_path | e }}</code>{% endif %}</p>
+  <p>Source: {{ (selected.scope_profile or 'unknown legacy profile') | e }} · no verified owner; Admin inspection only.</p>
+  <details><summary>Source details</summary><p>Record <code>{{ selected.memory_id | e }}</code>{% if selected.logical_path %} · path <code>{{ selected.logical_path | e }}</code>{% endif %}</p></details>
   <pre>{{ selected.content_text | e }}</pre>
   {% if current_head %}<h3>Current hat entry at this kind</h3><pre>{{ current_head.content_text | e }}</pre><p class="form-hint">The new entry replaces this head only if it is unchanged when you submit.</p>{% endif %}
   <h3>Write newly reviewed hat knowledge</h3>
   <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/legacy-review">
     <input type="hidden" name="source_memory_id" value="{{ selected.memory_id | e }}">
     {% if current_head %}<input type="hidden" name="expected_head" value="{{ current_head.id | e }}">{% endif %}
-    <label>Kind (lowercase identifier) <input name="kind" value="{{ selected.kind | e }}" required maxlength="64"></label>
-    <label>Newly authored, safe content <textarea name="reviewed_content" required rows="8" maxlength="16000"></textarea></label>
-    <label>What did you verify, omit, or change? <textarea name="review_notes" required rows="3" maxlength="4000"></textarea></label>
+    <label>Kind (lowercase identifier) <input name="kind" value="{{ (draft.kind if draft else selected.kind) | e }}" required maxlength="64"></label>
+    <label>Newly authored, safe content <textarea name="reviewed_content" required rows="8" maxlength="16000">{{ draft.reviewed_content | default('') | e }}</textarea></label>
+    <label>What did you verify, omit, or change? <textarea name="review_notes" required rows="3" minlength="12" maxlength="4000">{{ draft.review_notes | default('') | e }}</textarea></label>
     <label><input type="checkbox" name="acknowledge_unverified_source_and_members" value="true" required> I understand the original has no verified owner and this new text is safe for every Bear member wearing this hat.</label>
     {% if hat.work_enabled %}<label><input type="checkbox" name="work_audience_reviewed" value="true" required> I also reviewed this text for autonomous Work wearing this hat.</label>{% endif %}
     <button type="submit">Publish a reviewed hat entry</button>

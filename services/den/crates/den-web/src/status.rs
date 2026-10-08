@@ -13,11 +13,21 @@ use serde::Deserialize;
 
 use den_llm::model_registry::{self, ModelGatewayCompatibilityReport};
 
-use crate::build_info;
+use crate::{
+    auth_backend::{AuthSession, SessionUser},
+    build_info,
+};
+
+#[path = "stack_health/status_feedback.rs"]
+mod feedback;
 use crate::web::stack_health::{self, CheckState, StackHealthReport, StackHealthTemplateRow};
 use crate::web::AppState;
 
 const GITHUB_FETCH_TIMEOUT: Duration = Duration::from_secs(12);
+
+#[cfg(test)]
+#[path = "stack_health/status_usability_tests.rs"]
+mod usability_tests;
 
 #[derive(Clone, serde::Serialize)]
 pub struct StatusPayload {
@@ -25,6 +35,7 @@ pub struct StatusPayload {
     pub den_version: build_info::VersionBody,
     pub ghcr_den: Option<GhcrPackageRow>,
     pub ghcr_config_note: Option<String>,
+    pub ghcr_error: Option<String>,
     pub model_registry: ModelRegistryStatus,
 }
 
@@ -57,8 +68,20 @@ struct GhContainerMeta {
     tags: Option<Vec<String>>,
 }
 
-pub async fn page(State(state): State<AppState>) -> Result<Response, crate::errors::CustomError> {
+pub async fn page(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+) -> Result<Response, crate::errors::CustomError> {
     let payload = gather_status(&state).await;
+    render_page(&state, auth_session.user.as_ref(), payload)
+}
+
+fn render_page(
+    state: &AppState,
+    user: Option<&SessionUser>,
+    mut payload: StatusPayload,
+) -> Result<Response, crate::errors::CustomError> {
+    feedback::sanitize(&mut payload, &state.config);
     let status = if payload.health.ok {
         StatusCode::OK
     } else {
@@ -86,6 +109,10 @@ pub async fn page(State(state): State<AppState>) -> Result<Response, crate::erro
     let ghcr_note = payload.ghcr_config_note.clone().unwrap_or_default();
 
     let ctx = minijinja::context! {
+        session => user.map(|user| minijinja::context! {
+            user_id => user.id, username => &user.username,
+            is_admin => user.is_admin, theme => &user.theme,
+        }),
         title => "BEARS status",
         template_tag => "page-bears-health",
         app_display_name => state.config.app_display_name.clone(),
@@ -97,6 +124,7 @@ pub async fn page(State(state): State<AppState>) -> Result<Response, crate::erro
         json_path => "/status.json",
         deploy_rows => deploy_rows,
         ghcr_note => ghcr_note,
+        ghcr_error => payload.ghcr_error,
         model_registry => payload.model_registry,
     };
     let template = state
@@ -106,7 +134,12 @@ pub async fn page(State(state): State<AppState>) -> Result<Response, crate::erro
     let body = template
         .render(ctx)
         .map_err(|e| crate::errors::CustomError::Render(format!("status render: {e}")))?;
-    Ok((status, Html(body)).into_response())
+    Ok((
+        status,
+        [(axum::http::header::CACHE_CONTROL, "no-store")],
+        Html(body),
+    )
+        .into_response())
 }
 
 #[derive(serde::Serialize)]
@@ -173,7 +206,11 @@ pub async fn json_endpoint(State(state): State<AppState>) -> impl IntoResponse {
     } else {
         StatusCode::SERVICE_UNAVAILABLE
     };
-    (status, Json(payload))
+    (
+        status,
+        [(axum::http::header::CACHE_CONTROL, "no-store")],
+        Json(payload),
+    )
 }
 
 async fn gather_status(state: &AppState) -> StatusPayload {
@@ -183,6 +220,7 @@ async fn gather_status(state: &AppState) -> StatusPayload {
     let cfg = state.config.as_ref();
     let model_registry = gather_model_registry_status(state).await;
     let mut ghcr_config_note: Option<String> = None;
+    let mut ghcr_error: Option<String> = None;
     let ghcr_den = if cfg.github_packages_token.trim().is_empty()
         || cfg.ghcr_packages_owner.trim().is_empty()
     {
@@ -207,24 +245,27 @@ async fn gather_status(state: &AppState) -> StatusPayload {
                     notes.push(format!("den GHCR: {e}"));
                 }
                 if !notes.is_empty() {
-                    ghcr_config_note = Some(notes.join(" "));
+                    ghcr_error = Some(notes.join(" "));
                 }
                 d
             }
             Err(e) => {
-                ghcr_config_note = Some(format!("Could not build HTTP client: {e}"));
+                ghcr_error = Some(format!("Could not build HTTP client: {e}"));
                 None
             }
         }
     };
 
-    StatusPayload {
+    let mut payload = StatusPayload {
         health,
         den_version,
         ghcr_den,
         ghcr_config_note,
+        ghcr_error,
         model_registry,
-    }
+    };
+    feedback::sanitize(&mut payload, cfg);
+    payload
 }
 
 async fn gather_model_registry_status(state: &AppState) -> ModelRegistryStatus {
@@ -286,13 +327,12 @@ async fn fetch_ghcr_package(
     {
         Ok(r) => r,
         Err(e) => {
-            return (None, Some(format!("request failed: {e}")));
+            return (None, Some(format!("request failed: {}", e.without_url())));
         }
     };
     let status_code = resp.status();
     if !status_code.is_success() {
-        let txt = resp.text().await.unwrap_or_default();
-        return (None, Some(format!("HTTP {status_code} — {txt}")));
+        return (None, Some(format!("HTTP {status_code}; verify GHCR token permissions and package visibility. Upstream response body withheld.")));
     }
     let body = match resp.text().await {
         Ok(t) => t,

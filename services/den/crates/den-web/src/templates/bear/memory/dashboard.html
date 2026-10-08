@@ -4,36 +4,25 @@
 <div class="box">
     <h2>Memory</h2>
     <p class="form-hint">Admin inspection includes private and historical records, not only shared knowledge.</p>
-    <details><summary>Store &amp; search diagnostics</summary>
-    <p class="form-hint">
-        This is the Bear's owned, portable mind: it travels with an export, unlike
-        the transcripts that formed it. Canonical memory lives in this Bear's
-        SQLite store; the recall index and entity layer are derived.
-    </p>
 
     {% if import_notice %}
-    <p><strong>{{ import_notice | e }}</strong></p>
+    <p role="status"><strong>{{ import_notice | e }}</strong></p>
     {% endif %} {% if import_error %}
-    <p class="form-errors">{{ import_error | e }}</p>
+    <p class="form-errors" role="alert">{{ import_error | e }}</p>
     {% endif %} {% if review_notice %}
-    <p><strong>{{ review_notice | e }}</strong></p>
+    <p role="status"><strong>{{ review_notice | e }}</strong></p>
     {% endif %} {% if review_error %}
-    <p class="form-errors">{{ review_error | e }}</p>
-    {% endif %} {% if stats %}
-    <div
-        style="
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
-            gap: 0.75rem;
-            margin: 1rem 0;
-        "
-    >
+    <p class="form-errors" role="alert">{{ review_error | e }}</p>
+    {% endif %}
+    {% if inspection_errors %}<ul class="form-errors" role="alert">{% for error in inspection_errors %}<li>{{ error | e }}</li>{% endfor %}</ul>{% endif %}
+    {% if stats %}
+    <div class="inspection-summary-grid">
         <div class="box" style="margin: 0">
             <strong style="font-size: 1.6rem">{{ stats.record_count }}</strong
             ><br />records (all versions)
         </div>
         <div class="box" style="margin: 0">
-            <strong style="font-size: 1.6rem">{{ head_count }}</strong
+            <strong>{% if head_count is not none %}{{ head_count }}{% else %}Unavailable{% endif %}</strong
             ><br />current entries
         </div>
         <div class="box" style="margin: 0">
@@ -49,36 +38,30 @@
             <strong style="font-size: 1.6rem">{{ stats.distinct_paths }}</strong
             ><br />logical paths
         </div>
-        <div class="box" style="margin: 0">
-            <strong style="font-size: 1.6rem"
-                >{{ stats.sequence_high_water }}</strong
-            ><br />sequence high-water
-        </div>
+
     </div>
-    <p class="form-hint">
-        DB: <code>{{ stats.db_path | e }}</code>
-        {% if stats.db_size_bytes %}({{ stats.db_size_bytes }} bytes){% endif %}
-        · pending proposals: {{ pending_review_count }} · needs human review: {{ needs_human_review_count }} · pending
-        observations: {{ stats.pending_observations }}
-    </p>
+    <p>{{ stats.pending_observations }} pending observations. <a href="#review-queue">Review proposals</a> · <a href="/bear/{{ bear.slug | e }}/memory/browse">Browse entries</a>.</p>
+    <details><summary>Help: store and search diagnostics</summary>
+    <p>Canonical memory is stored in this Bear’s SQLite file. Recall passages and entity links are derived inspection data, not the source of truth.</p>
+    <p>DB: <code>{{ stats.db_path | e }}</code>{% if stats.db_size_bytes %} ({{ stats.db_size_bytes }} bytes){% endif %} · sequence high-water: {{ stats.sequence_high_water }}.</p>
+    </details>
     {% else %}
     <p class="form-errors">
         Memory store statistics are unavailable for this Bear.
     </p>
     {% endif %}
-</details>
+{% if head_count is none %}<p class="form-errors" role="alert">Current entry count unavailable. Reload to retry.</p>{% endif %}
 </div>
 
 {% include "bear/memory/_own_notes.html" %}
 
 <div class="box">
     <h3 id="review-queue">Review queue</h3>
-    <p class="form-hint">
-        Showing the 10 most recent reviewable proposals out of {{ reviewable_proposal_count }} total
-        ({{ pending_review_count }} pending, {{ needs_human_review_count }} needs human review).
-    </p>
-    {% if can_manage_bear and reviewable_proposal_count > 0 %}
-    <form method="post" action="/bear/{{ bear.slug | e }}/memory/review-queue/clear" style="margin: 0 0 1rem 0; border: 1px solid currentColor; padding: 0.75rem;">
+    {% if reviewable_proposal_count is not none %}
+    <p class="form-hint">Showing up to 10 recent proposals out of {{ reviewable_proposal_count }} total ({{ pending_review_count }} pending, {{ needs_human_review_count }} needs human review).</p>
+    {% else %}<p class="form-errors" role="alert">Review counts unavailable. Reload to retry; the queue must not be treated as empty.</p>{% endif %}
+    {% if can_manage_bear and reviewable_proposal_count is not none and reviewable_proposal_count > 0 %}
+    <form method="post" action="/bear/{{ bear.slug | e }}/memory/review-queue/clear" class="inspection-clear-confirm">
         <p class="form-hint">
             Clear rejects all currently reviewable proposals and marks identifiable source sessions for reflection retry.
             Type <code>clear review queue</code> to confirm.
@@ -87,6 +70,7 @@
         <button type="submit">Clear review queue and re-reflect sources</button>
     </form>
     {% endif %}
+    {% if pending_proposals_complete is defined and not pending_proposals_complete %}<p class="form-errors" role="alert">Review queue is incomplete. Available proposals are shown; reload to retry the failed store.</p>{% endif %}
     {% if pending_proposals or (stats and stats.pending_observations > 0) %}
     {% if pending_proposals %}
     <table>
@@ -124,26 +108,16 @@
     </p>
     {% endif %}
     {% else %}
-    <p class="form-hint">Nothing awaiting review.</p>
+    {% if reviewable_proposal_count == 0 and (pending_proposals_complete | default(true)) %}<p class="form-hint">Nothing awaiting review.</p>{% elif reviewable_proposal_count is not none %}<p class="form-errors" role="alert">Review proposals could not be loaded. Reload to retry.</p>{% endif %}
     {% endif %}
 </div>
 
 <div class="box">
     <h3>Reflection performance</h3>
-    <p class="form-hint">
-        Recent sleep-time memory work across curation, archive harvest, recall indexing,
-        and context compaction. Queue wait is time from enqueue to start; runtime is time
-        from start to completion (or age while running).
-    </p>
+    <details><summary>Help: reflection timing</summary><p>Recent background memory work across curation, archive harvest, recall indexing and compaction. Queue wait measures enqueue to start; runtime measures start to completion, or current age while running.</p></details>
 
-    <div
-        style="
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
-            gap: 0.75rem;
-            margin: 1rem 0;
-        "
-    >
+    {% if reflection_run_summary %}
+    <div class="inspection-summary-grid">
         <div class="box" style="margin: 0"><strong>{{ reflection_run_summary.queued }}</strong><br />queued</div>
         <div class="box" style="margin: 0"><strong>{{ reflection_run_summary.running }}</strong><br />running</div>
         <div class="box" style="margin: 0"><strong>{{ reflection_run_summary.completed }}</strong><br />completed</div>
@@ -151,14 +125,9 @@
         <div class="box" style="margin: 0"><strong>{{ reflection_run_summary.avg_completed_duration_label | e }}</strong><br />avg runtime</div>
     </div>
 
-    <div
-        style="
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
-            gap: 0.75rem;
-            margin: 1rem 0;
-        "
-    >
+    {% else %}<p class="form-errors">Reflection summary unavailable. Reload to retry.</p>{% endif %}
+    {% if reflection_slo %}
+    <div class="inspection-summary-grid">
         <div class="box" style="margin: 0">
             <strong{% if reflection_slo.oldest_queued_attention %} class="form-errors"{% endif %}>{{ reflection_slo.oldest_queued_label | e }}</strong><br />oldest queued
         </div>
@@ -194,7 +163,8 @@
     </details>
     {% endif %}
 
-    <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 1rem 0;">
+    {% else %}<p class="form-errors">Reflection performance unavailable; no failure rate could be verified. Reload to retry.</p>{% endif %}
+    <div class="button-row">
         <span class="form-hint">Attention:</span>
         <a href="/bear/{{ bear.slug | e }}/memory?reflection_status=failed&amp;reflection_attention=failed_today"{% if reflection_run_filters.selected_attention == "failed_today" %} aria-current="page"{% endif %} style="border: 1px solid currentColor; border-radius: 999px; padding: 0.15rem 0.55rem;">failed today</a>
         <a href="/bear/{{ bear.slug | e }}/memory?reflection_status=queued&amp;reflection_attention=queued_over_10m"{% if reflection_run_filters.selected_attention == "queued_over_10m" %} aria-current="page"{% endif %} style="border: 1px solid currentColor; border-radius: 999px; padding: 0.15rem 0.55rem;">queued &gt; 10m</a>
@@ -204,7 +174,7 @@
         {% endif %}
     </div>
 
-    <form method="get" action="/bear/{{ bear.slug | e }}/memory" style="display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: end; margin: 1rem 0;">
+    <form method="get" action="/bear/{{ bear.slug | e }}/memory" class="den-management-form-row">
         <label>
             Lane<br />
             <select name="reflection_lane">
@@ -265,17 +235,15 @@
         </tbody>
     </table>
     {% else %}
-    <p class="form-hint">No reflection runs match these filters.</p>
+    {% if reflection_runs is none %}<p class="form-errors">Reflection runs unavailable. Reload to retry.</p>{% else %}<p class="form-hint">No reflection runs match these filters.</p>{% endif %}
     {% endif %}
 </div>
 
-<section
-    class="two-columns"
-    style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem"
->
+<section class="den-reach-grid">
     <div class="box">
         <h3>By kind</h3>
-        {% if by_kind %}
+        {% if by_kind is none %}<p class="form-errors">Kind counts unavailable.</p>
+        {% elif by_kind %}
         <table>
             <thead>
                 <tr>
@@ -299,7 +267,8 @@
 
     <div class="box">
         <h3>By profile / scope</h3>
-        {% if by_profile %}
+        {% if by_profile is none %}<p class="form-errors">Scope counts unavailable.</p>
+        {% elif by_profile %}
         <table>
             <thead>
                 <tr>
@@ -322,18 +291,15 @@
     </div>
 </section>
 
-<section
-    class="two-columns"
-    style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem"
->
+<section class="den-reach-grid">
     <div class="box">
         <h3>Derived recall index</h3>
         {% if recall %}
-        <p>
+        {% if recall.passages is not none %}<p>
             <strong>{{ recall.passages }}</strong> passages across
             <strong>{{ recall.memories }}</strong> records indexed for semantic
             recall.
-        </p>
+        </p>{% else %}<p class="form-errors">Recall coverage unavailable. See the read failure above or reload to retry.</p>{% endif %}
         {% if recall.watermark and recall.watermark.available %}
         <p>
             Watermark: indexed
@@ -358,21 +324,16 @@
             Watermark unavailable: {{ recall.watermark.reason | e }}
         </p>
         {% endif %}
-        <p class="form-hint">
-            Recall is enabled (Qdrant configured). Indexing runs asynchronously
-            after canonical writes.
-        </p>
+        <details><summary>Help: recall indexing</summary><p>Qdrant is configured. Passages are indexed asynchronously after canonical writes; the watermark records coverage and failures.</p></details>
         {% else %}
-        <p class="form-hint">
-            Recall index is not configured for this deployment (no
-            <code>QDRANT_URL</code>). Search falls back to keyword matching.
-        </p>
+        <p class="form-hint">Semantic recall is not configured in this deployment. Keyword search remains available.</p>
+        <details><summary>Help: recall configuration</summary><p>The derived index requires <code>QDRANT_URL</code> and an embedding service.</p></details>
         {% endif %}
     </div>
 
     <div class="box">
-        <h3>Entities <span class="form-hint">(ADR-0042)</span></h3>
-        <p>
+        <h3>Entities</h3>
+        {% if entity_summary %}<p>
             <strong>{{ entity_summary.total }}</strong> known {{
             entity_summary.total == 1 and "entity" or "entities" }}.
             <a href="/bear/{{ bear.slug | e }}/entities">Browse entities →</a>
@@ -396,15 +357,15 @@
         </table>
         {% else %}
         <p class="form-hint">
-            No entities resolved yet. The Bear populates these as it recognizes
-            people, work surfaces, missions, and other entities in its memory.
+            No entities recorded.
         </p>
         {% endif %}
+        {% else %}<p class="form-errors">Entity summary unavailable. <a href="/bear/{{ bear.slug | e }}/entities">Open entity inspection</a> or reload to retry.</p>{% endif %}
     </div>
 </section>
 
-<div class="box" id="legacy-memory-import">
-    <h3>Legacy memory upload</h3>
+<details class="box" id="legacy-memory-import"{% if import_error %} open{% endif %}>
+    <summary>Legacy migration: upload a memory bundle</summary>
     <p class="form-hint">
         Upload an archived legacy memory git bundle to import current memory heads into this
         Bear's SQLite store. Failed uploads are discarded after the importer
@@ -416,12 +377,10 @@
         the
         <code>admin</code> Bear access level from the Access page.
     </p>
-    {% endif %} {% if legacy_import_locked %}
-    <p class="form-hint">
-        This import is disabled because this Bear already has memory records.
-        Legacy bundle import is intended only for the initial backfill into an
-        empty Bear memory store.
-    </p>
+    {% endif %} {% if not stats %}
+    <p class="form-errors">Import is disabled because the memory store state could not be verified. Reload to retry before uploading.</p>
+    {% elif legacy_import_locked %}
+    <p class="form-hint">Import is disabled because this Bear already has memory records. Legacy migration requires an empty store.</p>
     {% endif %}
     <form
         method="post"
@@ -463,14 +422,14 @@
         </p>
     </form>
     <p class="form-hint">
-        Max upload size: 128 MiB. Expected format: git bundle. Current import
-        mode is heads-only.
+        Max upload size: 128 MiB. Use a self-contained git bundle with its legacy memory branch heads; incremental bundles requiring existing commits cannot be imported. Current import mode is heads-only. Den needs Git and writable import and temporary directories.
     </p>
-</div>
+</details>
 
 <div class="box">
     <h3>Recent additions</h3>
-    {% if recent %}
+    {% if recent is none %}<p class="form-errors">Recent additions unavailable. Reload to retry.</p>
+    {% elif recent %}
     <ul>
         {% for r in recent %}
         <li>
@@ -494,6 +453,7 @@
 <div class="box">
     <h3>Review &amp; governance</h3>
     <h4>Memory proposals</h4>
+    {% if proposals_complete is defined and not proposals_complete %}<p class="form-errors">Proposal list is incomplete. Available rows are shown; reload to retry the failed store.</p>{% endif %}
     {% if proposals %}
     <table>
         <thead>
@@ -525,11 +485,12 @@
         </tbody>
     </table>
     {% else %}
-    <p class="form-hint">No memory proposals.</p>
+    {% if proposals_complete | default(true) %}<p class="form-hint">No memory proposals.</p>{% endif %}
     {% endif %}
 
     <h4>Pair reflection runs</h4>
-    {% if pair_reflection_runs %}
+    {% if pair_reflection_runs is none %}<p class="form-errors">Pair reflection runs unavailable. Reload to retry.</p>
+    {% elif pair_reflection_runs %}
     <table>
         <thead>
             <tr>

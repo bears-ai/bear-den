@@ -1,0 +1,6 @@
+<details>
+  <summary>Help: reflection statuses</summary>
+  <p>Processed means the recorded checkpoint was inspected; zero candidates means no durable memory was found. Proposals still need review.</p>
+  <p>Live reflection uses normal compaction policy. Below threshold, no new content and live reflection disabled are normal skip states. Each skipped run retains its actual reason beside its status.</p>
+  <p>Manual reflection forces a fresh checkpoint. Failures and other blockers keep their explanation and any permitted Retry action beside the run. Payloads contain the recorded technical evidence.</p>
+</details>

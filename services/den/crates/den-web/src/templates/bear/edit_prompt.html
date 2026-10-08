@@ -1,19 +1,20 @@
 {% extends "bear/_manage.html" %}
 {% import "forms.jinja" as forms %}
 
-{% block title %}Edit system prompt · {{ bear.name | e }}{% endblock %}
+{% block title %}Edit Bear-wide steering · {{ bear.name | e }}{% endblock %}
 
 {% block manage %}
 <section>
-    <h2>System prompt</h2>
-    <p><a href="/bear/{{ bear.slug | e }}/overview">Back to bear</a></p>
-    {% if runtime_sync_error %}
-    <p class="form-errors"><strong>Runtime sync failed</strong>: {{ runtime_sync_error | e }}</p>
+    <h2>Bear-wide steering</h2>
+    <p><a href="/bear/{{ bear.slug | e }}/identity">Back to Purpose</a></p>
+    {% if provision_error %}
+    <div class="form-errors" role="alert"><p><strong>Saved, but Bear initialization failed.</strong> {{ provision_error | e }}</p><p>Your changes are saved in Den. Submit the saved values again to retry initialization, or <a href="/bear/{{ bear.slug | e }}/advanced">inspect diagnostics</a>.</p></div>
     {% endif %}
-    <form method="post" class="box full-width">
-        <label for="system_prompt_textarea" {% if errors and errors.system_prompt %}class="has-error"{% endif %}>System prompt</label>
+    <p class="form-hint">Applies to future turns across this Bear. Hat identity is separate; steering does not grant access.</p>
+    <form method="post" action="/bear/{{ bear.slug | e }}/edit/prompt" class="box full-width">
+        <label for="system_prompt_textarea" {% if errors and errors.system_prompt %}class="has-error"{% endif %}>Bear-wide steering</label>
         <div class="form-field{% if errors and errors.system_prompt %} has-error{% endif %}">
-            <textarea id="system_prompt_textarea" name="system_prompt" rows="12" cols="72">{{ form.system_prompt if form else '' }}</textarea>
+            <textarea id="system_prompt_textarea" name="system_prompt" rows="12" cols="72">{{ (form.system_prompt if form else '') | e }}</textarea>
             {% if errors and errors.system_prompt %}
             <span class="form-hint form-errors">Submission error: {{ errors.system_prompt | map(attribute="message", default="unknown error") | join(", ") }}</span>
             {% endif %}

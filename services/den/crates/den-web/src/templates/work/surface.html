@@ -2,6 +2,7 @@
 {% block title %}Repository · {{ name | e }}{% endblock %}
 {% block breadcrumb %}<a href="/connections">Connections</a> / <a href="/work/surfaces">Repositories</a>{% endblock %}
 {% block content %}
+<div class="usability-work">
 <p><a href="/work/surfaces">← Repositories</a></p>
 <h1><a href="/work/surfaces/{{ surface_reference.route_id }}" title="UUID prefix for {{ surface_reference.full_id }}">{{ surface_reference.kind }} <code class="entity-reference-id">{{ surface_reference.id }}</code>: {{ surface_reference.title }}</a></h1>
 
@@ -10,15 +11,185 @@
 {% endif %}
 
 <section>
-    <h2>Repository comparison</h2>
-    <p><a href="/work/surfaces/{{ surface_id }}/diff?base={{ default_ref | urlencode }}&head=origin%2FHEAD">Inspect default ref versus origin</a>. The provider reports resolved commits and its pristine worktree state.</p>
+    <h2>Readiness</h2>
+    {% if readiness_error %}<p role="alert">{{ readiness_error }}</p>{% endif %}
+    {% if provider_root_status %}
+    <p>
+        Repository: {% if provider_root_status.ok %}<strong>ready</strong>{% else %}<strong>not ready</strong>{% endif %}
+        {% if provider_root_status.detail and not provider_root_status.ok %}— {{ provider_root_status.detail }}{% endif %}
+    </p>
+    {% else %}
+    <p>Provider readiness has not been verified.</p>
+    {% endif %}
+    {% if provider_root_status and provider_root_status.ok and provider_root_status.detail %}<details><summary>Provider preparation details</summary><p>{{ provider_root_status.detail }}</p></details>{% endif %}
+    {% if provider_root_inspection and provider_root_inspection.origin_status != "in_sync" %}<p role="status">{% if provider_root_inspection.origin_status == "remote_differs" %}The upstream differs from the prepared repository. Use Test &amp; prepare to fetch current content.{% else %}Upstream inspection is unavailable. Check the account and upstream, then Test &amp; prepare.{% endif %}</p>{% endif %}
+    {% if provider_root_inspection %}
+    <details><summary>Provider snapshot &amp; diagnostics</summary>
+    <h3>Default ref snapshot</h3>
+    <p>
+        <code>{{ provider_root_inspection.default_ref }}</code> @
+        <code title="{{ provider_root_inspection.head }}">{{ provider_root_inspection.short_head }}</code>
+        — {{ provider_root_inspection.subject }}
+    </p>
+    <p>
+        Origin status:
+        {% if provider_root_inspection.origin_status == "in_sync" %}<strong>in sync</strong>
+        {% elif provider_root_inspection.origin_status == "remote_differs" %}<strong>remote differs; Test &amp; prepare to fetch</strong>
+        {% else %}<strong>remote unavailable</strong>{% endif %}
+        · {{ provider_root_inspection.files | length }} file(s)
+        · +{{ provider_root_inspection.additions }} / -{{ provider_root_inspection.deletions }} lines
+    </p>
+    {% if provider_root_inspection.files %}
+    <details>
+        <summary>Files in latest commit</summary>
+        <table>
+            <thead><tr><th>File</th><th>Added</th><th>Deleted</th></tr></thead>
+            <tbody>
+                {% for file in provider_root_inspection.files %}
+                <tr><td><code>{{ file.path }}</code></td><td>{{ file.additions if file.additions is not none else "binary" }}</td><td>{{ file.deletions if file.deletions is not none else "binary" }}</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </details>
+    {% endif %}
+    </details>
+    {% endif %}
+    <p>Test credentials and upstream access before dispatching. This prepares the repository but does not start work.</p>
+    <form method="post" action="/work/surfaces/{{ surface_id }}/sync">
+        <p><button type="submit">Test &amp; prepare</button></p>
+    </form>
+</section>
+
+<section id="connection">
+    <h2>Repository account</h2>
+    {% if linked_account %}
+    <p><strong>{{ linked_account.name }}</strong> · {{ linked_account.provider_label }} · {% if linked_account.state == "revoked" %}<strong>revoked</strong>{% elif linked_account.state == "unavailable" %}<strong>unavailable</strong>{% elif linked_account.github_app_write_enabled == false %}<strong>read-only — cannot publish repository changes</strong>{% else %}authorized; provider readiness is checked separately{% endif %}</p>
+    {% if linked_account.state != "available" %}<p role="alert">This linked account cannot authorize Work. Check the account owner's repository access and upstream compatibility, or attach a replacement account.</p>{% endif %}
+    <p>{% if linked_account.can_manage %}<a href="/connections#account-{{ linked_account.id }}">Manage this reusable account</a>{% else %}Only the account owner can revoke it. A repository manager can attach their own replacement account. <a href="/connections#repository-{{ linked_account.surface_id }}">Manage this repository's account link</a>.{% endif %}</p>
+    {% if linked_account.github_app_write_enabled == false %}<p role="alert">Publication is disabled on this reusable GitHub App account. Create or attach a write-enabled replacement in <a href="/connections#repository-{{ linked_account.surface_id }}">Connections</a>; provider preparation alone does not enable publication.</p>{% endif %}
+    <p>Authentication belongs to the reusable account. Local credential and local GitHub App edits are unavailable while it is linked. Replacement or detachment affects this repository; revocation affects every repository linked to that account. Previously cleared local credentials are not restored.</p>
+    {% else %}
+    <p>{% if credential_kind %}Local {{ credential_kind }} credential configured; its value is never displayed.{% elif github_app_installation_id %}Local GitHub App authorization configured below.{% else %}No account or local credential configured. Public read access alone does not imply permission to publish; Test &amp; prepare before dispatching.{% endif %} <a href="/connections">Attach a reusable account</a>.</p>
+    <details><summary>{% if credential_kind %}Replace local credential{% else %}Set local credential{% endif %}</summary>
+      <p>Changes only <strong>{{ name }}</strong>. Replacing permanently overwrites the local secret; assigned Bears' future Work uses the replacement.</p>
+      <details><summary>HTTPS access token</summary><form method="post" action="/work/surfaces/{{ surface_id }}/credential">
+        <input type="hidden" name="credential_kind" value="https_token">
+        <label>HTTPS access token <input type="password" name="credential_value" required autocomplete="new-password"></label>
+        <p>Use an HTTPS upstream without embedded credentials.</p><button type="submit">Save HTTPS token</button>
+      </form></details>
+      <details><summary>SSH private key</summary><form method="post" action="/work/surfaces/{{ surface_id }}/credential">
+        <input type="hidden" name="credential_kind" value="ssh_key">
+        <label>SSH private key <textarea name="credential_value" rows="6" required autocomplete="new-password" spellcheck="false"></textarea></label>
+        <p>Use an SSH or SCP-style upstream.</p><button type="submit">Save SSH key</button>
+      </form></details>
+    </details>
+    {% if credential_kind %}<form method="post" action="/work/surfaces/{{ surface_id }}/credential/clear">
+      <label><input type="checkbox" required>Clear {{ name }}'s local credential permanently; future Work cannot use it and this does not revoke the token/key at its provider.</label>
+      <button type="submit">Clear local credential</button>
+    </form>{% endif %}
+    {% endif %}
+</section>
+
+{% if not linked_account %}
+<details><summary>Local GitHub App authorization</summary>
+    <p>Only for a plain HTTPS upstream on github.com. Changes affect {{ name }} and its assigned Bears; replacing authorization does not revoke the installation at GitHub.</p>
+    {% if github_app_installation_id %}
+    <p>Installation <code>{{ github_app_installation_id }}</code> is authorized for {% if github_app_write_enabled %}read and write{% else %}read-only{% endif %} access.</p>
+    {% else %}
+    <p>No GitHub App installation is authorized.</p>
+    {% endif %}
+    <form method="post" action="/work/surfaces/{{ surface_id }}/github-app">
+        <p>
+            <label>Installation ID<br>
+                <input type="number" name="installation_id" min="1" required value="{{ github_app_installation_id or '' }}">
+            </label>
+        </p>
+        <p>
+            <label><input type="checkbox" name="write_enabled" value="true" {% if github_app_write_enabled %}checked{% endif %}> Allow publishing</label>
+        </p>
+        <p><button type="submit">{% if github_app_installation_id %}Update authorization{% else %}Authorize installation{% endif %}</button></p>
+    </form>
+    {% if github_app_installation_id %}
+    <form method="post" action="/work/surfaces/{{ surface_id }}/github-app/clear">
+        <label><input type="checkbox" required>Remove {{ name }}'s local App authorization. Future Work cannot use it; the GitHub installation itself is not revoked.</label>
+        <p><button type="submit">Clear GitHub App authorization</button></p>
+    </form>
+    {% endif %}
+</details>
+{% endif %}
+
+<section>
+    <h2>Managers</h2>
+    <table>
+        <thead><tr><th>User</th><th>Role</th><th></th></tr></thead>
+        <tbody>
+            {% for manager in managers %}
+            <tr>
+                <td>{{ manager.username }} ({{ manager.display_name }})</td>
+                <td>{{ manager.role }}</td>
+                <td>
+                    <form method="post" action="/work/surfaces/{{ surface_id }}/managers/revoke">
+                        <input type="hidden" name="user_id" value="{{ manager.user_id }}">
+                        <label><input type="checkbox" required>Revoke this person's repository-management access. If they own its reusable account, Work authentication may become unavailable.</label><button type="submit">Revoke manager</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <form method="post" action="/work/surfaces/{{ surface_id }}/managers/grant">
+        <p>
+            <label>Username <input type="text" name="username" required></label>
+            <label>Management role <select name="role">
+                <option value="manager">manager</option>
+                <option value="owner">owner</option>
+            </select></label>
+            <button type="submit">Grant</button>
+        </p>
+    </form>
 </section>
 
 <section>
-    <h2>Settings</h2>
+    <h2>Assigned bears</h2>
+    <p>Assignment makes this repository eligible for Jobs; a Work-enabled hat, repository grant and current Job authority are also required.</p>
+    {% if assigned_bears %}
+    <table>
+        <thead><tr><th>Bear</th><th></th></tr></thead>
+        <tbody>
+            {% for bear in assigned_bears %}
+            <tr>
+                <td>{{ bear.slug }} ({{ bear.display_name }})</td>
+                <td>
+                    <form method="post" action="/work/surfaces/{{ surface_id }}/bears/unassign">
+                        <input type="hidden" name="bear_id" value="{{ bear.bear_id }}">
+                        <label><input type="checkbox" required>Remove this Bear's repository assignment; future dispatch requires reassignment. Existing run history is retained.</label><button type="submit">Unassign Bear</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No Bears assigned yet — assign a Bear before creating Jobs on this repository.</p>
+    {% endif %}
+    {% if assignable_bears %}
+    <form method="post" action="/work/surfaces/{{ surface_id }}/bears/assign">
+        <p>
+            <label>Bear to assign <select name="bear_id" required>
+                {% for bear in assignable_bears %}
+                <option value="{{ bear[0] }}">{{ bear[1] }}</option>
+                {% endfor %}
+            </select></label>
+            <button type="submit">Assign bear</button>
+        </p>
+    </form>
+    {% endif %}
+</section>
+
+<details><summary>Repository settings</summary>
     <form method="post" action="/work/surfaces/{{ surface_id }}/update">
         <p>
-            <label>Name <small>(immutable — it is the provider root identity)</small><br>
+            <label>Name <small>(cannot be changed)</small><br>
                 <input type="text" value="{{ name }}" disabled>
             </label>
         </p>
@@ -56,187 +227,18 @@
         </p>
         <p><button type="submit">Save</button></p>
     </form>
-</section>
+</details>
+
+<details><summary>Repository comparison</summary>
+    <p><a href="/work/surfaces/{{ surface_id }}/diff?base={{ default_ref | urlencode }}&head=origin%2FHEAD">Inspect default ref versus origin</a>. The provider reports resolved commits and its pristine worktree state.</p>
+</details>
 
 <section>
-    <h2 id="connection">Credential</h2>
-    {% if credential_kind %}
-    <p>A <code>{{ credential_kind }}</code> credential is set (values are never shown). Submitting a new one replaces it.</p>
-    {% else %}
-    <p>No credential set — the upstream must be readable and pushable without one.</p>
-    {% endif %}
-    <form method="post" action="/work/surfaces/{{ surface_id }}/credential">
-        <p>
-            <label>Kind<br>
-                <select name="credential_kind" required>
-                    <option value="ssh_key">SSH private key (deploy key)</option>
-                    <option value="https_token">HTTPS token</option>
-                </select>
-            </label>
-        </p>
-        <p>
-            <label>Value<br>
-                <textarea name="credential_value" rows="6" cols="70" required></textarea>
-            </label>
-        </p>
-        <p><button type="submit">{% if credential_kind %}Replace credential{% else %}Set credential{% endif %}</button></p>
-    </form>
-    {% if credential_kind %}
-    <form method="post" action="/work/surfaces/{{ surface_id }}/credential/clear">
-        <p><button type="submit">Clear credential</button></p>
-    </form>
-    {% endif %}
-</section>
-
-<section>
-    <h2>GitHub App authorization</h2>
-    <p>Optional GitHub-specific authorization for this repository. Other Git hosts continue to use the generic credential above.</p>
-    {% if github_app_installation_id %}
-    <p>Installation <code>{{ github_app_installation_id }}</code> is authorized for {% if github_app_write_enabled %}read and write{% else %}read-only{% endif %} access.</p>
-    {% else %}
-    <p>No GitHub App installation is authorized.</p>
-    {% endif %}
-    <form method="post" action="/work/surfaces/{{ surface_id }}/github-app">
-        <p>
-            <label>Installation ID<br>
-                <input type="number" name="installation_id" min="1" required value="{{ github_app_installation_id or '' }}">
-            </label>
-        </p>
-        <p>
-            <label><input type="checkbox" name="write_enabled" value="true" {% if github_app_write_enabled %}checked{% endif %}> Allow publishing</label>
-        </p>
-        <p><button type="submit">{% if github_app_installation_id %}Update authorization{% else %}Authorize installation{% endif %}</button></p>
-    </form>
-    {% if github_app_installation_id %}
-    <form method="post" action="/work/surfaces/{{ surface_id }}/github-app/clear">
-        <p><button type="submit">Clear GitHub App authorization</button></p>
-    </form>
-    {% endif %}
-</section>
-
-<section>
-    <h2>Managers</h2>
-    <table>
-        <thead><tr><th>User</th><th>Role</th><th></th></tr></thead>
-        <tbody>
-            {% for manager in managers %}
-            <tr>
-                <td>{{ manager.username }} ({{ manager.display_name }})</td>
-                <td>{{ manager.role }}</td>
-                <td>
-                    <form method="post" action="/work/surfaces/{{ surface_id }}/managers/revoke">
-                        <input type="hidden" name="user_id" value="{{ manager.user_id }}">
-                        <button type="submit">Revoke</button>
-                    </form>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    <form method="post" action="/work/surfaces/{{ surface_id }}/managers/grant">
-        <p>
-            <input type="text" name="username" placeholder="username" required>
-            <select name="role">
-                <option value="manager">manager</option>
-                <option value="owner">owner</option>
-            </select>
-            <button type="submit">Grant</button>
-        </p>
+    <h2>Delete repository connection</h2>
+    <form method="post" action="/work/surfaces/{{ surface_id }}/delete">
+        <label><input type="checkbox" required>Delete this repository connection for all assigned Bears. Jobs keep history but cannot dispatch using it; this does not delete the upstream repository.</label>
+        <p><button type="submit">Delete repository connection</button></p>
     </form>
 </section>
-
-<section>
-    <h2>Assigned bears</h2>
-    <p>Any member of an assigned bear can create and dispatch jobs on this surface.</p>
-    {% if assigned_bears %}
-    <table>
-        <thead><tr><th>Bear</th><th></th></tr></thead>
-        <tbody>
-            {% for bear in assigned_bears %}
-            <tr>
-                <td>{{ bear.slug }} ({{ bear.display_name }})</td>
-                <td>
-                    <form method="post" action="/work/surfaces/{{ surface_id }}/bears/unassign">
-                        <input type="hidden" name="bear_id" value="{{ bear.bear_id }}">
-                        <button type="submit">Unassign</button>
-                    </form>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p>No bears assigned yet — jobs cannot dispatch onto this surface until one is.</p>
-    {% endif %}
-    {% if assignable_bears %}
-    <form method="post" action="/work/surfaces/{{ surface_id }}/bears/assign">
-        <p>
-            <select name="bear_id" required>
-                {% for bear in assignable_bears %}
-                <option value="{{ bear[0] }}">{{ bear[1] }}</option>
-                {% endfor %}
-            </select>
-            <button type="submit">Assign bear</button>
-        </p>
-    </form>
-    {% endif %}
-</section>
-
-<section>
-    <h2>Readiness</h2>
-    {% if provider_root_status %}
-    <p>
-        Provider root: {% if provider_root_status.ok %}<strong>ready</strong>{% else %}<strong>not ready</strong>{% endif %}
-        {% if provider_root_status.detail %}— {{ provider_root_status.detail }}{% endif %}
-    </p>
-    {% else %}
-    <p>Provider readiness has not been verified.</p>
-    {% endif %}
-    {% if provider_root_inspection %}
-    <h3>Default ref snapshot</h3>
-    <p>
-        <code>{{ provider_root_inspection.default_ref }}</code> @
-        <code title="{{ provider_root_inspection.head }}">{{ provider_root_inspection.short_head }}</code>
-        — {{ provider_root_inspection.subject }}
-    </p>
-    <p>
-        Origin status:
-        {% if provider_root_inspection.origin_status == "in_sync" %}<strong>in sync</strong>
-        {% elif provider_root_inspection.origin_status == "remote_differs" %}<strong>remote differs; Test &amp; prepare to fetch</strong>
-        {% else %}<strong>remote unavailable</strong>{% endif %}
-        · {{ provider_root_inspection.files | length }} file(s)
-        · +{{ provider_root_inspection.additions }} / -{{ provider_root_inspection.deletions }} lines
-    </p>
-    {% if provider_root_inspection.files %}
-    <details>
-        <summary>Files in latest commit</summary>
-        <table>
-            <thead><tr><th>File</th><th>Added</th><th>Deleted</th></tr></thead>
-            <tbody>
-                {% for file in provider_root_inspection.files %}
-                <tr><td><code>{{ file.path }}</code></td><td>{{ file.additions if file.additions is not none else "binary" }}</td><td>{{ file.deletions if file.deletions is not none else "binary" }}</td></tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </details>
-    {% endif %}
-    {% endif %}
-    <p>
-        <strong>Test &amp; prepare</strong> pushes current configuration, verifies credentials and
-        upstream reachability, clones/fetches the pristine mirror, and resolves the default ref.
-        This does not launch a work sandbox.
-    </p>
-    <form method="post" action="/work/surfaces/{{ surface_id }}/sync">
-        <p><button type="submit">Test &amp; prepare surface</button></p>
-    </form>
-    <p><small>Pushes are generated from successful run workspaces, not from the pristine surface mirror. Choose <strong>Publish after each task</strong> or <strong>Publish to the job branch</strong> on the job to publish automatically. Jobs publish only when their source change policy is <strong>Publish after each task</strong> or <strong>Publish to the job branch</strong>.</small></p>
-</section>
-
-<section>
-    <h2>Danger</h2>
-    <form method="post" action="/work/surfaces/{{ surface_id }}/delete"
-          onsubmit="return confirm('Delete this surface? Jobs referencing it keep their history but can no longer dispatch.')">
-        <p><button type="submit">Delete surface</button></p>
-    </form>
-</section>
+</div>
 {% endblock %}

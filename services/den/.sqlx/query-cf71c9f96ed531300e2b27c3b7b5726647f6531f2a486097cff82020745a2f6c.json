@@ -1,0 +1,59 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT g.id AS surface_id, c.id, c.name, c.provider, c.owner_user_id,\n        (c.revoked_at IS NOT NULL) AS \"revoked!\", c.github_app_write_enabled\n        FROM git_work_surface_details g JOIN provider_connections c ON c.id = g.connection_id\n        WHERE g.id = ANY($1) AND (\n            EXISTS (SELECT 1 FROM users u WHERE u.id = $2 AND u.is_admin)\n            OR EXISTS (SELECT 1 FROM work_surface_managers m WHERE m.surface_id = g.id AND m.user_id = $2)\n        )",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "surface_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "provider",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "owner_user_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 5,
+        "name": "revoked!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 6,
+        "name": "github_app_write_enabled",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      null,
+      false
+    ]
+  },
+  "hash": "cf71c9f96ed531300e2b27c3b7b5726647f6531f2a486097cff82020745a2f6c"
+}

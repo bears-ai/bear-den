@@ -1,0 +1,42 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT i.title AS page_title, p.title AS \"destination_title?\",\n            EXISTS (SELECT 1 FROM cabinet_ancestors(p.id) a WHERE a.id = i.id) AS \"cycle!\",\n            CASE WHEN p.id IS NULL THEN false ELSE\n                (SELECT count(*) FROM cabinet_ancestors(p.id)) +\n                (WITH RECURSIVE subtree AS (\n                    SELECT id, 1 AS depth FROM cabinet_items WHERE id = i.id\n                    UNION ALL SELECT child.id, subtree.depth + 1 FROM cabinet_items child\n                    JOIN subtree ON child.parent_item_id = subtree.id WHERE subtree.depth < 33\n                ) SELECT COALESCE(max(depth), 1) FROM subtree) > 32\n            END AS \"too_deep!\"\n        FROM cabinet_items i LEFT JOIN cabinet_items p ON p.cabinet_ref = $2\n        WHERE i.cabinet_ref = $1 AND cabinet_can_access(i.id, $3, NULL, true)\n            AND ($2::text IS NULL OR cabinet_can_access(p.id, $3, NULL, true))",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "page_title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "destination_title?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "cycle!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 3,
+        "name": "too_deep!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "3daf0b8c60109e5009eb7074128698521af6afecd7b38f7b2a6bb978e18cf1ca"
+}

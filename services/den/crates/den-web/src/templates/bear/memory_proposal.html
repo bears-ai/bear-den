@@ -6,6 +6,8 @@
 <section>
     <h2>Memory proposal</h2>
     <p><a href="/bear/{{ bear.slug | e }}/memory">Back to memory</a></p>
+    {% if saved %}<p role="status">The previous proposal resolution was saved.</p>{% endif %}
+    {% if errors %}<p class="form-errors" role="alert">{{ errors | e }}</p>{% endif %}
 
     <section class="box full-width">
         <h3>{{ proposal.title | e }}</h3>
@@ -48,7 +50,7 @@
         {% endif %}
 
         {% if proposal.extraction.is_memory_extraction %}
-        <h4>Extraction evidence</h4>
+        <details><summary>Extraction details · {{ proposal.extraction.source_message_count }} messages · {{ proposal.extraction.source_artifact_count }} artifacts</summary>
         <dl class="fields-grid">
             {% if proposal.extraction.source_kind %}<dt>Source kind</dt><dd><code>{{ proposal.extraction.source_kind | e }}</code></dd>{% endif %}
             {% if proposal.extraction.source_ref %}<dt>Source ref</dt><dd><code>{{ proposal.extraction.source_ref | e }}</code></dd>{% endif %}
@@ -66,6 +68,7 @@
             {% endfor %}
         </ul>
         {% endif %}
+        </details>
         {% endif %}
     </section>
 
@@ -74,19 +77,21 @@
         {% if proposal.source_paths and proposal.source_paths | length > 0 %}
         <ul>
             {% for path in proposal.source_paths %}
-            <li><a href="/bear/{{ bear.slug | e }}/memory?role={{ proposal.source_profile | e }}&path={{ path | urlencode }}"><code>{{ path | e }}</code></a></li>
+            <li><a href="/bear/{{ bear.slug | e }}/memory/browse"><code>{{ path | e }}</code></a></li>
             {% endfor %}
         </ul>
         {% else %}
         <p class="form-hint">No source paths recorded.</p>
         {% endif %}
         {% if proposal.source_refs and proposal.source_refs.conversation_id %}
-        <p class="form-hint">Formed in conversation <code>{{ proposal.source_refs.conversation_id | e }}</code>.</p>
+        <p class="form-hint">Source conversation: <a href="/bear/{{ bear.slug | e }}/conversations/{{ proposal.source_refs.conversation_id | urlencode }}"><code>{{ proposal.source_refs.conversation_id | e }}</code></a>.</p>
         {% endif %}
+        <details><summary>Full source and memory references</summary>
         <h4>Source references</h4>
         <pre style="white-space: pre-wrap; max-height: 12rem; overflow: auto;">{{ proposal.source_refs | tojson(indent=2) }}</pre>
         <h4>Memory references</h4>
         <pre style="white-space: pre-wrap; max-height: 12rem; overflow: auto;">{{ proposal.refs | tojson(indent=2) }}</pre>
+        </details>
     </section>
 
     {% if can_manage_bear %}
@@ -96,16 +101,18 @@
         <form method="post" action="/bear/{{ bear.slug | e }}/memory/proposals/{{ proposal.id }}" class="fields-grid">
             <label for="proposal-status">Resolution</label>
             <select id="proposal-status" name="status">
-                <option value="deferred">Deferred</option>
-                <option value="retained_local">Retained local</option>
-                <option value="rejected">Rejected</option>
-                <option value="superseded">Superseded</option>
-                <option value="needs_human_review">Needs human review</option>
+                {% set selection = form.status if form else proposal.status %}
+                {% if form and selection not in ["deferred", "retained_local", "rejected", "superseded", "needs_human_review"] %}<option value="{{ selection | e }}" selected>Unsupported: {{ selection | e }}</option>{% endif %}
+                <option value="deferred"{% if selection in ["deferred", "pending"] %} selected{% endif %}>Deferred</option>
+                <option value="retained_local"{% if selection == "retained_local" %} selected{% endif %}>Retained local</option>
+                <option value="rejected"{% if selection == "rejected" %} selected{% endif %}>Rejected</option>
+                <option value="superseded"{% if selection == "superseded" %} selected{% endif %}>Superseded</option>
+                <option value="needs_human_review"{% if selection == "needs_human_review" %} selected{% endif %}>Needs human review</option>
             </select>
             <label for="decision-summary">Decision summary</label>
-            <textarea id="decision-summary" name="decision_summary" rows="3"></textarea>
+            <textarea id="decision-summary" name="decision_summary" rows="3">{{ (form.decision_summary if form else proposal.decision_summary) | default("", true) | e }}</textarea>
             <label for="review-notes">Review notes</label>
-            <textarea id="review-notes" name="review_notes" rows="4"></textarea>
+            <textarea id="review-notes" name="review_notes" rows="4">{{ (form.review_notes if form else proposal.review_notes) | default("", true) | e }}</textarea>
             <div></div>
             <div>
                 <button type="submit" name="after_save" value="list">Save and return to list</button>

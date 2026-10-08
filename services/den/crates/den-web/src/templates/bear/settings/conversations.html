@@ -5,12 +5,14 @@
 {% block manage %}
 <div class="box">
 <h2>Activity</h2>
-<p class="form-hint">What this Bear has done, on this Den: conversations now, jobs and Cabinet activity as they land. The record stays here — the Bear's memory is what travels.</p>
+<p class="form-hint">Persisted conversations and reflection activity in this Den.</p>
+{% if message %}<p role="status"><strong>{{ message | e }}</strong></p>{% endif %}
+{% if error %}<p class="form-errors" role="alert">{{ error | e }}</p>{% endif %}
 
 <h3>Live reflection</h3>
 <dl>
   <dt>Status</dt>
-  <dd><strong>{{ live_reflection_status.status_label | e }}</strong><br><small>{{ live_reflection_status.status_explanation | e }}</small></dd>
+  <dd><strong>{{ live_reflection_status.status_label | e }}</strong>{% if not live_reflection_status.enabled or not live_reflection_status.workers_enabled or not live_reflection_status.last_event_at %}<br><small>{{ live_reflection_status.status_explanation | e }}</small>{% endif %}</dd>
   <dt>Bear setting</dt>
   <dd>{% if live_reflection_status.enabled %}On{% else %}Off{% endif %}</dd>
   <dt>Background worker</dt>
@@ -21,17 +23,9 @@
   <dd>{{ live_reflection_status.checked_24h }} checked, {{ live_reflection_status.processed_24h }} reflected, {{ live_reflection_status.skipped_24h }} skipped</dd>
 </dl>
 
+<p><a href="/bear/{{ bear.slug | e }}/advanced">Live reflection settings</a> · <a href="/bear/{{ bear.slug | e }}/reflections">Reflection outcomes and retries</a> · <a href="/bear/{{ bear.slug | e }}/memory">Memory review queue</a>.</p>
 <h3>Conversations</h3>
-
-{% if message %}<p><strong>{{ message | e }}</strong></p>{% endif %}
-{% if error %}<p><strong>{{ error | e }}</strong></p>{% endif %}
-
-<p class="form-hint">
-  <strong>Live reflection</strong> is the background sweep: it checks open conversations and may reflect when normal context-pressure policy produces a summary. <strong>Manual reflection checkpoint</strong> is different: the buttons below force a fresh checkpoint first, then mine that checkpoint for memory proposals.
-  Review accepted/queued outcomes in the <a href="/bear/{{ bear.slug | e }}/memory">Memory review queue</a>.
-</p>
-
-<p class="form-hint">Legacy compaction event status is unavailable here because events are not keyed to a Bear. Conversation-scoped artifacts remain available in each conversation.</p>
+<p class="form-hint">Reflect requests a fresh checkpoint and memory proposals. Select at most 25 conversations per action; notes remain private until reviewed and promoted.</p>
 
 {% if conversations and conversations | length > 0 %}
 <form method="post" action="/bear/{{ bear.slug }}/conversations/reflect">
@@ -69,10 +63,7 @@
 <p><em>No persisted conversations yet.</em></p>
 {% endif %}
 
-<h3>Jobs</h3>
-<p class="form-hint">Structured, dispatched work. The <code>work</code> stance sandbox is not built yet in this Den, so there are no jobs to show — when it lands, you will create, dispatch, and prioritize jobs here, and each run will link back to the conversation that spawned it.</p>
-
-<h3>Cabinet</h3>
-<p class="form-hint">Shared knowledge-base activity (creates, edits, comments) will appear here when Cabinet is deployed with this Den.</p>
+<p><a href="/bear/{{ bear.slug | e }}/jobs">Inspect Jobs</a> · <a href="/cabinet">Open Cabinet</a>.</p>
+<details><summary>Help: live and manual reflection</summary><p>Live sweeps check open conversations using normal compaction policy. Manual reflection requests a fresh checkpoint before discovering memory proposals. Conversation pages retain their scoped artifacts and reflection evidence.</p></details>
 </div>
 {% endblock %}

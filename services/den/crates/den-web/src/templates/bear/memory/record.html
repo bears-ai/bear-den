@@ -10,6 +10,7 @@
   <h2>Memory entry
     {% if is_head %}<span class="form-hint">(current head)</span>{% else %}<span class="form-hint">(superseded version)</span>{% endif %}
   </h2>
+  {% if inspection_errors %}<ul class="form-errors" role="alert">{% for error in inspection_errors %}<li>{{ error | e }}</li>{% endfor %}</ul>{% endif %}
   <p class="button-row"><a href="/bear/{{ bear.slug }}/memory/browse">Back to library</a><a href="/bear/{{ bear.slug }}/memory/browse#memory-delete-form">Request review or remove a supported path</a><a href="/bear/{{ bear.slug }}/hats">Reviewed hat/core corrections</a></p>
 
   <dl>
@@ -26,7 +27,7 @@
     {% endif %}
     <dt>Created</dt><dd>{{ record.created_at | e }}</dd>
   </dl>
-  <p class="form-hint">Source-conversation links are not yet recorded for memory entries.</p>
+  <details><summary>Help: provenance and versions</summary><p>Inspect the recorded author, scope, metadata and linked records for provenance. This view does not supply a source-conversation link. Path history selects the current entry by recency.</p></details>
 </div>
 
 <div class="box">
@@ -34,11 +35,11 @@
   <pre class="bear-manage-prompt-preview">{{ record.content_text | e }}</pre>
 </div>
 
-<section class="two-columns" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+<section class="den-reach-grid">
   <div class="box">
     <h3>History at this path</h3>
     {% if history %}
-    <p class="form-hint">All versions at this logical path, newest first. The newest is the current head (supersession is by recency today).</p>
+    <p class="form-hint">Recorded versions, newest first.</p>
     <ul>
       {% for h in history %}
       <li>
@@ -59,7 +60,8 @@
 
   <div class="box">
     <h3>Referenced entities</h3>
-    {% if entities %}
+    {% if entities_available is defined and not entities_available %}<p class="form-errors">Referenced entities unavailable. Reload to retry.</p>
+    {% elif entities %}
     <ul>
       {% for ent in entities %}
       <li>
@@ -74,7 +76,7 @@
 
     <h3>Recall index</h3>
     {% if recall %}
-    <p>{{ recall.passages }} passage{{ recall.passages == 1 and "" or "s" }} indexed for semantic recall.</p>
+    {% if recall.passages is not none %}<p>{{ recall.passages }} passage{{ recall.passages == 1 and "" or "s" }} indexed for semantic recall.</p>{% else %}<p class="form-errors">Recall coverage unavailable. See the read failure above or reload to retry.</p>{% endif %}
     {% else %}
     <p class="form-hint">Recall index not configured.</p>
     {% endif %}

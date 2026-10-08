@@ -1,7 +1,10 @@
 // ROUTES: When modifying routes in this file, update /src/web/ROUTES.md
 pub mod account;
+mod form_feedback;
 pub mod session;
 pub mod settings;
+#[cfg(test)]
+mod usability_tests;
 
 use axum::Router;
 use axum_login::login_required;

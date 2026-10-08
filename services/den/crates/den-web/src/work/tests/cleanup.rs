@@ -363,7 +363,7 @@ async fn cleanup_history_and_manual_retry_are_owner_and_membership_scoped(pool: 
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("PRIVATE RECOVERY FILE"));
     assert!(html.contains("RECOVERY PAGE"));
-    assert!(!html.contains("Retry cleanup"));
+    assert!(!html.contains("Retry file removal"));
     let (_, peer_html) = get_page(&app, &peer_cookie, "/cabinet/uploads").await;
     assert!(!peer_html.contains("PRIVATE RECOVERY FILE"));
     assert!(!peer_html.contains(reference));
@@ -404,7 +404,7 @@ async fn cleanup_history_and_manual_retry_are_owner_and_membership_scoped(pool: 
     .await
     .unwrap();
     let (_, html) = get_page(&app, &cookie, "/cabinet/uploads").await;
-    assert!(html.contains("Retry cleanup"));
+    assert!(html.contains("Retry file removal"));
     assert!(!html.contains("HIDDEN RECOVERY SOURCE"));
     assert!(!html.contains(foreign_page.as_str()));
     let done = post_form(&app, &cookie, &url, String::new()).await;

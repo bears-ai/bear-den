@@ -12,7 +12,7 @@
     <p class="button-row"><a class="button-link" href="/bear/{{ bear.slug | urlencode }}/memory#review-queue">Review memory</a><a href="/bear/{{ bear.slug | urlencode }}/hats">Hat Work eligibility</a><a href="/bear/{{ bear.slug | urlencode }}/jobs">Inspect Jobs</a><a href="/bear/{{ bear.slug | urlencode }}/skills">Review Skills</a></p>
   </section>
   {% endfor %}
-  {% else %}<section class="box"><h2>No review access</h2><p>Memory proposals and Work eligibility reviews require Bear-admin access. Your permitted conversations and Jobs remain available from <a href="/">Bears</a>.</p></section>{% endif %}
+  {% else %}<section class="box"><h2>No Bear-admin reviews in this scope</h2><p>Memory proposals and Work eligibility reviews require Bear-admin access. Cabinet review grants are separate and any eligible Cabinet versions appear below. Your permitted conversations and Jobs remain available from <a href="/">Bears</a>.</p></section>{% endif %}
   {% if cabinet_reviews %}<section class="box"><h2>Shared Cabinet versions</h2><ul>{% for entry in cabinet_reviews %}<li><a href="/cabinet/{{ entry.cabinet_ref }}?version={{ entry.version_ref }}">{{ entry.title | e }} · revision {{ entry.revision }}</a></li>{% endfor %}</ul></section>{% endif %}
   <details class="box"><summary>Which decisions appear here?</summary><p>These summaries link to the records that own each decision; the inbox does not copy approval state. Cabinet versions appear only when you hold the current page-review grant. Skill drafts and installation choices are reviewed on the Skills page. A combined Job-approval inbox is not yet available.</p><a href="/cabinet">Open Cabinet</a></details>
 </main>

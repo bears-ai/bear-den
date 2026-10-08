@@ -2,6 +2,7 @@
 {% block title %}{{ item_title }}{% endblock %}
 {% block breadcrumb %}<a href="/">Bears</a> / <a href="/cabinet">Cabinet</a>{% endblock %}
 {% block content %}
+<div class="usability-work">
 <p><a href="/cabinet">← Cabinet</a></p>
 
 {% if message %}
@@ -26,92 +27,15 @@
 {% endif %}
 
 <h1>{{ item_title | e }}</h1>
-<p class="button-row">{% if is_current and lifecycle == "active" %}<a class="button-link" href="/cabinet/{{ cabinet_ref }}/edit">Edit page</a>{% endif %}<a href="/cabinet/{{ cabinet_ref }}/history">Versions &amp; authors</a><a href="#sources">Sources</a></p>
+<p class="button-row">{% if is_current and lifecycle == "active" and page.can_write %}<a class="button-link" href="/cabinet/{{ cabinet_ref }}/edit">Edit page</a>{% endif %}<a href="/cabinet/{{ cabinet_ref }}/history">Versions &amp; authors</a><a href="#sources">Sources</a></p>
 <article>
 {{ content | markdown }}
 </article>
-
-<section>
-    <h2 id="sources">Sources</h2>
-    {% if sources %}
-    <ul>
-        {% for source in sources %}
-        <li>
-            {{ source.role }} ({{ source.kind }}):
-            {% if source.kind == "url" %}
-            <a href="{{ source.locator }}" rel="noreferrer">{{ source.locator }}</a>
-            {% else %}
-            <code>{{ source.locator }}</code>
-            {% endif %}
-            {% if lifecycle == "active" %}
-            <form method="post" action="/cabinet/{{ cabinet_ref }}/sources/{{ source.ref }}/remove">
-                <button type="submit">Remove</button>
-            </form>
-            {% endif %}
-        </li>
-        {% endfor %}
-    </ul>
-    {% else %}
-    <p>No sources recorded. Sources say where this knowledge came from; Cabinet stores the link, not the linked content.</p>
-    {% endif %}
-
-    {% if lifecycle == "active" %}
-    <form method="post" action="/cabinet/{{ cabinet_ref }}/sources">
-        <label for="source_kind">Kind</label>
-        <select id="source_kind" name="source_kind">
-            <option value="url">url</option>
-            <option value="offline">offline</option>
-            <option value="artifact">artifact</option>
-            <option value="conversation">conversation</option>
-            <option value="external_record">external_record</option>
-        </select>
-        <label for="locator">Locator</label>
-        <input id="locator" name="locator" required placeholder="https://... or book://isbn/...">
-        <label for="role">Role</label>
-        <select id="role" name="role">
-            <option value="origin">origin</option>
-            <option value="citation">citation</option>
-            <option value="related">related</option>
-        </select>
-        <button type="submit">Link source</button>
-    </form>
-    {% endif %}
-</section>
-
-<hr>
-<p>
-    Revision {{ revision }} · {{ authored_at | timeago }} ·
-    {% if authored_by.actor_kind == "bear" %}by a Bear ({{ authored_by.stance }} stance){% else %}by a person{% endif %}
-</p>
-<p>
-    {% if is_current and lifecycle == "active" %}
-    <a href="/cabinet/{{ cabinet_ref }}/edit">Edit</a> ·
-    {% endif %}
-    <a href="/cabinet/{{ cabinet_ref }}/history">History</a>
-</p>
-{% if is_current and lifecycle == "active" %}
-<form method="post" action="/cabinet/{{ cabinet_ref }}/archive">
-    <button type="submit">Archive page</button>
-</form>
-{% endif %}
-{% if is_current and lifecycle != "deleted" %}
-<form method="post" action="/cabinet/{{ cabinet_ref }}/delete"
-      onsubmit="return confirm('Delete this item? It leaves Cabinet for everyone. Existing citations of its revisions keep working. Bears cannot do this.');">
-    <button type="submit">Delete page</button>
-</form>
-{% endif %}
-
+{% include "cabinet/_audience.html" %}
 <section class="box"><h2>Child pages</h2>{% if page.parent %}<p>Parent: <a href="/cabinet/{{ page.parent }}">Open parent page</a></p>{% endif %}
 {% if children %}<ul>{% for child in children %}<li><a href="/cabinet/{{ child.reference }}">{{ child.title | e }}</a></li>{% endfor %}</ul>{% else %}<p>No visible published child pages.</p>{% endif %}
 {% if page.can_write %}<a class="button-link" href="/cabinet/new?parent={{ cabinet_ref | urlencode }}">New child page</a>{% endif %}
 </section>
-<details class="box"><summary>Access &amp; organization</summary>
-<p>Effective Bear-write review: {% if page.review_required %}required{% else %}direct publication{% endif %}. Ancestor restrictions remain in force.</p>
-{% if page.can_manage %}<form method="post" action="/cabinet/{{ cabinet_ref }}/policy"><label>People (usernames, comma-separated; include yourself for a restricted page) <input name="people" value="{{ people_names | join(", ") | e }}"></label><label>Bears (handles, comma-separated) <input name="bears" value="{{ bear_names | join(", ") | e }}"></label><label>Human reviewers (usernames) <input name="reviewers" value="{{ reviewer_names | join(", ") | e }}"></label><label><input type="checkbox" name="bears_may_write" value="true" {% if not page.policy or page.policy.bears_may_write %}checked{% endif %}>Bears may write if otherwise authorized</label><label><input type="checkbox" name="review_required" value="true" {% if page.policy and page.policy.review_required %}checked{% endif %}>Require human review of Bear-written versions</label><label><input type="checkbox" name="confirm_audience" value="true" required>I reviewed who can read this page and its children.</label><button type="submit">Save page access</button></form>{% endif %}
-{% if page.can_write %}<form method="post" action="/cabinet/{{ cabinet_ref }}/organize"><label>Move under <select name="parent"><option value="">Cabinet root</option>{% for destination in destinations %}{% if destination.cabinet_ref != cabinet_ref %}<option value="{{ destination.cabinet_ref }}" {% if page.parent==destination.cabinet_ref %}selected{% endif %}>{{ destination.title | e }}</option>{% endif %}{% endfor %}</select></label><label>Sibling position <input type="number" name="position" min="0" value="{{ page.position }}" required></label><label><input type="checkbox" name="confirm_audience" value="true" required>I reviewed the destination audience. Moving changes inherited access for this page and its children.</label><button type="submit">Move or reorder</button></form>{% endif %}
-</details>
-{% if review=="pending" and page.can_review %}<section class="box"><h2>Review this unpublished version</h2>{% if proposed_title %}<p>Proposed title: <strong>{{ proposed_title | e }}</strong></p>{% endif %}<form method="post" action="/cabinet/{{ cabinet_ref }}/review"><input type="hidden" name="version" value="{{ version_ref }}"><label>Rationale <textarea name="rationale" maxlength="4000" required></textarea></label><button name="decision" value="approved">Approve publication</button><button name="decision" value="rejected">Reject version</button></form><p>A changed published base blocks approval; no silent merge.</p></section>{% endif %}
-
 <section class="box">
     <h2 id="attachments">Attachments</h2>
     {% if attachments %}
@@ -124,7 +48,7 @@
             <a href="/cabinet/{{ cabinet_ref }}/attachments/{{ attachment.reference }}/content">Download</a>
             {% else %}<span class="form-hint">File storage is not configured</span>{% endif %}
             {% if page.can_write %}
-            <form method="post" action="/cabinet/{{ cabinet_ref }}/attachments/{{ attachment.reference }}/remove"><button type="submit">Detach</button></form>
+            <form method="post" action="/cabinet/{{ cabinet_ref }}/attachments/{{ attachment.reference }}/remove"><label><input type="checkbox" required>Detach this file from the page. This removes a retaining link; after the last retaining link is removed, its bytes may become eligible for permanent cleanup. Other links and independent saved copies are not restored or removed by this action.</label><button type="submit">Detach file</button></form>
             {% endif %}
         </li>
         {% endfor %}
@@ -133,20 +57,20 @@
     {% if page.can_write %}
     {% if byte_storage_enabled and upload_bears and lifecycle == "active" %}
     <form method="post" enctype="multipart/form-data" action="/cabinet/{{ cabinet_ref }}/attachments/upload">
-        <label>File <input type="file" name="file" required></label>
+        <label>File (maximum 16 MiB) <input type="file" name="file" required></label>
         <label>Bear <select name="bear_id" required>{% for bear in upload_bears %}<option value="{{ bear.id }}">{{ bear.name | e }}</option>{% endfor %}</select></label>
         <label>File use <select name="role"><option value="other">Other</option><option value="source_pdf">Source PDF</option><option value="generated_report">Generated report</option><option value="image">Image</option><option value="data">Data</option></select></label>
         <label><input type="checkbox" name="share_with_bear" value="true">Share with this Bear and its members</label>
         <button type="submit">Upload file</button>
-        <details><summary>File access and limits</summary><p>Private to you unless you choose to share. Linking never gives additional page readers file access. Maximum 16 MiB. The page retains the file until its last retaining link is removed.</p></details>
+        <p>Private to you unless you choose to share with this Bear and its members. Page readers do not automatically receive file access. The page retains the bytes until the last retaining link is removed.</p>
     </form>
     {% elif not byte_storage_enabled %}<p>File uploads are unavailable: this Den has no file storage configured.</p>
     {% elif lifecycle != "active" %}<p>Restore this page before uploading files.</p>
     {% else %}<p>File uploads require membership in a Bear.</p>{% endif %}
     <details>
-        <summary>Link an existing artifact</summary>
+        <summary>Link an existing saved file</summary>
         <form method="post" action="/cabinet/{{ cabinet_ref }}/attachments">
-            <label>Artifact reference <input name="artifact_ref" required placeholder="artifact_…"></label>
+            <label>Saved file reference <input name="artifact_ref" required placeholder="artifact_…"></label>
             <label>File use <select name="role"><option value="source_pdf">Source PDF</option><option value="generated_report">Generated report</option><option value="image">Image</option><option value="data">Data</option><option value="other">Other</option></select></label>
             <button type="submit">Link existing file</button>
         </form>
@@ -154,4 +78,84 @@
     </details>
     {% endif %}
 </section>
+<section>
+    <h2 id="sources">Sources</h2>
+    {% if sources %}
+    <ul>
+        {% for source in sources %}
+        <li>
+            {% if source.role == "origin" %}Original source{% elif source.role == "citation" %}Citation{% else %}Related material{% endif %}:
+            {% if source.kind == "url" %}
+            <a href="{{ source.locator }}" rel="noreferrer">{{ source.locator }}</a>
+            {% else %}
+            <code>{{ source.locator }}</code>
+            {% endif %}
+            {% if lifecycle == "active" and page.can_write %}
+            <details><summary>Remove source link</summary><form method="post" action="/cabinet/{{ cabinet_ref }}/sources/{{ source.ref }}/remove">
+                <label><input type="checkbox" required>Remove this source reference from the page; the original content is not deleted.</label><button type="submit">Remove source link</button>
+            </form></details>
+            {% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p>No sources recorded.</p>
+    {% endif %}
+
+    {% if lifecycle == "active" and page.can_write %}
+    <details><summary>Add source</summary>
+    <p>Record where this knowledge came from. Cabinet stores the reference, not a copy of the linked content.</p>
+    <form method="post" action="/cabinet/{{ cabinet_ref }}/sources">
+        <label for="source_kind">Source type</label>
+        <select id="source_kind" name="source_kind">
+            <option value="url">Web URL</option>
+            <option value="offline">Offline source (book, document)</option>
+            <option value="artifact">Saved artifact</option>
+            <option value="conversation">Conversation reference</option>
+            <option value="external_record">External record</option>
+        </select>
+        <label for="locator">URL or source reference</label>
+        <input id="locator" name="locator" required placeholder="https://... or book://isbn/...">
+        <label for="role">Relationship to page</label>
+        <select id="role" name="role">
+            <option value="origin">Original source</option>
+            <option value="citation">Citation</option>
+            <option value="related">Related material</option>
+        </select>
+        <button type="submit">Link source</button>
+    </form>
+    </details>
+    {% endif %}
+</section>
+
+{% if review=="pending" and page.can_review %}<section class="box"><h2>Review this unpublished version</h2>{% if proposed_title %}<p>Proposed title: <strong>{{ proposed_title | e }}</strong></p>{% endif %}{% include "cabinet/_audience.html" %}<form method="post" action="/cabinet/{{ cabinet_ref }}/review"><input type="hidden" name="version" value="{{ version_ref }}"><label>Rationale <textarea name="rationale" maxlength="4000" required></textarea></label><button name="decision" value="approved">Approve publication</button><button name="decision" value="rejected">Reject version</button></form><details><summary>How approval is checked</summary><p>Approval fails if another revision has changed the published base. Reload and review the current content; Den does not merge silently.</p></details></section>{% endif %}
+
+<details class="box"><summary>Access &amp; organization</summary>
+<p>Effective Bear-write review: {% if page.review_required %}required{% else %}direct publication{% endif %}. Ancestor restrictions remain in force.</p>
+<p>Blank <strong>People and Bears together</strong> means no local membership restriction, not private and not nobody. At the root that is open wiki; under a parent its restrictions still apply. When either list has entries, only the listed people/Bears who also satisfy every ancestor restriction can read. Human reviewers do not gain readership merely by being named.</p>
+{% if page.can_manage %}<form method="post" action="/cabinet/{{ cabinet_ref }}/policy"><label>People (usernames, comma-separated; include yourself for a restricted page) <input name="people" value="{{ people_names | join(", ") | e }}"></label><label>Bears (handles, comma-separated) <input name="bears" value="{{ bear_names | join(", ") | e }}"></label><label>Human reviewers (usernames) <input name="reviewers" value="{{ reviewer_names | join(", ") | e }}"></label><label><input type="checkbox" name="bears_may_write" value="true" {% if not page.policy or page.policy.bears_may_write %}checked{% endif %}>Bears may write if otherwise authorized</label><label><input type="checkbox" name="review_required" value="true" {% if page.policy and page.policy.review_required %}checked{% endif %}>Require human review of Bear-written versions</label><label><input type="checkbox" name="confirm_audience" value="true" required>I reviewed the current audience above, the entered membership and inherited restrictions for this page and its children.</label><button type="submit">Save page access</button></form>{% endif %}
+{% if page.can_write %}<form method="get" action="/cabinet/{{ cabinet_ref }}/move"><label>Move under <select name="parent"><option value="">Cabinet root</option>{% for destination in destinations %}{% if destination.cabinet_ref != cabinet_ref %}<option value="{{ destination.cabinet_ref }}" {% if page.parent==destination.cabinet_ref %}selected{% endif %}>{{ destination.title | e }}</option>{% endif %}{% endfor %}</select></label><label>Sibling position <input type="number" name="position" min="0" value="{{ page.position }}" required></label><p>Preview the resulting effective audience before confirming. Moving changes inherited access for this page and its children.</p><button type="submit">Review move audience</button></form>{% endif %}
+</details>
+<details class="box"><summary>Page history details &amp; maintenance</summary>
+<hr>
+<p>
+    Revision {{ revision }} · {{ authored_at | timeago }} ·
+    {% if authored_by.actor_kind == "bear" %}by a Bear ({{ authored_by.stance }} stance){% else %}by a person{% endif %}
+</p>
+{% if is_current and lifecycle == "active" %}
+<form method="post" action="/cabinet/{{ cabinet_ref }}/archive">
+    <label><input type="checkbox" required>Archive this page from active browsing; published history remains available.</label><button type="submit">Archive page</button>
+</form>
+{% endif %}
+{% if is_current and lifecycle != "deleted" %}
+<form method="post" action="/cabinet/{{ cabinet_ref }}/delete">
+    <label><input type="checkbox" required>Delete this page from Cabinet for everyone. Existing revision citations remain, but ordinary navigation and access to this subtree stop. This does not erase independent saved copies. Bears cannot delete pages.</label>
+    <button type="submit">Delete page</button>
+</form>
+{% endif %}
+
+</details>
+
+
+</div>
 {% endblock %}

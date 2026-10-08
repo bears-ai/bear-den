@@ -28,11 +28,11 @@ pub fn router() -> Router<AppState> {
 
 #[derive(Validate, Serialize, Deserialize, Debug)]
 pub struct GrantMembershipForm {
-    #[validate(range(min = 1))]
+    #[validate(range(min = 1, message = "Choose an existing user."))]
     user_id: i32,
-    #[validate(length(min = 1))]
+    #[validate(length(min = 1, message = "Choose an existing Bear."))]
     bear_id: String,
-    #[validate(length(max = 64))]
+    #[validate(length(max = 64, message = "Choose Member or Admin."))]
     role: String,
 }
 
@@ -82,7 +82,7 @@ pub async fn grant_action(
     if bear_id.is_none() {
         validation_errors.add(
             "bear_id",
-            ValidationError::new("bear_id must be a valid UUID"),
+            ValidationError::new("invalid_bear").with_message("Choose an existing Bear.".into()),
         );
     }
 
@@ -90,22 +90,36 @@ pub async fn grant_action(
         .await?
         .is_none()
     {
-        validation_errors.add("user_id", ValidationError::new("User not found."));
+        validation_errors.add(
+            "user_id",
+            ValidationError::new("unknown_user").with_message("Choose an existing user.".into()),
+        );
     }
 
     if let (true, Some(bid)) = (validation_errors.is_empty(), bear_id) {
         if bears_db::get_bear(state.sqlx_pool(), bid).await?.is_none() {
-            validation_errors.add("bear_id", ValidationError::new("Bear not found."));
+            validation_errors.add(
+                "bear_id",
+                ValidationError::new("unknown_bear")
+                    .with_message("Choose an existing Bear.".into()),
+            );
         }
     }
 
+    let role_opt = match form.role.trim() {
+        "" | "member" => Some(bears_db::BEAR_ROLE_MEMBER),
+        "admin" => Some(bears_db::BEAR_ROLE_ADMIN),
+        _ => {
+            validation_errors.add(
+                "role",
+                ValidationError::new("unsupported_role")
+                    .with_message("Choose Member or Admin.".into()),
+            );
+            None
+        }
+    };
+
     if let (true, Some(bid)) = (validation_errors.is_empty(), bear_id) {
-        let role = form.role.trim();
-        let role_opt = match role {
-            "" | "member" => Some(bears_db::BEAR_ROLE_MEMBER),
-            "admin" => Some(bears_db::BEAR_ROLE_ADMIN),
-            other => Some(other),
-        };
         bears_db::grant_membership(state.sqlx_pool(), form.user_id, bid, role_opt).await?;
         Ok(Redirect::to("/admin/membership/").into_response())
     } else {

@@ -5,8 +5,11 @@
 //! so each test seeds a user + membership and logs in through a test-only
 //! route before exercising the real router.
 
+use super::bundle_io::read_bear_bundle;
 use super::*;
 mod backend_management;
+mod feedback;
+mod import_review_race;
 mod model_configurations;
 mod portability;
 mod portable_models;
@@ -19,10 +22,11 @@ use axum::{
 use axum_login::AuthnBackend;
 use den_core::RuntimeContextLabel;
 use den_runtime::{
-    runtime::compaction_observability::RuntimeCompactionEvent,
+    runtime::compaction_observability::{RuntimeCompactionEvent, RuntimeCompactionEventStatus},
     runtime::compaction_store::record_runtime_compaction_event,
     runtime_conversations::RuntimeCompactionTriggerKind,
 };
+use den_service::bears::db::BEAR_ROLE_ADMIN;
 use http_body_util::BodyExt;
 use minijinja::Environment;
 use sqlx::postgres::PgPoolOptions;
@@ -56,7 +60,8 @@ async fn shared_management_hubs_preserve_membership_and_review_authority() {
     assert!(!admin_page.contains(&other_slug));
     let (status, member_page) = get_as(&app, &member_cookie, "/reviews").await;
     assert_eq!(status, StatusCode::OK, "{member_page}");
-    assert!(member_page.contains("No review access"));
+    assert!(member_page.contains("No Bear-admin reviews in this scope"));
+    assert!(member_page.contains("Cabinet review grants are separate"));
     assert!(!member_page.contains(&format!("/bear/{own_slug}/memory#review-queue")));
     let (status, _) = get_as(&app, &admin_cookie, &format!("/reviews?bear={other_slug}")).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -198,6 +203,28 @@ fn test_state(pool: sqlx::PgPool) -> AppState {
             include_str!("../../templates/bear/manage/hat.jinja"),
         )
         .expect("add hat template");
+    for (name, source) in [
+        (
+            "bear/manage/import_review.html",
+            include_str!("../../templates/bear/manage/import_review.html"),
+        ),
+        (
+            "bear/settings/access.html",
+            include_str!("../../templates/bear/settings/access.html"),
+        ),
+        (
+            "bear/settings/reconsider_result.html",
+            include_str!("../../templates/bear/settings/reconsider_result.html"),
+        ),
+        (
+            "bear/memory/_reflection_help.html",
+            include_str!("../../templates/bear/memory/_reflection_help.html"),
+        ),
+    ] {
+        template_env
+            .add_template(name, source)
+            .expect("add settings feedback template");
+    }
     template_env
         .add_template("bear/settings/reflections.html", "reflections admin page")
         .expect("add inspection test template");
@@ -222,6 +249,11 @@ async fn test_login(
 }
 
 async fn test_app(pool: sqlx::PgPool) -> axum::Router {
+    let state = test_state(pool.clone());
+    test_app_with_state(pool, state).await
+}
+
+async fn test_app_with_state(pool: sqlx::PgPool, state: AppState) -> axum::Router {
     let store = PostgresStore::new(pool.clone());
     store.migrate().await.expect("session store migration");
     Router::new()
@@ -232,7 +264,7 @@ async fn test_app(pool: sqlx::PgPool) -> axum::Router {
         .merge(crate::connections::router())
         .merge(super::super::skills::router())
         .route("/test-login/{user_id}", get(test_login))
-        .with_state(test_state(pool.clone()))
+        .with_state(state)
         .layer(
             axum_login::AuthManagerLayerBuilder::new(
                 Backend::new(pool),
@@ -414,9 +446,16 @@ fn context_separates_bound_components_from_older_reference_snapshots() {
             compiled_roles => vec![CompiledRolePromptRow {
                 role: "pair".into(), prompt_preview: "OLD PAIR REFERENCE".into(), char_count: 18,
             }],
+            inspection_errors => Vec::<String>::new(), stored_snapshots => true,
+            standing_notes => Vec::<PromptMemoryAdminRow>::new(),
+            session_note_count => 0, inactive_note_count => 0,
+            latest_budget => None::<serde_json::Value>, recall_configured => false,
+            context_profile_enabled => false, template_id => None::<String>,
+            can_manage_bear => true,
         })
         .unwrap();
-    assert!(body.contains("Bear base and modes"));
+    assert!(body.contains("Stored Bear base and mode snapshots"));
+    assert!(body.contains("not a live turn preview"));
     assert!(body.contains("BOUND BASE"));
     assert!(body.contains("Older stance reference snapshots"));
     assert!(body.contains("OLD PAIR REFERENCE"));
@@ -512,7 +551,9 @@ async fn bear_defaults_save_preserves_historical_profile_overrides_and_ignores_o
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.contains("Default configuration"));
     assert!(!body.contains("bear_default_model"));
-    assert!(body.contains("Bifrost usage"));
+    assert!(body.contains("Usage &amp; gateway status"));
+    assert!(body.contains("Saved loop control: <strong>careful</strong>"));
+    assert!(body.contains("saved tool budget multiplier: <strong>1.5</strong>"));
     assert!(!body.contains("Stance defaults"));
     assert!(!body.contains("Configure stance"));
     assert!(!body.contains("name=\"pair_model\""));
@@ -581,6 +622,7 @@ async fn inspection_gets_require_bear_admin_but_overview_remains_member_viewable
     )
     .await
     .expect("persist colliding conversation");
+    let private_diagnostic = format!("PRIVATE-COMPACTION-CANARY-{}", Uuid::new_v4());
     record_runtime_compaction_event(
         &pool,
         &RuntimeCompactionEvent {
@@ -592,7 +634,7 @@ async fn inspection_gets_require_bear_admin_but_overview_remains_member_viewable
             source_group_start: None,
             source_group_end: None,
             artifact: None,
-            diagnostic: Some("other Bear's private compaction diagnostic".to_string()),
+            diagnostic: Some(private_diagnostic.clone()),
         },
     )
     .await
@@ -639,7 +681,12 @@ async fn inspection_gets_require_bear_admin_but_overview_remains_member_viewable
             "admin overview missing {expected}: {body}"
         );
     }
-    assert!(body.contains("Derived search:") || body.contains("Memory statistics unavailable."));
+    assert!(
+        body.contains("Derived search:")
+            || body.contains("Search uses the keyword fallback.")
+            || body.contains("Memory statistics unavailable."),
+        "admin overview missing search/memory availability: {body}",
+    );
     assert!(body.contains(&format!("/bear/{slug}/activity")));
 
     let hat = hats::create_hat(
@@ -692,11 +739,18 @@ async fn inspection_gets_require_bear_admin_but_overview_remains_member_viewable
         let (status, body) = get_as(&app, &admin_cookie, &uri).await;
         assert_eq!(status, StatusCode::OK, "admin {uri}: {body}");
         if path == "activity" || path.starts_with("conversations") {
-            assert!(body.contains("Legacy compaction"), "admin {uri}: {body}");
             assert!(
-                !body.contains("other Bear's private compaction diagnostic"),
+                body.contains("private conversation title"),
                 "admin {uri}: {body}"
             );
+            let scoped_link = if path == "activity" || path == "conversations" {
+                format!("/bear/{slug}/conversations/{}", conversation.id)
+            } else {
+                assert!(body.contains("No persisted compaction artifacts for this conversation."));
+                format!("/bear/{slug}/conversations/{}/reflect", conversation.id)
+            };
+            assert!(body.contains(&scoped_link), "admin {uri}: {body}");
+            assert!(!body.contains(&private_diagnostic), "admin {uri}: {body}");
             assert!(!body.contains("legacy-test"), "admin {uri}: {body}");
         }
     }

@@ -1,0 +1,8 @@
+<div class="cabinet-audience">
+  <p><strong>Effective page audience:</strong>
+    {% if audience.kind == "open_wiki" %}Open wiki — people with Den accounts and Bears with Cabinet access enabled.
+    {% else %}Restricted by this page and its ancestors. People: {{ audience.people | join(", ") or "none" }}. Eligible Bears: {{ audience.bears | join(", ") or "none" }}.
+    {% endif %}
+  </p>
+  <p class="form-hint">Child pages may further restrict access. Attachments and saved copies keep their own access policy; page membership never shares a private file.</p>
+</div>
