@@ -1,0 +1,41 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Review deletion of {{ preview.username }}{% endblock %}
+
+{% block admin_content %}
+<h2>Delete user {{ preview.username }}?</h2>
+{% if error %}
+<p class="form-errors" role="alert">User was not deleted. {{ error }}</p>
+{% endif %}
+<p>Deleting this account removes its Bear memberships and other records covered by existing deletion rules. This cannot be undone here. Historical records may prevent deletion.</p>
+<p>This is a preview, not a reservation. Admin access is checked again when you submit.</p>
+
+<h3>Affected Bears</h3>
+{% if preview.bears %}
+<ul>
+{% for bear in preview.bears %}
+  <li>
+    <strong>{{ bear.name }}</strong> — {% if bear.is_admin %}Admin{% else %}Member{% endif %} access will be removed.
+    {% if bear.last_admin %}
+    <strong>Deletion blocked: this user is the only Admin.</strong>
+    Grant another person Admin access in <a href="/admin/membership/grant">Bear membership</a>, then return here; or keep this account.
+    {% endif %}
+  </li>
+{% endfor %}
+</ul>
+{% else %}
+<p>This user has no Bear memberships.</p>
+{% endif %}
+<p><a href="/admin/membership/">Review Bear membership</a>. No access is transferred automatically, and no replacement Admin is chosen for you.</p>
+
+<form method="post" action="/admin/users/{{ preview.user_id }}/delete">
+  <input type="hidden" name="confirmation_token" value="{{ confirmation_token }}">
+  <p>
+    <label><input type="checkbox" name="confirm_delete" value="true" required{% if confirmed %} checked{% endif %}> I confirm deletion of user {{ preview.username }} and removal of their memberships.</label>
+  </p>
+  <ul class="button-row">
+    <li><button type="submit" class="button-danger">Delete user</button></li>
+    <li><a href="/admin/users/{{ preview.user_id }}">Keep account and return to user</a></li>
+  </ul>
+</form>
+{% endblock %}

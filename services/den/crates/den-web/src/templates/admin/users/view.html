@@ -37,7 +37,5 @@
    <form style="display:inline" method="post" action="/admin/users/{{ id }}/create_invite"><button type="submit">Create invite</button></form> ·
    <a href="/admin/users/{{ id }}/test_email">Send test email</a></p>
 
-<form method="post" action="/admin/users/{{ id }}/delete" onsubmit="return confirm('Delete this user?');">
-  <button type="submit" class="button-danger">Delete user</button>
-</form>
+<p><a class="button-danger" href="/admin/users/{{ id }}/delete">Review user deletion</a></p>
 {% endblock %}

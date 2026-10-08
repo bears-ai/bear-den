@@ -1,5 +1,5 @@
 //! Canonical owner of explicit Bear membership mutations.
-use den_core::DenError;
+use den_core::{BearId, DenError, UserId};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -65,15 +65,31 @@ async fn change_membership(
     bear_id: Uuid,
     change: MembershipChange,
 ) -> Result<(), DenError> {
+    let user_id = UserId::from(user_id);
+    let bear_id = BearId::from(bear_id);
     let mut tx = pool.begin().await?;
     // A waiter must read committed membership state after acquiring the Bear lock, not an older snapshot.
     sqlx::query!("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
         .execute(&mut *tx)
         .await?;
-    // Serialize grants, demotions and revocations for this Bear before reading membership state.
-    let bear = sqlx::query_scalar!("SELECT id FROM bears WHERE id = $1 FOR UPDATE", bear_id)
-        .fetch_optional(&mut *tx)
-        .await?;
+    // Identity deletion takes an exclusive User lock before Bear locks. Take the FK-compatible
+    // User lock first even for demotions/revocations, so inserts cannot reverse that lock order.
+    let user = sqlx::query_scalar!(
+        "SELECT id FROM users WHERE id = $1 FOR KEY SHARE",
+        user_id.get()
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    if user.is_none() {
+        return Err(DenError::NotFound("user not found".to_string()));
+    }
+    // Serialize grants, demotions and revocations before reading fresh membership state.
+    let bear = sqlx::query_scalar!(
+        "SELECT id FROM bears WHERE id = $1 FOR UPDATE",
+        bear_id.as_uuid()
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
     if bear.is_none() {
         return Err(DenError::NotFound("bear not found".to_string()));
     }
@@ -81,8 +97,8 @@ async fn change_membership(
     if !matches!(change, MembershipChange::Grant(BearMembershipRole::Admin)) {
         let current_role = sqlx::query_scalar!(
             "SELECT role FROM user_bear WHERE user_id = $1 AND bear_id = $2",
-            user_id,
-            bear_id
+            user_id.get(),
+            bear_id.as_uuid()
         )
         .fetch_optional(&mut *tx)
         .await?;
@@ -95,8 +111,8 @@ async fn change_membership(
                       AND lower(btrim(coalesce(role, ''))) = 'admin'
                 ) AS "exists!"
                 "#,
-                bear_id,
-                user_id
+                bear_id.as_uuid(),
+                user_id.get()
             )
             .fetch_one(&mut *tx)
             .await?;
@@ -116,8 +132,8 @@ async fn change_membership(
                 VALUES ($1, $2, $3)
                 ON CONFLICT (user_id, bear_id) DO UPDATE SET role = EXCLUDED.role
                 ",
-                user_id,
-                bear_id,
+                user_id.get(),
+                bear_id.as_uuid(),
                 role.as_str()
             )
             .execute(&mut *tx)
@@ -126,8 +142,8 @@ async fn change_membership(
         MembershipChange::Revoke => {
             let result = sqlx::query!(
                 "DELETE FROM user_bear WHERE user_id = $1 AND bear_id = $2",
-                user_id,
-                bear_id
+                user_id.get(),
+                bear_id.as_uuid()
             )
             .execute(&mut *tx)
             .await?;

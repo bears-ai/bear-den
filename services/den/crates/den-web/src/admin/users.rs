@@ -29,6 +29,10 @@ use crate::{
 #[path = "user_password_tests.rs"]
 mod user_password_tests;
 
+mod delete;
+
+pub use delete::{delete_user_action, delete_user_view};
+
 const USER_PASSWORD_NOTICE_KEY: &str = "admin_user_password_changed";
 
 #[derive(Serialize, Deserialize)]
@@ -82,7 +86,10 @@ pub fn router() -> Router<AppState> {
             get(change_user_password_view).post(change_user_password_action),
         )
         .route_with_tsr("/users/{id}/create_invite", post(create_invite_action))
-        .route_with_tsr("/users/{id}/delete", post(delete_user_action))
+        .route_with_tsr(
+            "/users/{id}/delete",
+            get(delete_user_view).post(delete_user_action),
+        )
 }
 
 #[derive(Validate, Serialize, Deserialize, Debug)]
@@ -434,16 +441,6 @@ pub async fn send_test_email_action(
         },
     )
     .await?;
-
-    // 303 redirect to users list
-    Ok(Redirect::to("/admin/users/"))
-}
-
-pub async fn delete_user_action(
-    Path(id): Path<i32>,
-    State(state): State<AppState>,
-) -> Result<Redirect, CustomError> {
-    user_db::delete_user_by_id(&state.sqlx_pool, id).await?;
 
     // 303 redirect to users list
     Ok(Redirect::to("/admin/users/"))

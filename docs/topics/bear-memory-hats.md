@@ -109,6 +109,14 @@ Version-2 `.bear` bundles include hat identity/default, secretless grant intent 
 
 The historical [source-level usability review](../design/bear-management-ui-design.md#usability-review--2026-10-07) covers active public/account/setup, Bear, memory, Chat, Docket, Cabinet, shared and operator screen families at `c1440157a`. It prioritizes state/actions/content over routine explanatory prose, while retaining action-specific privacy/audience warnings and exposing real failures. The review found implementation issues as well as copy clutter: the then-checked-in admin parent did not inherit the shared shell, some error feedback was hidden or dropped, and several controls/copy claims disagreed with their handlers. These historical findings motivated the code/test follow-on above. The audit itself changed no UI code or deployment; its original route/line evidence is not a current-state claim. Live-page/participant validation remains outstanding.
 
+## Guarded identity deletion
+
+**Code/test follow-on; not deployed:** operator user deletion now uses an explicit GET preview and session/target-bound expiring POST confirmation. The shared identity-deletion helper—not just the web button—locks the target User, then affected Bears in deterministic UUID order, rechecks remaining Admins and either deletes atomically or returns a typed blocker. Membership grant/demotion/revocation uses the same User-before-Bear order, including a User key-share lock, so a new grant cannot slip through the deletion snapshot or reverse the lock order. Preview is advisory; confirmation rechecks current state. No automatic ownership handoff or access elevation occurs.
+
+A sole-Admin account must hand off every affected Bear first. Existing historical foreign-key restrictions remain intact; handing off membership does not authorize purging durable provenance. Operator views show affected Bear names and the owning membership-management route; anonymous users, members and Bear-only admins cannot use them. The account and memberships remain unchanged on denial. Application mutation paths are guarded; arbitrary privileged SQL is outside this application transaction contract.
+
+Evidence: `den-http/src/user/db/deletion/tests.rs`, `den-web/src/admin/users/delete/tests/`, and canonical membership concurrency tests. Static SQL uses macros and all-target offline metadata; no dependencies or schema migration are needed. Deployment/live acceptance is deferred.
+
 ## Read deeper
 
 - [Memory architecture](../architecture/memory-model.md)

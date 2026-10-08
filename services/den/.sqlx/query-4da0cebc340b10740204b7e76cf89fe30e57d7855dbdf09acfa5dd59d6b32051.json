@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO bear_jobs (bear_id, created_by_user_id, created_by_role, goal, lifecycle_intent) VALUES ($1, $2, 'ui', 'Historical job', 'archived') RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "4da0cebc340b10740204b7e76cf89fe30e57d7855dbdf09acfa5dd59d6b32051"
+}

@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT b.id AS \"bear_id!: BearId\", b.name, ub.role,\n               EXISTS (\n                   SELECT 1 FROM user_bear other\n                   WHERE other.bear_id = b.id AND other.user_id <> $1\n                     AND lower(btrim(coalesce(other.role, ''))) = 'admin'\n               ) AS \"other_admin_exists!\"\n        FROM user_bear ub\n        JOIN bears b ON b.id = ub.bear_id\n        WHERE ub.user_id = $1\n        ORDER BY b.id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "bear_id!: BearId",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "role",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "other_admin_exists!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      null
+    ]
+  },
+  "hash": "a300f3b9c1324493ee0c672bd74657e921c738218e34d3c3b87083fb6ee511c1"
+}

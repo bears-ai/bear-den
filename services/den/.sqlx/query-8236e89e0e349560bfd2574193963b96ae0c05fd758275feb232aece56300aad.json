@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (\n                        SELECT 1 FROM pg_stat_activity\n                        WHERE datname = current_database() AND wait_event_type = 'Lock'\n                          AND query = 'SELECT id FROM users WHERE id = $1 FOR KEY SHARE'\n                    ) AS \"waiting!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "waiting!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "8236e89e0e349560bfd2574193963b96ae0c05fd758275feb232aece56300aad"
+}

@@ -2,6 +2,8 @@ use sqlx::{query, PgPool};
 
 use crate::errors::DenError;
 
+pub mod deletion;
+
 #[derive(sqlx::FromRow, serde::Serialize)]
 pub struct User {
     pub id: i32,
@@ -162,10 +164,9 @@ pub async fn set_user_passhash_by_id(
 }
 
 pub async fn delete_user_by_id(db_pool: &PgPool, id: i32) -> Result<(), DenError> {
-    query!("DELETE FROM users WHERE id = $1", id)
-        .execute(db_pool)
-        .await?;
-    Ok(())
+    deletion::delete_user(db_pool, id.into())
+        .await
+        .map_err(DenError::from)
 }
 
 pub async fn user_by_id(db_pool: &PgPool, id: i32) -> Result<Option<super::User>, DenError> {

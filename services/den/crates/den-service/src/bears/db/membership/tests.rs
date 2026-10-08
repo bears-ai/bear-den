@@ -273,6 +273,79 @@ async fn race(pool: PgPool, first_action: Attempt, second_action: Attempt) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn missing_identity_is_rejected_before_grant_or_revoke(pool: PgPool) {
+    let bear = bear(&pool).await;
+    let absent = i32::MAX;
+    for result in [
+        grant_membership(&pool, absent, bear, Some("admin")).await,
+        grant_membership(&pool, absent, bear, Some("member")).await,
+        revoke_membership(&pool, absent, bear).await,
+    ] {
+        assert!(matches!(result, Err(DenError::NotFound(_))));
+    }
+    assert_eq!(db::count_bear_members(&pool, bear).await.unwrap(), 0);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn every_membership_mutation_waits_on_identity_before_locking_bear(pool: PgPool) {
+    let bear = bear(&pool).await;
+    let target = user(&pool, "identitylocktarget").await;
+    let next = user(&pool, "identitylocknext").await;
+    grant_membership(&pool, next, bear, Some("admin"))
+        .await
+        .unwrap();
+    for change in [
+        MembershipChange::Grant(BearMembershipRole::Admin),
+        MembershipChange::Grant(BearMembershipRole::Member),
+        MembershipChange::Revoke,
+    ] {
+        grant_membership(&pool, target, bear, Some("admin"))
+            .await
+            .unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query!("SELECT id FROM users WHERE id = $1 FOR UPDATE", target)
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+        let task = tokio::spawn({
+            let pool = pool.clone();
+            async move { change_membership(&pool, target, bear, change).await }
+        });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let waiting = sqlx::query_scalar!(
+                    r#"SELECT EXISTS (
+                        SELECT 1 FROM pg_stat_activity
+                        WHERE datname = current_database() AND wait_event_type = 'Lock'
+                          AND query = 'SELECT id FROM users WHERE id = $1 FOR KEY SHARE'
+                    ) AS "waiting!""#
+                )
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+                if waiting {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("membership change must wait for the exclusive User lock");
+        sqlx::query!("SELECT id FROM bears WHERE id = $1 FOR UPDATE NOWAIT", bear)
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+        tx.rollback().await.unwrap();
+        tokio::time::timeout(Duration::from_secs(10), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(db::count_bear_admins(&pool, bear).await.unwrap() >= 1);
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn concurrent_demotions_cannot_remove_both_admins(pool: PgPool) {
     race(pool, Attempt::Demote, Attempt::Demote).await;
 }
