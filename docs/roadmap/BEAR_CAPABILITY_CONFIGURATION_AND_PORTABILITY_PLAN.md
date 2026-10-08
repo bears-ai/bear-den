@@ -112,7 +112,7 @@ The intended product behavior is:
 2. Add connection requirement records to portable Bear definitions.
 3. Model connections as satisfying capability requirements or provider-backed capability instances.
 4. Start with minimal providers needed soonest, likely MCP server bindings and common external services.
-5. Ensure credentials/secrets are stored in the existing secret-management path or provider-specific secure storage, never in Bear export blobs.
+5. Ensure credentials/secrets are stored in the existing secret-management path or provider-specific secure storage, never in Bear export blobs. Credential-backed tools must follow the active hats plan's [runtime-mediated credential and external key-management boundary](HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md#runtime-mediated-credentials-and-external-key-management-planned): models request operations, trusted runtime adapters resolve and inject credentials after live authorization, and raw keys never become model-visible tool inputs/results or ambient credentials for model-controlled processes. That active gate owns backend selection, migration, rotation/revocation and exposure tests; this proposed plan must not create a parallel credential authority.
 6. Add import UX/API output that reports missing required/recommended connections.
 
 **Exit criteria:** a Bear can declare it needs a provider connection; import restores the requirement but not the secret, and capability discovery can report missing connection state.

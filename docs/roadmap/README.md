@@ -8,7 +8,7 @@ The older [planning hub](PLAN.md) contains useful priorities and delivery histor
 
 ## Active contract and validation work
 
-- [Hats and session memory boundaries](HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md) — validate the memory and authority contract and hat UX with one isolated workflow before any general migration or stance removal. The current-system evidence and target are separated in the [Bear memory and hats topic](../topics/bear-memory-hats.md).
+- [Hats and session memory boundaries](HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md) — validate the memory and authority contract and hat UX with one isolated workflow before any general migration or stance removal. Includes the [approved credential-mediation and external key-management direction](HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md#runtime-mediated-credentials-and-external-key-management-planned): runtime-wrapped credential use, `secrecy`/`zeroize`, existing Connections ownership, and one external backend/vertical slice before expansion. Backend selection and implementation remain pending. The current-system evidence and target are separated in the [Bear memory and hats topic](../topics/bear-memory-hats.md).
 
 ## Adding or advancing a plan
 
