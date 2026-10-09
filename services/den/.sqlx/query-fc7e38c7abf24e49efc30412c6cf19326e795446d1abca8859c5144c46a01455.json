@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO bear_hat_access_grants (bear_id, hat_id, kind, action_key, target_kind, target_value, created_by_user_id)\n         VALUES ($1, $2, 'tool', $3, 'repository', $4, $5)\n         ON CONFLICT (bear_id, hat_id, kind, action_key, target_kind, target_value) WHERE revoked_at IS NULL\n         DO UPDATE SET target_value = EXCLUDED.target_value RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "fc7e38c7abf24e49efc30412c6cf19326e795446d1abca8859c5144c46a01455"
+}

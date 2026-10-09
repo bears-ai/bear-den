@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+pub mod external;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ConnectionId(pub Uuid);
@@ -15,6 +17,7 @@ pub enum Provider {
     GitHttps,
     GitSsh,
     GithubApp,
+    GithubExternal,
 }
 impl Provider {
     fn parse(value: &str) -> Result<Self, DenError> {
@@ -22,6 +25,7 @@ impl Provider {
             "git_https" => Ok(Self::GitHttps),
             "git_ssh" => Ok(Self::GitSsh),
             "github_app" => Ok(Self::GithubApp),
+            "github_external" => Ok(Self::GithubExternal),
             _ => Err(DenError::ValidationError(
                 "unknown connection provider".into(),
             )),
@@ -34,6 +38,7 @@ pub enum Material {
     HttpsToken(String),
     SshKey(String),
     GithubApp { installation: i64, write: bool },
+    ExternalReference(den_repository::ExternalReference),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -75,6 +80,9 @@ pub async fn create(
             "connection name must be 1–120 characters".into(),
         ));
     }
+    if let Material::ExternalReference(reference) = &material {
+        return external::create(pool, owner, name, reference).await;
+    }
     let (provider, ciphertext, installation, write) = match material {
         Material::HttpsToken(value) => (
             "git_https",
@@ -92,6 +100,9 @@ pub async fn create(
             installation,
             write,
         } if installation > 0 => ("github_app", None, Some(installation), write),
+        Material::ExternalReference(_) => {
+            unreachable!("external reference handled before legacy encryption")
+        }
         Material::GithubApp { .. } => {
             return Err(DenError::ValidationError(
                 "GitHub installation must be positive".into(),
@@ -119,6 +130,19 @@ pub async fn revoke(
 
 fn validate_upstream(provider: Provider, upstream: &str) -> Result<(), DenError> {
     match provider {
+        Provider::GithubExternal => {
+            let url = reqwest::Url::parse(upstream).map_err(|_| {
+                DenError::ValidationError("GitHub HTTPS repository required".into())
+            })?;
+            if url.host_str() != Some("github.com") {
+                return Err(DenError::ValidationError(
+                    "GitHub HTTPS repository required".into(),
+                ));
+            }
+            den_repository::GithubRepository::parse(upstream, "main").map_err(|_| {
+                DenError::ValidationError("canonical GitHub HTTPS repository required".into())
+            })?;
+        }
         Provider::GitHttps | Provider::GithubApp => {
             let url = reqwest::Url::parse(upstream)
                 .map_err(|_| DenError::ValidationError("HTTPS repository URL required".into()))?;
@@ -160,6 +184,7 @@ pub async fn attach(
     let mut tx = pool.begin().await?;
     let target = sqlx::query!("SELECT g.upstream_url,c.provider FROM git_work_surface_details g JOIN provider_connections c ON c.id=$2 WHERE g.id=$1 AND c.owner_user_id=$3 AND c.revoked_at IS NULL AND EXISTS(SELECT 1 FROM work_surface_managers m WHERE m.surface_id=g.id AND m.user_id=$3) FOR UPDATE OF g,c",surface,id.0,owner.get()).fetch_optional(&mut *tx).await?.ok_or_else(|| DenError::NotFound("connection or managed repository not found".into()))?;
     validate_upstream(Provider::parse(&target.provider)?, &target.upstream_url)?;
+    external::require_idle_attachment(&mut tx, surface).await?;
     let changed = sqlx::query!("UPDATE git_work_surface_details g SET connection_id = c.id, credential_kind = NULL, credential_encrypted = NULL, github_app_installation_id = NULL, github_app_write_enabled = false FROM provider_connections c WHERE g.id = $1 AND c.id = $2 AND c.owner_user_id = $3 AND c.revoked_at IS NULL AND EXISTS (SELECT 1 FROM work_surface_managers m WHERE m.surface_id = g.id AND m.user_id = $3)", surface,id.0,owner.get()).execute(&mut *tx).await?;
     if changed.rows_affected() != 1 {
         return Err(DenError::NotFound(
@@ -171,10 +196,15 @@ pub async fn attach(
 }
 
 pub async fn detach(pool: &PgPool, actor: UserId, surface: Uuid) -> Result<(), DenError> {
-    let changed = sqlx::query!("UPDATE git_work_surface_details g SET connection_id = NULL WHERE g.id = $1 AND EXISTS (SELECT 1 FROM work_surface_managers m WHERE m.surface_id = g.id AND m.user_id = $2)",surface,actor.get()).execute(pool).await?;
+    let mut tx = pool.begin().await?;
+    sqlx::query_scalar!("SELECT g.id FROM git_work_surface_details g WHERE g.id = $1 AND EXISTS (SELECT 1 FROM work_surface_managers m WHERE m.surface_id = g.id AND m.user_id = $2) FOR UPDATE", surface, actor.get())
+        .fetch_optional(&mut *tx).await?.ok_or_else(|| DenError::NotFound("managed repository not found".into()))?;
+    external::require_idle_attachment(&mut tx, surface).await?;
+    let changed = sqlx::query!("UPDATE git_work_surface_details g SET connection_id = NULL WHERE g.id = $1 AND EXISTS (SELECT 1 FROM work_surface_managers m WHERE m.surface_id = g.id AND m.user_id = $2)",surface,actor.get()).execute(&mut *tx).await?;
     if changed.rows_affected() != 1 {
         return Err(DenError::NotFound("managed repository not found".into()));
     }
+    tx.commit().await?;
     Ok(())
 }
 
@@ -190,6 +220,7 @@ pub(crate) enum ResolvedConnection {
     Legacy,
     Available(ExecutionConnection),
     Denied,
+    ExternalReference,
 }
 
 pub(crate) async fn resolve(pool: &PgPool, surface: Uuid) -> Result<ResolvedConnection, DenError> {
@@ -208,11 +239,15 @@ pub(crate) async fn resolve(pool: &PgPool, surface: Uuid) -> Result<ResolvedConn
     if validate_upstream(provider, &row.upstream_url).is_err() {
         return Ok(ResolvedConnection::Denied);
     }
+    if provider == Provider::GithubExternal {
+        return Ok(ResolvedConnection::ExternalReference);
+    }
     Ok(ResolvedConnection::Available(ExecutionConnection {
         kind: match provider {
             Provider::GitHttps => Some("https_token".into()),
             Provider::GitSsh => Some("ssh_key".into()),
             Provider::GithubApp => None,
+            Provider::GithubExternal => unreachable!("external references are not exported"),
         },
         ciphertext: row.secret_ciphertext,
         installation: row.github_app_installation_id,
@@ -233,6 +268,9 @@ pub async fn require_live_for_surface(pool: &PgPool, surface: Uuid) -> Result<()
     match resolve(pool, surface).await? {
         ResolvedConnection::Denied => Err(DenError::Authorization(
             "repository connection is revoked or no longer authorized".into(),
+        )),
+        ResolvedConnection::ExternalReference => Err(DenError::Authorization(
+            "external-reference Connections are not available to sandbox provisioning or credential export; the repository_head backend is unconfigured".into(),
         )),
         _ => Ok(()),
     }

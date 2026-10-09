@@ -4,6 +4,8 @@ use den_service::{bears::model_configurations, skills};
 
 #[path = "recovery_tests.rs"]
 mod recovery_tests;
+#[path = "repository_access_tests.rs"]
+mod repository_access_tests;
 
 async fn new_bear(pool: &PgPool, slug: &str) -> Uuid {
     bears_db::create_bear(
@@ -39,6 +41,7 @@ async fn app_with_state(pool: &PgPool, config: Config) -> (Router, AppState) {
         .merge(crate::bear::management::router())
         .merge(crate::bear::manage::router())
         .merge(crate::bear::skills::router())
+        .merge(crate::connections::router())
         .route("/test-login/{user_id}", get(login))
         .route(
             "/test-review-draft/{bear}/{hat}/{actor}",

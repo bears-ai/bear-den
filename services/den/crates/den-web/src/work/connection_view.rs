@@ -12,6 +12,7 @@ pub(crate) enum AccountState {
     Available,
     Revoked,
     Unavailable,
+    BackendUnconfigured,
 }
 
 #[derive(Debug, Serialize)]
@@ -31,6 +32,7 @@ pub(crate) fn provider_label(provider: Provider) -> &'static str {
         Provider::GitHttps => "Git HTTPS token",
         Provider::GitSsh => "Git SSH key",
         Provider::GithubApp => "GitHub App installation",
+        Provider::GithubExternal => "GitHub external credential reference (backend unconfigured)",
     }
 }
 
@@ -60,6 +62,8 @@ pub(crate) async fn linked_accounts(
             .map_err(|_| CustomError::System("unknown repository account provider".into()))?;
         let state = if row.revoked {
             AccountState::Revoked
+        } else if provider == Provider::GithubExternal {
+            AccountState::BackendUnconfigured
         } else {
             match connections::require_live_for_surface(pool, row.surface_id).await {
                 Ok(()) => AccountState::Available,

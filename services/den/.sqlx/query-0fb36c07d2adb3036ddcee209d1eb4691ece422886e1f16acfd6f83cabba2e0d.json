@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE provider_connections SET external_secret_version=1 WHERE id=$1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0fb36c07d2adb3036ddcee209d1eb4691ece422886e1f16acfd6f83cabba2e0d"
+}

@@ -23,6 +23,14 @@ struct NewConnection {
     installation: String,
     #[serde(default)]
     allow_write: bool,
+    #[serde(default)]
+    backend_binding_id: Option<Uuid>,
+    #[serde(default)]
+    external_secret_id: Option<Uuid>,
+    #[serde(default)]
+    external_secret_version: Option<i64>,
+    #[serde(default)]
+    confirm_external_boundary: bool,
 }
 #[derive(Serialize)]
 pub(crate) struct ConnectionDraft {
@@ -136,6 +144,16 @@ async fn create_inner(
     form: NewConnection,
 ) -> Result<Response, CustomError> {
     let actor = owner(state, session).await?;
+    if form.provider != Provider::GithubExternal
+        && (form.backend_binding_id.is_some()
+            || form.external_secret_id.is_some()
+            || form.external_secret_version.is_some()
+            || form.confirm_external_boundary)
+    {
+        return Err(CustomError::ValidationError(
+            "External references cannot be combined with legacy token/key or App material.".into(),
+        ));
+    }
     if form.secret.len() > 128_000 {
         return Err(CustomError::ValidationError("secret too large".into()));
     }
@@ -147,6 +165,34 @@ async fn create_inner(
     let material = match form.provider {
         Provider::GitHttps => Material::HttpsToken(form.secret),
         Provider::GitSsh => Material::SshKey(form.secret),
+        Provider::GithubExternal => {
+            if !form.confirm_external_boundary
+                || !form.secret.is_empty()
+                || !form.installation.is_empty()
+                || form.allow_write
+            {
+                return Err(CustomError::ValidationError("Confirm the unconfigured external-backend boundary; do not submit token/key or App material with a reference.".into()));
+            }
+            let reference = den_service::repository::ExternalReference::new(
+                form.backend_binding_id.ok_or_else(|| {
+                    CustomError::ValidationError("internal backend binding UUID required".into())
+                })?,
+                form.external_secret_id.ok_or_else(|| {
+                    CustomError::ValidationError(
+                        "internal credential reference UUID required".into(),
+                    )
+                })?,
+                form.external_secret_version.ok_or_else(|| {
+                    CustomError::ValidationError("positive credential version required".into())
+                })?,
+            )
+            .map_err(|_| {
+                CustomError::ValidationError(
+                    "non-empty UUID bindings and a positive credential version are required".into(),
+                )
+            })?;
+            Material::ExternalReference(reference)
+        }
         Provider::GithubApp => Material::GithubApp {
             installation: form.installation.trim().parse().map_err(|_| {
                 CustomError::ValidationError("positive GitHub installation ID required".into())

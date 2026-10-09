@@ -5,5 +5,6 @@ mod observation_write;
 mod ordinary_memory_authority;
 mod prompt_memory;
 mod prompt_memory_bound;
+mod repository_head;
 mod role_scoping;
 pub(crate) mod source_fixture;

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE git_work_surface_details SET default_ref='main' WHERE id=$1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "016be38a26a58de42df6edd3a9f0c5d0b81185a756c2532a20063a0804ad1780"
+}

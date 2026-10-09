@@ -31,6 +31,7 @@ use super::legacy_memory_tools::{
 };
 
 fn den_tool_to_llm_definition(descriptor: &DenToolDescriptor, compact: bool) -> LlmToolDefinition {
+    let compact = compact && descriptor.name != den_core::tools::constants::DEN_REPOSITORY_HEAD;
     LlmToolDefinition {
         name: descriptor.provider_name.clone(),
         description: Some(if compact {

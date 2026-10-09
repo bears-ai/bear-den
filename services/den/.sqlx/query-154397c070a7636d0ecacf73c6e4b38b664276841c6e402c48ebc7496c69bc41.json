@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT jsonb_agg(jsonb_build_array(t.relname,c.conname,pg_get_constraintdef(c.oid))\n        ORDER BY t.relname,c.conname) AS \"guards!\"\n        FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid JOIN pg_namespace n ON n.oid=t.relnamespace\n        WHERE n.nspname=current_schema() AND (\n            (t.relname='provider_connections' AND c.conname IN ('provider_connections_material','provider_connections_provider_check'))\n            OR (t.relname='bear_hat_access_grants' AND c.conname IN ('bear_hat_access_grants_check','bear_hat_repository_target'))\n        )",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "guards!",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "154397c070a7636d0ecacf73c6e4b38b664276841c6e402c48ebc7496c69bc41"
+}

@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS(SELECT 1 FROM pg_stat_activity\n                WHERE datname=current_database() AND wait_event_type='Lock' AND (\n                    ($1=0 AND query='SELECT id FROM users WHERE id = $1 FOR KEY SHARE') OR\n                    ($1=1 AND query='SELECT id FROM bears WHERE id = $1 FOR KEY SHARE') OR\n                    ($1=2 AND query LIKE '%FOR UPDATE OF h, ub, hs, sb%') OR\n                    ($1=3 AND query='SELECT id FROM bears WHERE id = $1 FOR UPDATE')\n                )) AS \"waiting!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "waiting!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "0a61b794f4de4441111eed465a386f586f49de3e88c9049c31b4e6d19be11b9d"
+}

@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS(SELECT 1 FROM client_sessions s WHERE s.bear_id = $1 AND s.user_id = $2\n                 AND s.client_session_id = $3 AND s.closed_at IS NULL AND s.archived_at IS NULL\n                 AND coalesce(s.resolved_conversation_id, s.conversation_id) = $4) AS \"valid!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "valid!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "49c93e7eb055b4f75797ef408f14b1cc941631e041506787e078fd0e77e64b13"
+}

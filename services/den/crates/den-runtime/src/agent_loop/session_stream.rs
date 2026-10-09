@@ -608,6 +608,19 @@ impl SessionTrackingStream {
         self.persist_assistant_tool_step();
         self.finished = true;
         let outstanding_tools = self.outstanding_tool_details();
+        if self.dispatch_mode == NativeToolDispatchMode::ServerSideInProcess {
+            // This tracks one provider step, not the enclosing web-chat turn.
+            // The outer loop owns batch execution, results and final persistence.
+            // Leave the synchronized requests in the session; do not record false
+            // abandonment results that could win canonical result deduplication.
+            tracing::info!(
+                event = "native_provider_step_handoff_to_server_loop",
+                tool_call_count = outstanding_tools.len(),
+                "provider step ended with a batch for the enclosing server loop"
+            );
+            self.tool_calls.clear();
+            return None;
+        }
         if !self.has_outstanding_server_tool() {
             tracing::info!(
                 event = "native_turn_awaiting_client_tool_results",
@@ -2975,6 +2988,10 @@ mod tool_output_tests;
 #[cfg(test)]
 #[path = "session_stream/focused_execution_tests.rs"]
 mod focused_execution_tests;
+
+#[cfg(test)]
+#[path = "session_stream/web_tool_handoff_tests.rs"]
+mod web_tool_handoff_tests;
 
 #[cfg(test)]
 mod tests {

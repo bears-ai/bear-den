@@ -23,6 +23,7 @@ use den_core::tools::{
     prompt_memory::{
         PromptMemoryBlock, PromptMemoryBlockPatch, PromptMemoryBlockWrite, PromptMemoryStore,
     },
+    repository::{RepositoryError, RepositoryHeadResult, RepositoryOps, RepositorySurfaceId},
     review::{
         MarkMemoryLifecycleRequest, MemoryProposalStatus, MemoryReviewStore, ObservationRecord,
         ObservationWriteRequest, RequestReviewRequest, ResolveProposalRequest,
@@ -54,6 +55,8 @@ pub(crate) struct DenToolContext<'a> {
     pub(crate) pool: &'a PgPool,
     pub(crate) config: &'a Config,
     pub(crate) stores: &'a MemoryStoreManager,
+    #[cfg(test)]
+    repository_test_adapter: Option<&'a den_repository::test_util::LoopbackRepository>,
 }
 
 impl<'a> DenToolContext<'a> {
@@ -66,7 +69,21 @@ impl<'a> DenToolContext<'a> {
             pool,
             config,
             stores,
+            #[cfg(test)]
+            repository_test_adapter: None,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_repository_test_adapter(
+        pool: &'a PgPool,
+        config: &'a Config,
+        stores: &'a MemoryStoreManager,
+        adapter: &'a den_repository::test_util::LoopbackRepository,
+    ) -> Self {
+        let mut context = Self::new(pool, config, stores);
+        context.repository_test_adapter = Some(adapter);
+        context
     }
 
     fn web(&self) -> DenWebFetcher<'a> {
@@ -115,6 +132,28 @@ impl<'a> DenToolContext<'a> {
 
     fn conversation(&self) -> DenConversationTitleOps<'a> {
         DenConversationTitleOps { pool: self.pool }
+    }
+}
+
+impl RepositoryOps for DenToolContext<'_> {
+    async fn repository_head(
+        &self,
+        context: &DenToolInvocationContext,
+        origin: den_core::TurnExecutionOrigin,
+        governance: den_core::Governance,
+        surface: RepositorySurfaceId,
+    ) -> Result<RepositoryHeadResult, RepositoryError> {
+        #[cfg(test)]
+        if let Some(adapter) = self.repository_test_adapter {
+            let policy = den_service::repository::RepositoryHeadPolicy {
+                pool: self.pool,
+                context,
+                origin,
+                governance,
+            };
+            return adapter.head(&policy, surface).await;
+        }
+        den_service::repository::head(self.pool, context, origin, governance, surface).await
     }
 }
 

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO bear_web_sources (bear_id,scope_kind,scope_value,policy) VALUES ($1,'host','api.github.com','blocked')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f5379a944bacd9b8bfeb09b93a3780c43dc0d3013ed8dcd2d2627899ebecec04"
+}

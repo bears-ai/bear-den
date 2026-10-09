@@ -33,6 +33,7 @@ mod core_review;
 mod legacy_instructions;
 mod legacy_review;
 mod primary_model;
+mod repository_access;
 mod review;
 mod work_review;
 mod work_review_draft;
@@ -43,6 +44,7 @@ mod tests;
 pub fn router() -> Router<AppState> {
     Router::new()
         .merge(access::router())
+        .merge(repository_access::router())
         .merge(review::router())
         .merge(core_review::router())
         .merge(legacy_review::router())
@@ -293,6 +295,15 @@ async fn render_detail(
     let workspace_read_grants =
         hats::access::workspace_read_grants_for_hat(state.sqlx_pool(), bear_id, hat_id).await?;
     let workspace_read_choices = hats::access::ReadOnlyWorkspaceAction::choices();
+    let repository_choices = den_service::repository::grants::choices(
+        state.sqlx_pool(),
+        bear_id,
+        hat_id,
+        UserId::new(session_user(&auth).await?.id),
+    )
+    .await?;
+    let repository_grants =
+        den_service::repository::grants::list(state.sqlx_pool(), bear_id, hat_id).await?;
     let memory = state.memory_stores.store_for_bear(bear.id).await?;
     let historical_hat_records = den_memory::hat_review::hat_history_count(&memory, hat_id).await?;
     let work_reviews = hats::work_review::list_receipts(
@@ -319,6 +330,7 @@ async fn render_detail(
         auth,
         context! {
             hat, identity_preview, identity_sha256, previous_instructions, is_ide_default, ide_default_hat_name, choices, grant_count => granted.len(), web_grants, workspace_read_grants, workspace_read_choices, historical_hat_records, work_reviews, message, configurations, model_selection, effective_model, model_error,
+            repository_choices, repository_grants,
             can_manage_bear => true, native_runtime => true,
             ..bear_nav_context(&bear, "hats"),
         },

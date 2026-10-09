@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, target_value FROM bear_hat_access_grants WHERE bear_id = $1 AND hat_id = $2 AND kind = 'tool'\n         AND action_key = $3 AND target_kind = 'repository' AND revoked_at IS NULL ORDER BY created_at, id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "target_value",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "77464e60dd0661aa49a467d5c6a9e959b2a9b3d9b646889fb272bac66b26e21b"
+}

@@ -1,0 +1,30 @@
+[package]
+name = "den-repository"
+version.workspace = true
+edition = "2021"
+
+[lints]
+workspace = true
+
+[features]
+# Trusted Rust-only integration seam; never enabled by production composition.
+test-util = []
+
+[dependencies]
+async-trait.workspace = true
+den-core = { path = "../den-core" }
+reqwest.workspace = true
+secrecy.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio = { workspace = true, features = ["net", "time"] }
+url.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+futures.workspace = true
+den-llm = { path = "../den-llm" }
+axum = { workspace = true, features = ["http1", "tokio", "json"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "test-util"] }

@@ -1,0 +1,71 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT c.id, c.owner_user_id, c.revision, c.external_backend_binding_id,\n                c.external_secret_id, c.external_secret_version, g.upstream_url, g.default_ref, g.allowed_outbound_hosts\n         FROM git_work_surface_details g JOIN provider_connections c ON c.id = g.connection_id\n         JOIN work_surfaces s ON s.id = g.id AND s.kind = 'git_workspace'\n         WHERE g.id = $1 AND c.owner_user_id = $2 AND c.provider = 'github_external'\n           AND c.revoked_at IS NULL AND c.secret_ciphertext IS NULL AND c.github_app_installation_id IS NULL\n           AND EXISTS (SELECT 1 FROM work_surface_managers m WHERE m.surface_id = g.id AND m.user_id = c.owner_user_id)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "owner_user_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "revision",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "external_backend_binding_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "external_secret_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 5,
+        "name": "external_secret_version",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 6,
+        "name": "upstream_url",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "default_ref",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "allowed_outbound_hosts",
+        "type_info": "TextArray"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "6439f0361414de5f76ce6c404609fe389024c6db47077e3e132958ccc25a4cec"
+}

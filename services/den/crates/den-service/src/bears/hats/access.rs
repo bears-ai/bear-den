@@ -192,6 +192,7 @@ pub enum HatAccessGrant {
     ToolForHat(ToolActionKey),
     ReadOnlyToolInWorkspace(ReadOnlyWorkspaceAction, WorkspaceRoot),
     HttpsHost(HttpsHost),
+    RepositoryHead(crate::repository::grants::RepositoryTarget),
 }
 
 impl HatAccessGrant {
@@ -205,6 +206,12 @@ impl HatAccessGrant {
                 &root.0,
             ),
             Self::HttpsHost(host) => ("network", "https", "host", &host.0),
+            Self::RepositoryHead(target) => (
+                "tool",
+                den_core::tools::constants::DEN_REPOSITORY_HEAD,
+                "repository",
+                target.as_str(),
+            ),
         }
     }
 }

@@ -420,6 +420,29 @@ impl CanonicalConversationRecord {
         )
     }
 
+    /// A genuine model tool exchange belongs to model replay, not diagnostic-only
+    /// storage. Human history remains a separate projection.
+    pub fn model_tool_request(
+        record: CanonicalToolRequestRecord,
+        provenance: &ConversationEventProvenance,
+    ) -> Self {
+        Self::model_tool_projection(Self::tool_request(record, provenance))
+    }
+
+    pub fn model_tool_result(
+        record: CanonicalToolResultRecord,
+        provenance: &ConversationEventProvenance,
+    ) -> Self {
+        Self::model_tool_projection(Self::tool_result(record, provenance))
+    }
+
+    fn model_tool_projection(mut record: Self) -> Self {
+        if let Self::StructuredEvent { visibility, .. } = &mut record {
+            *visibility = ConversationMessageVisibility::HiddenFromUser;
+        }
+        record
+    }
+
     pub fn turn_outcome(
         status: &str,
         reason: &str,
@@ -771,6 +794,28 @@ pub fn spawn_persist_turn_outcome(
             outcome.diagnostics.clone(),
             provenance,
         ),
+    );
+}
+
+pub fn spawn_persist_model_tool_result(
+    context: ConversationPersistenceContext,
+    record: CanonicalToolResultRecord,
+    provenance: &ConversationEventProvenance,
+) {
+    spawn_persist_canonical_conversation_record(
+        context,
+        CanonicalConversationRecord::model_tool_result(record, provenance),
+    );
+}
+
+pub fn spawn_persist_model_tool_request(
+    context: ConversationPersistenceContext,
+    record: CanonicalToolRequestRecord,
+    provenance: &ConversationEventProvenance,
+) {
+    spawn_persist_canonical_conversation_record(
+        context,
+        CanonicalConversationRecord::model_tool_request(record, provenance),
     );
 }
 

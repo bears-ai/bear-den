@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS(SELECT 1 FROM job_work_surface_assignments a JOIN bear_work_runs r ON r.job_id = a.job_id\n         WHERE a.work_surface_id = $1 AND r.state IN ('queued', 'claimed', 'provisioning', 'running', 'reporting', 'paused')) AS \"busy!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "busy!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "3d6fb5a2408c13b55292907ac0739c2d0164e695b44424b543ce5a4a4e5a880e"
+}

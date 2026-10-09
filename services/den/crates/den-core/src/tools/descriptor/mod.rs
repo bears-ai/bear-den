@@ -4,6 +4,7 @@ pub use audience::ToolAudience;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::tools::constants::{DEN_REPOSITORY_HEAD, DEN_REPOSITORY_HEAD_PROVIDER};
 use crate::{RuntimeContextLabel, TurnExecutionOrigin};
 use ToolAudience::{
     ArmatureConversation as Armature, AuthorizedWorkRun as Work, BrowserTaskSession as BrowserTask,
@@ -109,6 +110,7 @@ pub struct DenToolDescriptor {
 
 pub fn provider_safe_tool_name(name: &str) -> String {
     match name {
+        DEN_REPOSITORY_HEAD => return DEN_REPOSITORY_HEAD_PROVIDER.to_string(),
         DEN_CAPABILITY_SEARCH => return DEN_CAPABILITY_SEARCH_PROVIDER.to_string(),
         DEN_CAPABILITY_DESCRIBE => return DEN_CAPABILITY_DESCRIBE_PROVIDER.to_string(),
         DEN_CONVERSATION_SET_TITLE => return DEN_CONVERSATION_SET_TITLE_PROVIDER.to_string(),
@@ -213,6 +215,15 @@ pub fn provider_safe_tool_name(name: &str) -> String {
 
 pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
     vec![
+        descriptor(
+            DEN_REPOSITORY_HEAD,
+            "Read repository head",
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../prompts/tool_descriptions/repository_head.md")),
+            "bear.repository",
+            &["repository.head.read"],
+            ALL_AUDIENCES,
+            json!({"type":"object","properties":{"work_surface_id":{"type":"string","format":"uuid"}},"required":["work_surface_id"],"additionalProperties":false}),
+        ),
         descriptor(
             DEN_BEAR_GET_SELF,
             "About this bear",
@@ -980,6 +991,7 @@ pub fn render_profile_tool_surface_blurb(role: RuntimeContextLabel) -> String {
 /// Keeps session/memory/plan tools without session-admin or plan-mode control noise.
 pub fn pair_acp_surface_den_tool_names() -> &'static [&'static str] {
     &[
+        DEN_REPOSITORY_HEAD,
         DEN_CONVERSATION_SET_TITLE,
         DEN_CAPABILITY_SEARCH,
         DEN_CAPABILITY_DESCRIBE,
@@ -1210,7 +1222,11 @@ fn descriptor(
         scope,
         domain: tool_domain(name),
         content_class: tool_content_class(name),
-        availability: "available",
+        availability: if name == DEN_REPOSITORY_HEAD {
+            "credential_backend_unconfigured"
+        } else {
+            "available"
+        },
         permissions,
         allowed_origins,
         allowed_roles,
@@ -1266,6 +1282,15 @@ pub fn den_tool_completion_status_text(provider_name: &str) -> Option<String> {
 
 pub fn den_tool_display(name: &'static str, label: &'static str) -> ToolDisplayDescriptor {
     match name {
+        DEN_REPOSITORY_HEAD => ToolDisplayDescriptor {
+            label,
+            category: "repository",
+            progress_verb: "Reading repository head",
+            complete_verb: "Read repository head",
+            target_arg_keys: &["work_surface_id"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Read one exactly authorized repository's configured branch SHA.",
+        },
         DEN_CABINET_SEARCH => ToolDisplayDescriptor {
             label,
             category: "cabinet",
@@ -1755,6 +1780,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> ToolDisplayD
 
 fn tool_domain(name: &str) -> &'static str {
     match name {
+        DEN_REPOSITORY_HEAD => "repository",
         DEN_CABINET_SEARCH | DEN_CABINET_READ | DEN_CABINET_CREATE | DEN_CABINET_UPDATE => {
             "cabinet"
         }

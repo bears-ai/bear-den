@@ -4,8 +4,9 @@ use uuid::Uuid;
 
 use den_service::conversation::events::{
     canonical_persistence_context, persist_canonical_conversation_record_with_id,
-    spawn_persist_assistant_output, spawn_persist_tool_request, spawn_persist_tool_result,
-    CanonicalToolRequestRecord, CanonicalToolResultRecord, ConversationEventProvenance,
+    spawn_persist_assistant_output, spawn_persist_model_tool_request,
+    spawn_persist_model_tool_result, CanonicalToolRequestRecord, CanonicalToolResultRecord,
+    ConversationEventProvenance,
 };
 
 use crate::llm::{ChatMessage, ChatToolCall};
@@ -97,7 +98,7 @@ pub fn spawn_persist_native_agent_step(
         let args = parse_tool_arguments(&call.function.arguments);
         let approval_required = preauthorized_call_id != Some(call.id.as_str())
             && provider_tool_requires_approval(&call.function.name);
-        spawn_persist_tool_request(
+        spawn_persist_model_tool_request(
             context.clone(),
             CanonicalToolRequestRecord::new(
                 call.function.name.clone(),
@@ -152,7 +153,7 @@ pub fn spawn_persist_web_chat_turn(
                         let args = parse_tool_arguments(&call.function.arguments);
                         let approval_required =
                             provider_tool_requires_approval(&call.function.name);
-                        spawn_persist_tool_request(
+                        spawn_persist_model_tool_request(
                             context.clone(),
                             CanonicalToolRequestRecord::new(
                                 call.function.name.clone(),
@@ -179,7 +180,7 @@ pub fn spawn_persist_web_chat_turn(
                 } else {
                     message.content.clone()
                 };
-                spawn_persist_tool_result(
+                spawn_persist_model_tool_result(
                     context.clone(),
                     CanonicalToolResultRecord::new(
                         message.name.clone(),
@@ -211,7 +212,7 @@ fn spawn_persist_incomplete_tool_results(
     phase: &str,
 ) {
     for call in tool_calls {
-        spawn_persist_tool_result(
+        spawn_persist_model_tool_result(
             context.clone(),
             CanonicalToolResultRecord::new(
                 Some(call.function.name.clone()),
@@ -305,7 +306,7 @@ pub fn spawn_persist_abandoned_native_tool_results(
         false,
     );
     for call in tool_calls {
-        spawn_persist_tool_result(
+        spawn_persist_model_tool_result(
             context.clone(),
             CanonicalToolResultRecord::new(
                 Some(call.function.name.clone()),

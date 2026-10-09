@@ -20,6 +20,8 @@ aes-gcm.workspace = true
 base64.workspace = true
 den-cabinet = { path = "../den-cabinet" }
 den-core = { path = "../den-core" }
+den-repository = { path = "../den-repository" }
+async-trait.workspace = true
 den-protocol = { path = "../den-protocol" }
 den-sandbox = { path = "../den-sandbox" }
 den-llm = { path = "../den-llm" }
@@ -38,3 +40,4 @@ uuid.workspace = true
 
 [dev-dependencies]
 den-core = { path = "../den-core", features = ["test-util"] }
+secrecy.workspace = true

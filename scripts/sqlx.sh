@@ -125,6 +125,13 @@ case "$1" in
     usage
     exit 0
     ;;
+  migrate)
+    # Creating migration files is local-only: no database, Docker, or Cargo build.
+    if [ "${2:-}" = "add" ]; then
+      cd "${DEN}"
+      exec sqlx "$@"
+    fi
+    ;;
   prepare-all)
     shift
     "${ROOT}/scripts/smoke-stack.sh" --infra

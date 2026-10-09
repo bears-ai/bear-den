@@ -10,6 +10,10 @@
 
 use serde_json::Value;
 
+use crate::tools::{
+    constants::DEN_REPOSITORY_HEAD,
+    repository::{self, RepositoryOps},
+};
 use crate::{DenError, Governance, TurnExecutionOrigin};
 
 use crate::tools::{
@@ -45,6 +49,7 @@ pub trait ToolContext:
     + EnvironmentOps
     + entity::EntityOps
     + WebFetcher
+    + RepositoryOps
     + memory::RoleMemoryStore
     + prompt_memory::PromptMemoryStore
     + review::MemoryReviewStore
@@ -111,6 +116,7 @@ pub fn has_native_session_executor(tool_name: &str) -> bool {
     matches!(
         tool_name,
         DEN_BEAR_GET_SELF
+            | DEN_REPOSITORY_HEAD
             | DEN_USER_GET_CURRENT
             | DEN_BEAR_LIST_MEMBERS
             | DEN_CAPABILITIES_LIST_SELF
@@ -167,12 +173,24 @@ pub async fn invoke_den_tool_for_origin(
     origin: TurnExecutionOrigin,
     governance: Governance,
 ) -> Result<Value, DenError> {
-    origin.require_ordinary_session()?;
     // Provider-facing names are advertised to models, while dispatch arms use
     // canonical names. Normalize once here so newly advertised aliases cannot
     // silently fall through as "unknown Den tool".
     let tool_name =
         crate::tools::aliases::canonical_builtin_den_tool(tool_name).unwrap_or(tool_name);
+    if tool_name == DEN_REPOSITORY_HEAD {
+        if let Err(error) = authorize_den_tool_for_origin(ctx, tool_name, &context, origin).await {
+            let code = match error {
+                DenError::Database(_) | DenError::System(_) => {
+                    repository::RepositoryError::PolicyUnavailable
+                }
+                _ => repository::RepositoryError::NotAuthorized,
+            };
+            return Ok(repository::error_payload(code));
+        }
+        return Ok(repository::invoke(ctx, &context, origin, governance, arguments).await);
+    }
+    origin.require_ordinary_session()?;
     match prevalidate_tool_arguments(tool_name, &arguments, &context)? {
         ToolPreflight::Proceed => {}
         ToolPreflight::Warning(warning) => {
@@ -181,6 +199,7 @@ pub async fn invoke_den_tool_for_origin(
     }
     let role = authorize_den_tool_for_origin(ctx, tool_name, &context, origin).await?;
     match tool_name {
+
         DEN_BEAR_GET_SELF => identity::get_bear_self(ctx, &context).await,
         DEN_USER_GET_CURRENT => identity::get_current_user(ctx, &context).await,
         DEN_BEAR_LIST_MEMBERS => identity::list_bear_members(ctx, &context).await,

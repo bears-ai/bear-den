@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO job_work_surface_assignments (job_id,work_surface_id) VALUES ($1,$2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9f6e7c039726e04c66904fd99f177ac9a95923ac45343f52ede9f91b929cce05"
+}

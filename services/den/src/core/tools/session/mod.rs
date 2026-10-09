@@ -52,6 +52,18 @@ pub async fn invoke_den_tool_for_origin(
     origin: TurnExecutionOrigin,
     governance: den_core::Governance,
 ) -> Result<Value, CustomError> {
+    if den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name(tool_name)
+        .is_some_and(|descriptor| {
+            descriptor.name == den_core::tools::constants::DEN_REPOSITORY_HEAD
+        })
+    {
+        let ctx = DenToolContext::new(pool, config, stores);
+        return den_core::tools::dispatch::invoke_den_tool_for_origin(
+            &ctx, tool_name, arguments, context, origin, governance,
+        )
+        .await
+        .map_err(CustomError::from);
+    }
     origin.require_ordinary_session()?;
     reject_closed_freeform_task_definition(tool_name, &context)?;
     reject_immutable_focused_task_definition(tool_name, &context)?;

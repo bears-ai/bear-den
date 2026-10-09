@@ -8928,6 +8928,11 @@ async fn bearwire_conversation_reads_require_canonical_owner_or_bear_admin(pool:
             "admin may inspect NULL owner: {null_admin}"
         );
     }
+    let spare_admin = create_test_user(&pool).await;
+    assert!(![owner, other, admin].contains(&spare_admin));
+    bears_db::grant_membership(&pool, spare_admin, bear_id, Some(bears_db::BEAR_ROLE_ADMIN))
+        .await
+        .expect("retain a distinct spare Bear admin before demotion");
     bears_db::grant_membership(&pool, admin, bear_id, Some(bears_db::BEAR_ROLE_MEMBER))
         .await
         .expect("demote Bear admin");
@@ -9668,6 +9673,11 @@ async fn focused_execution_authorizes_task_before_attachment_and_reuse(pool: sql
         .expect("member may focus own attached standalone task");
     assert_eq!(standalone_start.task_id(), Some(own_standalone));
 
+    let spare_admin = create_test_user(&pool).await;
+    assert!(![owner, other, admin].contains(&spare_admin));
+    bears_db::grant_membership(&pool, spare_admin, bear_id, Some(bears_db::BEAR_ROLE_ADMIN))
+        .await
+        .expect("retain a distinct spare Bear admin before demotion");
     bears_db::grant_membership(&pool, admin, bear_id, Some(bears_db::BEAR_ROLE_MEMBER))
         .await
         .expect("demote admin after starting private task");
@@ -9966,6 +9976,11 @@ async fn docket_rpc_job_controls_reject_guessed_ids_without_side_effects(pool: s
         diagnostics_admin.get("error").is_none(),
         "{diagnostics_admin}"
     );
+    let spare_admin = create_test_user(&pool).await;
+    assert!(![owner, other, admin].contains(&spare_admin));
+    bears_db::grant_membership(&pool, spare_admin, bear_id, Some(bears_db::BEAR_ROLE_ADMIN))
+        .await
+        .expect("retain a distinct spare Bear admin before demotion");
     bears_db::grant_membership(&pool, admin, bear_id, Some(bears_db::BEAR_ROLE_MEMBER))
         .await
         .expect("demote admin");

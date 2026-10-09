@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE git_work_surface_details SET allowed_outbound_hosts=ARRAY[]::text[] WHERE id=$1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "60e792eee2394c7067f3b7888248c2868aca75954923769c147f0cffde70a9c6"
+}

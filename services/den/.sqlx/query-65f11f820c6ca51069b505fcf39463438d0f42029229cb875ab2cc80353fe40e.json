@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS(SELECT 1 FROM bear_web_sources WHERE bear_id = $1 AND policy = 'blocked'\n             AND ((scope_kind = 'host' AND scope_value = $2) OR (scope_kind = 'url' AND scope_value = $3))) AS \"blocked!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "blocked!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "65f11f820c6ca51069b505fcf39463438d0f42029229cb875ab2cc80353fe40e"
+}

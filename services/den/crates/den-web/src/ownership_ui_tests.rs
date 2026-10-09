@@ -1,4 +1,6 @@
 //! Rendering regressions for the ownership-led shell and permission-safe views.
+#[path = "repository_ui_tests.rs"]
+mod repository_ui_tests;
 
 use std::path::Path;
 

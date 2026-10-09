@@ -23,11 +23,27 @@ use crate::errors::CustomError;
 
 pub struct DenRuntimeToolInvoker {
     state: DenState,
+    #[cfg(test)]
+    repository_test_adapter: Option<std::sync::Arc<den_repository::test_util::LoopbackRepository>>,
 }
 
 impl DenRuntimeToolInvoker {
     pub fn new(state: DenState) -> Self {
-        Self { state }
+        Self {
+            state,
+            #[cfg(test)]
+            repository_test_adapter: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_repository_test_adapter(
+        state: DenState,
+        adapter: std::sync::Arc<den_repository::test_util::LoopbackRepository>,
+    ) -> Self {
+        let mut invoker = Self::new(state);
+        invoker.repository_test_adapter = Some(adapter);
+        invoker
     }
 }
 
@@ -132,6 +148,47 @@ impl RuntimeToolInvoker for DenRuntimeToolInvoker {
         // The runtime's verified origin is the authority. A forged/supplied
         // compatibility profile or binding cannot turn a Pair/Channel run
         // into an internal Curate/Work Den tool invocation.
+        if builtin_den_tool_descriptor_for_provider_name(&tool_name).is_some_and(|descriptor| {
+            descriptor.name == den_core::tools::constants::DEN_REPOSITORY_HEAD
+        }) {
+            if require_origin_policy_and_descriptor(&context, &effective_policy, origin, &tool_name)
+                .is_err()
+            {
+                return Ok(den_core::tools::repository::error_payload(
+                    den_core::tools::repository::RepositoryError::NotAuthorized,
+                ));
+            }
+            #[cfg(test)]
+            if let Some(adapter) = self.repository_test_adapter.as_deref() {
+                let tools = DenToolContext::with_repository_test_adapter(
+                    &self.state.sqlx_pool,
+                    self.state.config.as_ref(),
+                    &self.state.memory_stores,
+                    adapter,
+                );
+                return den_core::tools::dispatch::invoke_den_tool_for_origin(
+                    &tools,
+                    &tool_name,
+                    arguments,
+                    context,
+                    origin,
+                    effective_policy.governance,
+                )
+                .await;
+            }
+            return invoke_den_tool_for_origin(
+                &self.state.sqlx_pool,
+                self.state.config.as_ref(),
+                &self.state.memory_stores,
+                &tool_name,
+                arguments,
+                context,
+                origin,
+                effective_policy.governance,
+            )
+            .await
+            .map_err(CustomError::into_den);
+        }
         require_origin_policy_and_descriptor(&context, &effective_policy, origin, &tool_name)?;
         require_current_tool_actor(&self.state.sqlx_pool, &context, origin).await?;
         require_live_work_tool_source(&self.state.sqlx_pool, &context, origin).await?;

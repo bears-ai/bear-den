@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM job_work_surface_assignments WHERE job_id=$1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c0bc658db89495bb2912b1ab5de4bc39a2d6c344414b97bdc40afc16085ed688"
+}

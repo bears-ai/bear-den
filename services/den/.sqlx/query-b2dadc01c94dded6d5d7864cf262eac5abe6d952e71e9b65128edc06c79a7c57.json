@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT g.id FROM git_work_surface_details g JOIN provider_connections c ON c.id = g.connection_id\n         WHERE g.id = $1 AND c.owner_user_id = $2 AND c.revoked_at IS NULL FOR UPDATE OF g, c",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "b2dadc01c94dded6d5d7864cf262eac5abe6d952e71e9b65128edc06c79a7c57"
+}

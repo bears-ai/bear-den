@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT h.id FROM bear_hats h JOIN user_bear ub ON ub.bear_id = h.bear_id AND ub.user_id = $3\n         JOIN bear_hat_work_surfaces hs ON hs.bear_id = h.bear_id AND hs.hat_id = h.id AND hs.surface_id = $4\n         JOIN work_surface_bears sb ON sb.bear_id = h.bear_id AND sb.surface_id = hs.surface_id\n         WHERE h.bear_id = $1 AND h.id = $2 AND lower(btrim(coalesce(ub.role, ''))) = 'admin'\n         FOR UPDATE OF h, ub, hs, sb",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int4",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "2c3b6a223aaa723b28f34bb20cf1ab9b569d7841637f98ed8302e77606570e98"
+}

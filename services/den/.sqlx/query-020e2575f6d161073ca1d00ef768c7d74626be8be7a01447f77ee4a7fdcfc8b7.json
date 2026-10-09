@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bear_work_runs SET lease_expires_at=now()+interval '60 seconds' WHERE id=$1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "020e2575f6d161073ca1d00ef768c7d74626be8be7a01447f77ee4a7fdcfc8b7"
+}

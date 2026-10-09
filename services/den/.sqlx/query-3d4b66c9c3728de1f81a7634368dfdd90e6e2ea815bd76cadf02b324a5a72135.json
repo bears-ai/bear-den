@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bear_work_runs SET state='paused' WHERE id=$1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3d4b66c9c3728de1f81a7634368dfdd90e6e2ea815bd76cadf02b324a5a72135"
+}

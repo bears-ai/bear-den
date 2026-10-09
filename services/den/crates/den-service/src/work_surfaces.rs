@@ -789,7 +789,8 @@ pub async fn build_managed_config(
     for mut row in raw_rows {
         match crate::connections::resolve(pool, row.id).await? {
             crate::connections::ResolvedConnection::Legacy => {}
-            crate::connections::ResolvedConnection::Denied => continue,
+            crate::connections::ResolvedConnection::Denied
+            | crate::connections::ResolvedConnection::ExternalReference => continue,
             crate::connections::ResolvedConnection::Available(connection) => {
                 row.credential_kind = connection.kind;
                 row.credential_encrypted = connection.ciphertext;

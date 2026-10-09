@@ -10,7 +10,8 @@
     {% if connection_catalog %}
     <ul class="den-record-list">{% for connection in connection_catalog %}
       <li id="account-{{ connection.id }}"><strong>{{ connection.name | e }}</strong>
-        <span>{% if connection.provider == "git_https" %}Git HTTPS token{% elif connection.provider == "git_ssh" %}Git SSH key{% else %}GitHub App installation{% endif %} · {{ connection.repository_count }} linked repositories · {% if connection.revoked %}<strong>revoked</strong>{% else %}active{% endif %}</span>
+        <span>{% if connection.provider == "git_https" %}Git HTTPS token{% elif connection.provider == "git_ssh" %}Git SSH key{% elif connection.provider == "github_external" %}GitHub external reference — backend unconfigured{% else %}GitHub App installation{% endif %} · {{ connection.repository_count }} linked repositories · {% if connection.revoked %}<strong>revoked</strong>{% elif connection.provider == "github_external" %}<strong>reference saved, not operational</strong>{% else %}active{% endif %}</span>
+        {% if connection.provider == "github_external" %}<p role="status"><strong>Not operational: no external credential backend is integrated.</strong> This reference cannot provision Work, sync a checkout or publish changes. No secret or reference is exported to the sandbox. Previously distributed legacy credential copies are not erased.</p>{% endif %}
         {% if connection.provider == "github_app" %}<p>{% if connection.github_app_write_enabled %}Publication enabled, subject to installation permissions.{% else %}<strong>Read-only installation — cannot publish repository changes.</strong> Create a write-enabled replacement account if publication is required.{% endif %}</p>{% endif %}
         <p>Affected repositories: {% for repository in connection.repositories %}{% if not loop.first %}, {% endif %}<a href="/work/surfaces/{{ repository.id }}">{{ repository.name | e }}</a>{% else %}No linked repositories within your current repository access{% endfor %}.{% if connection.other_repository_count %} Also {{ connection.other_repository_count }} linked repository/repositories outside your current repository access.{% endif %}</p>
         {% if not connection.revoked %}
@@ -28,7 +29,7 @@
               {% for repository in repositories %}{% if repository.can_link %}<option value="{{ repository.id }}" {% if retry_attachment and attachment_feedback.surface_id == repository.id %}selected{% endif %}>{{ repository.name | e }} — {% if repository.linked_account %}replaces {{ repository.linked_account.name | e }}{% elif repository.github_app_configured %}replaces local GitHub App authorization{% elif repository.credential_configured %}replaces local credential{% else %}no account linked{% endif %}</option>{% endif %}{% endfor %}
             </select></label>
             <p>This changes only the selected repository. Attaching replaces its account link and permanently clears its local token/key and local GitHub App authorization; detaching later will not restore them. Other repositories keep their existing links.</p>
-            <p>{% if connection.provider == "git_ssh" %}Requires an SSH or SCP-style upstream.{% elif connection.provider == "github_app" %}Requires a plain HTTPS upstream on github.com; installation permissions still apply.{% else %}Requires a plain HTTPS upstream without embedded credentials.{% endif %}</p>
+            <p>{% if connection.provider == "git_ssh" %}Requires an SSH or SCP-style upstream.{% elif connection.provider == "github_external" %}Requires a canonical HTTPS github.com repository. Attachment disables legacy sandbox authentication for this repository; queued/live/paused Work must stop first. No external backend is integrated.{% elif connection.provider == "github_app" %}Requires a plain HTTPS upstream on github.com; installation permissions still apply.{% else %}Requires a plain HTTPS upstream without embedded credentials.{% endif %}</p>
             <label><input type="checkbox" name="confirmed" value="true" required>I understand the selected repository's existing authentication will be replaced.</label>
             {% if not has_linkable_repositories %}<p role="status">No repositories are currently yours to attach. Obtain a repository-management grant first.</p>{% endif %}
             <button type="submit" {% if not has_linkable_repositories %}disabled{% endif %}>Attach / replace account</button>
@@ -39,7 +40,7 @@
     {% endfor %}</ul>
     {% else %}<p>No reusable accounts yet.</p>{% endif %}
     <details {% if error %}open{% endif %}><summary>Add a reusable account</summary>
-      <p>Choose the provider below. Secrets stay encrypted on this Den and are never displayed. Creating an account does not grant a Bear access; attach it to a repository separately.</p>
+      <p>Choose the provider below. Legacy token/key secrets stay encrypted on this Den and are never displayed; external references contain no secret material. Creating an account does not grant a Bear access; attach it to a repository separately.</p>
       <details {% if draft.provider == "git_https" %}open{% endif %}><summary>Git HTTPS token</summary>
         <form method="post" action="/connections/create"><input type="hidden" name="provider" value="git_https">
           <label>Account name <input name="name" maxlength="120" required value="{{ draft.name or '' }}"></label>
@@ -52,6 +53,17 @@
           <label>Account name <input name="name" maxlength="120" required value="{{ draft.name or '' }}"></label>
           <label>SSH private key <textarea name="secret" rows="6" required autocomplete="new-password" spellcheck="false"></textarea></label>
           <button type="submit">Create SSH account</button>
+        </form>
+      </details>
+      <details {% if draft.provider == "github_external" %}open{% endif %}><summary>External GitHub credential reference — backend not integrated</summary>
+        <p role="status">Save only operator-provided internal identifiers. This does not configure a secret service or make repository_head operational; the production resolver returns credential_unavailable. Do not paste tokens, URLs or secret-store paths.</p>
+        <form method="post" action="/connections/create"><input type="hidden" name="provider" value="github_external">
+          <label>Account name <input name="name" maxlength="120" required value="{{ draft.name or '' }}"></label>
+          <label>Internal backend binding UUID <input name="backend_binding_id" required autocomplete="off"></label>
+          <label>Internal credential reference UUID <input name="external_secret_id" required autocomplete="off"></label>
+          <label>Credential version <input type="number" name="external_secret_version" min="1" required></label>
+          <label><input type="checkbox" name="confirm_external_boundary" value="true" required>I understand the backend is unavailable and this reference cannot authenticate Work; no legacy ciphertext/environment fallback is allowed.</label>
+          <button type="submit">Save inactive external reference</button>
         </form>
       </details>
       <details {% if draft.provider == "github_app" %}open{% endif %}><summary>GitHub App installation</summary>
@@ -69,7 +81,7 @@
     <p class="button-row"><a class="button-link" href="/work/surfaces/new">Connect a repository</a><a href="/work/surfaces">All permitted repositories</a></p>
     {% if repositories %}<ul class="den-record-list">{% for repository in repositories %}
       <li id="repository-{{ repository.id }}"><a href="/work/surfaces/{{ repository.id }}">{{ repository.name | e }}</a>
-        <span>{% if repository.linked_account %}Account: {{ repository.linked_account.name | e }} · {% if repository.linked_account.state == "revoked" %}<strong>revoked — replace or detach to repair</strong>{% elif repository.linked_account.state == "unavailable" %}<strong>unavailable — check owner access and upstream compatibility</strong>{% elif repository.linked_account.github_app_write_enabled == false %}<strong>read-only — cannot publish; replace with a write-enabled account</strong>{% else %}authorized; provider readiness is checked separately{% endif %}{% elif repository.github_app_configured %}Local GitHub App configured{% elif repository.credential_configured %}Local credential configured{% else %}No account or local credential; verify upstream access{% endif %}</span>
+        <span>{% if repository.linked_account %}Account: {{ repository.linked_account.name | e }} · {% if repository.linked_account.state == "revoked" %}<strong>revoked — replace or detach to repair</strong>{% elif repository.linked_account.state == "backend_unconfigured" %}<strong>external backend unconfigured — repository_head unavailable; sandbox Work/export unsupported</strong>{% elif repository.linked_account.state == "unavailable" %}<strong>unavailable — check owner access and upstream compatibility</strong>{% elif repository.linked_account.github_app_write_enabled == false %}<strong>read-only — cannot publish; replace with a write-enabled account</strong>{% else %}authorized; provider readiness is checked separately{% endif %}{% elif repository.github_app_configured %}Local GitHub App configured{% elif repository.credential_configured %}Local credential configured{% else %}No account or local credential; verify upstream access{% endif %}</span>
         <a href="/work/surfaces/{{ repository.id }}#connection">Inspect account &amp; test readiness</a>
         {% if repository.linked_account and repository.can_link %}
         <form method="post" action="/connections/repositories/{{ repository.id }}/detach">

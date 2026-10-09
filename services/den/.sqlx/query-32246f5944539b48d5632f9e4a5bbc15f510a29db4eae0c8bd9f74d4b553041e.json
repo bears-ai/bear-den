@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM bear_web_sources WHERE bear_id=$1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "32246f5944539b48d5632f9e4a5bbc15f510a29db4eae0c8bd9f74d4b553041e"
+}

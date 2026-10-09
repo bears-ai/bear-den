@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT c.id, c.hat_id FROM conversations c JOIN user_bear ub ON ub.bear_id = c.bear_id AND ub.user_id = c.created_by_user_id\n             WHERE c.bear_id = $1 AND c.external_conversation_id = $2 AND c.created_by_user_id = $3 AND c.status = 'active'\n               AND NOT EXISTS(SELECT 1 FROM bear_work_runs r WHERE r.bearwire_session_id = $4 AND r.state IN ('claimed', 'provisioning', 'running', 'reporting'))",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "hat_id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Int4",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "aa463a9fbbca13c67d8f2d25a94bc48a4d6aaf41d4e9c459a0ccc2e5a0a683df"
+}

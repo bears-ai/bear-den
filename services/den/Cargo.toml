@@ -12,7 +12,7 @@ web-ui-fixtures = []
 # docs/roadmap/DEN_CRATE_SPLIT_PLAN.md. Members are added as they are extracted.
 [workspace]
 resolver = "2"
-members = ["crates/bearwire-protocol", "crates/den-cabinet", "crates/den-core", "crates/den-protocol", "crates/den-service", "crates/den-llm", "crates/den-memory", "crates/den-docket", "crates/den-runtime", "crates/den-http", "crates/den-oauth", "crates/den-api", "crates/den-web", "crates/den-bearwire", "crates/den-sandbox"]
+members = ["crates/bearwire-protocol", "crates/den-cabinet", "crates/den-core", "crates/den-protocol", "crates/den-service", "crates/den-llm", "crates/den-memory", "crates/den-docket", "crates/den-runtime", "crates/den-http", "crates/den-oauth", "crates/den-api", "crates/den-web", "crates/den-bearwire", "crates/den-sandbox", "crates/den-repository"]
 
 [workspace.package]
 version = "0.1.2"
@@ -34,6 +34,7 @@ password-auth = "1.0.0"
 rand = "0.9.1"
 regex = "1.11.1"
 reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls", "stream"] }
+secrecy = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.138"
 serde_yml = "0.0.12"
@@ -53,6 +54,7 @@ urlencoding = "2.1"
 utoipa = { version = "4.0", features = ["axum_extras"] }
 uuid = { version = "1", features = ["serde", "v4", "v5"] }
 validator = { version = "0.20", features = ["derive"] }
+zeroize = "1.9"
 
 [lints]
 workspace = true
@@ -212,6 +214,9 @@ urlencoding.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["net"] }
+den-repository = { path = "crates/den-repository", features = ["test-util"] }
+secrecy.workspace = true
 den-core = { path = "crates/den-core", features = ["test-util"] }
 den-memory = { path = "crates/den-memory" }
 den-runtime = { path = "crates/den-runtime", features = ["test-util"] }

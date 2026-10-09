@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bear_hat_access_grants SET revoked_at=now() WHERE bear_id=$1 AND hat_id=$2 AND kind='network'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e6ca315745cd0d3f9abe5746d37038a5e4d6dd24d297be4d36c261f6febbfc19"
+}

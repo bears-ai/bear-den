@@ -149,6 +149,26 @@
     <button type="submit" name="action" value="grant_workspace_read">Grant workspace read action</button>
   </form>
 </div>
+<div class="box" id="repository-head">
+  <h3>Read repository head</h3>
+  <p role="status"><strong>External credential backend not integrated — repository_head is unavailable.</strong> You may prepare an exact permission below; saving it does not configure a backend, supply credentials or start Work.</p>
+  <p>Only the configured GitHub branch SHA is readable. Bear assignment, this hat's permitted repositories, the exact action, <code>api.github.com</code> host permission and repository egress ceiling, current source and your separately owned Connection must all allow it. Another wearer cannot borrow your account.</p>
+  {% for grant in repository_grants %}
+    <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/repository-access">
+      <p>Saved exact scope <code>{{ grant.target_key | e }}</code>. Changing the repository, branch, account or credential version invalidates this permission.</p>
+      <input type="hidden" name="grant_id" value="{{ grant.id }}"><button name="action" value="revoke">Revoke repository-head permission</button>
+    </form>
+  {% else %}<p>No repository-head permissions saved.</p>{% endfor %}
+  {% for repository in repository_choices %}
+    <form method="post" action="/bear/{{ bear.slug | e }}/hats/{{ hat.id }}/repository-access">
+      <p><strong>{{ repository.name | e }}</strong> — {{ repository.owner | e }}/{{ repository.repository | e }}, configured branch <code>{{ repository.branch | e }}</code></p>
+      <input type="hidden" name="surface_id" value="{{ repository.surface_id }}">
+      <input type="hidden" name="expected_target" value="{{ repository.target_key | e }}">
+      <label><input type="checkbox" name="confirm_future_job_audience" value="true" required>I approve this exact repository/branch/account binding for future owned conversations and separately eligible Jobs wearing this hat. Other humans cannot use my Connection; backend and host access remain separate.</label>
+      <button name="action" value="grant">Save exact repository-head permission</button>
+    </form>
+  {% else %}<p>No eligible repository with an external-reference account you own. Use Connections to save an inactive reference, attach it only to an idle repository, then assign the repository to this Bear and permit it for this hat. Legacy encrypted/App credentials do not qualify.</p>{% endfor %}
+</div>
 <div class="box" id="sharing">
   <h3>Automatic memory sharing for this hat: {{ hat.auto_curate_enabled and "on" or "off" }}</h3>
   <p>Private notes may be sent to this Bear's configured model provider, with privacy, network, and usage costs. Rewritten knowledge is shared with all members and eligible Jobs wearing this hat, now and in the future. Rewriting cannot guarantee removal of sensitive details or prompt injections.</p>

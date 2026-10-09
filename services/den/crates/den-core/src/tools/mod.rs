@@ -31,6 +31,7 @@ pub mod memory;
 pub mod plan_mode;
 pub mod preflight;
 pub mod prompt_memory;
+pub mod repository;
 pub mod result_compaction;
 pub mod review;
 pub mod support;
