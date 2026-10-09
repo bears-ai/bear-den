@@ -54,13 +54,15 @@ async fn invalidate(
             .execute(&mut **tx)
             .await?
         }
-        ProofKind::Criterion => sqlx::query!(
+        ProofKind::Criterion => {
+            sqlx::query!(
             "UPDATE bear_job_criteria_state SET status='unmet' WHERE run_id=$1 AND criterion_id=$2",
             rows.run,
             rows.criterion
         )
-        .execute(&mut **tx)
-        .await?,
+            .execute(&mut **tx)
+            .await?
+        }
     };
     Ok(changed.rows_affected())
 }

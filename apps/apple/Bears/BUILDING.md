@@ -110,6 +110,24 @@ cd apps/apple/Bears
 swift build
 ```
 
+## Version metadata and regression tests
+
+The app probes `bear-armature version --json` for installed/bundled binary metadata. Current source implements that configuration-free command: one JSON object on stdout with version/build facts, no Den authentication or browser/network probing. Human `--version` output remains on stderr. The app retains text fallback for older `bear-armature` and `bears-acp-adapter` binaries; it checks each stream independently and does not treat arbitrary diagnostic text as a version.
+
+On macOS, run the app-side parser/probe regressions from this package root:
+
+```bash
+swift test --filter AdapterVersionReaderTests
+```
+
+From the repository root, run the binary CLI contract tests:
+
+```bash
+cargo test --manifest-path tools/bear-armature/Cargo.toml --locked --test version_cli
+```
+
+A version-probe failure does not itself prove the installation is corrupt. The app now reports the actual launch/probe/parse failure; inspect the installed executable path and full diagnostics for permissions, architecture, quarantine, missing-file or incompatible-version output. These are source changes, not evidence that an existing app/package contains the fix. Rebuild the app to receive parser/diagnostic improvements, and rebuild/release the armature package to supply JSON introspection to older apps. Publishing that package still requires the version bump described above.
+
 ## Run
 
 ```bash

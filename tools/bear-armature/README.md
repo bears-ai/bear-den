@@ -89,6 +89,16 @@ That expectation is an identity check, not a grant. Den rechecks the live run/at
 
 **Exact Work is startup preflight with rechecks, not an atomic inference lease.** It does not hold authority across inference or guarantee instantaneous attempt/hat revocation after a successful check. **Upgrade Den and armature together** for this boundary; do not bypass a capability or fence failure. See the [compatibility guide](../../services/den/docs/guides/bearwire-compatibility.md).
 
+## Version metadata
+
+For machine-readable installation checks:
+
+```bash
+bear-armature version --json
+```
+
+This configuration-free command emits one JSON object on stdout with `name`, `version`, `build_git_sha`, `built_at_utc`, `local_head_sha`, `supports_session_list`, `supports_session_resume`, `supports_session_load`, `direct_tools`, and `chrome_tools`. It describes the built binary, does not initialize ACP/Den or probe local Git/browser state, and exposes no runtime credentials. Accordingly, `local_head_sha` is `unavailable`, `direct_tools` is null, and `chrome_tools` is `not_probed`; use `doctor` for runtime environment diagnostics. Human-readable `--version` output remains on stderr.
+
 ## Build
 
 From the repository root:

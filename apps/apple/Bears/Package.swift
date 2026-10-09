@@ -25,6 +25,11 @@ let package = Package(
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency")
             ]
+        ),
+        .testTarget(
+            name: "BearsAppTests",
+            dependencies: ["BearsApp"],
+            path: "Tests/BearsAppTests"
         )
     ]
 )

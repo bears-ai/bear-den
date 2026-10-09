@@ -85,7 +85,7 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
         } else {
             status = .repairNeeded
             combinedError = combinedInstallError(
-                primary: "Installed armature is missing version metadata and likely needs repair.",
+                primary: "Unable to inspect installed armature version: \(installedVersionError?.components(separatedBy: .newlines).first ?? "no readable metadata returned")",
                 installedVersionError: installedVersionError,
                 bundledVersionError: bundledVersionError,
                 packageInstallOutput: nil,
@@ -132,7 +132,7 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
         let availableVersionError = errorDescription(from: availableVersionResult)
         let status: InstallStatus = installedVersion.map { updateStatus(installedVersion: $0, availableVersion: availableVersion) } ?? .repairNeeded
         let combinedError = installedVersion != nil ? nil : combinedInstallError(
-            primary: "Installed armature is missing version metadata and likely needs repair.",
+            primary: "Unable to inspect installed armature version: \(installedVersionError?.components(separatedBy: .newlines).first ?? "no readable metadata returned")",
             installedVersionError: installedVersionError,
             bundledVersionError: bundledVersionError,
             packageInstallOutput: nil,
@@ -180,87 +180,7 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
     }
 
     private func readVersionInfo(from executableURL: URL) throws -> AdapterVersionInfo {
-        let jsonResult = try processRunner.run(executableURL, arguments: ["version", "--json"])
-        if jsonResult.terminationStatus == 0,
-           let info = try? decodeJSONVersionInfo(from: jsonResult.standardOutput) {
-            return info
-        }
-
-        let textResult = try processRunner.run(executableURL, arguments: ["--version"])
-        guard textResult.terminationStatus == 0 else {
-            let jsonError = jsonResult.standardError.trimmingCharacters(in: .whitespacesAndNewlines)
-            let textError = textResult.standardError.trimmingCharacters(in: .whitespacesAndNewlines)
-            throw NSError(
-                domain: "Bears.ArmatureInstallManager",
-                code: Int(textResult.terminationStatus),
-                userInfo: [NSLocalizedDescriptionKey: [
-                    textError.isEmpty ? "Failed to read armature version metadata." : textError,
-                    jsonError.isEmpty ? nil : "Legacy JSON metadata probe failed: \(jsonError)"
-                ].compactMap { $0 }.joined(separator: "\n")]
-            )
-        }
-
-        let output = [textResult.standardOutput, textResult.standardError]
-            .joined(separator: "\n")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if let info = parseTextVersionInfo(from: output) {
-            return info
-        }
-
-        throw NSError(
-            domain: "Bears.ArmatureInstallManager",
-            code: 1001,
-            userInfo: [NSLocalizedDescriptionKey: "Failed to parse armature version metadata. Raw output:\n\(output)"]
-        )
-    }
-
-    private func decodeJSONVersionInfo(from output: String) throws -> AdapterVersionInfo {
-        let output = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let jsonStartIndex = output.firstIndex(of: "{") else {
-            throw NSError(
-                domain: "Bears.ArmatureInstallManager",
-                code: 1001,
-                userInfo: [NSLocalizedDescriptionKey: "Failed to parse armature version metadata as JSON. Raw output:\n\(output)"]
-            )
-        }
-
-        let jsonText = String(output[jsonStartIndex...])
-        return try jsonDecoder.decode(AdapterVersionInfo.self, from: Data(jsonText.utf8))
-    }
-
-    private func parseTextVersionInfo(from output: String) -> AdapterVersionInfo? {
-        let lines = output
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        guard let first = lines.first else { return nil }
-        let firstParts = first.split(separator: " ", maxSplits: 1).map(String.init)
-        guard firstParts.count == 2 else { return nil }
-
-        var fields: [String: String] = [:]
-        for line in lines.dropFirst() {
-            let parts = line.split(separator: ":", maxSplits: 1).map(String.init)
-            guard parts.count == 2 else { continue }
-            fields[parts[0].trimmingCharacters(in: .whitespacesAndNewlines)] = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-
-        return AdapterVersionInfo(
-            name: firstParts[0],
-            version: firstParts[1],
-            buildGitSha: fields["Build git SHA"] ?? "unknown",
-            builtAtUtc: fields["Built at UTC"] ?? "n/a",
-            localHeadSha: fields["Local HEAD SHA"] ?? "unknown",
-            supportsSessionList: fields["ACP sessions"]?.contains("list") ?? false,
-            supportsSessionResume: fields["ACP sessions"]?.contains("resume") ?? false,
-            supportsSessionLoad: fields["ACP sessions"]?.contains("load") ?? false,
-            directTools: parseDirectTools(fields["Direct tools"]),
-            chromeTools: fields["Chrome tools"] ?? "unknown"
-        )
-    }
-
-    private func parseDirectTools(_ raw: String?) -> [String: JSONValue]? {
-        guard let raw, let data = raw.data(using: .utf8) else { return nil }
-        return try? jsonDecoder.decode([String: JSONValue].self, from: data)
+        try AdapterVersionReader(processRunner: processRunner).read(from: executableURL)
     }
 
     private func updateStatus(installedVersion: String, availableVersion: String?) -> InstallStatus {

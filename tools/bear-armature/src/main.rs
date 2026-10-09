@@ -13,6 +13,7 @@ mod session_lifecycle_tests;
 mod tool_tasks;
 mod tools;
 mod update;
+mod version_metadata;
 
 fn classify_prompt_failure(error_chain: &str) -> (&'static str, String) {
     if error_chain.contains("Den API connectivity failure:") {
@@ -1745,14 +1746,22 @@ fn route_browser_screenshot() -> rmcp::handler::server::router::tool::ToolRoute<
     )
 }
 
-#[tokio::main]
-async fn main() {
-    if let Err(err) = run().await {
+fn main() {
+    if let Err(err) = run_cli() {
         eprintln!("bear-armature: {err:#}");
         std::process::exit(1);
     }
 }
 
+fn run_cli() -> Result<()> {
+    let mut args = env::args_os().skip(1);
+    if args.next().as_deref() == Some(std::ffi::OsStr::new("version")) {
+        return version_metadata::run(args);
+    }
+    run()
+}
+
+#[tokio::main]
 async fn run() -> Result<()> {
     init_armature_tracing();
     let mut runtime = RuntimeConfig::from_env_and_args()?;
@@ -2311,9 +2320,10 @@ fn require_arg_value(flag: &str, value: Option<String>) -> Result<String> {
 
 fn print_version_to_stderr() {
     eprintln!(
-        "bear-armature {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP sessions: list/resume/load; conversations bound via Den\nDirect tools: {}\nChrome tools: {}",
+        "bear-armature {}\nBuild git SHA: {}\nBuilt at UTC: {}\nLocal HEAD SHA: {}\nACP sessions: list/resume/load; conversations bound via Den\nDirect tools: {}\nChrome tools: {}",
         adapter_version(),
         env!("DEN_ACP_ADAPTER_GIT_SHA"),
+        env!("DEN_ACP_ADAPTER_BUILT_AT_UTC"),
         local_head_sha(),
         direct_tools_context(),
         chrome_capability_status_line()
@@ -2374,8 +2384,8 @@ pub(crate) fn headless_mode() -> bool {
 fn print_help_to_stderr() {
     eprintln!(
         "bear-armature {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP sessions: list/resume/load; conversations bound via Den\n\n\
-Subcommands:\n  acp                    Run ACP stdio mode (explicit)\n  headless               Execute one Den work order in a sandbox (no editor; env-driven)\n  doctor                 Run user-friendly setup checks and exit\n  update-check           Check for a newer signed macOS package\n  update                 Download, verify, and install/open a newer macOS package\n  browser-bridge         Serve browser-only MCP tools over local Streamable HTTP\n\n\
-Usage: bear-armature acp --api-url <url> --bear <slug> [--client zed] [--token-env DEN_TOKEN]\n       bear-armature doctor\n       bear-armature update-check [--channel stable]\n       bear-armature update [--open|--install|--download-only] [--yes]\n       bear-armature browser-bridge [--bind 127.0.0.1:3766] [--path /mcp] [--token <token>]\n\n\
+Subcommands:\n  version                Show version metadata (--json for machine-readable stdout)\n  acp                    Run ACP stdio mode (explicit)\n  headless               Execute one Den work order in a sandbox (no editor; env-driven)\n  doctor                 Run user-friendly setup checks and exit\n  update-check           Check for a newer signed macOS package\n  update                 Download, verify, and install/open a newer macOS package\n  browser-bridge         Serve browser-only MCP tools over local Streamable HTTP\n\n\
+Usage: bear-armature acp --api-url <url> --bear <slug> [--client zed] [--token-env DEN_TOKEN]\n       bear-armature version [--json]\n       bear-armature doctor\n       bear-armature update-check [--channel stable]\n       bear-armature update [--open|--install|--download-only] [--yes]\n       bear-armature browser-bridge [--bind 127.0.0.1:3766] [--path /mcp] [--token <token>]\n\n\
 Legacy usage (still supported):\n  bear-armature --api-url <url> --bear <slug> [--client zed] [--token-env DEN_TOKEN]\n\n\
 Global options:\n  --version              Show version/build behavior and exit\n  --help                 Show this help\n\n\
 Environment fallbacks:\n  DEN_API_URL\n  BEAR_SLUG\n  DEN_TOKEN\n  DEN_TOKEN_ENV\n  DEN_ACP_CLIENT\n  BEAR_ARMATURE_UPDATE_CHANNEL / BEARS_ACP_UPDATE_CHANNEL\n  BEAR_ARMATURE_UPDATE_MANIFEST_URL / BEARS_ACP_UPDATE_MANIFEST_URL\n\n\
