@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE artifacts SET title='Changed retired title' WHERE artifact_ref=$1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "622c54b161803fef19f3f60ace5df406eb0e45f1d6be1e55a0c2539b29aba519"
+}

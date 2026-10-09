@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO artifact_links(artifact_id,target_kind,target_id,role) SELECT id,'unknown_target','opaque','evidence' FROM artifacts WHERE artifact_ref=$1 RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "e855feb6dce2282f4d82945dda895854778d0992002c6cbd8d7984efaef05097"
+}

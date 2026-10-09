@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT created_by_user_id FROM artifacts WHERE artifact_ref=$1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "created_by_user_id",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "c2c36bc210621f6fd6c3a21d2a5fd16cd2057819ddafcf9edc4ca36a851e87e2"
+}

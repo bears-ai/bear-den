@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO bear_job_criteria_state(run_id,criterion_id,status) VALUES($1,$2,'met')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8ab68395ce9813bc55ee8b559cfd76aa6019465ca1604934aa3db0531b3cb0e0"
+}

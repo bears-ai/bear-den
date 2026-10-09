@@ -7,6 +7,7 @@ mod attachment_read;
 mod cleanup;
 mod knowledge;
 mod previews;
+mod retirement;
 mod uploads;
 mod usability;
 mod usability_followups;

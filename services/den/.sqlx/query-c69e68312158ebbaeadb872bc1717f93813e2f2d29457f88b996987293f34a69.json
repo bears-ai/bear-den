@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bear_jobs SET lifecycle_intent='archived' WHERE id=$1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c69e68312158ebbaeadb872bc1717f93813e2f2d29457f88b996987293f34a69"
+}

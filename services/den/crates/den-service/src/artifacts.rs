@@ -23,6 +23,7 @@ use uuid::Uuid;
 pub mod bytes;
 pub mod cleanup;
 mod scoped_access;
+pub mod snapshot_retirement;
 pub use scoped_access::{
     authorize_for_reader, content_location_for_reader, json_content_for_reader,
     verify_content_bytes, ArtifactReader, ArtifactRef,
@@ -1126,7 +1127,7 @@ pub async fn list_expired_artifact_gc_candidates(
             AND expires_at <= $2
             AND lifecycle IN ('finalized', 'expired')
             AND content_removed_at IS NULL
-            AND NOT EXISTS (SELECT 1 FROM artifact_links l WHERE l.artifact_id = artifacts.id AND l.target_kind IN ('cabinet_item','cabinet_snapshot'))
+            AND NOT artifact_has_cabinet_retention(artifacts.id)
          ORDER BY expires_at ASC, created_at ASC
          LIMIT $3",
         bear_id,

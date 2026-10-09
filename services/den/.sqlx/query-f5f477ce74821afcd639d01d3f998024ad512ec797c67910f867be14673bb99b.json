@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT l.id FROM artifact_links l JOIN artifacts a ON a.id=l.artifact_id WHERE a.artifact_ref=$1 AND l.target_kind='docket_job'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "f5f477ce74821afcd639d01d3f998024ad512ec797c67910f867be14673bb99b"
+}

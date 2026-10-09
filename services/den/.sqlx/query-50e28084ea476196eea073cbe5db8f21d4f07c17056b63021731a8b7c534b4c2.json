@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bear_jobs SET goal='Changed after preview' WHERE id=$1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "50e28084ea476196eea073cbe5db8f21d4f07c17056b63021731a8b7c534b4c2"
+}

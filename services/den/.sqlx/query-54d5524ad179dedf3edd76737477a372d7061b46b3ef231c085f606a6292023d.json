@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT a.created_by_user_id,l.retention_released_by_user_id,l.retention_release_reason FROM artifacts a JOIN artifact_links l ON l.artifact_id=a.id WHERE a.artifact_ref=$1 AND l.target_kind='cabinet_snapshot'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "created_by_user_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "retention_released_by_user_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "retention_release_reason",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "54d5524ad179dedf3edd76737477a372d7061b46b3ef231c085f606a6292023d"
+}

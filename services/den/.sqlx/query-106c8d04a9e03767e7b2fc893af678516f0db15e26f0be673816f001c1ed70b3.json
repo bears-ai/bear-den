@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (SELECT 1 FROM artifacts a JOIN artifact_links l ON l.artifact_id=a.id\n        WHERE a.created_by_user_id=$1 AND a.kind='cabinet_document_snapshot' AND a.visibility='same_user'\n          AND a.lifecycle='finalized' AND l.target_kind='cabinet_snapshot'\n          AND l.retention_released_at IS NULL) AS \"blocked!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "blocked!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "106c8d04a9e03767e7b2fc893af678516f0db15e26f0be673816f001c1ed70b3"
+}

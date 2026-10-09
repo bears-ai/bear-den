@@ -34,13 +34,14 @@ pub async fn capture_in_tx(
     let Actor::User { user_id } = scope.actor else {
         return Err(CabinetError::NotAuthorized);
     };
-    if crate::bears::db::membership_role_for_user(pool, user_id.0, bear.as_uuid())
+    artifacts::snapshot_retirement::lock_owner(tx, user_id, bear)
         .await
-        .map_err(|error| CabinetError::Storage(error.to_string()))?
-        .is_none()
-    {
-        return Err(CabinetError::NotAuthorized);
-    }
+        .map_err(|error| match error {
+            den_core::DenError::NotFound(_) | den_core::DenError::Authorization(_) => {
+                CabinetError::NotAuthorized
+            }
+            other => CabinetError::Storage(other.to_string()),
+        })?;
     pages::lock(tx).await?;
     pages::authorize(pool, scope, page, Authority::Read).await?;
     let view = super::read(

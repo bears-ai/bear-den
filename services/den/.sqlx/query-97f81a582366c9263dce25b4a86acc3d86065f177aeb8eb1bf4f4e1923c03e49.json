@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO docket_execution_attempts(bear_id,task_id,binding_kind,binding_id,host_kind,host_run_id,fence_epoch,authorization_key,state) VALUES($1,$2,'client_session','test-session','pair','test-run',1,$3,'authorized')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "97f81a582366c9263dce25b4a86acc3d86065f177aeb8eb1bf4f4e1923c03e49"
+}

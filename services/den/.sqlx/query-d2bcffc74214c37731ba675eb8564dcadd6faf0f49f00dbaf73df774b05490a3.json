@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO artifacts(artifact_ref,bear_id,created_by_user_id,owner_profile,kind,storage_kind,visibility,lifecycle,deleted_at) VALUES($1,$2,$3,'chat','cabinet_document_snapshot','db_text','same_user','deleted',NOW())",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d2bcffc74214c37731ba675eb8564dcadd6faf0f49f00dbaf73df774b05490a3"
+}

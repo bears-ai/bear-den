@@ -16,11 +16,13 @@ pub struct UserDeletionPreview {
     pub user_id: UserId,
     pub username: String,
     pub bears: Vec<UserDeletionBear>,
+    /// Generic owner-lifecycle blocker, not a private-evidence inspection projection.
+    pub has_active_private_copies: bool,
 }
 
 impl UserDeletionPreview {
     pub fn is_blocked(&self) -> bool {
-        self.bears.iter().any(|bear| bear.last_admin)
+        self.bears.iter().any(|bear| bear.last_admin) || self.has_active_private_copies
     }
 }
 
@@ -30,6 +32,8 @@ pub enum UserDeletionError {
     NotFound,
     #[error("Grant another person Admin access to each affected Bear before deleting this user.")]
     LastBearAdmin(UserDeletionPreview),
+    #[error("This account owns active privately retained saved copies. Their creator must retire eligible copies or resolve their requirements before deleting the account. No private evidence is disclosed or transferred.")]
+    ActivePrivateCopies(UserDeletionPreview),
     #[error("Historical records still refer to this account. Keep the account; handing off Bear Admin access alone does not remove those references.")]
     Referenced { constraint: Option<String> },
     #[error(transparent)]
@@ -40,10 +44,9 @@ impl From<UserDeletionError> for DenError {
     fn from(error: UserDeletionError) -> Self {
         match error {
             UserDeletionError::NotFound => Self::NotFound("User not found".into()),
-            error
-            @ (UserDeletionError::LastBearAdmin(_) | UserDeletionError::Referenced { .. }) => {
-                Self::ValidationError(error.to_string())
-            }
+            error @ (UserDeletionError::LastBearAdmin(_)
+            | UserDeletionError::ActivePrivateCopies(_)
+            | UserDeletionError::Referenced { .. }) => Self::ValidationError(error.to_string()),
             UserDeletionError::Database(error) => error.into(),
         }
     }
@@ -108,6 +111,17 @@ async fn affected_bears(
         .collect())
 }
 
+async fn has_active_private_copies(
+    connection: &mut PgConnection,
+    user_id: UserId,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar!(r#"SELECT EXISTS (SELECT 1 FROM artifacts a JOIN artifact_links l ON l.artifact_id=a.id
+        WHERE a.created_by_user_id=$1 AND a.kind='cabinet_document_snapshot' AND a.visibility='same_user'
+          AND a.lifecycle='finalized' AND l.target_kind='cabinet_snapshot'
+          AND l.retention_released_at IS NULL) AS "blocked!""#, user_id.get())
+        .fetch_one(connection).await
+}
+
 /// Advisory only. Callers must authorize disclosure; deletion always checks again under locks.
 pub async fn preview_user_deletion(
     pool: &PgPool,
@@ -119,10 +133,12 @@ pub async fn preview_user_deletion(
         .await?
         .ok_or(UserDeletionError::NotFound)?;
     let bears = affected_bears(&mut connection, user_id).await?;
+    let has_active_private_copies = has_active_private_copies(&mut connection, user_id).await?;
     Ok(UserDeletionPreview {
         user_id,
         username,
         bears,
+        has_active_private_copies,
     })
 }
 
@@ -146,6 +162,7 @@ pub async fn delete_user(pool: &PgPool, user_id: UserId) -> Result<(), UserDelet
         r#"
         SELECT id FROM bears
         WHERE id IN (SELECT bear_id FROM user_bear WHERE user_id = $1)
+                   OR id IN (SELECT bear_id FROM artifacts WHERE created_by_user_id=$1 AND kind='cabinet_document_snapshot')
         ORDER BY id
         FOR UPDATE
         "#,
@@ -155,14 +172,20 @@ pub async fn delete_user(pool: &PgPool, user_id: UserId) -> Result<(), UserDelet
     .await?;
     // Use a separate statement after all lock waits, so READ COMMITTED sees their commits.
     let bears = affected_bears(&mut tx, user_id).await?;
+    let has_active_private_copies = has_active_private_copies(&mut tx, user_id).await?;
     let preview = UserDeletionPreview {
         user_id,
         username,
         bears,
+        has_active_private_copies,
     };
-    if preview.is_blocked() {
+    if preview.bears.iter().any(|bear| bear.last_admin) {
         tx.rollback().await?;
         return Err(UserDeletionError::LastBearAdmin(preview));
+    }
+    if preview.has_active_private_copies {
+        tx.rollback().await?;
+        return Err(UserDeletionError::ActivePrivateCopies(preview));
     }
     if let Err(error) = sqlx::query!("DELETE FROM users WHERE id = $1", user_id.get())
         .execute(&mut *tx)

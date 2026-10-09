@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO bears(slug,name,description) VALUES('foreign-snapshot-bear','Foreign Bear','') RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "26c1f6c309f96248e0ce33f0f32ac87e7988663c6b3734189e9624fca8c05cfa"
+}

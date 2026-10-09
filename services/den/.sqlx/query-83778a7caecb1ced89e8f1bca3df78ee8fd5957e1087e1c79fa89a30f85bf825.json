@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO turn_runs(run_id,session_id,bear_id,user_id,state) VALUES('live-delete-turn','live-delete-session',$1,$2,'accepted')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "83778a7caecb1ced89e8f1bca3df78ee8fd5957e1087e1c79fa89a30f85bf825"
+}

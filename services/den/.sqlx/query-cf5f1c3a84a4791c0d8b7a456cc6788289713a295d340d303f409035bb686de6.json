@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO artifact_links(artifact_id,target_kind,target_id,role,created_by_user_id) SELECT id,'docket_job',$2,'source',$3 FROM artifacts WHERE artifact_ref=$1 RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "cf5f1c3a84a4791c0d8b7a456cc6788289713a295d340d303f409035bb686de6"
+}

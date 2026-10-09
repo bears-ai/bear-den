@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE artifact_json_payloads SET payload='{}'::jsonb WHERE artifact_id=(SELECT id FROM artifacts WHERE artifact_ref=$1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "771db79339dc771b3d73f8bf6b08d5271852352b1cf4e37097bad0699374cc0f"
+}

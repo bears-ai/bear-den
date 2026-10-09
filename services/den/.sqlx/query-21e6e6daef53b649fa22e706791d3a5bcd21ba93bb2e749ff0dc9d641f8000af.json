@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.id FROM bear_job_runs r JOIN bear_jobs j ON j.id=r.job_id\n        WHERE j.bear_id=$1 AND ($2::text IS NULL OR EXISTS (\n        SELECT 1 FROM artifact_links l JOIN artifacts a ON a.id=l.artifact_id\n        WHERE a.artifact_ref=$2 AND l.target_kind='docket_job' AND l.target_id=j.id::text))\n        ORDER BY r.id FOR UPDATE OF r NOWAIT",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "21e6e6daef53b649fa22e706791d3a5bcd21ba93bb2e749ff0dc9d641f8000af"
+}

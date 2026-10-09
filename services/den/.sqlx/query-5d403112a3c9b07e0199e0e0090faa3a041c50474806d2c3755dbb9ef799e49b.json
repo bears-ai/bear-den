@@ -1,0 +1,131 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT a.id,a.artifact_ref,a.bear_id,b.name,b.slug,a.title,a.created_at,a.lifecycle,\n            p.payload AS \"payload: Json<DocumentSnapshot>\",\n            c.id AS \"citation_id?\",c.retention_released_at,c.retention_released_by_user_id,\n            c.retention_release_reason,c.retirement_fingerprint,\n            cabinet_snapshot_is_simple(a.id) AS \"simple!\",\n            cabinet_snapshot_job_settled(a.id) AS \"settled!\",\n            NOT EXISTS (SELECT 1 FROM artifact_links l WHERE l.artifact_id=a.id AND l.target_kind='docket_job'\n                AND NOT EXISTS (SELECT 1 FROM bear_jobs j JOIN user_bear ub ON ub.bear_id=j.bear_id AND ub.user_id=$2\n                    WHERE j.id::text=l.target_id AND j.bear_id=a.bear_id\n                      AND j.visibility IN ('private_to_profile','same_user','bear_visible','handoff_requested')\n                      AND (j.created_by_user_id=$2 OR lower(btrim(coalesce(ub.role,'')))='admin'))) AS \"job_authorized!\",\n            NOT EXISTS (SELECT 1 FROM artifact_links l WHERE l.artifact_id=a.id AND l.target_kind='docket_job'\n                AND NOT EXISTS (SELECT 1 FROM bear_jobs j JOIN user_bear ub ON ub.bear_id=j.bear_id AND ub.user_id=$2\n                    WHERE j.id::text=l.target_id AND j.bear_id=a.bear_id\n                      AND j.visibility IN ('private_to_profile','same_user','bear_visible','handoff_requested')\n                      AND (j.created_by_user_id=$2 OR lower(btrim(coalesce(ub.role,'')))='admin' OR j.visibility='bear_visible'))) AS \"job_readable!\",\n            jsonb_build_object('artifact',to_jsonb(a),'links',\n                (SELECT jsonb_agg(to_jsonb(l) ORDER BY l.id) FROM artifact_links l WHERE l.artifact_id=a.id),\n                'jobs',(SELECT jsonb_agg(to_jsonb(j) ORDER BY j.id) FROM bear_jobs j\n                    JOIN artifact_links l ON l.target_kind='docket_job' AND l.target_id=j.id::text WHERE l.artifact_id=a.id),\n                'runs',(SELECT jsonb_agg(to_jsonb(r) ORDER BY r.id) FROM bear_job_runs r JOIN bear_jobs j ON j.id=r.job_id\n                    WHERE j.bear_id=a.bear_id AND EXISTS (SELECT 1 FROM artifact_links l WHERE l.artifact_id=a.id AND l.target_kind='docket_job' AND l.target_id=j.id::text)),\n                'work',(SELECT jsonb_agg(to_jsonb(r) ORDER BY r.id) FROM bear_work_runs r WHERE r.bear_id=a.bear_id\n                    AND EXISTS (SELECT 1 FROM artifact_links l WHERE l.artifact_id=a.id AND l.target_kind='docket_job' AND l.target_id=r.job_id::text)),\n                'attempts',(SELECT jsonb_agg(to_jsonb(e) ORDER BY e.id) FROM docket_execution_attempts e JOIN bear_tasks t ON t.id=e.task_id\n                    WHERE e.bear_id=a.bear_id AND EXISTS (SELECT 1 FROM artifact_links l WHERE l.artifact_id=a.id AND l.target_kind='docket_job' AND l.target_id=t.job_id::text)),\n                'claims',(SELECT jsonb_agg(to_jsonb(c) ORDER BY c.id) FROM docket_turn_claims c WHERE c.bear_id=a.bear_id\n                    AND EXISTS (SELECT 1 FROM artifact_links l WHERE l.artifact_id=a.id AND l.target_kind='docket_job' AND l.target_id=c.job_id::text)),\n                'task_states',(SELECT jsonb_agg(to_jsonb(s) ORDER BY s.run_id,s.task_id) FROM bear_task_run_state s JOIN bear_tasks t ON t.id=s.task_id\n                    WHERE t.bear_id=a.bear_id AND EXISTS (SELECT 1 FROM artifact_links l WHERE l.artifact_id=a.id AND l.target_kind='docket_job' AND l.target_id=t.job_id::text)),\n                'criterion_states',(SELECT jsonb_agg(to_jsonb(s) ORDER BY s.run_id,s.criterion_id) FROM bear_job_criteria_state s JOIN bear_job_criteria c ON c.id=s.criterion_id\n                    WHERE EXISTS (SELECT 1 FROM artifact_links l WHERE l.artifact_id=a.id AND l.target_kind='docket_job' AND l.target_id=c.job_id::text)),\n                'simple',cabinet_snapshot_is_simple(a.id),'settled',cabinet_snapshot_job_settled(a.id))::text AS \"material!\"\n        FROM artifacts a JOIN bears b ON b.id=a.bear_id JOIN user_bear ub ON ub.bear_id=a.bear_id AND ub.user_id=$2\n        JOIN artifact_json_payloads p ON p.artifact_id=a.id\n        LEFT JOIN LATERAL (SELECT * FROM artifact_links l WHERE l.artifact_id=a.id AND l.target_kind='cabinet_snapshot'\n            ORDER BY l.id LIMIT 1) c ON true\n        WHERE a.artifact_ref=$1 AND a.created_by_user_id=$2 AND a.kind='cabinet_document_snapshot' AND a.visibility='same_user'\n    ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "artifact_ref",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "bear_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "slug",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "lifecycle",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "payload: Json<DocumentSnapshot>",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 9,
+        "name": "citation_id?",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 10,
+        "name": "retention_released_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "retention_released_by_user_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 12,
+        "name": "retention_release_reason",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
+        "name": "retirement_fingerprint",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 14,
+        "name": "simple!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 15,
+        "name": "settled!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 16,
+        "name": "job_authorized!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 17,
+        "name": "job_readable!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 18,
+        "name": "material!",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "5d403112a3c9b07e0199e0e0090faa3a041c50474806d2c3755dbb9ef799e49b"
+}

@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Saved copy · {{ view.title | e }}{% endblock %}
+{% block content %}
+<main class="den-hub"><section class="box">
+<h1>{{ view.title | e }}</h1>
+<p>Private saved copy · {{ view.bear_name | e }}</p>
+<p><a href="/cabinet/saved-copies">Your saved copies</a> · <a href="/bear/{{ view.bear_slug | urlencode }}/identity">Bear purpose</a></p>
+{% if error %}<p class="form-errors" role="alert">{{ error | e }}</p>{% endif %}
+{% if view.receipt %}
+<h2>Retired</h2>
+<p>Ordinary downloads have stopped. The original snapshot, citation and Job source link remain as audit while the Bear exists. No content was erased by retirement.</p>
+<dl><dt>Retired at</dt><dd>{{ view.receipt.retired_at | e }}</dd><dt>Reason</dt><dd>{{ view.receipt.reason | e }}</dd></dl>
+{% else %}
+{% if view.readable %}<p><a href="/cabinet/saved-copies/{{ view.reference }}/content">Download saved copy</a></p>{% endif %}
+<h2>Review retirement</h2>
+<p>This releases only this copy's Cabinet snapshot retention and stops ordinary downloads. The original captured content, hash, provenance and citation remain unchanged; the Job source link and source page are not removed or edited. This cannot be undone here.</p>
+<p>A later separately confirmed hard Bear deletion may permanently remove its eligible retired copies, Jobs and history. It is refused while other live, shared or required records remain.</p>
+{% if blocker %}<p role="alert">{{ blocker | e }}</p>{% endif %}
+{% if can_retire %}<form method="post" action="/cabinet/saved-copies/{{ view.reference }}/retire">
+<input type="hidden" name="expected" value="{{ view.fingerprint }}"><input type="hidden" name="token" value="{{ token }}">
+<label for="retirement-reason">Why is this copy no longer needed?</label><textarea id="retirement-reason" name="reason" required maxlength="2000">{{ reason | e }}</textarea>
+<p><label><input type="checkbox" name="acknowledged" value="true" required> I confirm this copy is no longer required and understand that retirement stops downloads, preserves audit, and is not physical erasure.</label></p>
+<button type="submit" class="button-danger">Retire saved copy</button>
+</form>{% endif %}
+{% endif %}
+</section></main>
+{% endblock %}

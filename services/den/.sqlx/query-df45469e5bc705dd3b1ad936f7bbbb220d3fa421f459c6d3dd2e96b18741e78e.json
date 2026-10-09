@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO bear_jobs(bear_id,created_by_user_id,created_by_role,goal,lifecycle_intent) VALUES($1,$2,'ui','FOREIGN PRIVATE GOAL','cancelled') RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "df45469e5bc705dd3b1ad936f7bbbb220d3fa421f459c6d3dd2e96b18741e78e"
+}

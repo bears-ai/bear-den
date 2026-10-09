@@ -1,0 +1,24 @@
+{% extends "bear/_manage.html" %}
+{% block title %}Review Bear deletion · {{ bear.name | e }}{% endblock %}
+{% block manage %}
+<section class="box">
+<h1>Delete {{ bear.name | e }} permanently?</h1>
+<p><a href="/bear/{{ bear.slug | urlencode }}/identity">Keep Bear and return to Purpose</a></p>
+{% if error %}<p class="form-errors" role="alert">{{ error | e }}</p>{% endif %}
+<p>This is a separate destructive action, not snapshot retirement. It permanently removes this Bear and its memberships, eligible retired snapshots and their stored content/receipts, Jobs and Den history under existing cascade rules. Retirement alone did not erase those records. This cannot be undone here.</p>
+<p>Live work, retained Cabinet attachments, required/shared/external-owner references and unremoved registered external bytes prevent deletion. Private access is not overridden and nothing is handed off automatically. This does not promise erasure of backups, external repositories, object-store versions or private memory files.</p>
+{% if blockers %}<h2>Resolve before deleting</h2><ul>{% for blocker in blockers %}<li>{{ blocker | e }}</li>{% endfor %}</ul>{% endif %}
+<h2>Your saved copies</h2>
+<p><a href="/cabinet/saved-copies">Review all your saved copies</a> · <a href="/cabinet">Cabinet</a> · <a href="/bear/{{ bear.slug | urlencode }}/jobs">Jobs</a></p>
+{% if copies.copies %}<ul>{% for copy in copies.copies %}<li>{{ copy.title | e }} · {% if copy.retired %}Retired · <a href="/cabinet/saved-copies/{{ copy.reference }}/retire">Receipt</a>{% else %}<a href="/cabinet/saved-copies/{{ copy.reference }}/retire">Review retirement</a>{% endif %}</li>{% endfor %}</ul>{% else %}<p>No copies available to you. An unreadable private blocker must be handled by its creator; private details are not shown here.</p>{% endif %}
+{% if preview.can_delete %}
+<h2>Confirm hard deletion</h2>
+<form method="post" action="/bear/{{ bear.slug | urlencode }}/delete">
+<input type="hidden" name="expected" value="{{ preview.fingerprint }}"><input type="hidden" name="token" value="{{ token }}">
+<label for="confirm_slug">Type the Bear handle <code>{{ bear.slug | e }}</code></label><input id="confirm_slug" name="confirm_slug" required autocomplete="off">
+<p><label><input type="checkbox" name="acknowledged" value="true" required> I confirm permanent deletion of this Bear and its eligible retired snapshot audit, stored content, Jobs and history.</label></p>
+<button type="submit" class="button-danger">Delete Bear permanently</button>
+</form>
+{% else %}<p>Nothing will be deleted until these blockers are resolved and a fresh preview is confirmed.</p>{% endif %}
+</section>
+{% endblock %}

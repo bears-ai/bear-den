@@ -157,6 +157,11 @@ pub async fn delete_user_action(
             Some("Deletion would leave a Bear without an Admin. Grant another person Admin access to every affected Bear, then return here; or keep this account."),
             StatusCode::CONFLICT,
         ).await,
+        Err(UserDeletionError::ActivePrivateCopies(preview)) => render_preview(
+            &state, auth_session, &session, preview, form.confirm_delete,
+            Some("This account owns active privately retained saved copies. Ask the creator to review Your saved copies and retire eligible copies or resolve their requirements first. No private evidence is disclosed or transferred; no changes were made."),
+            StatusCode::CONFLICT,
+        ).await,
         Err(UserDeletionError::Referenced { constraint }) => {
             tracing::info!(?id, ?constraint, "User deletion blocked by historical references");
             render_preview(

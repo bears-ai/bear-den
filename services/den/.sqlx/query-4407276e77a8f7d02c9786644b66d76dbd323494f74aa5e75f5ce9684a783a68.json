@@ -1,0 +1,70 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT a.artifact_ref,a.title,b.name AS bear_name,a.lifecycle,a.expires_at,\n        a.content_removed_at,a.created_at,a.provenance AS \"source: Json<UploadSource>\",\n        artifact_has_cabinet_retention(a.id) AS \"retained!\"\n        FROM artifacts a JOIN bears b ON b.id=a.bear_id\n        JOIN user_bear ub ON ub.bear_id=a.bear_id AND ub.user_id=$1\n        WHERE a.created_by_user_id=$1 AND a.kind='cabinet_file' AND a.storage_kind='garage_artifacts'\n        ORDER BY a.created_at DESC,a.id DESC LIMIT 64",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "artifact_ref",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "bear_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "lifecycle",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "expires_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "content_removed_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "source: Json<UploadSource>",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 8,
+        "name": "retained!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "4407276e77a8f7d02c9786644b66d76dbd323494f74aa5e75f5ce9684a783a68"
+}

@@ -117,6 +117,12 @@ A sole-Admin account must hand off every affected Bear first. Existing historica
 
 Evidence: `den-http/src/user/db/deletion/tests.rs`, `den-web/src/admin/users/delete/tests/`, and canonical membership concurrency tests. Static SQL uses macros and all-target offline metadata; no dependencies or schema migration are needed. Deployment/live acceptance is deferred.
 
+## Retained-evidence lifecycle
+
+**Code/test follow-on, not deployed:** [saved-copy retirement](docket.md#saved-copy-retirement-and-deletion-resolution) is available through Cabinet and Job evidence. It is creator-authorized, checks current membership and applicable Job authority/settlement, and keeps original payload/provenance with an immutable receipt while stopping ordinary downloads. Retirement is not erasure or permission to remove required/shared evidence. Bear deletion now has a fresh-inventory preview and explicit confirmation, with readable own-copy remediation and generic private/reference/file-cleanup blockers. Simple retired copies can be purged only as part of separately confirmed deletion of their owning Bear's eligible history. Identity deletion cannot strand privately retained copies. No private-reader override, ownership transfer, source-page deletion, model tool, or general bucket cleanup was added.
+
+Canonical Docket proof rows, artifacts and links are fenced; reverse foreign-run references, lifecycle reopening, receipt-insert bypasses and lock inversions have regression coverage. The schema changes and downgrade barrier are applied only to the isolated validation database. Rollback refuses populated receipts before unwinding guards; clean/old-active rollback/reapply passes. See the Docket topic for code/test evidence; live acceptance and deployment remain deferred.
+
 ## Read deeper
 
 - [Memory architecture](../architecture/memory-model.md)

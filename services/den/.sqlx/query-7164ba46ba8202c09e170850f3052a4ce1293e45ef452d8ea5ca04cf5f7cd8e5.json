@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT jsonb_build_object(\n        'triggers',(SELECT jsonb_agg(jsonb_build_array(c.relname,t.tgname,t.tgtype,t.tgdeferrable,t.tginitdeferred,t.tgenabled::text) ORDER BY c.relname,t.tgname)\n            FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace\n            WHERE n.nspname='public' AND t.tgname IN ('artifacts_snapshot_immutable','artifact_links_snapshot_citation',\n                'artifacts_snapshot_retirement_commit','artifact_links_snapshot_retirement_commit','artifacts_cabinet_retention')),\n        'functions',(SELECT jsonb_agg(jsonb_build_array(p.proname,p.prosrc) ORDER BY p.proname)\n            FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public'\n            AND p.proname IN ('protect_snapshot_registry','protect_snapshot_citation','verify_snapshot_retirement_commit',\n                'docket_job_has_foreign_requirements','docket_run_has_foreign_requirements'))\n        ) AS \"guards!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "guards!",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "7164ba46ba8202c09e170850f3052a4ce1293e45ef452d8ea5ca04cf5f7cd8e5"
+}

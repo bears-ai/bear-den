@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO bear_jobs(bear_id,created_by_user_id,created_by_role,goal,lifecycle_intent,visibility) VALUES($1,$2,'ui','Private Job','cancelled','same_user') RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "70c5c1d1aeec781217d03844697f0d5bbdaefccc7404f5fb813d7c28bd484fe7"
+}

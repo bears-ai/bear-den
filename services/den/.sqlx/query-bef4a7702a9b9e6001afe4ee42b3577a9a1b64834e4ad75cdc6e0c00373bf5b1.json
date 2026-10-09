@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT lifecycle,content_sha256 FROM artifacts WHERE artifact_ref=$1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "lifecycle",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "content_sha256",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "bef4a7702a9b9e6001afe4ee42b3577a9a1b64834e4ad75cdc6e0c00373bf5b1"
+}

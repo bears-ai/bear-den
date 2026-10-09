@@ -12,6 +12,7 @@ fn delete_templates_render_real_parents_and_no_javascript_confirmation_or_unsafe
             preview => UserDeletionPreview {
                 user_id: target,
                 username: "casey<script>".into(),
+                has_active_private_copies: false,
                 bears: vec![UserDeletionBear {
                     bear_id: atlas, name: "Private Atlas<script>".into(), is_admin: true, last_admin: true,
                 }],

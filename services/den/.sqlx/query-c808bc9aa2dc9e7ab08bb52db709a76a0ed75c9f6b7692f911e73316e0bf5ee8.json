@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO bear_work_runs(bear_id,job_id,job_run_id,state,finished_at) VALUES($1,$2,$3,'succeeded',NOW()) RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c808bc9aa2dc9e7ab08bb52db709a76a0ed75c9f6b7692f911e73316e0bf5ee8"
+}

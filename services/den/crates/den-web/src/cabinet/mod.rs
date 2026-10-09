@@ -34,6 +34,7 @@ mod audience;
 pub(crate) mod cleanup;
 mod pages;
 mod previews;
+mod saved_copies;
 mod uploads;
 
 pub fn router() -> Router<AppState> {
@@ -41,6 +42,7 @@ pub fn router() -> Router<AppState> {
         .merge(pages::router())
         .merge(attachments::router())
         .merge(cleanup::router())
+        .merge(saved_copies::router())
         .merge(previews::router())
         .merge(uploads::router())
         .route("/cabinet", get(index))

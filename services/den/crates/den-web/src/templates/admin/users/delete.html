@@ -10,6 +10,7 @@
 <p>Deleting this account removes its Bear memberships and other records covered by existing deletion rules. This cannot be undone here. Historical records may prevent deletion.</p>
 <p>This is a preview, not a reservation. Admin access is checked again when you submit.</p>
 
+{% if preview.has_active_private_copies %}<p role="alert"><strong>Deletion blocked: active privately retained saved copies.</strong> Their creator must review Your saved copies and resolve retirement or other requirements first. Private evidence is not disclosed or transferred here.</p>{% endif %}
 <h3>Affected Bears</h3>
 {% if preview.bears %}
 <ul>

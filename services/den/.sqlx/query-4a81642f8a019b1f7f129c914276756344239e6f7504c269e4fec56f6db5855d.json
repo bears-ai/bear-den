@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE artifacts SET lifecycle='finalized' WHERE artifact_ref=$1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4a81642f8a019b1f7f129c914276756344239e6f7504c269e4fec56f6db5855d"
+}

@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE artifact_links SET retention_released_at=NOW(),\n            retention_released_by_user_id=$2,retention_release_reason=$3,retirement_fingerprint=$4\n        WHERE id=$1 AND target_kind='cabinet_snapshot' AND role='citation'\n          AND retention_released_at IS NULL\n        RETURNING retention_released_at AS \"retired_at!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "retired_at!",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "964ee95ff203cee5e4cc6b3363d61e01841f1edb0944f16847d08323d5101880"
+}

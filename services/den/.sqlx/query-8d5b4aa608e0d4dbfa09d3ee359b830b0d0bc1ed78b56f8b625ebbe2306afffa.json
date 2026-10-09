@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE artifact_links SET metadata=metadata WHERE id=$1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8d5b4aa608e0d4dbfa09d3ee359b830b0d0bc1ed78b56f8b625ebbe2306afffa"
+}

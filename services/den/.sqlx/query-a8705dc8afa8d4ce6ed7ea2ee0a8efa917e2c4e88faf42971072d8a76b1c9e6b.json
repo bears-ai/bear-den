@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO docket_task_completion_receipts(task_id,run_id,primary_output_ref,immutable_identity,validation) VALUES($1,$2,$3,'recorded-identity','{}'::jsonb)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a8705dc8afa8d4ce6ed7ea2ee0a8efa917e2c4e88faf42971072d8a76b1c9e6b"
+}

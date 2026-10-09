@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE artifacts SET deleted_at=deleted_at+INTERVAL '1 second' WHERE artifact_ref=$1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2206c4d1c9ee5ebd16f525e2b31af634fbae4ce4d225bd648193d3359f6088fd"
+}

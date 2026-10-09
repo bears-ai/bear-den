@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE artifacts SET title='Rewritten audit',content_sha256=repeat('b',64) WHERE artifact_ref=$1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "56920d59c90fcdca3f7da913d171720fa543ddbaa301bc8a5d3b98a98a8f9bc8"
+}

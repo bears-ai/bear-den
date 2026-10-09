@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bear_job_runs SET state='completed' WHERE id=(SELECT current_run_id FROM bear_jobs WHERE id=$1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "07a37fddcbaaa829fc3716beb3241cc57fbfa42f0614030d691c97b573cf19dc"
+}

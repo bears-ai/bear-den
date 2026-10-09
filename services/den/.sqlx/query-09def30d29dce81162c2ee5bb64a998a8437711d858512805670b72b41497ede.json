@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT l.id FROM artifact_links l JOIN artifacts a ON a.id=l.artifact_id WHERE a.bear_id=$1 ORDER BY l.id FOR UPDATE OF l NOWAIT",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "09def30d29dce81162c2ee5bb64a998a8437711d858512805670b72b41497ede"
+}

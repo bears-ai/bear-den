@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT jsonb_build_object('artifact',to_jsonb(a),'payload',p.payload,\n        'links',(SELECT jsonb_agg(to_jsonb(l) ORDER BY l.id) FROM artifact_links l WHERE l.artifact_id=a.id),\n        'job',(SELECT to_jsonb(j) FROM bear_jobs j WHERE j.id=$2)) AS \"audit!\"\n        FROM artifacts a JOIN artifact_json_payloads p ON p.artifact_id=a.id WHERE a.artifact_ref=$1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "audit!",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "28381e3289b990905ab79ec3c85ef2eee87a5f9a9cdf6e51a8a28b6114530f72"
+}

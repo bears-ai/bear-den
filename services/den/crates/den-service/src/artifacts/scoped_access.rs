@@ -89,7 +89,12 @@ pub async fn authorize_for_reader(
             .expires_at
             .is_some_and(|time| time <= OffsetDateTime::now_utc())
         {
-            let retained=sqlx::query_scalar!(r#"SELECT EXISTS(SELECT 1 FROM artifact_links WHERE artifact_id=$1 AND target_kind IN('cabinet_item','cabinet_snapshot')) AS "retained!""#,artifact.id).fetch_one(pool).await?;
+            let retained = sqlx::query_scalar!(
+                r#"SELECT artifact_has_cabinet_retention($1) AS "retained!""#,
+                artifact.id
+            )
+            .fetch_one(pool)
+            .await?;
             if !retained {
                 return Err(DenError::NotFound("artifact expired".into()));
             }

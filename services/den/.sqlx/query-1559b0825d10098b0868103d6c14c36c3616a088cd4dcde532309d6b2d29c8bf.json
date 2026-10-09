@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT artifact_has_cabinet_retention(id) AS \"retained!\" FROM artifacts WHERE artifact_ref=$1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "retained!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "1559b0825d10098b0868103d6c14c36c3616a088cd4dcde532309d6b2d29c8bf"
+}

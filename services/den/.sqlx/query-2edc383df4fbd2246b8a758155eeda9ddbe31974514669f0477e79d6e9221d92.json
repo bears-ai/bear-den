@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.run_id,s.criterion_id FROM bear_job_criteria_state s\n        JOIN bear_job_criteria c ON c.id=s.criterion_id JOIN bear_jobs j ON j.id=c.job_id\n        WHERE j.bear_id=$1 AND ($2::text IS NULL OR EXISTS (\n        SELECT 1 FROM artifact_links l JOIN artifacts a ON a.id=l.artifact_id\n        WHERE a.artifact_ref=$2 AND l.target_kind='docket_job' AND l.target_id=j.id::text))\n        ORDER BY s.run_id,s.criterion_id FOR UPDATE OF s NOWAIT",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "run_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "criterion_id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "2edc383df4fbd2246b8a758155eeda9ddbe31974514669f0477e79d6e9221d92"
+}

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO artifact_links(artifact_id,target_kind,target_id,role) SELECT id,'unknown_owner','new-requirement','evidence' FROM artifacts WHERE artifact_ref=$1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6cb72e5293a5345925183151a08b0d0e34ed72b01e865db4bb9e47c78ed1963c"
+}

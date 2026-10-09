@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT t.id FROM docket_turn_attempts t JOIN docket_routing_decisions d ON d.id=t.routing_decision_id\n        WHERE d.bear_id=$1 AND ($2::text IS NULL OR EXISTS (\n        SELECT 1 FROM artifact_links l JOIN artifacts a ON a.id=l.artifact_id\n        WHERE a.artifact_ref=$2 AND l.target_kind='docket_job' AND l.target_id=d.job_id::text))\n        ORDER BY t.id FOR UPDATE OF t NOWAIT",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "33cd79132ea0c137ebf828666b009238cf92fda9be72d3e6347a857b7d35d4f0"
+}

@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT payload FROM artifact_json_payloads WHERE artifact_id=(SELECT id FROM artifacts WHERE artifact_ref=$1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "payload",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "cae2e25aa089f0755af9d5173d5486e9e1f35bfd4e0317fd77ece939aa65611e"
+}

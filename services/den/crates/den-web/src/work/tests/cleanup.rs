@@ -249,17 +249,44 @@ async fn cleanup_protects_page_and_snapshot_retention_and_published_replay_is_re
         0
     );
     assert!(!removed(&pool, &item.pending).await);
-    sqlx::query!("DELETE FROM artifact_links WHERE id=$1", link.id)
-        .execute(&pool)
+    assert!(store.contains(&item.pending.location().storage_key).await);
+    let retained = sqlx::query_scalar!("SELECT id FROM artifact_links WHERE id=$1", link.id)
+        .fetch_optional(&pool)
         .await
         .unwrap();
+    assert_eq!(
+        retained,
+        Some(link.id),
+        "unknown snapshot citations remain protected"
+    );
+
+    // A cabinet_file carrying a snapshot citation is not an eligible document snapshot.
+    // Exercise successful cleanup on a separate, genuinely unretained upload instead.
+    let unretained = fixture(&pool).await;
+    media
+        .write_artifact(&pool, &unretained.pending, BYTES)
+        .await
+        .unwrap();
+    deadline(
+        &pool,
+        &unretained.pending,
+        now - registry::WRITE_GRACE - Duration::minutes(1),
+    )
+    .await;
     assert_eq!(
         crate::cabinet::cleanup::run_batch(&state, now, 10)
             .await
             .unwrap(),
         1
     );
-    assert!(removed(&pool, &item.pending).await);
+    assert!(removed(&pool, &unretained.pending).await);
+    assert!(
+        !store
+            .contains(&unretained.pending.location().storage_key)
+            .await
+    );
+    assert!(!removed(&pool, &item.pending).await);
+    assert!(store.contains(&item.pending.location().storage_key).await);
 }
 
 #[sqlx::test(migrations = "../../migrations")]

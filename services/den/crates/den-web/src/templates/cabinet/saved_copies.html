@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Your saved copies{% endblock %}
+{% block content %}
+<main class="den-hub">
+<section class="box">
+<h1>Your saved copies</h1>
+<p><a href="/cabinet">Cabinet</a></p>
+<p>Private to you under current Bear membership. Retirement stops ordinary downloads, but keeps the captured content and citation audit while the Bear exists. It is not physical erasure.</p>
+{% if history.copies %}<ul class="den-record-list">
+{% for copy in history.copies %}<li><strong>{{ copy.title | e }}</strong> · {{ copy.bear_name | e }}
+{% if copy.retired %}<strong>Retired</strong> · <a href="/cabinet/saved-copies/{{ copy.reference }}/retire">View retirement receipt</a>
+{% else %}{% if copy.readable %}<a href="/cabinet/saved-copies/{{ copy.reference }}/content">Download saved copy</a> · {% else %}<strong>Unavailable</strong> · {% endif %}<a href="/cabinet/saved-copies/{{ copy.reference }}/retire">Review retirement</a>{% endif %}
+</li>{% endfor %}</ul>{% else %}<p>No saved copies available under your current membership.</p>{% endif %}
+{% if history.next %}<p><a href="/cabinet/saved-copies?before={{ history.next }}">Older copies</a></p>{% endif %}
+</section>
+</main>
+{% endblock %}

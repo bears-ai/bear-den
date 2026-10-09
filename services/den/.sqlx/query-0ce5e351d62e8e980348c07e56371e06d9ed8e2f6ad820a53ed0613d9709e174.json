@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO bear_jobs(bear_id,created_by_user_id,created_by_role,goal,visibility) VALUES($1,$2,'ui','Source evidence','same_user') RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "0ce5e351d62e8e980348c07e56371e06d9ed8e2f6ad820a53ed0613d9709e174"
+}

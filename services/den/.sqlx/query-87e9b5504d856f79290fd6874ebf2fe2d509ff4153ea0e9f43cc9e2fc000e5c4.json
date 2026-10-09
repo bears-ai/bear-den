@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO bear_tasks(bear_id,job_id,title,body,created_by_role) VALUES($1,$2,'Focused','Focused source','ui') RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "87e9b5504d856f79290fd6874ebf2fe2d509ff4153ea0e9f43cc9e2fc000e5c4"
+}

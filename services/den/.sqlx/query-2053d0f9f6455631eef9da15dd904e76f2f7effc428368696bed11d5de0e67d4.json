@@ -1,0 +1,150 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n            id, artifact_ref, bear_id, created_by_user_id, owner_profile, kind,\n            title, summary, content_type, storage_kind, storage_key, content_bytes,\n            content_sha256, lifecycle, visibility, provenance, metadata, expires_at,\n            finalized_at, deleted_at, created_at, updated_at\n         FROM artifacts\n         WHERE bear_id = $1\n            AND expires_at IS NOT NULL\n            AND expires_at <= $2\n            AND lifecycle IN ('finalized', 'expired')\n            AND content_removed_at IS NULL\n            AND NOT artifact_has_cabinet_retention(artifacts.id)\n         ORDER BY expires_at ASC, created_at ASC\n         LIMIT $3",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "artifact_ref",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "bear_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "created_by_user_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 4,
+        "name": "owner_profile",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "summary",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "content_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "storage_kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "storage_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "content_bytes",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 12,
+        "name": "content_sha256",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
+        "name": "lifecycle",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 14,
+        "name": "visibility",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 15,
+        "name": "provenance",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 16,
+        "name": "metadata",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 17,
+        "name": "expires_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 18,
+        "name": "finalized_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 19,
+        "name": "deleted_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 20,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 21,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Timestamptz",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "2053d0f9f6455631eef9da15dd904e76f2f7effc428368696bed11d5de0e67d4"
+}

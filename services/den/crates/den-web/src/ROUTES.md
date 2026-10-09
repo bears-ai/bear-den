@@ -83,7 +83,7 @@ Bear management at `/bear/{slug}/…` is membership-gated. Raw inspection (Bear-
 - `GET|POST /bear/{slug}/code-token` — Bear-level ACP armature identity token; not a hat or stance grant
 - `GET /bear/{slug}/memory/browse/runtime-blocks` — permanent redirect to `/bear/{slug}/advanced` (deprecated)
 - `GET /bear/{slug}/memory/browse/proposals/{id}` — permanent redirect to `/bear/{slug}/memory/proposals/{id}`
-- `POST /bear/{slug}/delete` — delete bear row (bear admins only)
+- `GET|POST /bear/{slug}/delete` — Bear-admin deletion inventory/confirmation. Current handle, actor-bound expiring token, acknowledgement and expected fingerprint are required; shared service rechecks locks and blockers atomically. Simple retired copies and eligible own settled history may be purged only by this explicit operation. Live work, retaining/required/shared/foreign evidence and unremoved external bytes block deletion; private records supply generic remediation without reader elevation. Internal `delete_bear` callers remain conservative and cannot silently purge finalized evidence/history.
 - `POST /bear/{slug}/members/add`, `POST /bear/{slug}/members/remove` — legacy membership actions
 
 ## End-user chat (Phase 1 — same origin as web)
@@ -134,6 +134,9 @@ All `/admin/*` routes use `permission_required!(…, "admin")`.
 Shared-knowledge wiki over the `den_service::cabinet` facade (hierarchy/policy/review plus artifact attachments and bounded human uploads; bounded attachment inspection/previews; recall remains pending; contract in `docs/architecture/cabinet-contract.md`).
 
 - `GET /cabinet` — list/search items (`q`, `lifecycle=archived`)
+- `GET /cabinet/saved-copies` — creator/member-filtered paginated active/retired private snapshot history; metadata/receipt only for retired copies, no payload download or private admin override.
+- `GET|POST /cabinet/saved-copies/{artifact_ref}/retire` — creator-authorized fresh-inventory preview and retirement, requiring applicable Job authority/settlement, reason and explicit actor/target-bound confirmation. Required or unknown references remain blockers. It releases only the exact citation, stops downloads and preserves audit while the Bear survives; it does not erase bytes or edit the source page.
+- `GET /cabinet/saved-copies/{artifact_ref}/content` — current independent artifact/Job authorization and finalized-only download; retired copies are refused.
 - `GET /cabinet/uploads` — latest 64 owner-only historical upload records under current Bear membership; readable source-page links only, retired/retained/recovery states and no-store headers; does not grant retired content access
 - `POST /cabinet/uploads/{artifact_ref}/cleanup` — owner-only manual retry after lease/grace expiry, with fresh membership/retention checks; canonical-key DELETE then durable acknowledgement; cannot force cleanup of live/retained records
 - `GET /cabinet/new` / `POST /cabinet/new` — create an item (first published revision)

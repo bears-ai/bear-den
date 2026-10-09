@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT jsonb_build_object('artifact',to_jsonb(a),'payload',p.payload,\n        'citation',to_jsonb(l)) AS \"audit!\" FROM artifacts a JOIN artifact_json_payloads p ON p.artifact_id=a.id\n        JOIN artifact_links l ON l.artifact_id=a.id AND l.target_kind='cabinet_snapshot'\n        WHERE a.artifact_ref=$1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "audit!",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "319b24c2aa30fd4aad8fcb1ef4a690aeceb3e19f92a2dca9eaa2afaf5689f394"
+}

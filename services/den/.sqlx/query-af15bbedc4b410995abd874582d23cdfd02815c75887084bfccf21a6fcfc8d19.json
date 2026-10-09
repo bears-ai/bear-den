@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO docket_checkpoint_directives(execution_attempt_id,fence_epoch,state,acknowledged_at,acknowledged_artifact_ref) VALUES($1,1,'acknowledged',NOW(),$2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "af15bbedc4b410995abd874582d23cdfd02815c75887084bfccf21a6fcfc8d19"
+}

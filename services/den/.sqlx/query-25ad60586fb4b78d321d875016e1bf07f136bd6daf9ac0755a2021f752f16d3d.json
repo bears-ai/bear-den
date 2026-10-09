@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT tgenabled::text AS \"enabled!\" FROM pg_trigger\n        WHERE tgrelid='artifact_links'::regclass AND tgname='artifact_links_snapshot_citation'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "enabled!",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "25ad60586fb4b78d321d875016e1bf07f136bd6daf9ac0755a2021f752f16d3d"
+}

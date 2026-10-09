@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "ALTER TABLE artifact_links DISABLE TRIGGER artifact_links_snapshot_citation",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "022260e87dd892e8e7b6219085d914f1a1745bbafc57d4c4a9db6196fa3bea0a"
+}

@@ -243,13 +243,17 @@
     </details>
     {% endif %}
     <h3>Saved document evidence</h3>
+    <p><a href="/cabinet/saved-copies">Your saved copies</a></p>
+    {% if mission.saved_copies %}<ul>{% for copy in mission.saved_copies %}
+    <li>{{ copy.title | e }} · {% if copy.retired %}<strong>Retired</strong> · <a href="/cabinet/saved-copies/{{ copy.reference }}/retire">View retirement receipt</a>{% else %}{% if copy.readable %}<a href="/bear/{{ bear_slug | urlencode }}/jobs/{{ job_id }}/evidence/{{ copy.reference }}/content">Download saved copy</a> · {% endif %}<a href="/cabinet/saved-copies/{{ copy.reference }}/retire">Review retirement</a>{% endif %}</li>
+    {% endfor %}</ul>{% endif %}
     {% if mission.evidence %}
     <ul>
         {% for evidence in mission.evidence %}
         <li>{{ evidence.title | e }} · <a href="/bear/{{ bear_slug | urlencode }}/jobs/{{ job_id }}/evidence/{{ evidence.reference }}/content">Download saved copy</a></li>
         {% endfor %}
     </ul>
-    {% else %}
+    {% elif not mission.saved_copies %}
     <p>No saved documents available.</p>
     {% endif %}
 </section>

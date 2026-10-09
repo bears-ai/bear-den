@@ -35,6 +35,7 @@ pub(super) struct MissionView {
     pub revision: i64,
     pub can_edit: bool,
     pub evidence: Vec<EvidenceView>,
+    pub saved_copies: Vec<artifacts::snapshot_retirement::SnapshotSummary>,
 }
 
 #[derive(Debug, Serialize)]
@@ -85,6 +86,7 @@ pub(super) async fn view(
         revision: annotation.revision,
         can_edit: annotation.can_edit,
         evidence: Vec::new(),
+        saved_copies: Vec::new(),
     };
     if let Some(reference) = annotation.cabinet_ref {
         match cabinet::read(
@@ -127,6 +129,9 @@ pub(super) async fn view(
             Err(DenError::NotFound(_) | DenError::Authorization(_)) => continue,
             Err(failure) => return Err(failure.into()),
         };
+        if metadata.kind == "cabinet_document_snapshot" {
+            continue;
+        }
         if metadata.storage_kind == ArtifactStorageKind::DbText {
             visible.evidence.push(EvidenceView {
                 reference,
@@ -134,6 +139,15 @@ pub(super) async fn view(
             });
         }
     }
+    visible.saved_copies = artifacts::snapshot_retirement::history(
+        state.sqlx_pool(),
+        user,
+        None,
+        Some(bear),
+        Some(job),
+    )
+    .await?
+    .copies;
     Ok(visible)
 }
 
@@ -176,6 +190,13 @@ async fn evidence_content(
         BearId::new(bear.id),
         JobReference(job),
         actor,
+    )
+    .await?;
+    artifacts::authorize_for_reader(
+        state.sqlx_pool(),
+        &reference,
+        ArtifactReader::Human(actor),
+        ArtifactAccessLevel::Content,
     )
     .await?;
     let bytes = serde_json::to_vec(&value)
@@ -252,6 +273,7 @@ async fn snapshot(
     let job = super::resolve_job_prefix(state.sqlx_pool(), &bear, &job_ref).await?;
     let actor = UserId::new(super::require_user(&session)?);
     let mut tx = state.sqlx_pool().begin().await.map_err(DenError::from)?;
+    artifacts::snapshot_retirement::lock_owner(&mut tx, actor, BearId::new(bear.id)).await?;
     cabinet::write_fence(&mut tx).await.map_err(error)?;
     missions::authorize_edit(&mut tx, BearId::new(bear.id), JobReference(job), actor).await?;
     let annotation = missions::get_for_viewer(

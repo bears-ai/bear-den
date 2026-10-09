@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO bear_docket_entries(job_id,scope,kind,summary,evidence_refs,by_role,by_user_id) VALUES($1,'job_notebook','finding','Required copy',$2,'ui',$3) RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Jsonb",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "6a92deae11a3faad52c934bdc2d2d5417e33a29902d3edbfa981c2ce896e5772"
+}

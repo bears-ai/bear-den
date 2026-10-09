@@ -79,7 +79,10 @@ pub fn router() -> Router<AppState> {
             "/bear/{slug}/memory/browse/proposals/{proposal_id}",
             get(memory_proposal_legacy_redirect),
         )
-        .route_with_tsr("/bear/{slug}/delete", post(bear_delete_post))
+        .route_with_tsr(
+            "/bear/{slug}/delete",
+            get(super::deletion::get).post(super::deletion::post),
+        )
         .route_with_tsr("/bear/{slug}/members/add", post(member_add_post))
         .route_with_tsr("/bear/{slug}/members/remove", post(member_remove_post))
 }
@@ -1358,41 +1361,6 @@ async fn bear_edit_configuration_post(
         },
     )
     .await
-}
-
-#[derive(Debug, Deserialize)]
-struct BearDeleteForm {
-    confirm_slug: String,
-}
-
-async fn bear_delete_post(
-    Path(slug): Path<String>,
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-    Form(body): Form<BearDeleteForm>,
-) -> Result<Response, CustomError> {
-    let user = auth_session
-        .user
-        .as_ref()
-        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
-    let user_id = user.id;
-    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
-        return Ok(r.into_response());
-    }
-
-    let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
-    if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
-        return Err(CustomError::Authorization(
-            "bear admin role required".to_string(),
-        ));
-    }
-    if body.confirm_slug.trim() != bear.slug {
-        return Err(CustomError::ValidationError(
-            "confirmation slug does not match".to_string(),
-        ));
-    }
-    bears_db::delete_bear(state.sqlx_pool(), bear.id).await?;
-    Ok(Redirect::to("/").into_response())
 }
 
 #[derive(Debug, Deserialize, Validate)]

@@ -69,15 +69,13 @@ async fn claim(
               AND ($4::int IS NULL OR (a.created_by_user_id=$4 AND EXISTS (
                   SELECT 1 FROM user_bear ub WHERE ub.user_id=$4 AND ub.bear_id=a.bear_id)))
               AND ($3::text IS NOT NULL OR a.updated_at <= $2)
-              AND NOT EXISTS (SELECT 1 FROM artifact_links l WHERE l.artifact_id=a.id
-                  AND l.target_kind IN ('cabinet_item','cabinet_snapshot'))
+              AND NOT artifact_has_cabinet_retention(a.id)
             ORDER BY a.updated_at,a.id LIMIT $5 FOR UPDATE OF a SKIP LOCKED
         )
         UPDATE artifacts a SET lifecycle=CASE WHEN a.lifecycle='deleted' THEN 'deleted' ELSE 'expired' END,
             updated_at=$6
         FROM due WHERE a.id=due.id
-          AND NOT EXISTS (SELECT 1 FROM artifact_links l WHERE l.artifact_id=a.id
-              AND l.target_kind IN ('cabinet_item','cabinet_snapshot'))
+          AND NOT artifact_has_cabinet_retention(a.id)
         RETURNING a.id,a.artifact_ref,a.storage_key
     "#, now-WRITE_GRACE, now-RETRY_DELAY, reference.map(ArtifactRef::as_str), actor.map(|actor| actor.get()), limit, now)
         .fetch_all(pool).await?;
@@ -114,8 +112,7 @@ pub async fn acknowledge(
         r#"UPDATE artifacts a SET content_removed_at=COALESCE(content_removed_at,$3),updated_at=$3
         WHERE a.id=$1 AND a.artifact_ref=$2 AND a.kind='cabinet_file'
           AND a.storage_kind='garage_artifacts' AND a.lifecycle IN ('expired','deleted')
-          AND NOT EXISTS (SELECT 1 FROM artifact_links l WHERE l.artifact_id=a.id
-              AND l.target_kind IN ('cabinet_item','cabinet_snapshot'))"#,
+          AND NOT artifact_has_cabinet_retention(a.id)"#,
         ticket.id,
         ticket.reference.as_str(),
         now
@@ -152,8 +149,7 @@ pub struct UploadHistory {
 pub async fn history(pool: &PgPool, actor: UserId) -> Result<Vec<UploadHistory>, DenError> {
     let rows = sqlx::query!(r#"SELECT a.artifact_ref,a.title,b.name AS bear_name,a.lifecycle,a.expires_at,
         a.content_removed_at,a.created_at,a.provenance AS "source: Json<UploadSource>",
-        EXISTS(SELECT 1 FROM artifact_links l WHERE l.artifact_id=a.id
-            AND l.target_kind IN ('cabinet_item','cabinet_snapshot')) AS "retained!"
+        artifact_has_cabinet_retention(a.id) AS "retained!"
         FROM artifacts a JOIN bears b ON b.id=a.bear_id
         JOIN user_bear ub ON ub.bear_id=a.bear_id AND ub.user_id=$1
         WHERE a.created_by_user_id=$1 AND a.kind='cabinet_file' AND a.storage_kind='garage_artifacts'

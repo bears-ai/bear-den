@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO bear_task_run_state(run_id,task_id,status) SELECT $1,id,'done' FROM bear_tasks WHERE job_id=$2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b728dd69ee917f4af86e2ffd2c0689962b3283e22eb082c2b8476a977f8c7cab"
+}

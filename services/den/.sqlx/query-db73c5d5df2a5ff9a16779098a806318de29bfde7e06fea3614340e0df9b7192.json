@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM user_bear WHERE user_id=$1 AND bear_id=$2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "db73c5d5df2a5ff9a16779098a806318de29bfde7e06fea3614340e0df9b7192"
+}

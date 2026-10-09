@@ -19,12 +19,8 @@
 
     <div class="box full-width">
         <h3>Delete bear</h3>
-        <p class="form-hint">This removes the bear from Den and all memberships.</p>
-        <form method="post" action="/bear/{{ bear.slug | e }}/delete">
-            <label for="confirm_slug">Type the Bear handle <code>{{ bear.slug | e }}</code> to confirm</label>
-            <input id="confirm_slug" name="confirm_slug" type="text" required autocomplete="off" />
-            <p><button type="submit">Delete bear permanently</button></p>
-        </form>
+        <p>Review retained evidence, live work and cleanup requirements before separately confirming permanent deletion.</p>
+        <p><a class="button-link" href="/bear/{{ bear.slug | urlencode }}/delete">Review Bear deletion</a></p>
     </div>
 </section>
 {% endblock %}

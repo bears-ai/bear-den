@@ -79,6 +79,26 @@ pub async fn authorize_edit(
     Ok(())
 }
 
+/// Docket's canonical terminal-source evidence, not a stored `status` cache.
+/// Callers still independently authorize the private artifact and fence execution liveness.
+pub async fn can_release_private_source_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    bear: BearId,
+    job: JobReference,
+    actor: UserId,
+) -> Result<bool, DenError> {
+    authorize_edit(tx, bear, job, actor).await?;
+    Ok(sqlx::query_scalar!(
+        r#"SELECT docket_job_can_release_private_source(id) AS "eligible!"
+        FROM bear_jobs WHERE id=$1 AND bear_id=$2"#,
+        job.0,
+        bear.as_uuid()
+    )
+    .fetch_optional(&mut **tx)
+    .await?
+    .unwrap_or(false))
+}
+
 /// Caller must verify the destination page through Cabinet under the shared write fence.
 pub async fn set_in_tx(
     tx: &mut Transaction<'_, Postgres>,

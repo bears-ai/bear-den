@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT bear_id FROM artifacts WHERE artifact_ref=$1 AND created_by_user_id=$2 AND kind='cabinet_document_snapshot' AND visibility='same_user'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "bear_id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "8f4572da982726208b80fb8123de4d4255ce3f3101fe92e0027a2d37ceb046d8"
+}

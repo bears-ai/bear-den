@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bear_job_criteria_state SET status='unmet' WHERE run_id=$1 AND criterion_id=$2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6401a4cf339133ce5655966a5eecda93def163bfa9236b7f55ced09378a834fc"
+}

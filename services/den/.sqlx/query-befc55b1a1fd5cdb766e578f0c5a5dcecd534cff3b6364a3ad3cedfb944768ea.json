@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT bool_and(l.retention_released_at IS NULL\n        AND l.retention_released_by_user_id IS NULL AND l.retention_release_reason IS NULL\n        AND l.retirement_fingerprint IS NULL) AS \"unreleased!\"\n        FROM artifact_links l JOIN artifacts a ON a.id=l.artifact_id WHERE a.artifact_ref=$1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "unreleased!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "befc55b1a1fd5cdb766e578f0c5a5dcecd534cff3b6364a3ad3cedfb944768ea"
+}

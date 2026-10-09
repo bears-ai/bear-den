@@ -15,6 +15,7 @@ use tower::ServiceExt;
 use tower_sessions_sqlx_store::PostgresStore;
 
 mod concurrency;
+mod copies;
 mod root_guard;
 mod routes;
 

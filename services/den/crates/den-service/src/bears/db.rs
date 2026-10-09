@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use den_core::{AgentLoopControlLevel, DenError};
 
+pub mod deletion;
 mod membership;
 pub use membership::{
     grant_membership, revoke_membership, BearMembershipRole, LAST_BEAR_ADMIN_MESSAGE,
@@ -283,13 +284,7 @@ pub fn role_is_bear_admin(role: Option<&str>) -> bool {
 }
 
 pub async fn delete_bear(pool: &PgPool, bear_id: Uuid) -> Result<(), DenError> {
-    let r = sqlx::query!("DELETE FROM bears WHERE id = $1", bear_id)
-        .execute(pool)
-        .await?;
-    if r.rows_affected() == 0 {
-        return Err(DenError::NotFound("bear not found".to_string()));
-    }
-    Ok(())
+    deletion::delete_unconfirmed(pool, den_core::BearId::new(bear_id)).await
 }
 
 #[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]

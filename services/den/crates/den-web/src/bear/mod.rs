@@ -1,5 +1,6 @@
 pub mod chat;
 pub mod create_support;
+mod deletion;
 pub mod hats;
 pub mod manage;
 pub mod management;
