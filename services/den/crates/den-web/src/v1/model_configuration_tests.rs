@@ -1,6 +1,10 @@
 use super::access_tests::{app_with_runtime, conversation, login, request, seed};
 use super::*;
-use den_service::bears::model_configurations as models;
+use den_core::{ids::ModelConfigurationId, ThinkingEffort};
+use den_llm::ModelOption;
+use den_service::bears::model_configurations::{
+    self as models, PrimaryModelSource, ResolvedPrimaryModel,
+};
 use sqlx::PgPool;
 
 async fn get_model(
@@ -433,7 +437,10 @@ fn unavailable_model_response_preserves_only_explicit_pins_and_not_authorization
         );
         assert!(response["thinking_effort"].is_null());
         assert!(response["configuration_id"].is_null());
-        assert_eq!(response["error"], "model is no longer selectable");
+        assert_eq!(
+            response["error"],
+            "The configured model is unavailable or no longer selectable."
+        );
         assert_eq!(response["model_options"][0]["handle"], "valid/model");
     }
     assert!(matches!(
@@ -442,7 +449,7 @@ fn unavailable_model_response_preserves_only_explicit_pins_and_not_authorization
             Some(stored_model_state("explicit")),
             vec![],
         ),
-        Err(CustomError::Authorization(_))
+        Err(ChatApiError::Service(DenError::Authorization(_)))
     ));
 }
 

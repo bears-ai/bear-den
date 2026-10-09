@@ -371,7 +371,7 @@ test("hosted Chat and design fixture keep accessible task controls synced and no
     const picker = (page) => page.match(/    <details id="den-task-picker" hidden>[\s\S]*?    <\/details>/)[0];
     assert.equal(picker(template), picker(design));
     assert.ok(template.includes("taskSelector.sync();"));
-    assert.match(template, /readOnly: !row \|\| !!pending \|\| !row.hat_id \|\| !row.own_notes_available/);
+    assert.match(template, /var state = denConversationState\(\);\s*return \{\s*id: CONVERSATION_ID,\s*readOnly: !state.canSend/);
     assert.doesNotMatch(template, /Task UUID|window.prompt\("Task title/);
     assert.match(template, /Private conversation notes/);
     assert.match(template, /Only this conversation can use these unreviewed notes/);

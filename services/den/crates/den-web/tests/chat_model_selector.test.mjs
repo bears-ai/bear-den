@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
+import { code, loadAssets, response, deferred } from "./chat-test-support.mjs";
 
 const template = readFileSync(new URL("../src/templates/bear_chat.html", import.meta.url), "utf8");
 const selectorCode = template.slice(
@@ -37,11 +38,19 @@ function fixture() {
         document: { getElementById: (id) => id === "den-model-select" ? select : id === "den-model-error" ? modelError : null },
         BEAR_ID: "bear",
         CONVERSATION_ID: "conv-model",
-        DEN_MODEL_OPTIONS: [],
-        URLSearchParams,
-        showErr: (message) => errors.push(message),
+        DEN_MODEL_OPTIONS: [], DEN_MODEL_MUTATION: null, DEN_MODEL_AVAILABLE: false,
+        DEN_CONVERSATIONS_LOADED: true, DEN_HATS: [{ id: "hat" }],
+        DEN_CONVERSATIONS: [{ id: "conv-model", hat_id: "hat", own_notes_available: true, can_send: true }],
+        denResponseRequiresLogin: () => false, denRedirectToLogin: () => {},
+        URLSearchParams, URL,
+        showErr: (message, token) => context.chatOperations.fail(token, message),
     });
-    vm.runInContext(escapeCode + selectorCode, context);
+    loadAssets(context);
+    context.chatOperations = context.DenChatOperations({
+        selection: () => context.CONVERSATION_ID,
+        renderError: (message) => { if (message) errors.push(message); },
+    });
+    vm.runInContext(code("denConversationState") + escapeCode + selectorCode, context);
     return { context, select, errors, modelError };
 }
 
@@ -100,6 +109,7 @@ test("a validated pin outside shortcut options remains a pin, never silently sel
 test("pending conversations show the inherited preview but cannot save a pin yet", () => {
     const { context, select } = fixture();
     context.CONVERSATION_ID = "new-preview";
+    context.DEN_CONVERSATIONS = [{ id: "new-preview", hat_id: "hat", own_notes_available: true, can_send: true, pending: true }];
     context.renderModelSelector({ selection_mode: "auto", source: "bear_default", effective_model: "test/model", model_options: options });
     assert.equal(select.value, "auto");
     assert.equal(select.disabled, true);
@@ -148,13 +158,15 @@ test("missing explicit pin has a recovery placeholder, not implicit inheritance"
 test("GET of an invalid pin still allows PATCH clear and valid replacement", async () => {
     const { context, select, modelError } = fixture();
     const patches = [];
+    let canonical = { selection_mode: "explicit", selected_model: "test/revoked", effective_model: null, error: "revoked pin", model_options: options };
     context.fetch = async (_url, request) => {
-        if (!request.method) return { ok: true, json: async () => ({ selection_mode: "explicit", selected_model: "test/revoked", effective_model: null, error: "revoked pin", model_options: options }) };
+        if (!request.method) return response(canonical);
         const body = JSON.parse(request.body);
         patches.push(body);
-        return { ok: true, json: async () => body.selection_mode === "auto"
+        canonical = body.selection_mode === "auto"
             ? { selection_mode: "auto", effective_model: null, error: "inherited configuration unavailable", model_options: options }
-            : { selection_mode: "explicit", source: "conversation_explicit", selected_model: body.model, effective_model: body.model, error: null, model_options: options } };
+            : { selection_mode: "explicit", source: "conversation_explicit", selected_model: body.model, effective_model: body.model, error: null, model_options: options };
+        return response(canonical);
     };
     await context.loadConversationModel();
     assert.equal(select.disabled, false);
@@ -182,10 +194,169 @@ test("empty selectable catalog does not synthesize options or block clearing a p
 test("authorization failure clears stale display and disables the selector", async () => {
     const { context, select, errors } = fixture();
     context.renderModelSelector({ selection_mode: "auto", source: "bear_default", effective_model: "test/model", model_options: options });
-    context.fetch = async () => ({ ok: false, status: 403, text: async () => "not authorized" });
+    context.fetch = async () => response({ error: "not authorized" }, 403);
     await context.loadConversationModel();
     assert.equal(select.disabled, true);
     assert.equal(select.options[0].text, "Model unavailable");
     assert.equal(select.value, "");
-    assert.deepEqual(errors, ["not authorized"]);
+    assert.match(errors[0], /not authorized.*Reference: header-reference/s);
+});
+
+for (const body of ["<html>private provider diagnostics https://user:pass@host</html>", "proxy failure password=private"]) {
+    test(`model GET hides an unstructured failed body: ${body}`, async () => {
+        const { context, select, errors } = fixture();
+        context.fetch = async () => response(body, 403, "text/html", "REF-exact");
+        await context.loadConversationModel();
+        assert.equal(select.disabled, true);
+        assert.match(select.title, /HTTP 403.*Reference: REF-exact/s);
+        assert.match(errors[0], /Access was denied/);
+        assert.doesNotMatch(select.title + errors[0], /<html>|private|diagnostics|https:|user:pass/);
+    });
+}
+
+test("failed model PATCH remains visible while GET restores recovery choices", async () => {
+    const { context, select, errors } = fixture();
+    let gets = 0;
+    context.fetch = async (_url, init) => init.method === "PATCH" ?
+        response({ error: "Model access was revoked. Choose another model.", request_id: "wrong" }, 403) :
+        (gets++, response({ selection_mode: "auto", effective_model: "test/model", model_options: options }));
+    await context.saveConversationModel("test/revoked");
+    assert.equal(gets, 1);
+    assert.equal(select.disabled, false);
+    assert.match(errors[0], /Model access was revoked.*Reference: header-reference/s);
+    assert.doesNotMatch(errors[0], /wrong/);
+});
+
+test("no model GET/PATCH is issued for a fresh unbound or pending preview", async () => {
+    const { context, select } = fixture();
+    context.fetch = async () => { assert.fail("unbound preview must not inspect or persist default"); };
+    for (const id of ["", "default", "new-preview"]) {
+        context.CONVERSATION_ID = id;
+        await context.loadConversationModel();
+        await context.saveConversationModel("auto");
+        assert.equal(select.disabled, true);
+    }
+});
+
+test("stale model errors do not disable a different selected chat or hide its recovery", async () => {
+    const { context, select, errors } = fixture();
+    const old = deferred();
+    context.fetch = async () => old.promise;
+    const first = context.loadConversationModel();
+    context.CONVERSATION_ID = "conv-next";
+    context.DEN_CONVERSATIONS.push({ id: "conv-next", hat_id: "hat", own_notes_available: true, can_send: true });
+    context.fetch = async () => response({ selection_mode: "auto", effective_model: "test/next", model_options: [] });
+    await context.loadConversationModel();
+    old.resolve(response("<html>old error private</html>", 403, "text/html"));
+    await first;
+    assert.equal(errors.length, 0);
+    assert.equal(select.disabled, false);
+    assert.match(select.title, /test\/next/);
+});
+
+test("model login-required failures redirect rather than showing a login HTML body", async () => {
+    const { context, errors } = fixture();
+    let redirects = 0;
+    context.denResponseRequiresLogin = (res) => context.DenChatErrors.requiresLogin(res, "https://den.test");
+    context.denRedirectToLogin = () => redirects++;
+    context.fetch = async () => response("<html>private login page</html>", 401, "text/html");
+    await context.loadConversationModel();
+    await context.saveConversationModel("auto");
+    assert.equal(redirects, 3);
+    assert.equal(errors.length, 0);
+});
+
+for (const canSend of [false, undefined, "true"]) {
+    test(`server-listed read-only bound models remain inspectable with can_send=${canSend}`, async () => {
+        const { context, select } = fixture();
+        context.DEN_CONVERSATIONS[0].can_send = canSend;
+        context.DEN_CONVERSATIONS[0].hat_status = "inactive";
+        let reads = 0;
+        context.fetch = async (_url, init) => {
+            assert.equal(init.method, undefined, "read permission must not imply PATCH permission");
+            reads++;
+            return response({ selection_mode: "explicit", selected_model: "test/readonly", effective_model: "test/readonly", model_options: options });
+        };
+        await context.loadConversationModel();
+        assert.equal(reads, 1);
+        assert.equal(select.value, "test/readonly");
+        assert.match(select.title, /test\/readonly/);
+        assert.equal(select.disabled, true);
+        await context.saveConversationModel("auto");
+        assert.equal(reads, 1);
+    });
+}
+
+test("model mutations cannot overlap, remain disabled through reconciliation, and ignore pre-PATCH cached GETs", async () => {
+    const { context, select } = fixture();
+    const oldRead = deferred(), patch = deferred(), reread = deferred();
+    const patches = [];
+    let gets = 0, inFlight = 0, maximum = 0;
+    context.fetch = async (_url, init) => {
+        if (!init.method) return ++gets === 1 ? oldRead.promise : reread.promise;
+        patches.push(JSON.parse(init.body).model);
+        maximum = Math.max(maximum, ++inFlight);
+        const result = await patch.promise;
+        inFlight--;
+        return result;
+    };
+    const old = context.loadConversationModel();
+    const a = context.saveConversationModel("test/A");
+    assert.equal(select.disabled, true);
+    const blockedB = context.saveConversationModel("test/B");
+    assert.equal(blockedB, a);
+    assert.deepEqual(patches, ["test/A"]);
+    oldRead.resolve(response({ selection_mode: "explicit", selected_model: "cached/old", effective_model: "cached/old" }));
+    await old;
+    assert.doesNotMatch(select.title, /cached\/old/);
+    patch.resolve(response({ selection_mode: "explicit", selected_model: "cached/patch-response", effective_model: "cached/patch-response" }));
+    await new Promise(setImmediate);
+    assert.equal(gets, 2);
+    assert.equal(select.disabled, true, "PATCH success alone must not unlock stale UI");
+    await context.loadConversationModel();
+    assert.equal(gets, 2, "background reads cannot race reconciliation");
+    reread.resolve(response({ selection_mode: "explicit", selected_model: "test/A", effective_model: "test/A", model_options: options }));
+    await a;
+    assert.equal(select.value, "test/A");
+    assert.equal(select.disabled, false);
+    assert.doesNotMatch(select.title, /cached/);
+    assert.equal(maximum, 1);
+    let canonical = "test/A";
+    context.fetch = async (_url, init) => {
+        if (init.method) { canonical = JSON.parse(init.body).model; patches.push(canonical); }
+        return response({ selection_mode: "explicit", selected_model: canonical, effective_model: canonical, model_options: options });
+    };
+    await context.saveConversationModel("test/B");
+    assert.deepEqual(patches, ["test/A", "test/B"]);
+    assert.equal(select.value, "test/B");
+});
+
+test("selection changes during the final model GET require a fresh reread, including A -> B -> A", async () => {
+    const { context, select } = fixture();
+    const old = deferred();
+    let gets = 0;
+    context.fetch = async (_url, init) => init.method ? response({ ok: true }) : ++gets === 1 ? old.promise :
+        response({ selection_mode: "explicit", selected_model: "test/A", effective_model: "test/A", model_options: options });
+    const mutation = context.saveConversationModel("test/A");
+    await new Promise(setImmediate);
+    context.CONVERSATION_ID = "conv-next"; context.chatOperations.selectionChanged();
+    context.DEN_CONVERSATIONS.push({ id: "conv-next", hat_id: "hat", can_send: true });
+    await context.loadConversationModel();
+    context.CONVERSATION_ID = "conv-model"; context.chatOperations.selectionChanged();
+    await context.loadConversationModel();
+    old.resolve(response({ selection_mode: "explicit", selected_model: "cached/old", effective_model: "cached/old" }));
+    await mutation;
+    assert.equal(gets, 2);
+    assert.equal(select.value, "test/A");
+    assert.equal(select.disabled, false);
+    assert.doesNotMatch(select.title, /cached\/old/);
+});
+
+test("canonical model reread failures stay disabled rather than unlocking unavailable metadata", async () => {
+    const { context, select, errors } = fixture();
+    context.fetch = async (_url, init) => init.method ? response({ ok: true }) : response({ error: "Model inspection denied" }, 403);
+    await context.saveConversationModel("test/A");
+    assert.equal(context.DEN_MODEL_MUTATION, null);
+    assert.equal(select.disabled, true);
+    assert.match(errors.at(-1), /Model inspection denied/);
 });

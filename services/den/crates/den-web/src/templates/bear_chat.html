@@ -32,6 +32,7 @@ block head %} {{ super() }}
             id="den-model-select"
             class="den-model-select"
             aria-label="Conversation model"
+            disabled
         >
             <option value="auto">Inherit default</option>
         </select>
@@ -68,6 +69,8 @@ block head %} {{ super() }}
     <noscript><p>Task selection requires JavaScript.</p></noscript>
     <p id="den-model-error" class="form-errors" role="status" hidden></p>
     <p id="err" class="den-err" role="status" hidden></p>
+    <p id="den-chat-selection-status" role="status">Loading chats…</p>
+    <button id="den-chats-refresh" type="button" class="button-link">Refresh chats</button>
     <p id="den-legacy-conversation-notice" role="status" hidden>
         Read-only legacy chat. Choose a hat under “+ New chat” to continue.
     </p>
@@ -84,26 +87,32 @@ block head %} {{ super() }}
         #}
         <deep-chat
             id="chat"
+            textInput='{"disabled":true}'
             errorMessages='{"displayServiceErrorMessages":true}'
         ></deep-chat>
     </div>
 </div>
+<script src="/assets/js/chat-errors.js"></script>
+<script src="/assets/js/chat-conversation-state.js"></script>
+<script src="/assets/js/chat-operations.js"></script>
 <script src="/assets/js/task-selector.js"></script>
 <script>
     var BEAR_ID = "{{ bear_id | e }}";
     var BEAR_NAME = "{{ bear_name | e }}";
-    /** Conversation id from URL (`default` = agent main thread, or `conv-…`). */
+    /** Explicit history selection; an absent URL does not imply a default conversation. */
     var PREFERRED_CONVERSATION_ID = (function () {
         var p = new URLSearchParams(window.location.search).get(
             "conversation_id",
         );
-        return p && p.trim() ? p.trim() : "default";
+        return p && p.trim() ? p.trim() : null;
     })();
     /** Active thread; set to match the conversation tab UI after `loadConversations()` and on change. */
-    var CONVERSATION_ID = PREFERRED_CONVERSATION_ID;
+    var CONVERSATION_ID = "";
     var DEN_CONVERSATIONS = [];
     var DEN_HATS = [];
-    var DEN_PENDING_CONVERSATION = null;
+    var DEN_CONVERSATIONS_LOADED = false;
+    var DEN_MODEL_MUTATION = null;
+    var DEN_MODEL_AVAILABLE = false;
     var DEN_MODEL_OPTIONS = [];
     /**
      * Show raw `<system-reminder>…</system-reminder>` in the chat only when
@@ -115,13 +124,33 @@ block head %} {{ super() }}
         return v === "true" || v === "verbose";
     })();
     var errEl = document.getElementById("err");
+    var chatOperations = DenChatOperations({
+        selection: function () { return CONVERSATION_ID; },
+        renderError: function (message) {
+            errEl.textContent = message;
+            errEl.hidden = !message;
+        },
+    });
     /** Page size for Den history `GET …/messages` (newest page first; scroll up loads older). */
     var DEN_HISTORY_PAGE = 50;
     var historyNextBefore = null;
 
-    function showErr(msg) {
-        errEl.textContent = msg;
-        errEl.hidden = false;
+    function showErr(msg, token) {
+        chatOperations.fail(token || chatOperations.begin("page"), msg);
+    }
+
+    function adoptConversation(id) {
+        if (CONVERSATION_ID === id) return;
+        CONVERSATION_ID = id;
+        chatOperations.selectionChanged();
+        DEN_MODEL_AVAILABLE = false;
+        var select = currentModelSelect();
+        if (select) {
+            select.disabled = true;
+            select.innerHTML = '<option value="" disabled selected>Loading model…</option>';
+            select.title = "";
+        }
+        showModelError("");
     }
 
     var taskSelector = DenTaskSelector({
@@ -129,19 +158,38 @@ block head %} {{ super() }}
         bearId: BEAR_ID,
         fetch: function (url, init) { return fetch(url, init); },
         getContext: function () {
-            var row = DEN_CONVERSATIONS.find(function (row) { return row.id === CONVERSATION_ID; });
-            var pending = String(CONVERSATION_ID).indexOf("new-") === 0 || (row && row.pending);
+            var state = denConversationState();
             return {
-                id: CONVERSATION_ID || "default",
-                readOnly: !row || !!pending || !row.hat_id || !row.own_notes_available,
-                reason: pending ? "Create this chat before choosing a task." :
-                    !row || !row.hat_id ? "" : "Read-only chat. Start a New chat with a hat to use tasks.",
+                id: CONVERSATION_ID,
+                readOnly: !state.canSend,
+                reason: state.canSend ? "" : state.prompt,
             };
         },
     });
 
     function loadCurrentTask() {
         return taskSelector.load();
+    }
+
+    function denConversationState() {
+        return DenChatConversationState.selection(DEN_CONVERSATIONS, CONVERSATION_ID, DEN_CONVERSATIONS_LOADED, DEN_HATS);
+    }
+
+    function syncChatComposer() {
+        var state = denConversationState();
+        var status = document.getElementById("den-chat-selection-status");
+        if (status) {
+            status.textContent = state.canSend ? "" : state.prompt;
+            status.hidden = state.canSend;
+        }
+        var chat = document.getElementById("chat");
+        if (chat && chat.textInput && (chat.textInput.disabled !== !state.canSend ||
+            (chat.textInput.placeholder || {}).text !== state.prompt)) {
+            chat.textInput = Object.assign({}, chat.textInput, {
+                disabled: !state.canSend,
+                placeholder: Object.assign({}, chat.textInput.placeholder, { text: state.prompt }),
+            });
+        }
     }
 
     function currentModelSelect() {
@@ -205,71 +253,100 @@ block head %} {{ super() }}
                 ? "Conversation pin: " + (selected || "missing model") +
                     (unavailable ? " · unavailable" : " · reasoning model default")
                 : unavailable ? "Inherited default · unavailable" : "Inherited · " + source + ": " + effective;
-        select.disabled = String(CONVERSATION_ID || "").indexOf("new-") === 0;
-        showModelError(data.error || "");
+        DEN_MODEL_AVAILABLE = true;
+        syncModelSelectorDisabled();
+        showModelError(DenChatErrors.apiMessage(data.error) || (data.error ? "Model unavailable. Choose another model or inherit default." : ""));
     }
 
-    function loadConversationModel() {
-        if (!BEAR_ID) return Promise.resolve();
-        var params = new URLSearchParams();
-        params.set("bear_id", BEAR_ID);
-        params.set("conversation_id", CONVERSATION_ID || "default");
+    function syncModelSelectorDisabled() {
+        var select = currentModelSelect();
+        if (select) select.disabled = !DEN_MODEL_AVAILABLE || !!DEN_MODEL_MUTATION || !denConversationState().canSend;
+    }
+
+    function loadConversationModel(afterMutation) {
+        var select = currentModelSelect();
+        if (select) select.disabled = true;
+        if (DEN_MODEL_MUTATION && !afterMutation) return Promise.resolve();
+        var token = chatOperations.begin("model-read");
+        DEN_MODEL_AVAILABLE = false;
+        if (!BEAR_ID || !denConversationState().canReadModel) {
+            if (select) {
+                select.innerHTML = '<option value="" disabled selected>Choose a hat-bound chat</option>';
+                select.title = denConversationState().prompt;
+            }
+            showModelError("");
+            return Promise.resolve();
+        }
+        var params = new URLSearchParams({ bear_id: BEAR_ID, conversation_id: token.selection });
         return fetch("/v1/chat/model?" + params.toString(), {
-            credentials: "same-origin",
+            credentials: "same-origin", headers: { Accept: "application/json" },
         })
             .then(function (response) {
-                if (!response.ok)
-                    return response.text().then(function (t) {
-                        throw new Error(t || "HTTP " + response.status);
-                    });
-                return response.json();
+                if (!chatOperations.current(token)) return null;
+                if (denResponseRequiresLogin(response)) {
+                    denRedirectToLogin();
+                    return null;
+                }
+                return DenChatErrors.readJson(response, "Could not load the model");
             })
-            .then(renderModelSelector)
+            .then(function (data) {
+                if (!chatOperations.current(token) || !data) return;
+                renderModelSelector(data);
+                chatOperations.recover(token);
+            })
             .catch(function (err) {
-                var select = currentModelSelect();
+                if (!chatOperations.current(token)) return;
+                var message = DenChatErrors.failure(err, "Could not load the model");
                 if (select) {
                     select.innerHTML = '<option value="" disabled selected>Model unavailable</option>';
                     select.disabled = true;
-                    select.title = String(err.message || err);
+                    select.title = message;
                 }
-                showErr(String(err.message || err));
+                showErr(message, token);
             });
     }
 
     function saveConversationModel(value) {
-        if (
-            !BEAR_ID ||
-            !CONVERSATION_ID ||
-            String(CONVERSATION_ID).indexOf("new-") === 0
-        )
-            return;
-        var body = {
-            bear_id: BEAR_ID,
-            conversation_id: CONVERSATION_ID,
-            selection_mode: value === "auto" ? "auto" : "explicit",
-            model: value === "auto" ? null : value,
-        };
-        return fetch("/v1/chat/model", {
-            method: "PATCH",
-            credentials: "same-origin",
-            headers: {
-                "Content-Type": "application/json",
-                Accept: "application/json",
-            },
-            body: JSON.stringify(body),
+        if (DEN_MODEL_MUTATION) return DEN_MODEL_MUTATION.promise;
+        if (!BEAR_ID || !CONVERSATION_ID || !denConversationState().canSend) return;
+        var token = chatOperations.begin("model-write");
+        chatOperations.begin("model-read"); // Invalidate pre-PATCH reads; never undo a pin with cached data.
+        var mutation = { promise: null };
+        DEN_MODEL_MUTATION = mutation;
+        syncModelSelectorDisabled();
+        var readToken;
+        mutation.promise = fetch("/v1/chat/model", {
+            method: "PATCH", credentials: "same-origin",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify({
+                bear_id: BEAR_ID, conversation_id: token.selection,
+                selection_mode: value === "auto" ? "auto" : "explicit",
+                model: value === "auto" ? null : value,
+            }),
         })
             .then(function (response) {
-                if (!response.ok)
-                    return response.text().then(function (t) {
-                        throw new Error(t || "HTTP " + response.status);
-                    });
-                return response.json();
+                if (denResponseRequiresLogin(response)) {
+                    if (chatOperations.current(token)) denRedirectToLogin();
+                    return null;
+                }
+                return DenChatErrors.readJson(response, "Could not change the model");
             })
-            .then(renderModelSelector)
+            .then(function (data) {
+                if (data) chatOperations.recover(token);
+            })
             .catch(function (err) {
-                showErr(String(err.message || err));
-                loadConversationModel();
+                showErr(DenChatErrors.failure(err, "Could not change the model"), token);
+            })
+            .then(function () {
+                readToken = chatOperations.begin("model-reconcile");
+                return loadConversationModel(true);
+            })
+            .finally(function () {
+                DEN_MODEL_MUTATION = null;
+                if (!chatOperations.current(readToken)) return loadConversationModel();
+                syncModelSelectorDisabled();
             });
+        return mutation.promise;
     }
 
     function denLoginRedirectUrl() {
@@ -286,23 +363,7 @@ block head %} {{ super() }}
     }
 
     function denResponseRequiresLogin(response) {
-        if (!response) return false;
-        if (response.status === 401) return true;
-        // Expired sessions on POST chat requests can be redirected to `/login` while
-        // preserving the original method, which resolves as HTTP 405 because `/login`
-        // only accepts GET. Treat that as an expired Den web session from chat APIs.
-        if (response.status === 405) return true;
-        if (response.redirected && response.url) {
-            try {
-                return (
-                    new URL(response.url, window.location.origin).pathname ===
-                    "/login"
-                );
-            } catch (_) {
-                return false;
-            }
-        }
-        return false;
+        return DenChatErrors.requiresLogin(response, window.location.origin);
     }
 
     function cv(name) {
@@ -449,10 +510,7 @@ block head %} {{ super() }}
 
     /** Multi-line error string for Deep Chat `connect` `{ error: string }` (readable + optional support ref). */
     function formatChatError(title, detail, requestId) {
-        var parts = [title];
-        if (detail) parts.push("", detail);
-        if (requestId) parts.push("", "Reference: " + requestId);
-        return parts.join("\n");
+        return DenChatErrors.format(title, detail, requestId);
     }
 
     /**
@@ -462,36 +520,12 @@ block head %} {{ super() }}
      * `role: 'error'` so events go through the normal upsert path ({text} is valid).
      */
     function denChatSignalError(signals, errorText) {
-        signals.onResponse({ text: errorText, role: "error" });
+        signals.onResponse({ text: DenChatErrors.literalText(errorText), role: "error" });
     }
 
-    /** Prefer JSON `{ error, request_id }` from `POST /v1/chat/send`; strip noisy Den prefixes. */
-    function denChatParseSendError(text, httpStatus, requestIdFromHeader) {
-        var trimmed = (text || "").trim();
-        try {
-            var j = JSON.parse(trimmed);
-            if (j && typeof j === "object" && j.error != null) {
-                var rid = j.request_id || requestIdFromHeader;
-                return formatChatError(
-                    "Couldn\u2019t send message",
-                    String(j.error),
-                    rid || "",
-                );
-            }
-        } catch (_) {
-            /* use plain text */
-        }
-        var fallback = trimmed || "HTTP " + httpStatus;
-        fallback = fallback
-            .replace(/^Server Error:\s*/i, "")
-            .replace(/^Validation Error:\s*/i, "")
-            .replace(/^Authentication Error:\s*/i, "")
-            .replace(/^Authorization Error:\s*/i, "");
-        return formatChatError(
-            "Couldn\u2019t send message",
-            fallback,
-            requestIdFromHeader || "",
-        );
+    /** Only controlled JSON business text and the exact safe HTTP header reference reach Chat. */
+    function denChatParseSendError(text, httpStatus, requestIdFromHeader, contentType) {
+        return DenChatErrors.parse(text, httpStatus, requestIdFromHeader, "Couldn\u2019t send message", contentType);
     }
 
     function escapeHtmlWithBreaks(s) {
@@ -672,9 +706,11 @@ block head %} {{ super() }}
      * with `false`, scrolling to the top requests older messages (see deepchat.dev/docs/interceptors).
      */
     function loadDenHistory(index) {
-        if (!BEAR_ID) {
+        var state = denConversationState();
+        if (!BEAR_ID || !state.canReadHistory) {
             return Promise.resolve([]);
         }
+        var token = chatOperations.begin("history");
         if (index === 0) {
             historyNextBefore = null;
         } else if (!historyNextBefore) {
@@ -682,7 +718,7 @@ block head %} {{ super() }}
         }
         var params = new URLSearchParams();
         params.set("bear_id", BEAR_ID);
-        params.set("conversation_id", CONVERSATION_ID);
+        params.set("conversation_id", token.selection);
         params.set("limit", String(DEN_HISTORY_PAGE));
         if (DEN_CHAT_DEBUG_VERBOSE) {
             params.set("debug", "true");
@@ -691,24 +727,21 @@ block head %} {{ super() }}
             params.set("before", historyNextBefore);
         }
         return fetch("/v1/chat/history?" + params.toString(), {
-            credentials: "same-origin",
+            credentials: "same-origin", headers: { Accept: "application/json" },
         })
             .then(function (response) {
+                if (!chatOperations.current(token)) return null;
                 if (denResponseRequiresLogin(response)) {
                     denRedirectToLogin();
                     return { messages: [], has_more: false, next_before: null };
                 }
-                if (!response.ok) {
-                    return response.text().then(function (t) {
-                        throw new Error(t || "HTTP " + response.status);
-                    });
-                }
-                return response.json();
+                return DenChatErrors.readJson(response, "Could not load chat history");
             })
             .then(function (data) {
-                if (!data || typeof data !== "object") {
+                if (!chatOperations.current(token) || !data || typeof data !== "object") {
                     return [];
                 }
+                chatOperations.recover(token);
                 historyNextBefore = data.next_before || null;
                 var out = (data.messages || [])
                     .map(function (m) {
@@ -772,7 +805,7 @@ block head %} {{ super() }}
                 return out;
             })
             .catch(function (err) {
-                showErr(String(err.message || err));
+                showErr(DenChatErrors.failure(err, "Could not load chat history"), token);
                 return [];
             });
     }
@@ -811,8 +844,8 @@ block head %} {{ super() }}
 
         /**
          * Deep Chat default is displayServiceErrorMessages: false — then `signals.onResponse({ error })`
-         * does not show the real string from Den (SSE error_message or HTTP JSON), which looks
-         * like silence in the thread. Enable full service errors for harness/proxy failures (e.g. EACCES).
+         * does not show controlled failures from this handler, which looks like silence in the
+         * thread. Keep failures visible; never pass raw proxy bodies or upstream diagnostics.
          */
         chat.errorMessages = {
             displayServiceErrorMessages: true,
@@ -925,6 +958,7 @@ block head %} {{ super() }}
         };
 
         chat.textInput = {
+            disabled: !denConversationState().canSend,
             styles: {
                 container: {
                     width: "100%",
@@ -948,7 +982,7 @@ block head %} {{ super() }}
                 focus: {},
             },
             placeholder: {
-                text: "Message your bear\u2026",
+                text: denConversationState().prompt,
                 style: { color: met },
             },
         };
@@ -1022,7 +1056,11 @@ block head %} {{ super() }}
 
         chat.remarkable = { html: false, breaks: true };
 
-        chat.connect = { handler: nativeSseHandler, stream: true };
+        chat.onInput = function () { chatOperations.draftChanged(); };
+        chat.validateInput = function (text, files) {
+                    return denConversationState().canSend && (!!(text && text.trim()) || !!(files && files.length));
+                };
+                chat.connect = { handler: nativeSseHandler, stream: true };
 
         chat.loadHistory = loadDenHistory;
 
@@ -1054,39 +1092,11 @@ block head %} {{ super() }}
         });
     }
 
-    function compactJsonForError(value) {
-        try {
-            return JSON.stringify(value, null, 2);
-        } catch (_) {
-            return String(value);
-        }
-    }
-
-    function appendErrorContextLines(lines, context) {
-        if (!context || typeof context !== "object") return;
-        var upstream = context.upstream_error;
-        if (upstream) {
-            lines.push("Upstream error context:");
-            lines.push(compactJsonForError(upstream));
-        }
-    }
-
-    /** Map one native SSE JSON object to a stream Response (see denChatSignalError — use `text`, not `error`). */
+    /** Map one native SSE JSON object to safe error-role text, retaining runtime-specific messages. */
     function runtimeStreamEventErrorSignal(obj, requestRef) {
         var inner = runtimeInnerForStream(obj);
         if (!inner || inner.message_type !== "error_message") return null;
-        var lines = [];
-        if (inner.error_type) lines.push("[" + String(inner.error_type) + "]");
-        if (inner.message) lines.push(String(inner.message));
-        if (inner.detail) lines.push(String(inner.detail));
-        appendErrorContextLines(lines, inner.context);
-        var ref =
-            inner.support_ref != null && String(inner.support_ref).trim()
-                ? String(inner.support_ref).trim()
-                : requestRef || "";
-        if (ref) lines.push("Reference: " + ref);
-        var msg = lines.length ? lines.join("\n\n") : "An error occurred.";
-        return { text: msg, role: "error" };
+        return { text: DenChatErrors.literalText(DenChatErrors.runtimeError(inner, requestRef)), role: "error" };
     }
 
     function nativeSseHandler(body, signals) {
@@ -1102,15 +1112,17 @@ block head %} {{ super() }}
 
         if (!BEAR_ID) {
             denChatSignalError(signals, "Missing bear.");
+            signals.onClose();
             return;
         }
-        errEl.hidden = true;
-        var selected = DEN_CONVERSATIONS.find(function (row) { return row.id === CONVERSATION_ID; });
-        if (DEN_HATS.length && (!selected || !selected.hat_id)) {
-            denChatSignalError(signals, "This conversation is read-only. Choose a hat under + New chat to continue.");
+        var state = denConversationState();
+        if (!state.canSend) {
+            denChatSignalError(signals, state.prompt);
+            signals.onClose();
             return;
         }
-
+        var token = chatOperations.begin("send");
+        var requestRef = "";
         var abortCtl = new AbortController();
         var reasoningVisible = false;
         function hideReasoningLog() {
@@ -1124,7 +1136,7 @@ block head %} {{ super() }}
             abortCtl.abort();
         };
 
-        fetch("/v1/chat/send", {
+        return fetch("/v1/chat/send", {
             method: "POST",
             credentials: "same-origin",
             headers: {
@@ -1134,29 +1146,23 @@ block head %} {{ super() }}
             body: JSON.stringify({
                 bear_id: BEAR_ID,
                 message: userText,
-                conversation_id: CONVERSATION_ID,
+                conversation_id: token.selection,
             }),
             signal: abortCtl.signal,
         })
             .then(function (response) {
-                var requestRef =
-                    response.headers.get("x-request-id") ||
-                    response.headers.get("X-Request-Id") ||
-                    "";
+                if (!chatOperations.current(token)) { signals.onClose(); return; }
+                requestRef = DenChatErrors.requestRef(response.headers.get("x-request-id"));
                 if (denResponseRequiresLogin(response)) {
                     denRedirectToLogin();
+                    signals.onClose();
                     return;
                 }
-                if (!response.ok) {
-                    return response.text().then(function (t) {
-                        denChatSignalError(
-                            signals,
-                            denChatParseSendError(
-                                t,
-                                response.status,
-                                requestRef,
-                            ),
-                        );
+                var contentType = response.headers.get("content-type") || "";
+                if (!response.ok || !/^text\/event-stream\b/i.test(contentType)) {
+                    return response.text().catch(function () { return ""; }).then(function (t) {
+                        if (chatOperations.current(token)) denChatSignalError(signals, denChatParseSendError(t, response.status, requestRef, contentType));
+                        signals.onClose();
                     });
                 }
                 var reader = response.body.getReader();
@@ -1171,6 +1177,7 @@ block head %} {{ super() }}
                 signals.onOpen();
 
                 function consumeSseDataLine(raw) {
+                    if (!chatOperations.current(token)) return;
                     var line = raw.replace(/\r$/, "");
                     if (!line.startsWith("data: ")) return;
                     var payload = line.slice(6).trim();
@@ -1201,28 +1208,6 @@ block head %} {{ super() }}
                     }
                     var inner = runtimeInnerForStream(obj);
                     if (!inner || typeof inner !== "object") return;
-
-                    if (inner.message_type === "conversation_resolved") {
-                        var resolvedId = String(
-                            inner.conversation_id || "",
-                        ).trim();
-                        if (
-                            resolvedId &&
-                            resolvedId !== CONVERSATION_ID &&
-                            CONVERSATION_ID.indexOf("new-") === 0
-                        ) {
-                            if (DEN_PENDING_CONVERSATION) {
-                                DEN_PENDING_CONVERSATION.id = resolvedId;
-                                DEN_PENDING_CONVERSATION.pending = false;
-                            }
-                            CONVERSATION_ID = resolvedId;
-                            PREFERRED_CONVERSATION_ID = resolvedId;
-                            syncConversationUrl(resolvedId);
-                            renderConversationTabs();
-                            loadConversationModel();
-                        }
-                        return;
-                    }
 
                     if (inner.message_type === "runtime_card") {
                         sawStreamActivity = true;
@@ -1311,6 +1296,7 @@ block head %} {{ super() }}
 
                 function pump() {
                     return reader.read().then(function (result) {
+                        if (!chatOperations.current(token)) { signals.onClose(); return; }
                         lineBuf += decoder.decode(
                             result.value ? result.value : new Uint8Array(0),
                             { stream: !result.done },
@@ -1372,6 +1358,7 @@ block head %} {{ super() }}
                                 }
                             }
                             signals.onClose();
+                            chatOperations.recover(token);
                             loadConversations();
                             return;
                         }
@@ -1381,38 +1368,43 @@ block head %} {{ super() }}
                 return pump();
             })
             .catch(function (x) {
+                if (!chatOperations.current(token)) { signals.onClose(); return; }
                 hideReasoningLog();
                 if (x.name === "AbortError") {
                     var stoppedText = requestRef
                         ? "\n[stopped]\n\nReference: " + requestRef
                         : "\n[stopped]";
-                    signals.onResponse({ text: stoppedText });
+                    signals.onResponse({ text: DenChatErrors.literalText(stoppedText) });
                     signals.onClose();
                 } else {
                     denChatSignalError(
                         signals,
                         formatChatError(
                             "Connection problem",
-                            String(x.message || x),
-                            "",
+                            "Could not connect to the service. Check your connection and retry.",
+                            requestRef,
                         ),
                     );
+                    signals.onClose();
                 }
             });
     }
 
-    function remountDeepChat() {
+    function remountDeepChat(token) {
+        if (!chatOperations.current(token, true)) return;
         var wrap = document.getElementById("chat-wrap");
         if (!wrap) return;
         historyNextBefore = null;
         wrap.innerHTML =
-            '<deep-chat id="chat" errorMessages=\'{"displayServiceErrorMessages":true}\'></deep-chat>';
-        customElements.whenDefined("deep-chat").then(configureDenChat);
+            '<deep-chat id="chat" textInput=\'{"disabled":true}\' errorMessages=\'{"displayServiceErrorMessages":true}\'></deep-chat>';
+        customElements.whenDefined("deep-chat").then(function () {
+            if (chatOperations.current(token, true)) configureDenChat();
+        });
     }
 
     function syncConversationUrl(id) {
         var url = new URL(window.location.href);
-        if (id && id !== "default") {
+        if (id) {
             url.searchParams.set("conversation_id", id);
         } else {
             url.searchParams.delete("conversation_id");
@@ -1420,35 +1412,23 @@ block head %} {{ super() }}
         window.history.replaceState({}, "", url.toString());
     }
 
-    function makeNewConversationId() {
-        if (window.crypto && typeof window.crypto.randomUUID === "function") {
-            return "new-" + window.crypto.randomUUID();
-        }
-        return (
-            "new-" +
-            Date.now().toString(36) +
-            "-" +
-            Math.random().toString(36).slice(2, 12)
-        );
-    }
-
     function loadPrivateNotes() {
         var list = document.getElementById("den-notes-list");
-        var selection = CONVERSATION_ID;
         if (!list || !BEAR_ID) return;
+        var token = chatOperations.begin("notes");
         list.textContent = "Loading notes…";
-        var params = new URLSearchParams({ bear_id: BEAR_ID, conversation_id: selection });
-        fetch("/v1/chat/notes?" + params.toString(), { credentials: "same-origin" })
+        var params = new URLSearchParams({ bear_id: BEAR_ID, conversation_id: token.selection });
+        return fetch("/v1/chat/notes?" + params.toString(), { credentials: "same-origin" })
             .then(function (response) {
+                if (!chatOperations.current(token)) return null;
                 if (denResponseRequiresLogin(response)) {
                     denRedirectToLogin();
                     return null;
                 }
-                if (!response.ok) throw new Error("Could not load this conversation's notes");
-                return response.json();
+                return DenChatErrors.readJson(response, "Could not load this conversation's notes");
             })
             .then(function (notes) {
-                if (!notes || selection !== CONVERSATION_ID) return;
+                if (!notes || !chatOperations.current(token)) return;
                 list.replaceChildren();
                 if (!notes.length) {
                     list.textContent = "No private notes yet.";
@@ -1466,12 +1446,12 @@ block head %} {{ super() }}
                 });
             })
             .catch(function (error) {
-                if (selection === CONVERSATION_ID) list.textContent = String(error.message || error);
+                if (chatOperations.current(token)) list.textContent = DenChatErrors.failure(error, "Could not load notes");
             });
     }
 
     function setConversation(id, shouldRemount) {
-        CONVERSATION_ID = id || "default";
+        adoptConversation(id || "");
         PREFERRED_CONVERSATION_ID = CONVERSATION_ID;
         syncConversationUrl(CONVERSATION_ID);
         renderConversationTabs();
@@ -1479,7 +1459,7 @@ block head %} {{ super() }}
         loadCurrentTask();
         var notes = document.getElementById("den-private-notes");
         if (notes && notes.open && !notes.hidden) loadPrivateNotes();
-        if (shouldRemount !== false) remountDeepChat();
+        if (shouldRemount !== false) remountDeepChat(chatOperations.begin("selection"));
     }
 
     function closeConversationMenu() {
@@ -1487,7 +1467,8 @@ block head %} {{ super() }}
         if (toggle) toggle.checked = false;
     }
 
-    function patchConversation(id, body) {
+    function patchConversation(id, body, token) {
+        token = token || chatOperations.begin("conversation-patch");
         body.bear_id = BEAR_ID;
         return fetch("/v1/chat/conversations/" + encodeURIComponent(id), {
             method: "PATCH",
@@ -1498,16 +1479,12 @@ block head %} {{ super() }}
             },
             body: JSON.stringify(body),
         }).then(function (response) {
+            if (!chatOperations.current(token)) return { __den_skip: true };
             if (denResponseRequiresLogin(response)) {
                 denRedirectToLogin();
                 return { __den_skip: true };
             }
-            if (!response.ok) {
-                return response.text().then(function (t) {
-                    throw new Error(t || "HTTP " + response.status);
-                });
-            }
-            return response.json();
+            return DenChatErrors.readJson(response, "Could not update the chat");
         });
     }
 
@@ -1522,9 +1499,10 @@ block head %} {{ super() }}
         var current = document.getElementById("den-conv-current");
         if (!menu) return;
         var list = DEN_CONVERSATIONS.slice();
-        var currentTitle = DEN_HATS.length ? "Choose a hat to start" : "Conversation";
+        var currentTitle = DEN_HATS.length ? "Choose a hat to start" : "Create a hat to start";
         var selected = list.find(function (row) { return row.id === CONVERSATION_ID; });
         taskSelector.sync();
+        syncChatComposer();
         var notice = document.getElementById("den-legacy-conversation-notice");
         if (notice) notice.hidden = !(selected && !selected.pending && !selected.hat_id);
         var notes = document.getElementById("den-private-notes");
@@ -1539,7 +1517,7 @@ block head %} {{ super() }}
             item.className = "den-conv-menu-row";
             if (c.id === CONVERSATION_ID) {
                 item.className += " den-conv-menu-row-selected";
-                currentTitle = (c.title || c.id) + (hatName(c.hat_id) ? " · " + hatName(c.hat_id) : DEN_HATS.length ? " · Legacy (read-only)" : "");
+                currentTitle = (c.title || c.id) + (hatName(c.hat_id) ? " · " + hatName(c.hat_id) + (c.can_send === true ? "" : " · Read-only") : " · Legacy (read-only)");
             }
 
             var selectBtn = document.createElement("button");
@@ -1549,7 +1527,7 @@ block head %} {{ super() }}
                 "aria-current",
                 c.id === CONVERSATION_ID ? "true" : "false",
             );
-            selectBtn.textContent = (c.title || c.id) + (hatName(c.hat_id) ? " · " + hatName(c.hat_id) : DEN_HATS.length ? " · Legacy (read-only)" : "");
+            selectBtn.textContent = (c.title || c.id) + (hatName(c.hat_id) ? " · " + hatName(c.hat_id) + (c.can_send === true ? "" : " · Read-only") : " · Legacy (read-only)");
             selectBtn.onclick = (function (id) {
                 return function () {
                     if (id !== CONVERSATION_ID) setConversation(id, true);
@@ -1574,15 +1552,17 @@ block head %} {{ super() }}
                         if (next == null) return;
                         next = next.trim();
                         if (!next) return;
-                        patchConversation(row.id, { title: next }).then(
+                        var token = chatOperations.begin("rename");
+                        return patchConversation(row.id, { title: next }, token).then(
                             function (data) {
-                                if (data && data.__den_skip) return;
+                                if (!chatOperations.current(token) || (data && data.__den_skip)) return;
+                                chatOperations.recover(token);
                                 row.title = next;
                                 renderConversationTabs();
                                 closeConversationMenu();
                             },
                             function (err) {
-                                showErr(String(err.message || err));
+                                showErr(DenChatErrors.failure(err, "Could not rename the chat"), token);
                             },
                         );
                     };
@@ -1598,9 +1578,11 @@ block head %} {{ super() }}
                 archiveBtn.textContent = "Archive";
                 archiveBtn.onclick = (function (row) {
                     return function () {
-                        patchConversation(row.id, { archived: true }).then(
+                        var token = chatOperations.begin("archive");
+                        return patchConversation(row.id, { archived: true }, token).then(
                             function (data) {
-                                if (data && data.__den_skip) return;
+                                if (!chatOperations.current(token, true) || (data && data.__den_skip)) return;
+                                chatOperations.recover(token);
                                 DEN_CONVERSATIONS = DEN_CONVERSATIONS.filter(
                                     function (candidate) {
                                         return (
@@ -1608,20 +1590,12 @@ block head %} {{ super() }}
                                         );
                                     },
                                 );
-                                if (
-                                    DEN_PENDING_CONVERSATION &&
-                                    DEN_PENDING_CONVERSATION.id === row.id
-                                ) {
-                                    DEN_PENDING_CONVERSATION = null;
-                                }
                                 if (row.id === CONVERSATION_ID) {
-                                    PREFERRED_CONVERSATION_ID = "default";
-                                    CONVERSATION_ID = "default";
+                                    PREFERRED_CONVERSATION_ID = null;
+                                    adoptConversation("");
                                     syncConversationUrl(CONVERSATION_ID);
                                     renderConversationTabs();
-                                    loadConversations().then(function () {
-                                        remountDeepChat();
-                                    });
+                                    loadConversations({ remount: true });
                                 } else {
                                     renderConversationTabs();
                                     loadConversations();
@@ -1629,7 +1603,7 @@ block head %} {{ super() }}
                                 closeConversationMenu();
                             },
                             function (err) {
-                                showErr(String(err.message || err));
+                                showErr(DenChatErrors.failure(err, "Could not archive the chat"), token);
                             },
                         );
                     };
@@ -1660,52 +1634,43 @@ block head %} {{ super() }}
                 hatSelect.appendChild(option);
             });
             newBtn.disabled = true;
-            hatSelect.onchange = function () { newBtn.disabled = !hatSelect.value; };
+            hatSelect.onchange = function () { newBtn.disabled = !DEN_CONVERSATIONS_LOADED || !hatSelect.value; };
         } else {
             var legacy = document.createElement("option");
             legacy.value = "";
-            legacy.textContent = "No hats configured (legacy conversation)";
+            legacy.textContent = "Create a hat in Bear settings to start";
             hatSelect.appendChild(legacy);
             hatSelect.disabled = true;
+            newBtn.disabled = true;
         }
         newItem.appendChild(hatSelect);
         newBtn.onclick = function () {
-            if (DEN_HATS.length) {
-                if (!hatSelect.value) return;
-                newBtn.disabled = true;
-                fetch("/v1/chat/conversations", {
-                    method: "POST", credentials: "same-origin",
-                    headers: { "Content-Type": "application/json", Accept: "application/json" },
-                    body: JSON.stringify({ bear_id: BEAR_ID, hat_id: hatSelect.value }),
-                }).then(function (response) {
-                    if (denResponseRequiresLogin(response)) {
-                        denRedirectToLogin();
-                        return { __den_skip: true };
-                    }
-                    if (!response.ok) return response.text().then(function (text) { throw new Error(text || "Could not start a hat conversation"); });
-                    return response.json();
-                }).then(function (created) {
-                    if (!created || created.__den_skip) return;
-                    DEN_PENDING_CONVERSATION = null;
-                    DEN_CONVERSATIONS.unshift({ id: created.id, title: created.title || "New chat", hat_id: created.hat_id, own_notes_available: true });
-                    setConversation(created.id, true);
-                    closeConversationMenu();
-                }).catch(function (err) {
-                    newBtn.disabled = false;
-                    showErr(String(err.message || err));
-                });
-                return;
-            }
-            var id = makeNewConversationId();
-            DEN_PENDING_CONVERSATION = {
-                id: id,
-                title: "New chat",
-                last_message_at: null,
-                pending: true,
-            };
-            DEN_CONVERSATIONS.unshift(DEN_PENDING_CONVERSATION);
-            setConversation(id, true);
-            closeConversationMenu();
+            var hatId = hatSelect.value;
+            if (!DEN_CONVERSATIONS_LOADED || !DEN_HATS.some(function (hat) { return hat.id === hatId; })) return;
+            var token = chatOperations.begin("create");
+            newBtn.disabled = true;
+            return fetch("/v1/chat/conversations", {
+                method: "POST", credentials: "same-origin",
+                headers: { "Content-Type": "application/json", Accept: "application/json" },
+                body: JSON.stringify({ bear_id: BEAR_ID, hat_id: hatId }),
+            }).then(function (response) {
+                if (!chatOperations.current(token)) return null;
+                if (denResponseRequiresLogin(response)) {
+                    denRedirectToLogin();
+                    return null;
+                }
+                return DenChatErrors.readJson(response, "Could not start a hat conversation");
+            }).then(function (created) {
+                if (!chatOperations.current(token, true) || !created) return;
+                if (typeof created.id !== "string" || !created.id) throw new Error("Invalid chat response");
+                chatOperations.recover(token);
+                // Activation and remount belong to this create intent, not a later selection/draft.
+                return loadConversations({ requestedId: created.id, parent: token, remount: true, closeMenu: true });
+            }).catch(function (err) {
+                showErr(DenChatErrors.failure(err, "Could not start a hat conversation"), token);
+            }).finally(function () {
+                if (chatOperations.current(token)) newBtn.disabled = !DEN_CONVERSATIONS_LOADED || !hatSelect.value;
+            });
         };
         newItem.appendChild(newBtn);
         menu.appendChild(newItem);
@@ -1713,95 +1678,80 @@ block head %} {{ super() }}
         if (current) current.textContent = currentTitle;
     }
 
-    function loadConversations() {
-        if (!BEAR_ID) {
-            return Promise.resolve();
+    function loadConversations(options) {
+        options = options || {};
+        if (!BEAR_ID) return Promise.resolve(null);
+        var token = chatOperations.begin("list");
+        var requestedId = options.requestedId || PREFERRED_CONVERSATION_ID;
+        var params = new URLSearchParams({ bear_id: BEAR_ID });
+        if (requestedId) params.set("conversation_id", requestedId);
+        function current() {
+            return chatOperations.current(token) && (!options.parent || chatOperations.current(options.parent, true));
         }
-        return fetch(
-            "/v1/chat/conversations?bear_id=" + encodeURIComponent(BEAR_ID),
-            {
-                credentials: "same-origin",
-            },
-        )
+        return fetch("/v1/chat/conversations?" + params.toString(), {
+            credentials: "same-origin", headers: { Accept: "application/json" },
+        })
             .then(function (response) {
+                if (!current()) return null;
                 if (denResponseRequiresLogin(response)) {
                     denRedirectToLogin();
-                    return { __den_skip: true };
+                    return null;
                 }
-                if (!response.ok) {
-                    return response.text().then(function (t) {
-                        throw new Error(t || "HTTP " + response.status);
-                    });
-                }
-                return response.json();
+                return DenChatErrors.readJson(response, "Could not load chats");
             })
             .then(function (data) {
-                if (data && data.__den_skip) return "skip-boot";
-                DEN_HATS = data && data.hats ? data.hats : [];
-                var list = data && data.conversations ? data.conversations : [];
-                var rows = [];
-                var optionIds = [];
-                var i;
-                for (i = 0; i < list.length; i++) {
-                    var c = list[i];
-                    if (!c || !c.id) continue;
-                    rows.push(c);
-                    optionIds.push(c.id);
+                if (!current() || !data) return null;
+                if (!Array.isArray(data.hats) || !Array.isArray(data.conversations) ||
+                    !(data.selected_conversation_id === null || typeof data.selected_conversation_id === "string")) {
+                    var error = new Error("Chat list response is incompatible. Refresh chats after the service is updated.");
+                    error.denChatControlled = true;
+                    throw error;
                 }
-                if (rows.length === 0 && !DEN_HATS.length) {
-                    rows.push({ id: "default", title: "Main chat" });
-                    optionIds.push("default");
-                }
-                if (
-                    DEN_PENDING_CONVERSATION &&
-                    optionIds.indexOf(DEN_PENDING_CONVERSATION.id) < 0 &&
-                    DEN_PENDING_CONVERSATION.id === CONVERSATION_ID
-                ) {
-                    rows.unshift(DEN_PENDING_CONVERSATION);
-                    optionIds.unshift(DEN_PENDING_CONVERSATION.id);
-                } else if (
-                    DEN_PENDING_CONVERSATION &&
-                    optionIds.indexOf(DEN_PENDING_CONVERSATION.id) >= 0
-                ) {
-                    DEN_PENDING_CONVERSATION = null;
-                }
-                var firstId =
-                    list[0] && list[0].id
-                        ? list[0].id
-                        : optionIds[0] || "default";
-                var pick =
-                    PREFERRED_CONVERSATION_ID &&
-                    optionIds.indexOf(PREFERRED_CONVERSATION_ID) >= 0
-                        ? PREFERRED_CONVERSATION_ID
-                        : firstId;
-                if (optionIds.indexOf(pick) < 0) {
-                    pick = optionIds[0] || "default";
-                }
-                DEN_CONVERSATIONS = rows;
-                CONVERSATION_ID = pick;
+                chatOperations.recover(token);
+                DEN_HATS = data.hats;
+                DEN_CONVERSATIONS = data.conversations.filter(function (row) {
+                    return row && typeof row.id === "string" && row.id;
+                });
+                DEN_CONVERSATIONS_LOADED = true;
+                var previous = CONVERSATION_ID;
+                adoptConversation(DenChatConversationState.pick(DEN_CONVERSATIONS, requestedId, data.selected_conversation_id));
+                token = chatOperations.retarget(token);
                 renderConversationTabs();
-                syncConversationUrl(CONVERSATION_ID);
+                if (requestedId && !CONVERSATION_ID) {
+                    showErr("This conversation is unavailable. Choose an accessible chat or start a New chat with a hat.", token);
+                } else {
+                    PREFERRED_CONVERSATION_ID = CONVERSATION_ID || null;
+                    syncConversationUrl(CONVERSATION_ID);
+                }
                 return loadConversationModel().then(function () {
-                    return loadCurrentTask();
+                    if (chatOperations.current(token)) return loadCurrentTask();
                 }).then(function () {
-                    return "ok";
+                    if (!chatOperations.current(token)) return null;
+                    if (options.remount || previous !== CONVERSATION_ID) remountDeepChat(token);
+                    if (options.closeMenu && chatOperations.current(token, true)) closeConversationMenu();
+                    return { token: token };
                 });
             })
             .catch(function (err) {
-                showErr(String(err.message || err));
-                DEN_CONVERSATIONS = [{ id: "default", title: "Main chat" }];
-                CONVERSATION_ID = "default";
+                if (!current()) return null;
+                DEN_CONVERSATIONS_LOADED = false;
+                chatOperations.begin("model-read");
+                showErr(DenChatErrors.failure(err, "Could not load chats"), token);
                 renderConversationTabs();
-                syncConversationUrl(CONVERSATION_ID);
+                // Keep the selected history URL and server-listed rows; never fabricate a fallback.
                 return loadConversationModel().then(function () {
-                    return loadCurrentTask();
+                    if (chatOperations.current(token)) return loadCurrentTask();
                 }).then(function () {
-                    return "ok";
+                    return chatOperations.current(token) ? { token: token } : null;
                 });
             });
     }
 
     function boot() {
+        var chatsRefresh = document.getElementById("den-chats-refresh");
+        if (chatsRefresh) chatsRefresh.addEventListener("click", function () {
+            return loadConversations({ remount: true });
+        });
         var notes = document.getElementById("den-private-notes");
         if (notes) notes.addEventListener("toggle", function () {
             if (notes.open && !notes.hidden) loadPrivateNotes();
@@ -1821,17 +1771,12 @@ block head %} {{ super() }}
          * `errorMessages` on `<deep-chat>` in markup + `configureDenChat` keep
          * `displayServiceErrorMessages` true before the message stack is built.
          */
-        loadConversations()
-            .then(function () {
-                return customElements.whenDefined("deep-chat");
-            })
-            .catch(function (err) {
-                showErr(String(err.message || err));
-                return customElements.whenDefined("deep-chat");
-            })
-            .then(function () {
-                configureDenChat();
+        return loadConversations().then(function (result) {
+            if (!result) return;
+            return customElements.whenDefined("deep-chat").then(function () {
+                if (chatOperations.current(result.token, true)) configureDenChat();
             });
+        });
     }
 
     boot();

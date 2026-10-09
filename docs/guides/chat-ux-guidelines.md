@@ -56,6 +56,17 @@ Deep Chat surfaces should use custom roles and `custom` data (or an equivalent t
 
 Do not use model reasoning or private scratchpad as assistant text. This invariant is about context supplied by Den and connected runtimes, not disclosure of provider-private reasoning.
 
+## First-chat setup and HTTP failure rendering
+
+- Creating a hat does not bind a conversation. A fresh Bear's Chat view should explain how to choose that hat under **+ New chat**, create the owned conversation, and then send. Do not manufacture an executable default thread on empty or failed inventory, including on a zero-hat Bear.
+- Metadata inspection is not admission or mutation: viewing model settings must not create an unbound conversation. Keep authorized history/model reads separate from send/configuration eligibility.
+- Use the server's explicit send eligibility and canonical/display selection mapping. An exact authorized older history link must not be lost merely because it falls outside a recent inventory page; an unavailable link must not silently become another conversation.
+- Chat API failures should be typed JSON with safe recovery text and a request reference matching the response header. General navigation-page HTML is not a chat error payload. Render status/recovery for HTML/proxy/non-JSON failures, never their raw bodies; do not echo serialized provider diagnostics or credential-bearing context.
+- Error references and business messages must remain literal text, not executable links/Markdown. Sign-in redirects have their own handling. Clear only the relevant operation/selection's error after recovery; do not hide an unrelated failed mutation.
+- Serialize model mutations and reread canonical state before accepting another choice. Fence stale create/list/history/model callbacks against selection and draft changes; do not remount a newer chat merely because an older request completes.
+
+These rules describe the current branch's browser follow-on, not proof of deployment. See [current contract and validation limits](../topics/bear-memory-hats.md#browser-first-chat-and-error-boundary-follow-on-2026-10-09).
+
 ## Related contracts
 
 - [Conversation persistence and archive model](../architecture/den-conversation-persistence-and-archive-model.md) defines the shared, append-only transcript source of truth.

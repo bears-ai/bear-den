@@ -3,13 +3,13 @@
 
 use axum::{
     body::Body,
-    extract::{Path, State},
+    extract::{rejection::JsonRejection, Path, State},
     http::{header, HeaderName, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, patch, post},
     Json, Router,
 };
-use axum_extra::extract::Query;
+use axum_extra::extract::{Query, QueryRejection};
 use axum_login::login_required;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -17,7 +17,6 @@ use serde_json::{json, Value};
 use tracing::Instrument;
 use uuid::Uuid;
 
-use crate::bear::settings::model_configurations::selectable_model_options;
 use crate::{
     auth_backend::{AuthSession, Backend},
     errors::CustomError,
@@ -29,14 +28,14 @@ use crate::{
     web_chat_runtime::WebChatRuntimeRequest,
 };
 use den_core::{
-    ids::{BearId, ModelConfigurationId, UserId},
-    DenError, ThinkingEffort,
+    ids::{BearId, UserId},
+    DenError,
 };
 use den_docket::{
     DocketEffortHint, DocketService, DocketTaskCreate, DocketTaskDifficulty, DocketTaskKind,
     DocketTaskScope, PgDocketService, RoutingStrategy,
 };
-use den_llm::ModelOption;
+
 use den_protocol::{
     ContextBudgetReport, RuntimeConversationRef, RuntimeSemanticEvent, RuntimeStreamEvent,
 };
@@ -48,15 +47,21 @@ use den_service::{
     artifacts::{self, ArtifactAccessContext},
     bears::{
         db::{self as bears_db, role_is_bear_admin},
-        hats,
-        model_configurations::{self, PrimaryModelSource, ResolvedPrimaryModel},
-        RuntimeContextLabel,
+        hats, RuntimeContextLabel,
     },
     client_sessions,
     conversation::{persistence as conversation_persistence, viewer::ConversationViewer},
 };
 
+mod chat_api_error;
+mod chat_conversations;
+mod chat_model;
 mod current_task_choices;
+
+use chat_api_error::ChatApiError;
+use chat_conversations::chat_conversations;
+use chat_model::{chat_model_get, chat_model_patch};
+pub use chat_model::{ChatModelPatchBody, ChatModelQuery, ChatModelResponse};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -145,6 +150,8 @@ struct ChatArtifactsQuery {
 #[derive(Debug, Deserialize)]
 pub struct ChatConversationsQuery {
     pub bear_id: Uuid,
+    #[serde(default)]
+    pub conversation_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -154,6 +161,8 @@ pub struct ChatConversationRow {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hat_id: Option<Uuid>,
     pub own_notes_available: bool,
+    /// Readiness hint only; Den rechecks source authority when a turn is requested.
+    pub can_send: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_message_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -166,6 +175,7 @@ pub struct ChatConversationRow {
 pub struct ChatConversationsResponse {
     pub conversations: Vec<ChatConversationRow>,
     pub hats: Vec<ChatHatChoice>,
+    pub selected_conversation_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -238,93 +248,6 @@ pub struct ChatHistoryResponse {
     pub latest_context_budget: Option<ContextBudgetReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest_context_budget_updated_at: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ChatModelQuery {
-    pub bear_id: Uuid,
-    #[serde(default)]
-    pub conversation_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ChatModelPatchBody {
-    pub bear_id: Uuid,
-    #[serde(default)]
-    pub conversation_id: Option<String>,
-    #[serde(default)]
-    pub selection_mode: Option<String>,
-    #[serde(default)]
-    pub model: Option<String>,
-}
-
-#[derive(Serialize)]
-pub struct ChatModelResponse {
-    pub selection_mode: String,
-    pub requested_model: Option<String>,
-    pub selected_model: Option<String>,
-    pub effective_model: Option<String>,
-    pub source: Option<String>,
-    pub error: Option<String>,
-    pub configuration_id: Option<ModelConfigurationId>,
-    pub configuration_name: Option<String>,
-    pub thinking_effort: Option<ThinkingEffort>,
-    pub model_options: Vec<ModelOption>,
-}
-
-impl ChatModelResponse {
-    fn from_primary(primary: ResolvedPrimaryModel, model_options: Vec<ModelOption>) -> Self {
-        let pinned = primary.source == PrimaryModelSource::ConversationPin;
-        Self {
-            selection_mode: if pinned { "explicit" } else { "auto" }.to_string(),
-            requested_model: pinned.then(|| primary.model_handle.clone()),
-            selected_model: pinned.then(|| primary.model_handle.clone()),
-            effective_model: Some(primary.model_handle),
-            source: Some(
-                match primary.source {
-                    PrimaryModelSource::ConversationPin => "conversation_explicit",
-                    PrimaryModelSource::HatOverride => "hat_override",
-                    PrimaryModelSource::BearDefault => "bear_default",
-                    PrimaryModelSource::DeploymentDefault => "deployment_default",
-                }
-                .to_string(),
-            ),
-            error: None,
-            configuration_id: primary.configuration_id,
-            configuration_name: primary.configuration_name,
-            thinking_effort: primary.thinking_effort,
-            model_options,
-        }
-    }
-
-    fn from_resolution(
-        primary: Result<ResolvedPrimaryModel, DenError>,
-        model_state: Option<conversation_persistence::ConversationModelState>,
-        model_options: Vec<ModelOption>,
-    ) -> Result<Self, CustomError> {
-        match primary {
-            Ok(primary) => Ok(Self::from_primary(primary, model_options)),
-            Err(DenError::ValidationError(message)) => {
-                // These persisted strings are a legacy protocol boundary, not
-                // resolved execution state. Auto caches are never projected as pins.
-                let pin = model_state.filter(|state| state.selection_mode == "explicit");
-                let pinned = pin.is_some();
-                Ok(Self {
-                    selection_mode: if pinned { "explicit" } else { "auto" }.to_string(),
-                    requested_model: pin.as_ref().and_then(|state| state.requested_model.clone()),
-                    selected_model: pin.as_ref().and_then(|state| state.selected_model.clone()),
-                    effective_model: None,
-                    source: pinned.then(|| "conversation_explicit".into()),
-                    error: Some(message),
-                    configuration_id: None,
-                    configuration_name: None,
-                    thinking_effort: None,
-                    model_options,
-                })
-            }
-            Err(error) => Err(error.into()),
-        }
-    }
 }
 
 /// `None` / empty / `default` → agent main conversation. Existing runtime conversations use
@@ -755,8 +678,9 @@ async fn chat_current_task_clear(
 async fn chat_conversation_create(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Json(body): Json<ChatConversationCreateBody>,
-) -> Result<Json<ChatConversationCreateResponse>, CustomError> {
+    body: Result<Json<ChatConversationCreateBody>, JsonRejection>,
+) -> Result<Json<ChatConversationCreateResponse>, ChatApiError> {
+    let Json(body) = body?;
     let user_id = auth_session
         .user
         .as_ref()
@@ -809,8 +733,9 @@ struct ChatSourceNote {
 async fn chat_notes(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Query(q): Query<ChatNotesQuery>,
-) -> Result<Json<Vec<ChatSourceNote>>, CustomError> {
+    query: Result<Query<ChatNotesQuery>, QueryRejection>,
+) -> Result<Json<Vec<ChatSourceNote>>, ChatApiError> {
+    let Query(q) = query?;
     let user_id = auth_session
         .user
         .as_ref()
@@ -832,7 +757,8 @@ async fn chat_notes(
     {
         return Err(CustomError::Authorization(
             "only this conversation's creator can inspect its private notes".into(),
-        ));
+        )
+        .into());
     }
     let hats::memory_binding::ResolvedMemoryBinding::Bound(grant) =
         hats::memory_binding::for_conversation(
@@ -855,102 +781,13 @@ async fn chat_notes(
     Ok(Json(notes))
 }
 
-async fn chat_conversations(
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-    Query(q): Query<ChatConversationsQuery>,
-) -> Result<Json<ChatConversationsResponse>, CustomError> {
-    let user_id = auth_session
-        .user
-        .as_ref()
-        .map(|u| u.id)
-        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
-
-    let viewer = conversation_viewer(state.sqlx_pool(), q.bear_id, user_id).await?;
-    let default_id = canonical_chat_id(state.sqlx_pool(), q.bear_id, user_id, "default").await?;
-    let bear = bears_db::get_bear(state.sqlx_pool(), q.bear_id)
-        .await?
-        .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
-
-    let archived_ids = archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
-    let visible = viewer.list_visible(state.sqlx_pool(), 100).await?;
-    let ids: Vec<Uuid> = visible.iter().map(|row| row.id).collect();
-    let hat_bindings: std::collections::HashMap<Uuid, (Option<Uuid>, Option<i32>)> = sqlx::query!(
-        "SELECT id, hat_id, created_by_user_id FROM conversations WHERE bear_id = $1 AND id = ANY($2)",
-        bear.id,
-        &ids,
-    )
-    .fetch_all(state.sqlx_pool())
-    .await?
-    .into_iter()
-    .map(|row| (row.id, (row.hat_id, row.created_by_user_id)))
-    .collect();
-    let conversations = visible
-        .into_iter()
-        .filter_map(|row| {
-            let id = row.external_conversation_id?;
-            if id.starts_with("new-")
-                || archived_ids.contains(&id)
-                || (id == "default" && id != default_id)
-            {
-                return None;
-            }
-            let display_id = if id == default_id { "default" } else { &id };
-            Some(ChatConversationRow {
-                id: display_id.to_string(),
-                hat_id: hat_bindings.get(&row.id).and_then(|binding| binding.0),
-                own_notes_available: hat_bindings
-                    .get(&row.id)
-                    .is_some_and(|(hat, owner)| hat.is_some() && *owner == Some(user_id)),
-                title: row
-                    .current_title
-                    .filter(|title| !title.trim().is_empty())
-                    .unwrap_or_else(|| {
-                        if id == default_id {
-                            "Main chat".to_string()
-                        } else {
-                            id.clone()
-                        }
-                    }),
-                last_message_at: Some(
-                    row.updated_at
-                        .format(&time::format_description::well_known::Rfc3339)
-                        .ok()?,
-                ),
-                latest_context_budget: row.latest_context_budget,
-                latest_context_budget_updated_at: row.latest_context_budget_updated_at.and_then(
-                    |value| {
-                        value
-                            .format(&time::format_description::well_known::Rfc3339)
-                            .ok()
-                    },
-                ),
-            })
-        })
-        .collect::<Vec<_>>();
-
-    let hats = hats::list_hats(state.sqlx_pool(), BearId::new(bear.id))
-        .await?
-        .into_iter()
-        .map(|hat| ChatHatChoice {
-            id: hat.id.as_uuid(),
-            name: hat.name,
-            purpose: hat.purpose,
-        })
-        .collect::<Vec<_>>();
-
-    Ok(Json(ChatConversationsResponse {
-        conversations,
-        hats,
-    }))
-}
-
 async fn chat_conversation_patch(
     State(state): State<AppState>,
     auth_session: AuthSession,
     Path(conversation_id): Path<String>,
-    Json(body): Json<ChatConversationPatchBody>,
-) -> Result<Json<ChatConversationPatchResponse>, CustomError> {
+    body: Result<Json<ChatConversationPatchBody>, JsonRejection>,
+) -> Result<Json<ChatConversationPatchResponse>, ChatApiError> {
+    let Json(body) = body?;
     let user_id = auth_session
         .user
         .as_ref()
@@ -959,16 +796,17 @@ async fn chat_conversation_patch(
 
     let allowed = bears_db::user_may_use_bear(state.sqlx_pool(), user_id, body.bear_id).await?;
     if !allowed {
-        return Err(CustomError::Authorization(
-            "you do not have access to this bear".to_string(),
-        ));
+        return Err(
+            CustomError::Authorization("you do not have access to this bear".to_string()).into(),
+        );
     }
 
     let conv_id = normalize_client_conversation_id(Some(&conversation_id))?;
     if conv_id == "default" || conv_id.starts_with("new-") {
         return Err(CustomError::ValidationError(
             "only saved conversations can be renamed or archived".to_string(),
-        ));
+        )
+        .into());
     }
 
     let bear = bears_db::get_bear(state.sqlx_pool(), body.bear_id)
@@ -991,14 +829,14 @@ async fn chat_conversation_patch(
         .map(str::trim)
         .filter(|s| !s.is_empty());
     if body.title.is_some() && title.is_none() {
-        return Err(CustomError::ValidationError(
-            "conversation title cannot be empty".to_string(),
-        ));
+        return Err(
+            CustomError::ValidationError("conversation title cannot be empty".to_string()).into(),
+        );
     }
     if body.title.is_none() && body.archived.is_none() && body.deleted != Some(true) {
-        return Err(CustomError::ValidationError(
-            "no conversation update requested".to_string(),
-        ));
+        return Err(
+            CustomError::ValidationError("no conversation update requested".to_string()).into(),
+        );
     }
 
     if body.deleted == Some(true) {
@@ -1045,8 +883,9 @@ async fn chat_conversation_patch(
 async fn chat_history(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Query(q): Query<ChatHistoryQuery>,
-) -> Result<Json<ChatHistoryResponse>, CustomError> {
+    query: Result<Query<ChatHistoryQuery>, QueryRejection>,
+) -> Result<Json<ChatHistoryResponse>, ChatApiError> {
+    let Query(q) = query?;
     let user_id = auth_session
         .user
         .as_ref()
@@ -1055,9 +894,9 @@ async fn chat_history(
 
     let allowed = bears_db::user_may_use_bear(state.sqlx_pool(), user_id, q.bear_id).await?;
     if !allowed {
-        return Err(CustomError::Authorization(
-            "you do not have access to this bear".to_string(),
-        ));
+        return Err(
+            CustomError::Authorization("you do not have access to this bear".to_string()).into(),
+        );
     }
 
     let bear = bears_db::get_bear(state.sqlx_pool(), q.bear_id)
@@ -1182,23 +1021,25 @@ async fn chat_history(
 async fn chat_artifacts(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Query(q): Query<ChatArtifactsQuery>,
-) -> Result<Json<Value>, CustomError> {
+    query: Result<Query<ChatArtifactsQuery>, QueryRejection>,
+) -> Result<Json<Value>, ChatApiError> {
+    let Query(q) = query?;
     let user_id = auth_session
         .user
         .as_ref()
         .map(|u| u.id)
         .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
     if !bears_db::user_may_use_bear(state.sqlx_pool(), user_id, q.bear_id).await? {
-        return Err(CustomError::Authorization(
-            "you do not have access to this bear".to_string(),
-        ));
+        return Err(
+            CustomError::Authorization("you do not have access to this bear".to_string()).into(),
+        );
     }
     let conversation_id = normalize_client_conversation_id(q.conversation_id.as_deref())?;
     if conversation_id.starts_with("new-") {
         return Err(CustomError::ValidationError(
             "conversation artifacts are available after the conversation is created".to_string(),
-        ));
+        )
+        .into());
     }
     let (viewer, canonical_id) =
         checked_chat_id(state.sqlx_pool(), q.bear_id, user_id, &conversation_id).await?;
@@ -1216,7 +1057,7 @@ async fn chat_artifacts(
             json!({ "conversation_id": "default", "artifacts": [] }),
         ));
     } else {
-        return Err(CustomError::NotFound("conversation not found".to_string()));
+        return Err(CustomError::NotFound("conversation not found".to_string()).into());
     }
     let citations = artifacts::list_conversation_artifact_citations(
         state.sqlx_pool(),
@@ -1413,45 +1254,8 @@ pub struct ChatSendRequest {
     pub conversation_id: Option<String>,
 }
 
-fn chat_send_api_status_message(err: &CustomError) -> (StatusCode, String) {
-    match err {
-        CustomError::Anyhow(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")),
-        CustomError::System(s) => (StatusCode::UNPROCESSABLE_ENTITY, s.clone()),
-        CustomError::Database(s) => (StatusCode::UNPROCESSABLE_ENTITY, s.clone()),
-        CustomError::DatabaseUnavailable(s) => (StatusCode::SERVICE_UNAVAILABLE, s.clone()),
-        CustomError::Session(s) => (StatusCode::INTERNAL_SERVER_ERROR, s.clone()),
-        CustomError::Authentication(s) => (StatusCode::UNAUTHORIZED, s.clone()),
-        CustomError::Authorization(s) => (StatusCode::FORBIDDEN, s.clone()),
-        CustomError::Render(s) => (StatusCode::INTERNAL_SERVER_ERROR, s.clone()),
-        CustomError::Parsing(s) => (StatusCode::UNPROCESSABLE_ENTITY, s.clone()),
-        CustomError::Email(s) => (StatusCode::FAILED_DEPENDENCY, s.clone()),
-        CustomError::NotFound(s) => (StatusCode::NOT_FOUND, s.clone()),
-        CustomError::ValidationError(s) => (StatusCode::BAD_REQUEST, s.clone()),
-    }
-}
-
-fn chat_send_error_response(err: CustomError, request_id: Uuid) -> Response {
-    tracing::error!(%request_id, error = %err, "chat_send rejected");
-    let (status, message) = chat_send_api_status_message(&err);
-    let body = serde_json::json!({
-        "error": message,
-        "request_id": request_id,
-    });
-    let request_id_header = HeaderValue::from_str(&request_id.to_string())
-        .unwrap_or_else(|_| HeaderValue::from_static("invalid"));
-    match Response::builder()
-        .status(status)
-        .header(header::CONTENT_TYPE, "application/json; charset=utf-8")
-        .header(HeaderName::from_static("x-request-id"), request_id_header)
-        .body(Body::from(body.to_string()))
-    {
-        Ok(r) => r,
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("response build: {e}"),
-        )
-            .into_response(),
-    }
+fn chat_send_error_response(err: impl Into<ChatApiError>, request_id: Uuid) -> Response {
+    err.into().response(request_id)
 }
 
 async fn web_chat_workboard_prompt_context(
@@ -1468,133 +1272,16 @@ async fn web_chat_workboard_prompt_context(
     Ok(String::new())
 }
 
-async fn chat_model_response_for(
-    state: &AppState,
-    user_id: i32,
-    bear_id: Uuid,
-    conversation_id: Option<&str>,
-) -> Result<ChatModelResponse, CustomError> {
-    let allowed = bears_db::user_may_use_bear(state.sqlx_pool(), user_id, bear_id).await?;
-    if !allowed {
-        return Err(CustomError::Authorization(
-            "you do not have access to this bear".to_string(),
-        ));
-    }
-    let bear = bears_db::get_bear(state.sqlx_pool(), bear_id)
-        .await?
-        .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
-    let requested_id = normalize_client_conversation_id(conversation_id)?;
-    let (viewer, conv_id) =
-        checked_chat_id(state.sqlx_pool(), bear.id, user_id, &requested_id).await?;
-    let model_options = selectable_model_options(state.sqlx_pool()).await?;
-    let (primary, model_state) = if conv_id.starts_with("new-") {
-        (
-            model_configurations::resolve_primary(
-                state.sqlx_pool(),
-                BearId::new(bear.id),
-                None,
-                None,
-                &state.config.default_llm_model,
-            )
-            .await,
-            None,
-        )
-    } else {
-        let conversation =
-            ensure_chat_conversation(state.sqlx_pool(), bear.id, user_id, &viewer, &conv_id)
-                .await?;
-        let model_state = conversation_persistence::get_conversation_model_state(
-            state.sqlx_pool(),
-            conversation.id,
-        )
-        .await?;
-        (
-            den_service::model_selection::resolve_conversation_primary_model(
-                state.sqlx_pool(),
-                BearId::new(bear.id),
-                conversation.id,
-                &state.config.default_llm_model,
-            )
-            .await,
-            model_state,
-        )
-    };
-    ChatModelResponse::from_resolution(primary, model_state, model_options)
-}
-
-async fn chat_model_get(
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-    Query(q): Query<ChatModelQuery>,
-) -> Result<Json<ChatModelResponse>, CustomError> {
-    let user_id = auth_session
-        .user
-        .as_ref()
-        .map(|u| u.id)
-        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
-    Ok(Json(
-        chat_model_response_for(&state, user_id, q.bear_id, q.conversation_id.as_deref()).await?,
-    ))
-}
-
-async fn chat_model_patch(
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-    Json(body): Json<ChatModelPatchBody>,
-) -> Result<Json<ChatModelResponse>, CustomError> {
-    let user_id = auth_session
-        .user
-        .as_ref()
-        .map(|u| u.id)
-        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
-    let allowed = bears_db::user_may_use_bear(state.sqlx_pool(), user_id, body.bear_id).await?;
-    if !allowed {
-        return Err(CustomError::Authorization(
-            "you do not have access to this bear".to_string(),
-        ));
-    }
-    let bear = bears_db::get_bear(state.sqlx_pool(), body.bear_id)
-        .await?
-        .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
-    let requested_id = normalize_client_conversation_id(body.conversation_id.as_deref())?;
-    if requested_id.starts_with("new-") {
-        return Err(CustomError::ValidationError(
-            "choose a model after the conversation is created".to_string(),
-        ));
-    }
-    let (viewer, conv_id) =
-        checked_chat_id(state.sqlx_pool(), bear.id, user_id, &requested_id).await?;
-    let mode = body.selection_mode.as_deref().unwrap_or("auto").trim();
-    if mode == "explicit" {
-        model_configurations::validate_model_configuration(
-            state.sqlx_pool(),
-            body.model.as_deref().unwrap_or(""),
-            None,
-        )
-        .await?;
-    }
-    let conversation =
-        ensure_chat_conversation(state.sqlx_pool(), bear.id, user_id, &viewer, &conv_id).await?;
-    den_service::model_selection::apply_conversation_model_selection(
-        state.sqlx_pool(),
-        conversation.id,
-        mode,
-        body.model.as_deref(),
-        "human_selected",
-        "inherit_hat_bear_or_deployment_default",
-    )
-    .await?;
-    Ok(Json(
-        chat_model_response_for(&state, user_id, body.bear_id, Some(&conv_id)).await?,
-    ))
-}
-
 async fn chat_send(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Json(body): Json<ChatSendRequest>,
+    body: Result<Json<ChatSendRequest>, JsonRejection>,
 ) -> impl IntoResponse {
     let request_id = Uuid::new_v4();
+    let body = match body {
+        Ok(Json(body)) => body,
+        Err(error) => return ChatApiError::from(error).response(request_id),
+    };
     let result = async { chat_send_inner(state, auth_session, body, request_id).await }
         .instrument(tracing::info_span!("chat_send", request_id = %request_id))
         .await;
@@ -1765,7 +1452,7 @@ async fn chat_send_native_inner(
     username: &str,
     bear: den_service::bears::Bear,
     conv_id: String,
-) -> Result<Response, CustomError> {
+) -> Result<Response, ChatApiError> {
     let (viewer, requested_id) =
         checked_chat_id(state.sqlx_pool(), bear.id, user_id, &conv_id).await?;
     let resolved_id = requested_id
@@ -1778,6 +1465,12 @@ async fn chat_send_native_inner(
             .await?
             .flatten();
     let session_id = browser_client_session_id(user_id, bear.id, &conv_id);
+    if archived_conversations::list_for_bear(state.sqlx_pool(), bear.id)
+        .await?
+        .contains(&conv_id)
+    {
+        return Err(ChatApiError::ConversationArchived);
+    }
     den_service::conversation::viewer::require_ordinary_tool_source(
         state.sqlx_pool(),
         BearId::new(bear.id),
@@ -1785,17 +1478,13 @@ async fn chat_send_native_inner(
         &conv_id,
     )
     .await
-    .map_err(|error| match error {
-        den_core::DenError::NotFound(_) => CustomError::Authorization(
-            "a named hat is required; create a hat-bound conversation before sending".into(),
-        ),
-        error => error.into(),
-    })?;
+    .map_err(ChatApiError::ordinary_source)?;
     if state.config.llm_api_url.trim().is_empty() {
         return Err(CustomError::System(
             "Chat is unavailable: LLM_API_URL is not set (required when AGENT_RUNTIME=native)."
                 .into(),
-        ));
+        )
+        .into());
     }
     let canonical_conversation =
         ensure_chat_conversation(state.sqlx_pool(), bear.id, user_id, &viewer, &conv_id).await?;
@@ -1939,7 +1628,7 @@ async fn chat_send_native_inner(
         conv_id,
         state.sqlx_pool().clone(),
     );
-    chat_sse_response(stream, request_id)
+    chat_sse_response(stream, request_id).map_err(Into::into)
 }
 
 async fn chat_send_inner(
@@ -1947,7 +1636,7 @@ async fn chat_send_inner(
     auth_session: AuthSession,
     body: ChatSendRequest,
     request_id: Uuid,
-) -> Result<Response, CustomError> {
+) -> Result<Response, ChatApiError> {
     let session_user = auth_session
         .user
         .as_ref()
@@ -1956,16 +1645,14 @@ async fn chat_send_inner(
     let username = session_user.username.clone();
 
     if body.message.trim().is_empty() {
-        return Err(CustomError::ValidationError(
-            "message must not be empty".to_string(),
-        ));
+        return Err(CustomError::ValidationError("message must not be empty".to_string()).into());
     }
 
     let allowed = bears_db::user_may_use_bear(state.sqlx_pool(), user_id, body.bear_id).await?;
     if !allowed {
-        return Err(CustomError::Authorization(
-            "you do not have access to this bear".to_string(),
-        ));
+        return Err(
+            CustomError::Authorization("you do not have access to this bear".to_string()).into(),
+        );
     }
 
     let bear = bears_db::get_bear(state.sqlx_pool(), body.bear_id)
@@ -1990,11 +1677,19 @@ async fn chat_send_inner(
 #[cfg(test)]
 mod access_tests;
 #[cfg(test)]
+mod chat_api_error_tests;
+#[cfg(test)]
+mod chat_model_access_tests;
+#[cfg(test)]
+mod conversation_selection_tests;
+#[cfg(test)]
 mod current_task_tests;
 #[cfg(test)]
 mod model_configuration_tests;
 #[cfg(test)]
 mod native_stream_tests;
+#[cfg(test)]
+mod new_bear_chat_journey_tests;
 
 #[cfg(test)]
 mod browser_client_session_tests {
