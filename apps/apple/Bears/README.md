@@ -21,3 +21,7 @@ The first execution slice is limited to:
 - supporting a basic repair/reinstall flow.
 
 Sparkle, ACP usage log viewing, client auto-configuration, and Den-admin features belong to later slices.
+
+## Planned client evolution
+
+The [draft app roadmap](../../../docs/roadmap/MACOS_BEARS_CLIENT_APP_PLAN.md) plans human Bear administration, multimodal conversation and Docket task management, with local armature installation kept separate and optional for remote usage. UI design and AHP-versus-AG-UI evaluation are required before implementation; no protocol or expanded native UI is selected or implemented by that plan. Real-time voice/video and external agent interoperability are excluded.

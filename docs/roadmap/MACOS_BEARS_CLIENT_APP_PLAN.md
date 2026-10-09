@@ -1,7 +1,145 @@
-# macOS Bears client app implementation plan
+# Bears app client evolution roadmap
 
-For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
-Status: proposed implementation plan.
+**Status:** Draft — architecture direction approved; UI design and AHP-versus-AG-UI evaluation must precede implementation.
+**Date:** 2026-10-09.
+**Topic:** [BearWire and ACP](../topics/bearwire-acp.md); related domain homes: [Docket and task execution](../topics/docket.md) and [Bear memory and hats](../topics/bear-memory-hats.md).
+**Implementation home:** `apps/apple/Bears/`, with Den API/runtime edges as needed. This document records intended work, not delivered capabilities or a release commitment.
+
+## Product goal and agreed scope
+
+Evolve the existing macOS installer/diagnostics app into a native client for **human interaction with Bears, authorized Bear administration, and Docket task management**. Preserve armature installation/repair as an optional local responsibility rather than make the helper a prerequisite for ordinary app chat or administration.
+
+The project owner has agreed to the architecture below, but has **not selected AHP or AG-UI, approved a UI design, or authorized implementation of the new client surfaces**. The next work is design/research and review. No SDK adoption, production protocol edge, schema/migration, app screen implementation or deployment follows automatically from this roadmap.
+
+In scope for design:
+
+- Native Bear/conversation discovery and hat-aware interaction, with a clear distinction between pending admission, executable owned conversations, and read-only history.
+- Multimodal chat: typed text and media/attachment handling, previews and truthful model/provider capability limits. Evaluate images/documents first; decide whether recorded audio belongs in the first slice during UI design. No assumption that every model accepts every modality.
+- Docket Jobs, tasks, progress, questions/approvals and authorized lifecycle controls, with artifacts/evidence linked to their canonical owners.
+- Bear administration for authorized humans: identify the initial subset of hats, model settings, Connections, membership and review workflows rather than automatically port every operator page.
+- Native login/session handling, connection/error/reconnect UX, and optionally viewing the same authorized conversation from more than one client.
+- Continued macOS helper install/update/repair, client setup and diagnostics, isolated from remote-client logic. Keep reusable Apple UI/state portable, but do not add an iOS/iPadOS delivery milestone yet.
+
+Explicit non-goals:
+
+- **Real-time voice/video and WebRTC.** Live text/task event updates are still in scope; the exclusion concerns real-time media.
+- **External agent interoperability, A2A or app-hosted agent federation.** These are not dependencies or future milestones in this roadmap.
+- Forcing ordinary app conversations to provide ACP/editor tools or a local filesystem/workspace.
+- Exposing provider credentials to models or model-controlled processes, rebuilding Docket inside the app, or introducing an independently writable session/permission database.
+- Implementing both AHP and AG-UI in the first slice, a generic protocol/plugin framework, or generative UI/MCP Apps as a prerequisite for native Chat/Docket screens.
+
+## Approved architecture; interaction protocol remains open
+
+| Responsibility | Boundary |
+| --- | --- |
+| Human authentication | OAuth 2.0 Authorization Code with PKCE through the system authentication browser; human tokens in Keychain. Reconcile actual Den client registration, scopes, refresh and revocation before implementation. |
+| Bear administration and Docket commands | Versioned HTTPS JSON APIs with typed contracts/OpenAPI. UI controls issue explicit human commands to Den services; they do not ask a model to perform ordinary CRUD or lifecycle actions. |
+| Conversations and agent interaction | Select **AHP or AG-UI** after the evaluation gate. A thin Den edge projects canonical conversation/run/obligation state and routes validated commands to existing services. |
+| Task/status updates | Canonical snapshots and scoped events. Decide how the selected interaction transport and domain subscriptions coexist; an update is not execution authority. |
+| Attachment transfer | Authorized HTTPS upload/download plus typed, bounded references and message parts. Define integrity, MIME/size, ownership, retention and model-delivery rules before claiming multimodal support. |
+| Local work-surface management | Existing armature installation and ACP/BearWire boundaries remain separate. Local tools require a separately verified, explicitly enabled trusted work surface. |
+
+```text
+Apple app
+  ├── Human API client ── HTTPS JSON ── Den administration/Docket services
+  ├── Conversation client ── AHP OR AG-UI ── Den conversation/run services
+  └── macOS local services ── install/update/diagnose armature
+
+Editor ── ACP ── armature ── BearWire ── Den
+```
+
+Den remains authoritative for authenticated actors, membership, source ownership, hats, grants, conversations, runs and obligations; Docket remains authoritative for Jobs/tasks/attempts/settlement. Protocol reducers and app caches are derived views. An AHP "channel" is a subscribable protocol resource, not automatically a Den armature or a new canonical memory/source entity. AHP automation states or chat plans must not replace Docket lifecycle/attempt semantics. An AG-UI shared-state event is likewise a projection, not permission to mutate canonical state directly.
+
+An ordinary app conversation is a conversation **channel**, not an armature. A connected app, human approval, installed helper or supplied tool descriptor cannot create local-tool, admin or Work authority. Bear administration and site-operator administration remain different permissions; admin-readable history does not grant execution as its owner. Hide unsupported actions truthfully, but enforce every request again in Den.
+
+Provider keys remain behind runtime credential wrappers and canonical Connections; app identity tokens and provider credentials are separate. Follow the [approved credential-mediation plan](HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md#runtime-mediated-credentials-and-external-key-management-planned). The app must not fetch provider keys to call inference services itself or place them in prompts, tool results, logs or helper/subprocess environments.
+
+## Gate 0 — UI design and interaction model
+
+**Open; no navigation or screen design is selected.** Spend time on the product model before choosing a wire protocol based on its sample UI.
+
+Deliverables:
+
+- A reviewed information architecture distinguishing conversations, Docket work, Bear management/reviews, and local app/helper settings. Candidate tabs/rails are design hypotheses, not implementation instructions.
+- Clickable/wireframe flows for connecting/logging in; choosing a Bear/hat; pending admission; text/image/document composition; streaming/cancellation; history/reconnect; answering a question/approval; creating/organizing/monitoring a Job/task; and permitted Bear-admin actions.
+- Explicit handling of source identity and ownership: active conversation versus historical inspection, conversation versus Work transcript, current hat, and who may issue an action. Avoid selectable stance vocabulary and do not equate a Bear's charter with a separate entity.
+- Task detail designs that distinguish task completion, turn completion, run state, attempts, blocked/checkpoint state and settled evidence. Decide how Chat and Docket link without silently granting access or copying private content between them.
+- State/error designs covering a second client resolving an approval, stale edits, expired/revoked login or membership, missing media/model support, upload failure, disconnected/submitted-but-unacknowledged commands, and a missing/broken optional helper. Remote chat/admin must remain usable without the helper.
+- Review keyboard/accessibility behavior and content-first native rendering. Separate private attachments from explicitly shared content; make audience and provider data-sharing consequences visible at the relevant action.
+- Identify the smallest first-release journeys and administration subset, what remains accessible through the existing web UI, and what is deferred. Decide recorded-audio and notification requirements rather than assuming either.
+
+**Exit:** the project owner reviews the prototype/journeys, first-slice scope and unresolved UX questions. Approval of the architecture alone does not pass this gate.
+
+## Gate 1 — AHP versus AG-UI evaluation
+
+**Open; neither candidate is preferred by this roadmap.** Evaluate both against the approved journeys, not feature lists alone. Record released spec/SDK versions and unsupported behaviors; SDK version and protocol version may differ.
+
+| Criterion | Evidence required for both candidates |
+| --- | --- |
+| Native Swift integration | Typed models, viable client/transport/reconnect story, concurrency/accessibility integration, dependencies/license/maintenance and supported deployment targets. Existing SDK availability is useful evidence, not automatic selection. |
+| Canonical state and reconnect | Initial snapshots/history paging, ordered updates, gap recovery, retention, restart and reconciliation without transcript duplication or an independent writable session store. |
+| Multiple clients | Same-human observation/interaction, server acceptance/rejection, stable request identities and deterministic resolution of two clients answering one obligation. No cross-human inventory, draft or transcript leakage. |
+| Human control | Streaming, cancel/resume/steering, structured questions and approvals mapped to exact Den runs/obligations; duplicate/stale decisions and disconnect fail safely. No optimistic UI action is treated as an accepted grant or settled task. |
+| Multimodal content | Typed message parts and attachment/content refs, byte transfer, authorization/retention and capability degradation. Verify actual runtime/model delivery, not merely that the protocol can label a file. |
+| Docket integration | Links, snapshots/events and explicit human commands using Docket's canonical IDs/revisions/attempts. Assess extension costs without flattening Jobs/tasks into chats or adopting experimental automation semantics as authority. |
+| Identity and safety | Native public-client OAuth/PKCE fit, endpoint authentication, scoped subscriptions, owner/hat checks, read-only history, credential isolation and no implicit local tools. |
+| Implementation/operational cost | Thin Den-edge work, reusable service calls, event persistence/projection, conformance fixtures, version negotiation, Swift SDK gaps and future compatibility/migration cost. |
+
+Start with a written comparison. If evidence requires code, obtain agreement on a **bounded research spike** using deterministic fixtures/mock services; a spike is not production adoption and must not silently add SDKs to the app or change Den authority.
+
+Use the same scenarios for each candidate: one real-hat conversation, text plus an authorized image/document, persisted history and next-turn replay, reconnect during a streamed turn, two clients observing it, one contested approval, a read-only-history denial, and a linked Docket task whose canonical state is refreshed. Include rejected/stale actions and credential-bearing provider errors without exposing secret bytes. Do not require real-time media, external agents or a full operator console.
+
+**Exit:** a reviewed recommendation identifies one protocol, the minimal supported surface, unavailable features, stable version/SDK choices, Den mappings, transport and failure semantics. Record the decision and rationale here or in a linked ADR. AHP and AG-UI are alternatives; do not stack them by default. Neither may bypass canonical services to make a demo work.
+
+Research starting points, not decisions or implemented support:
+
+- [AHP specification](https://microsoft.github.io/agent-host-protocol/) and [Swift client](https://github.com/microsoft/agent-host-protocol/tree/main/clients/swift/AgentHostProtocol).
+- [AHP channel stability/versioning](https://github.com/microsoft/agent-host-protocol/blob/main/docs/specification/versioning.md): evaluate the selected released surface, particularly optional/experimental channels, rather than assuming every channel is mature.
+- [AG-UI documentation](https://docs.ag-ui.com/introduction): confirm concrete native-client and multimodal/reconnect behavior against the selected version.
+
+## Gate 2 — Native API, identity and media contracts
+
+**After UI/protocol evaluation; still planning, not implementation.** Inventory existing server routes/services and specify the missing native-client contracts. Current browser-cookie/form flows are not automatically an authenticated public-client API.
+
+- Define the approved Bear-admin and Docket JSON queries/commands using existing service authorization, typed domain IDs, cursor pagination, resource revisions and mutation idempotency. User actions must report accepted/pending/settled outcomes accurately; retries cannot double-create a message, Job or approval.
+- Specify OAuth client registration, PKCE callback handling, scopes, token refresh/revocation and Keychain lifecycle. Keep the installation/code-token flow separate from general human administration; never embed a confidential-client secret.
+- Define the interaction-protocol projection/command mappings and event subscription boundaries. Preserve canonical transcript versus user-visible history distinctions, source admission and immutable hat/owner bindings; reject unsupported forks/moves/cross-chat attachments instead of inventing authority.
+- Define media upload/download/content-ref contracts and the bounded set of message parts delivered to models. Reuse artifact/storage owners where appropriate, but do not let a private upload become shared or model-visible solely because the human can preview it.
+- Specify minimal server/client capabilities and compatibility errors independently of armature version. The app must explain unsupported media/protocol/admin features, not silently fall back to a more privileged route.
+
+**Exit:** reviewed contracts, denial/consistency matrix, identified gaps and narrowly scoped server/app implementation tasks. Reuse existing dependencies and patterns; any necessary new SDK belongs in the narrow owning layer.
+
+## Gate 3 — Implementation authorization
+
+**Blocked until Gates 0–2 are reviewed.** Before coding the product expansion, confirm the UI design, selected protocol, first-release journeys/API scope, acceptance tests and rollout approach with the project owner. This plan does not initiate migrations, dependencies, service/deployment changes or native screens.
+
+Conditional delivery sequence once approved:
+
+1. Human login, authorized Bear discovery and one hat-bound text conversation; optional helper management remains functional and independent.
+2. Selected protocol's live/history/reconnect behavior, scoped approvals/questions and canonical multi-client reconciliation.
+3. The agreed image/document and any separately approved recorded-audio slice, with secure uploads, truthful previews and verified next-model-request construction.
+4. First-slice Docket listing/detail/human commands and live status, preserving attempts, revisions and evidence/settlement boundaries.
+5. The approved Bear-admin subset and polish: accessibility, failure recovery, compatibility, native packaging/signing/update validation.
+
+**Acceptance before release:** native macOS build/tests and reviewed UI flows; server API/protocol conformance and restart/replay tests; two-human/two-hat/source/Connection denial checks; two-client approval and command-race checks; multimodal persistence and next-model-request assertions; no runtime-managed credentials in app/model/log projections; Docket snapshot/event gap recovery and stale-command rejection; ordinary app usage without an installed helper. Live provider/storage and deployment evidence must be recorded separately from mock/unit checks. Real-time voice/video and external agent interoperability remain excluded.
+
+## Immediate next work and open decisions
+
+- [ ] Agree on user journeys and the first administration/Docket scope.
+- [ ] Explore UI navigation and produce prototypes for the happy, denied, stale and disconnected states.
+- [ ] Compare AHP and AG-UI using the matrix above; decide whether a bounded spike is needed.
+- [ ] Review the UI and protocol recommendation before committing to native API/SDK implementation.
+- [ ] Specify contracts and seek implementation approval only after those design decisions.
+
+Open: navigation and source/hat presentation; initial admin controls; recorded audio; single-Den versus multi-Den first scope; draft synchronization/privacy; offline inspection versus queued mutations; exact event/media transport; selected spec/SDK and extension requirements. Notifications are a design question, not a push-infrastructure prerequisite. No protocol winner is recorded yet.
+
+## Relationship to earlier plans
+
+This design-first roadmap is the home for the agreed app expansion. The [installer-focused macOS app plan](BEARS_MACOS_APP_IMPLEMENTATION_PLAN.md) remains background for helper packaging/update work, and the [channel plan](DEN_CHANNELS_IMPLEMENTATION_PLAN.md) supplies the channel-versus-armature distinction. [Current Bear/hat behavior](../topics/bear-memory-hats.md) and [Docket behavior](../topics/docket.md) remain the contract; older stance/profile sketches do not override them.
+
+## Earlier installer-first proposal (historical)
+
+The remaining material is preserved for design history only. Its phases, paths, suggested CLI commands, BearWire-as-app assumptions and stance/A2A references are **not the selected implementation backlog**. Reconcile useful installer/platform details against current code before reuse. The current scope and gates above take precedence; in particular, ordinary app interaction is not committed to BearWire/ACP, real-time media and external agent interoperability are excluded, and no UI or AHP/AG-UI choice is made by this document.
 
 ## Goal
 

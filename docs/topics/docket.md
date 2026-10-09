@@ -32,6 +32,8 @@ Evidence: 40 snapshot-retirement service tests (including canonical task/criteri
 
 ## Intended behavior and gaps
 
+The [draft native app roadmap](../roadmap/MACOS_BEARS_CLIENT_APP_PLAN.md) includes human Docket management alongside multimodal chat and Bear administration. UI design, AHP-versus-AG-UI evaluation and native JSON/API contracts must be reviewed before implementation. Docket remains the canonical Job/task/attempt/settlement owner; protocol session/automation state and optimistic app updates do not replace it. This is planned client work, not an implemented native Docket API or UI.
+
 The [implementation plan](../roadmap/DOCKET_IMPLEMENTATION_PLAN.md) contains historical sequencing alongside remaining ideas; it does not override the current code or this page. Reconcile its status before using an item as delivery guidance. The [focused-execution completion record](../roadmap/pair-execution-authority-and-debug-tracing-plan.md) documents delivered stabilization and compatibility seams.
 
 ## Read deeper
