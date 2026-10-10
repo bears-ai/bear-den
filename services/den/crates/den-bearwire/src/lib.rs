@@ -7,9 +7,13 @@ use den_service::DenState;
 mod auth;
 mod events;
 mod methods;
+mod model_availability;
 mod obligation_expiry;
 mod open_reflection;
 mod rpc;
+
+#[cfg(test)]
+mod test_bifrost;
 
 pub use methods::focused_execution::{
     acquire_selected_task_for_run, ControllerDisposition, FocusedExecutionAttempt,

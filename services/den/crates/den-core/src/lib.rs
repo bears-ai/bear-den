@@ -19,6 +19,7 @@ pub mod metrics;
 /// (The concrete DB-backed executors live in the `den` binary's `core::tools`.)
 pub mod tools;
 
+pub mod model_availability;
 pub mod model_request_policy;
 pub use agent_loop_control::{AgentLoopControlLevel, ThinkingEffort};
 pub use effective_policy::{
@@ -28,6 +29,10 @@ pub use error::DenError;
 pub use execution_context::RuntimeContextLabel;
 pub use governance::{Governance, RunMode};
 pub use ids::{BearId, ConversationId, SessionId, UserId};
+pub use model_availability::{
+    ModelAvailabilityDescriptor, ModelAvailabilityFailure, ModelAvailabilityFailureKind,
+    SafeModelReference,
+};
 pub use model_request_policy::{
     resolve_agent_primary_request_profile, AgentPrimaryStep, ModelRequestProfile,
 };

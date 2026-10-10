@@ -10,7 +10,7 @@ use den_service::bears::{
     hats::{memory_binding, turn_binding::NativeTurnSource},
     model_configurations::{self, PrimaryModelSource, ResolvedPrimaryModel},
 };
-use den_service::bifrost::{BifrostCatalogEntry, BifrostCatalogSnapshot, BifrostClient};
+use den_service::bifrost::BifrostClient;
 use sqlx::PgPool;
 
 use crate::llm::LlmApiStyle;
@@ -133,66 +133,29 @@ async fn execution_api_style_with_client(
     primary: &ResolvedPrimaryModel,
     preference: PrimaryTransportPreference,
 ) -> Result<LlmApiStyle, DenError> {
-    let catalog = client
-        .bear_catalog_snapshot(pool, bear_id.as_uuid(), &config.den_secret_encryption_key)
-        .await;
-    catalog_api_style(client, bear_id, primary, preference, catalog)
-}
-
-fn catalog_api_style(
-    client: &BifrostClient,
-    bear_id: BearId,
-    primary: &ResolvedPrimaryModel,
-    preference: PrimaryTransportPreference,
-    catalog: Result<BifrostCatalogSnapshot, DenError>,
-) -> Result<LlmApiStyle, DenError> {
-    match catalog {
-        Ok(snapshot) => {
-            let entry = snapshot.resolve(&primary.model_handle).ok_or_else(|| {
-                DenError::ValidationError(format!(
-                    "selected primary model is missing from the Bifrost catalog: {}",
-                    primary.model_handle
-                ))
-            })?;
-            available_entry_api_style(entry, preference)
-        }
-        Err(error) if primary.source == PrimaryModelSource::ConversationPin => {
-            // Match BearWire's explicit-pin outage continuity: use this client's
-            // cached entry if present, otherwise attempt the same pinned model via
-            // Responses. A successful catalog never permits missing-entry continuity.
-            if let Some(snapshot) = client.cached_bear_catalog_snapshot(bear_id.as_uuid()) {
-                if let Some(entry) = snapshot.resolve(&primary.model_handle) {
-                    let style = available_entry_api_style(
-                        entry,
-                        PrimaryTransportPreference::ResponsesWhenUnknown,
-                    )?;
-                    tracing::warn!(bear_id = %bear_id, model = %primary.model_handle, error = %error,
-                        "Bifrost catalog unavailable; retaining explicit pin with the shared cached transport");
-                    return Ok(style);
-                }
+    let entry = client
+        .validate_bear_model_execution(
+            pool, bear_id.as_uuid(), &primary.model_handle,
+            &config.den_secret_encryption_key, primary.source,
+        )
+        .await
+        .inspect_err(|error| {
+            if let DenError::ModelAvailability(failure) = error {
+                tracing::warn!(bear_id = %bear_id, reason = failure.descriptor().code, model = ?failure.model,
+                    "Primary model preflight failed");
             }
-            tracing::warn!(bear_id = %bear_id, model = %primary.model_handle, error = %error,
-                "Bifrost catalog unavailable without a usable cached entry; retaining explicit pin via Responses");
-            Ok(primary_api_style_for_catalog_support(
-                None,
-                PrimaryTransportPreference::ResponsesWhenUnknown,
-            ))
-        }
-        Err(error) => Err(error),
-    }
-}
-
-fn available_entry_api_style(
-    entry: &BifrostCatalogEntry,
-    preference: PrimaryTransportPreference,
-) -> Result<LlmApiStyle, DenError> {
-    if !entry.available {
-        return Err(DenError::ValidationError(
-            "selected primary model is unavailable".into(),
-        ));
-    }
+        })?;
+    // Catalog capability metadata still wins. Explicit pins retain Responses
+    // when support is unknown, including the helper's unverified outage case.
+    let preference = if primary.source == PrimaryModelSource::ConversationPin {
+        PrimaryTransportPreference::ResponsesWhenUnknown
+    } else {
+        preference
+    };
     Ok(primary_api_style_for_catalog_support(
-        entry.supports_responses_api,
+        entry
+            .as_ref()
+            .and_then(|entry| entry.supports_responses_api),
         preference,
     ))
 }
@@ -276,7 +239,7 @@ pub(crate) async fn persist_progress(
 
 #[cfg(test)]
 #[path = "primary_model_transport_tests.rs"]
-mod transport_tests;
+pub(crate) mod transport_tests;
 
 #[cfg(test)]
 #[path = "primary_model_tests.rs"]

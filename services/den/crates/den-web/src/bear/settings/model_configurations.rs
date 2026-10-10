@@ -1,8 +1,7 @@
-//! Named primary model settings. Catalog validation and binding ownership stay in the service.
+//! Named primary model settings. Den owns metadata; the Bear's gateway catalog owns availability.
 
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
     response::{IntoResponse, Redirect, Response},
     routing::post,
     Router,
@@ -17,7 +16,12 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
 use super::{load_session_bear_manage, render_models_page};
-use crate::{auth_backend::AuthSession, errors::CustomError, AppState};
+use crate::{
+    auth_backend::AuthSession,
+    errors::CustomError,
+    model_availability::{self, BearModelCatalog},
+    AppState,
+};
 
 pub(super) fn router() -> Router<AppState> {
     Router::new()
@@ -36,17 +40,22 @@ pub(super) struct CatalogModelOption {
     label: String,
 }
 
-pub(super) async fn catalog_options(pool: &PgPool) -> Result<Vec<CatalogModelOption>, CustomError> {
-    // The general model list can fall back to a static registry; settings must not.
+pub(super) async fn catalog_options(
+    pool: &PgPool,
+    catalog: &BearModelCatalog,
+) -> Result<Vec<CatalogModelOption>, CustomError> {
+    // Den metadata labels selectable models, but only Bear-authenticated gateway membership
+    // makes them usable. No management, static registry, or stale-cache fallback.
     Ok(sqlx::query_as!(CatalogModelOption,
         "SELECT handle, display_name AS label FROM model_selection_options WHERE selectable = TRUE ORDER BY COALESCE(sort_order, 100000), display_name, handle"
-    ).fetch_all(pool).await?)
+    ).fetch_all(pool).await?.into_iter().filter(|option| catalog.require(&option.handle).is_ok()).collect())
 }
 
 pub(crate) async fn selectable_model_options(
     pool: &PgPool,
+    catalog: &BearModelCatalog,
 ) -> Result<Vec<den_llm::ModelOption>, CustomError> {
-    Ok(catalog_options(pool)
+    Ok(catalog_options(pool, catalog)
         .await?
         .into_iter()
         .map(|option| den_llm::ModelOption {
@@ -162,11 +171,21 @@ pub(crate) fn effort_label(effort: Option<ThinkingEffort>) -> &'static str {
 
 async fn availability(
     pool: &PgPool,
+    catalog: &BearModelCatalog,
     model: &str,
     effort: Option<ThinkingEffort>,
 ) -> Result<(Availability, Option<String>), CustomError> {
-    match service::validate_model_configuration(pool, model, effort).await {
-        Ok(_) => Ok((Availability::Available, None)),
+    let result = async {
+        service::validate_model_configuration(pool, model, effort).await?;
+        catalog.require(model)?;
+        Ok::<_, DenError>(())
+    }
+    .await;
+    match result {
+        Ok(()) => Ok((Availability::Available, None)),
+        Err(DenError::ModelAvailability(failure)) => {
+            Ok((Availability::Unavailable, Some(failure.to_string())))
+        }
         Err(DenError::ValidationError(message)) => Ok((Availability::Unavailable, Some(message))),
         Err(error) => Err(error.into()),
     }
@@ -174,6 +193,7 @@ async fn availability(
 
 pub(crate) async fn configuration_views(
     pool: &PgPool,
+    catalog: &BearModelCatalog,
     bear_id: BearId,
     draft: Option<&(Option<ModelConfigurationId>, ConfigurationForm)>,
 ) -> Result<Vec<ConfigurationView>, CustomError> {
@@ -181,6 +201,7 @@ pub(crate) async fn configuration_views(
     for configuration in service::list(pool, bear_id).await? {
         let (status, status_detail) = availability(
             pool,
+            catalog,
             configuration.model_handle.as_str(),
             configuration.thinking_effort,
         )
@@ -221,6 +242,7 @@ pub(crate) struct EffectiveModelView {
 /// Keep the selected configuration inspectable even when canonical resolution rejects it.
 pub(crate) async fn effective_model(
     pool: &PgPool,
+    catalog: &BearModelCatalog,
     bear_id: BearId,
     hat_id: Option<HatId>,
     deployment: &str,
@@ -259,7 +281,18 @@ pub(crate) async fn effective_model(
         status_detail: None,
     };
     match service::resolve_primary(pool, bear_id, hat_id, None, deployment).await {
-        Ok(resolved) => view.model_handle = resolved.model_handle,
+        Ok(resolved) => {
+            view.model_handle = resolved.model_handle;
+            if let Err(error) = catalog.require(&view.model_handle) {
+                match error {
+                    DenError::ModelAvailability(failure) => {
+                        view.status = Availability::Unavailable;
+                        view.status_detail = Some(failure.to_string());
+                    }
+                    error => return Err(error.into()),
+                }
+            }
+        }
         Err(DenError::ValidationError(message)) => {
             view.status = Availability::Unavailable;
             view.status_detail = Some(message);
@@ -276,10 +309,10 @@ async fn failed_form(
     error: CustomError,
     pending: PendingModelsForm,
 ) -> Result<Response, CustomError> {
-    if let CustomError::ValidationError(message) = error {
+    if let Some((status, message)) = model_availability::form_failure(&error) {
         let mut response =
             render_models_page(state, auth, bear, true, None, Some(message), pending).await?;
-        *response.status_mut() = StatusCode::BAD_REQUEST;
+        *response.status_mut() = status;
         Ok(response)
     } else {
         Err(error)
@@ -306,6 +339,10 @@ async fn save(
     };
     let result: Result<(), CustomError> = async {
         let effort = form.effort()?;
+        service::validate_model_configuration(state.sqlx_pool(), &form.model_handle, effort)
+            .await?;
+        model_availability::validate_model(&state, BearId::new(bear.id), &form.model_handle)
+            .await?;
         match id {
             Some(id) => {
                 service::update(
@@ -408,20 +445,30 @@ async fn set_default(
         Ok(bear) => bear,
         Err(redirect) => return Ok(redirect.into_response()),
     };
-    match service::set_default(
-        state.sqlx_pool(),
-        BearId::new(bear.id),
-        form.configuration_id,
-    )
-    .await
-    {
+    let result: Result<(), CustomError> = async {
+        model_availability::validate_configuration_selection(
+            &state,
+            BearId::new(bear.id),
+            form.configuration_id,
+        )
+        .await?;
+        service::set_default(
+            state.sqlx_pool(),
+            BearId::new(bear.id),
+            form.configuration_id,
+        )
+        .await?;
+        Ok(())
+    }
+    .await;
+    match result {
         Ok(()) => Ok(saved(&bear.slug)),
         Err(error) => {
             failed_form(
                 state,
                 auth,
                 bear,
-                error.into(),
+                error,
                 PendingModelsForm {
                     default_selection: form.configuration_id.into(),
                     ..Default::default()

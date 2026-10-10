@@ -6,7 +6,10 @@ use super::{
     Value,
 };
 use bearwire_protocol::session::SessionAccessState;
-use den_core::ids::{BearId, UserId};
+use den_core::{
+    ids::{BearId, UserId},
+    DenError,
+};
 use den_service::{
     bears::{
         hats::turn_binding::NativeTurnSource,
@@ -95,6 +98,42 @@ async fn session_model_payload(
             Ok(primary) => (Some(primary), None),
             Err(error) => (None, Some(error.to_string())),
         };
+    let catalog = state
+        .bifrost
+        .refresh_bear_catalog_snapshot(
+            &state.sqlx_pool,
+            bear.id,
+            &state.config.den_secret_encryption_key,
+        )
+        .await;
+    let mut model_options =
+        model_selection::list_selectable_model_options_for_acp(&state.sqlx_pool).await?;
+    let availability = match catalog {
+        Ok(snapshot) => {
+            model_options.retain(|option| snapshot.require_available_model(&option.handle).is_ok());
+            primary.as_ref().map(|model| {
+                snapshot
+                    .require_available_model(&model.model_handle)
+                    .map(|_| ())
+            })
+        }
+        Err(DenError::ModelAvailability(failure)) => {
+            model_options.clear();
+            Some(Err(DenError::ModelAvailability(match primary.as_ref() {
+                Some(model) => failure.with_model(&model.model_handle),
+                None => failure,
+            })))
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let model_available = availability.as_ref().map(Result::is_ok);
+    let availability_error = match availability {
+        Some(Err(DenError::ModelAvailability(failure))) => {
+            Some(crate::model_availability::error_data(&failure))
+        }
+        Some(Err(error)) => return Err(error.into()),
+        _ => None,
+    };
     Ok(json!({
         "ok": true,
         "session_id": session_id,
@@ -109,7 +148,9 @@ async fn session_model_payload(
         "configuration_name": primary.as_ref().and_then(|model| model.configuration_name.as_deref()),
         "thinking_effort": primary.as_ref().and_then(|model| model.thinking_effort).map(den_core::ThinkingEffort::as_str),
         "model_resolution_error": model_resolution_error,
-        "model_options": model_selection::list_selectable_model_options_for_acp(&state.sqlx_pool).await?,
+        "model_available": model_available,
+        "model_availability": availability_error,
+        "model_options": model_options,
     }))
 }
 
@@ -141,11 +182,39 @@ pub(crate) async fn session_model_set_result(
     .ok_or_else(|| CustomError::NotFound("BearWire session not found".into()))?;
     let conversation = access::require_live_source(state, &session).await?;
     let mode = request.selection_mode.unwrap_or_else(|| "auto".into());
+    // Selection mode is parsed at the RPC boundary. Clearing a pin never
+    // depends on catalog or credential availability.
+    let selected = match mode.trim() {
+        "explicit" => {
+            let validated = model_configurations::validate_model_configuration(
+                &state.sqlx_pool,
+                request.model.as_deref().unwrap_or(""),
+                None,
+            )
+            .await?;
+            state
+                .bifrost
+                .validate_bear_model_selection(
+                    &state.sqlx_pool,
+                    bear.id,
+                    validated.model_handle.as_str(),
+                    &state.config.den_secret_encryption_key,
+                )
+                .await?;
+            Some(validated.model_handle.into_string())
+        }
+        "auto" => None,
+        _ => {
+            return Err(CustomError::ValidationError(
+                "choose an explicit model pin or automatic inheritance".into(),
+            ))
+        }
+    };
     let model_state = model_selection::apply_conversation_model_selection(
         &state.sqlx_pool,
         conversation.id,
         &mode,
-        request.model.as_deref(),
+        selected.as_deref(),
         "acp_selected",
         "inherit_stance_or_bear_default",
     )

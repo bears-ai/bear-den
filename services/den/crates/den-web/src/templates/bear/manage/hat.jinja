@@ -54,7 +54,7 @@
     <select id="hat-model-configuration" name="configuration_id">
       <option value=""{% if not model_selection %} selected{% endif %}>Inherit Bear default (or deployment default)</option>
       {% for view in configurations %}
-      <option value="{{ view.configuration.id }}"{% if model_selection == view.configuration.id | string %} selected{% endif %}>{{ view.configuration.name | e }} · {{ view.configuration.model_handle | e }} · {{ view.effort_label | e }} · {{ view.status | e }}</option>
+      <option value="{{ view.configuration.id }}"{% if model_selection == view.configuration.id | string %} selected{% endif %}{% if view.status == 'unavailable' %} disabled{% endif %}>{{ view.configuration.name | e }} · {{ view.configuration.model_handle | e }} · {{ view.effort_label | e }} · {{ view.status | e }}</option>
       {% endfor %}
     </select>
     <button type="submit">Save primary model</button>

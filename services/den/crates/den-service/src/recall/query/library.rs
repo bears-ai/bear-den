@@ -1,7 +1,10 @@
 //! Curated semantic retrieval for Bear members. The vector index may rank
 //! candidate IDs, but canonical SQLite alone decides visibility and snippet text.
 
-use den_core::{config::Config, DenError};
+use den_core::{config::Config, ids::BearId, DenError};
+use sqlx::PgPool;
+
+use crate::recall::authenticated_embedder;
 use den_memory::{
     library::{self, CuratedMemoryGrant},
     BearMemoryStore,
@@ -39,6 +42,7 @@ fn curated_scope_filter(
 }
 
 pub async fn search_curated_library(
+    pool: &PgPool,
     config: &Config,
     bear_id: Uuid,
     grant: &CuratedMemoryGrant,
@@ -48,10 +52,9 @@ pub async fn search_curated_library(
     let Some(qdrant) = QdrantRecall::from_config(config) else {
         return Ok(disabled_projection(DisabledRecallReason::QdrantUnset));
     };
-    let embedder = den_llm::EmbeddingClient::new(config);
-    if !embedder.is_enabled() {
+    let Some(embedder) = authenticated_embedder(pool, config, BearId::new(bear_id)).await? else {
         return Ok(disabled_projection(DisabledRecallReason::EmbeddingsUnset));
-    }
+    };
     // Fetch the bounded candidate pool before the canonical post-filter; stale
     // or forbidden hits must not displace an authorized hit in the same page.
     search_passages(

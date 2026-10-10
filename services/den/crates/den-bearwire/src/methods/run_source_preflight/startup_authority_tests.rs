@@ -149,7 +149,7 @@ async fn ordinary_fixture(pool: &PgPool) -> Fixture {
 async fn work_start_requires_independent_live_owned_transcript(pool: PgPool) {
     let fixture = Fixture::new(&pool).await;
     let other = helpers::user(&pool).await;
-    let state = helpers::model_ready_state(&pool, &fixture).await;
+    let (state, _catalog) = helpers::model_ready_state(&pool, &fixture).await;
     let viewer = ConversationViewer::resolve(&pool, fixture.bear, fixture.user)
         .await
         .unwrap()
@@ -471,7 +471,7 @@ async fn exact_work_start_never_attaches_pair_old_work_or_old_fence_with_valid_m
         )
         .await
         .unwrap();
-        let state = helpers::model_ready_state(&pool, &fixture).await;
+        let (state, _catalog) = helpers::model_ready_state(&pool, &fixture).await;
         let bear = bears_db::bear_for_user_by_slug(&pool, fixture.user.get(), &fixture.slug)
             .await
             .unwrap()
@@ -522,7 +522,7 @@ async fn exact_work_active_turn_denial_precedes_transcript_creation(pool: PgPool
     )
     .await
     .unwrap();
-    let state = helpers::model_ready_state(&pool, &fixture).await;
+    let (state, _catalog) = helpers::model_ready_state(&pool, &fixture).await;
     denied_unchanged(
         &pool,
         &fixture,
@@ -596,7 +596,7 @@ async fn pending_default_and_resolved_alias_keep_the_session_selection(pool: PgP
     )
     .await
     .unwrap();
-    let state = helpers::model_ready_state(&pool, &fixture).await;
+    let (state, _catalog) = helpers::model_ready_state(&pool, &fixture).await;
     let result = crate::methods::run::run_start_result(&state, &fixture.headers(), &json!({
         "bear_slug": fixture.slug, "session_id": fixture.session, "conversation_id": canonical, "prompt": "Continue existing source",
     })).await.unwrap();
@@ -659,7 +659,7 @@ async fn recovery_cannot_substitute_a_different_owned_transcript_before_leasing(
     )
     .await
     .unwrap();
-    let state = helpers::model_ready_state(&pool, &fixture).await;
+    let (state, _catalog) = helpers::model_ready_state(&pool, &fixture).await;
     let before = snapshot(&pool, &fixture, &[&stored, &substituted]).await;
     let recovery_before = recovery_snapshot(&pool, &active).await;
     let error = crate::methods::run::run_recover_result(

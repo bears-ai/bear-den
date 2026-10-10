@@ -2,7 +2,6 @@
 
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
     response::{IntoResponse, Redirect, Response},
     routing::post,
     Router,
@@ -33,16 +32,30 @@ async fn set_override(
         Err(redirect) => return Ok(redirect.into_response()),
     };
     let hat_id = HatId::new(hat_id);
-    match model_configurations::set_hat_override(
-        state.sqlx_pool(),
-        BearId::new(bear.id),
-        hat_id,
-        form.configuration_id,
-    )
-    .await
-    {
+    let result: Result<(), CustomError> = async {
+        super::manage::get_hat(state.sqlx_pool(), BearId::new(bear.id), hat_id).await?;
+        crate::model_availability::validate_configuration_selection(
+            &state,
+            BearId::new(bear.id),
+            form.configuration_id,
+        )
+        .await?;
+        model_configurations::set_hat_override(
+            state.sqlx_pool(),
+            BearId::new(bear.id),
+            hat_id,
+            form.configuration_id,
+        )
+        .await?;
+        Ok(())
+    }
+    .await;
+    match result {
         Ok(()) => Ok(Redirect::to(&hat_url(&bear.slug, hat_id)).into_response()),
-        Err(den_core::DenError::ValidationError(message)) => {
+        Err(error) => {
+            let Some((status, message)) = crate::model_availability::form_failure(&error) else {
+                return Err(error);
+            };
             let mut response = render_detail(
                 state,
                 auth,
@@ -53,9 +66,8 @@ async fn set_override(
                 form.configuration_id.into(),
             )
             .await?;
-            *response.status_mut() = StatusCode::BAD_REQUEST;
+            *response.status_mut() = status;
             Ok(response)
         }
-        Err(error) => Err(error.into()),
     }
 }

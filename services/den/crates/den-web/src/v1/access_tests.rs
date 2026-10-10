@@ -62,6 +62,7 @@ pub(super) async fn seed(pool: &PgPool) -> (Uuid, [i32; 3]) {
         .await
         .unwrap();
     }
+    crate::test_bifrost::seed_key(pool, bear).await;
     (bear, users)
 }
 
@@ -80,14 +81,21 @@ async fn app(pool: &PgPool) -> Router {
 }
 
 pub(super) async fn app_with_runtime(pool: &PgPool, runtime: Arc<dyn WebChatRuntime>) -> Router {
+    let gateway = crate::test_bifrost::MockBifrost::standard().await;
+    app_with_config(pool, runtime, gateway.config()).await
+}
+
+pub(super) async fn app_with_config(
+    pool: &PgPool,
+    runtime: Arc<dyn WebChatRuntime>,
+    config: Config,
+) -> Router {
     let store = PostgresStore::new(pool.clone());
     store.migrate().await.unwrap();
     Router::new()
         .nest("/v1", router())
         .route("/test-login/{user_id}", get(test_login))
         .with_state({
-            let mut config = Config::test_stub();
-            config.llm_api_url = "http://127.0.0.1:1".to_string();
             AppState::test_with_template_env_and_chat_runtime(
                 pool.clone(),
                 Environment::new(),

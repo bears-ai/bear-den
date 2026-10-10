@@ -10,6 +10,7 @@ use std::fmt;
 mod tests;
 
 pub use den_core::DenError;
+use den_core::{ModelAvailabilityFailure, ModelAvailabilityFailureKind};
 
 /// Web-boundary error adapter for the `den` binary.
 ///
@@ -33,6 +34,7 @@ pub enum CustomError {
     Email(String),
     NotFound(String),
     ValidationError(String),
+    ModelAvailability(ModelAvailabilityFailure),
 }
 
 impl CustomError {
@@ -57,6 +59,7 @@ impl CustomError {
             CustomError::Email(cause) => DenError::Email(cause),
             CustomError::NotFound(cause) => DenError::NotFound(cause),
             CustomError::ValidationError(cause) => DenError::ValidationError(cause),
+            CustomError::ModelAvailability(failure) => DenError::ModelAvailability(failure),
         }
     }
 }
@@ -101,12 +104,16 @@ impl fmt::Display for CustomError {
             CustomError::ValidationError(ref cause) => {
                 write!(f, "Validation Error: {cause}")
             }
+            CustomError::ModelAvailability(ref failure) => write!(f, "{failure}"),
         }
     }
 }
 
 impl IntoResponse for CustomError {
     fn into_response(self) -> Response {
+        if let Self::ModelAvailability(failure) = &self {
+            return model_availability_response(failure);
+        }
         let error_string = self.to_string();
         let (error_name, status_code, title, summary, recovery) = match &self {
             CustomError::Anyhow(_) => (
@@ -186,6 +193,7 @@ impl IntoResponse for CustomError {
                 "This page or item could not be found.",
                 "Check the address or return home.",
             ),
+            CustomError::ModelAvailability(_) => unreachable!("handled by typed boundary"),
             CustomError::ValidationError(_) => (
                 "Validation",
                 StatusCode::BAD_REQUEST,
@@ -221,6 +229,34 @@ impl IntoResponse for CustomError {
         );
         (status_code, Html(body)).into_response()
     }
+}
+
+fn model_availability_response(failure: &ModelAvailabilityFailure) -> Response {
+    let descriptor = failure.descriptor();
+    let status = match failure.kind {
+        ModelAvailabilityFailureKind::ModelMissing
+        | ModelAvailabilityFailureKind::ModelUnavailable => StatusCode::BAD_REQUEST,
+        ModelAvailabilityFailureKind::VirtualKeyMissing
+        | ModelAvailabilityFailureKind::VirtualKeyRejected => StatusCode::CONFLICT,
+        ModelAvailabilityFailureKind::CatalogUnavailable => StatusCode::SERVICE_UNAVAILABLE,
+    };
+    tracing::error!(reason = descriptor.code, model = ?failure.model, "Bear model availability check failed");
+    // All dynamic text comes from the checked model reference, not an upstream cause.
+    let message = failure.public_message();
+    let recovery = descriptor.recovery;
+    let code = descriptor.code;
+    let http_code = status.as_u16();
+    let body = format!(
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
+         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
+         <title>Model access unavailable</title><link rel=\"stylesheet\" href=\"/assets/css/style.css\">\
+         </head><body><main id=\"content\"><h1>Model access unavailable</h1>\
+         <p role=\"alert\">{message}</p><p>{recovery}</p>\
+         <p>If you submitted a change, check its current state before submitting it again.</p>\
+         <p><a href=\"/\">Return home</a></p>\
+         <p class=\"caption\">{code} — HTTP {http_code}</p></main></body></html>"
+    );
+    (status, Html(body)).into_response()
 }
 
 // `From<CustomError> for DenError` IS permitted by the orphan rule here: the impl
@@ -269,6 +305,7 @@ impl From<DenError> for CustomError {
             DenError::Email(cause) => CustomError::Email(cause),
             DenError::NotFound(cause) => CustomError::NotFound(cause),
             DenError::ValidationError(cause) => CustomError::ValidationError(cause),
+            DenError::ModelAvailability(failure) => CustomError::ModelAvailability(failure),
         }
     }
 }

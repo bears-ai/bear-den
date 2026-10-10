@@ -12,7 +12,6 @@ use den_core::{
     ids::{BearId, HatId},
     DenError,
 };
-use den_llm::EmbeddingClient;
 
 use den_memory::MemoryStoreManager;
 use den_memory::{relations, BearMemoryStore, MemoryScopeType};
@@ -216,7 +215,9 @@ pub async fn reindex_bear_now(
 ) -> Result<ReconcileOutcome, DenError> {
     let qdrant = QdrantRecall::from_config(config)
         .ok_or_else(|| DenError::System("recall disabled (QDRANT_URL unset)".to_string()))?;
+    let embedder = super::authenticated_embedder(pg, config, BearId::new(bear_id))
+        .await?
+        .ok_or_else(|| DenError::System("embeddings API is not configured".into()))?;
     let store = stores.store_for_bear(bear_id).await?;
-    let embedder = EmbeddingClient::new(config);
     reconcile_bear(pg, &qdrant, &embedder, &store, &config.embedding_standard).await
 }

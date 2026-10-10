@@ -6,6 +6,7 @@ pub mod manage;
 pub mod management;
 pub mod member;
 pub mod memory;
+pub(crate) mod model_setup;
 mod overview;
 pub mod profile;
 pub mod settings;

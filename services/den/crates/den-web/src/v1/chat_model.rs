@@ -2,8 +2,11 @@
 
 use super::{checked_chat_id, normalize_client_conversation_id, ChatApiError};
 use crate::{
-    auth_backend::AuthSession, bear::settings::model_configurations::selectable_model_options,
-    errors::CustomError, web::AppState,
+    auth_backend::AuthSession,
+    bear::settings::model_configurations::selectable_model_options,
+    errors::CustomError,
+    model_availability::{self, BearModelCatalog},
+    web::AppState,
 };
 use axum::{
     extract::{rejection::JsonRejection, State},
@@ -45,13 +48,25 @@ pub struct ChatModelPatchBody {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelAvailabilityView {
+    Available,
+    Unavailable,
+    Unverified,
+}
+
+#[derive(Serialize)]
 pub struct ChatModelResponse {
     pub selection_mode: String,
     pub requested_model: Option<String>,
     pub selected_model: Option<String>,
     pub effective_model: Option<String>,
+    pub availability: ModelAvailabilityView,
     pub source: Option<String>,
     pub error: Option<String>,
+    pub error_code: Option<&'static str>,
+    pub unavailable_model: Option<String>,
+    pub recovery: Option<&'static str>,
     pub configuration_id: Option<ModelConfigurationId>,
     pub configuration_name: Option<String>,
     pub thinking_effort: Option<ThinkingEffort>,
@@ -69,6 +84,7 @@ impl ChatModelResponse {
             requested_model: pinned.then(|| primary.model_handle.clone()),
             selected_model: pinned.then(|| primary.model_handle.clone()),
             effective_model: Some(primary.model_handle),
+            availability: ModelAvailabilityView::Available,
             source: Some(
                 match primary.source {
                     PrimaryModelSource::ConversationPin => "conversation_explicit",
@@ -79,6 +95,9 @@ impl ChatModelResponse {
                 .to_string(),
             ),
             error: None,
+            error_code: None,
+            unavailable_model: None,
+            recovery: None,
             configuration_id: primary.configuration_id,
             configuration_name: primary.configuration_name,
             thinking_effort: primary.thinking_effort,
@@ -102,10 +121,14 @@ impl ChatModelResponse {
                     requested_model: pin.as_ref().and_then(|state| state.requested_model.clone()),
                     selected_model: pin.as_ref().and_then(|state| state.selected_model.clone()),
                     effective_model: None,
+                    availability: ModelAvailabilityView::Unavailable,
                     source: pinned.then(|| "conversation_explicit".into()),
                     error: Some(
                         "The configured model is unavailable or no longer selectable.".into(),
                     ),
+                    error_code: Some("model_configuration_unavailable"),
+                    unavailable_model: None,
+                    recovery: Some("Choose an available configuration in Bear → Models, or repair its Den model metadata."),
                     configuration_id: None,
                     configuration_name: None,
                     thinking_effort: None,
@@ -125,7 +148,8 @@ async fn response_for(
 ) -> Result<ChatModelResponse, ChatApiError> {
     let requested_id = normalize_client_conversation_id(conversation_id)?;
     let (_, conv_id) = checked_chat_id(state.sqlx_pool(), bear_id, user_id, &requested_id).await?;
-    let model_options = selectable_model_options(state.sqlx_pool()).await?;
+    let catalog = BearModelCatalog::load(state, BearId::new(bear_id)).await?;
+    let model_options = selectable_model_options(state.sqlx_pool(), &catalog).await?;
     let conversation = if conv_id.starts_with("new-") {
         None
     } else {
@@ -178,7 +202,44 @@ async fn response_for(
             None,
         )
     };
-    ChatModelResponse::from_resolution(primary, model_state, model_options)
+    let canonical_pin = primary
+        .as_ref()
+        .is_ok_and(|model| model.source == PrimaryModelSource::ConversationPin);
+    let mut response = ChatModelResponse::from_resolution(primary, model_state, model_options)?;
+    if let Some(model) = response.effective_model.as_deref() {
+        if let Err(error) = catalog.require(model) {
+            match error {
+                DenError::ModelAvailability(failure) => {
+                    let pin_outage = canonical_pin
+                        && failure.kind
+                            == den_core::ModelAvailabilityFailureKind::CatalogUnavailable;
+                    response.error = Some(if pin_outage {
+                        format!("{} Availability is unverified. An existing conversation pin may attempt the same model; no substitute will be chosen. {}", failure.public_message(), failure.descriptor().recovery)
+                    } else {
+                        format!(
+                            "{} {} See Bear → Models.",
+                            failure.public_message(),
+                            failure.descriptor().recovery
+                        )
+                    });
+                    response.error_code = Some(failure.descriptor().code);
+                    response.recovery = Some(failure.descriptor().recovery);
+                    if pin_outage {
+                        response.availability = ModelAvailabilityView::Unverified;
+                    } else {
+                        response.unavailable_model = failure
+                            .model
+                            .as_ref()
+                            .map(|model| model.as_str().to_owned());
+                        response.availability = ModelAvailabilityView::Unavailable;
+                        response.effective_model = None;
+                    }
+                }
+                error => return Err(error.into()),
+            }
+        }
+    }
+    Ok(response)
 }
 
 pub(super) async fn chat_model_get(
@@ -237,10 +298,25 @@ pub(super) async fn chat_model_patch(
     )
     .await
     .map_err(ChatApiError::ordinary_source)?;
+    let selection_mode = body.selection_mode.as_deref().unwrap_or("auto").trim();
+    if selection_mode == "explicit" {
+        let model = model_configurations::validate_model_configuration(
+            state.sqlx_pool(),
+            body.model.as_deref().unwrap_or(""),
+            None,
+        )
+        .await?;
+        model_availability::validate_model(
+            &state,
+            BearId::new(body.bear_id),
+            model.model_handle.as_str(),
+        )
+        .await?;
+    }
     den_service::model_selection::apply_conversation_model_selection(
         state.sqlx_pool(),
         conversation.id,
-        body.selection_mode.as_deref().unwrap_or("auto").trim(),
+        selection_mode,
         body.model.as_deref(),
         "human_selected",
         "inherit_hat_bear_or_deployment_default",

@@ -254,8 +254,10 @@ async fn render_detail(
 ) -> Result<Response, CustomError> {
     let bear_id = BearId::new(bear.id);
     let hat = manage::get_hat(state.sqlx_pool(), bear_id, hat_id).await?;
+    let catalog = crate::model_availability::BearModelCatalog::load(&state, bear_id).await?;
     let configurations = super::settings::model_configurations::configuration_views(
         state.sqlx_pool(),
+        &catalog,
         bear_id,
         None,
     )
@@ -272,6 +274,7 @@ async fn render_detail(
         .unwrap_or_default();
     let effective_model = super::settings::model_configurations::effective_model(
         state.sqlx_pool(),
+        &catalog,
         bear_id,
         Some(hat_id),
         &state.config.default_llm_model,

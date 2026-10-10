@@ -5,10 +5,15 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use time::{Duration as TimeDuration, OffsetDateTime};
+use time::OffsetDateTime;
 use uuid::Uuid;
 
-use den_core::{config::Config, DenError};
+use den_core::{config::Config, DenError, ModelAvailabilityFailure, ModelAvailabilityFailureKind};
+
+mod availability;
+mod catalog_state;
+use availability::catalog_failure;
+use catalog_state::BearCatalogState;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct BifrostModelMetadata {
@@ -96,7 +101,7 @@ impl BifrostCatalogSnapshot {
             entries.insert(
                 canonical,
                 BifrostCatalogEntry {
-                    available: true,
+                    available: model.enabled,
                     provider: model.provider,
                     provider_model_id: model.model,
                     gateway_handle: model.handle,
@@ -120,6 +125,18 @@ impl BifrostCatalogSnapshot {
 
     pub fn resolve(&self, handle: &str) -> Option<&BifrostCatalogEntry> {
         self.models.get(&canonical_catalog_key(handle, None, None))
+    }
+
+    pub fn require_available_model(&self, model: &str) -> Result<&BifrostCatalogEntry, DenError> {
+        let failure =
+            |kind| DenError::ModelAvailability(ModelAvailabilityFailure::new(kind, Some(model)));
+        let entry = self
+            .resolve(model)
+            .ok_or_else(|| failure(ModelAvailabilityFailureKind::ModelMissing))?;
+        if !entry.available {
+            return Err(failure(ModelAvailabilityFailureKind::ModelUnavailable));
+        }
+        Ok(entry)
     }
 
     pub fn models_vec(&self) -> Vec<BifrostModelMetadata> {
@@ -372,12 +389,21 @@ fn sort_models(models: &mut [BifrostModelMetadata]) {
     });
 }
 
+fn sensitive_virtual_key_header(
+    virtual_key: &str,
+) -> Result<reqwest::header::HeaderValue, DenError> {
+    let mut header = reqwest::header::HeaderValue::from_str(virtual_key)
+        .map_err(|_| catalog_failure(ModelAvailabilityFailureKind::VirtualKeyRejected))?;
+    header.set_sensitive(true);
+    Ok(header)
+}
+
 #[derive(Clone)]
 pub struct BifrostClient {
     http: reqwest::Client,
     llm_api_url: String,
     api_key: String,
-    bear_catalogs: BearBifrostCatalogStore,
+    bear_catalogs: Arc<RwLock<HashMap<Uuid, BearCatalogState>>>,
 }
 
 impl BifrostClient {
@@ -385,16 +411,22 @@ impl BifrostClient {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(20))
             .connect_timeout(Duration::from_secs(5))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
-            .unwrap_or_else(|err| {
-                tracing::warn!(error = %err, "failed to build tuned Bifrost HTTP client; using default client");
-                reqwest::Client::new()
+            .unwrap_or_else(|_| {
+                tracing::warn!(
+                    "failed to build tuned Bifrost HTTP client; using redirect-disabled fallback"
+                );
+                reqwest::Client::builder()
+                    .redirect(reqwest::redirect::Policy::none())
+                    .build()
+                    .expect("failed to build redirect-disabled Bifrost HTTP client")
             });
         Self {
             http,
             llm_api_url: config.llm_api_url.trim_end_matches('/').to_string(),
             api_key: config.llm_api_key.clone(),
-            bear_catalogs: new_bear_catalog_store(),
+            bear_catalogs: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -404,12 +436,6 @@ impl BifrostClient {
 
     /// Live Bifrost availability from `/v1/models`.
     pub async fn list_available_models(&self) -> Result<Vec<BifrostModelMetadata>, DenError> {
-        if self.llm_api_url.is_empty() {
-            return Err(DenError::System(
-                "Bifrost /v1 API is not configured (set LLM_API_URL or BIFROST_BASE_URL)"
-                    .to_string(),
-            ));
-        }
         self.list_available_models_with_virtual_key(None).await
     }
 
@@ -418,9 +444,13 @@ impl BifrostClient {
         virtual_key: Option<&str>,
     ) -> Result<Vec<BifrostModelMetadata>, DenError> {
         if self.llm_api_url.is_empty() {
-            return Err(DenError::System(
-                "Bifrost /v1 API is not configured (set LLM_API_URL or BIFROST_BASE_URL)"
-                    .to_string(),
+            return Err(catalog_failure(
+                ModelAvailabilityFailureKind::CatalogUnavailable,
+            ));
+        }
+        if virtual_key.is_some_and(|key| key.trim().is_empty()) {
+            return Err(catalog_failure(
+                ModelAvailabilityFailureKind::VirtualKeyMissing,
             ));
         }
         let mut models = Vec::new();
@@ -443,6 +473,11 @@ impl BifrostClient {
                 break;
             }
         }
+        if page_token.is_some() {
+            return Err(catalog_failure(
+                ModelAvailabilityFailureKind::CatalogUnavailable,
+            ));
+        }
         sort_models(&mut models);
         models.dedup_by(|a, b| a.handle == b.handle);
         Ok(models)
@@ -459,102 +494,33 @@ impl BifrostClient {
             req = req.query(&[("page_token", token)]);
         }
         if let Some(virtual_key) = virtual_key.map(str::trim).filter(|value| !value.is_empty()) {
-            req = req.header("x-bf-vk", virtual_key);
+            req = req.header("x-bf-vk", sensitive_virtual_key_header(virtual_key)?);
         } else if !self.api_key.trim().is_empty() {
             req = req.bearer_auth(&self.api_key);
         }
         let resp = req
             .send()
             .await
-            .map_err(|e| DenError::System(format!("Bifrost /v1/models request failed: {e}")))?;
+            .map_err(|_| catalog_failure(ModelAvailabilityFailureKind::CatalogUnavailable))?;
         let status = resp.status();
-        let text = resp
-            .text()
-            .await
-            .map_err(|e| DenError::System(format!("Bifrost /v1/models response body: {e}")))?;
+        if matches!(
+            status,
+            reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
+        ) {
+            return Err(catalog_failure(
+                ModelAvailabilityFailureKind::VirtualKeyRejected,
+            ));
+        }
         if !status.is_success() {
-            return Err(DenError::System(format!(
-                "Bifrost /v1/models HTTP {status}: {text}"
-            )));
+            return Err(catalog_failure(
+                ModelAvailabilityFailureKind::CatalogUnavailable,
+            ));
         }
-        serde_json::from_str(&text)
-            .map_err(|e| DenError::Parsing(format!("Bifrost /v1/models JSON: {e}; body: {text}")))
-    }
-
-    pub async fn refresh_bear_catalog_snapshot(
-        &self,
-        pool: &sqlx::PgPool,
-        bear_id: Uuid,
-        secret_encryption_key: &str,
-    ) -> Result<BifrostCatalogSnapshot, DenError> {
-        let virtual_key = crate::bears::db::bifrost_virtual_key_for_inference(
-            pool,
-            bear_id,
-            secret_encryption_key,
-        )
-        .await?
-        .ok_or_else(|| {
-            DenError::System(format!(
-                "Bear {bear_id} has no Bifrost virtual key for Bear-scoped model catalog refresh"
-            ))
-        })?;
-        let mut attempt = 0usize;
-        let models = loop {
-            attempt += 1;
-            match self
-                .list_available_models_with_virtual_key(Some(&virtual_key))
-                .await
-            {
-                Ok(models) => break models,
-                Err(error) if attempt <= BEAR_CATALOG_REFRESH_RETRY_DELAYS.len() => {
-                    let delay = BEAR_CATALOG_REFRESH_RETRY_DELAYS[attempt - 1];
-                    tracing::warn!(
-                        bear_id = %bear_id,
-                        attempt,
-                        retry_after_ms = delay.as_millis(),
-                        error = %error,
-                        "Bear-scoped Bifrost catalog refresh failed; retrying before Pair preflight"
-                    );
-                    tokio::time::sleep(delay).await;
-                }
-                Err(error) => return Err(error),
-            }
-        };
-        let snapshot = BifrostCatalogSnapshot::from_available_models(models);
-        if let Ok(mut guard) = self.bear_catalogs.write() {
-            guard.insert(bear_id, snapshot.clone());
-        }
-        Ok(snapshot)
-    }
-
-    /// Returns the last successful Bear-scoped catalog snapshot, including a stale one.
-    /// Callers may use this only as a continuity fallback when live refresh is unavailable.
-    pub fn cached_bear_catalog_snapshot(&self, bear_id: Uuid) -> Option<BifrostCatalogSnapshot> {
-        self.bear_catalogs
-            .read()
-            .ok()
-            .and_then(|guard| guard.get(&bear_id).cloned())
-    }
-
-    pub async fn bear_catalog_snapshot(
-        &self,
-        pool: &sqlx::PgPool,
-        bear_id: Uuid,
-        secret_encryption_key: &str,
-    ) -> Result<BifrostCatalogSnapshot, DenError> {
-        if let Ok(guard) = self.bear_catalogs.read() {
-            if let Some(snapshot) = guard.get(&bear_id) {
-                if let Some(fetched_at) = snapshot.fetched_at {
-                    if !snapshot.stale
-                        && OffsetDateTime::now_utc() - fetched_at < TimeDuration::hours(1)
-                    {
-                        return Ok(snapshot.clone());
-                    }
-                }
-            }
-        }
-        self.refresh_bear_catalog_snapshot(pool, bear_id, secret_encryption_key)
+        // Error bodies and reqwest errors can contain echoed credentials or URLs.
+        // Neither is retained, even for JSON/decode/body-read failures.
+        resp.json()
             .await
+            .map_err(|_| catalog_failure(ModelAvailabilityFailureKind::CatalogUnavailable))
     }
 
     pub async fn refresh_catalog_snapshot(
@@ -621,5 +587,13 @@ impl BifrostClient {
     }
 }
 
+#[cfg(test)]
+mod availability_policy_tests;
+#[cfg(test)]
+mod availability_tests;
+#[cfg(test)]
+mod catalog_concurrency_tests;
+#[cfg(test)]
+mod redirect_tests;
 #[cfg(test)]
 mod tests;

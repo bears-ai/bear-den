@@ -27,8 +27,7 @@ use den_service::bears::{db as bears_db, db::BearParams, provision};
 
 use crate::web::bear::create_support::{
     admin_bear_edit_page_context, admin_bear_new_form_context, canonical_default_model_handle,
-    model_catalog_select_context, provision_bifrost_virtual_key_for_bear,
-    validate_default_model_for_catalog, AdminBearPromptForm, AdminNewBearForm, NewBearForm,
+    AdminBearPromptForm, AdminNewBearForm, NewBearForm,
 };
 
 async fn redirect_bear_slug(
@@ -79,6 +78,16 @@ async fn redirect_bear_slug_path(
 
 pub fn router() -> Router<AppState> {
     Router::new().route_with_tsr("/bears/", get(list_view))
+}
+
+#[cfg(test)]
+pub(crate) fn model_setup_test_router() -> Router<AppState> {
+    Router::new()
+        .route("/test-admin/bears/new", get(new_view).post(new_action))
+        .route(
+            "/test-admin/bears/{id}/edit",
+            get(edit_view).post(edit_action),
+        )
 }
 
 #[derive(Debug, Serialize)]
@@ -346,30 +355,11 @@ pub async fn new_action(
     Form(admin_form): Form<AdminNewBearForm>,
 ) -> Result<Response, CustomError> {
     let form = admin_form.bear.clone();
-    let catalog_fetch = {
-        let (configured, options, _) = model_catalog_select_context(&state).await;
-        if !configured {
-            None
-        } else {
-            Some(Ok(options))
-        }
-    };
 
     let mut validation_errors = ValidationErrors::new();
     if let Err(e) = form.validate() {
         validation_errors = e;
     }
-
-    let default_model_trim = form.default_model.trim();
-    validate_default_model_for_catalog(&catalog_fetch, default_model_trim, &mut validation_errors);
-    if default_model_trim.is_empty() && catalog_fetch.is_none() {
-        validation_errors.add(
-            "default_model",
-            ValidationError::new("Default model is required."),
-        );
-    }
-
-    let default_model_opt = canonical_default_model_handle(default_model_trim);
 
     if bears_db::bear_slug_exists(state.sqlx_pool(), form.slug.trim()).await? {
         validation_errors.add(
@@ -379,46 +369,26 @@ pub async fn new_action(
     }
 
     if validation_errors.is_empty() {
-        let id = bears_db::create_bear(
-            state.sqlx_pool(),
-            BearParams {
-                slug: form.slug.trim(),
-                name: form.name.trim(),
-                description: form.description.trim(),
-                system_prompt: form.system_prompt.trim(),
-                default_model: default_model_opt.as_deref(),
-                tools_enabled: None::<Json<serde_json::Value>>,
-                context_profile: None,
-            },
-        )
-        .await?;
-
-        if let Err(e) = provision_bifrost_virtual_key_for_bear(&state, id, form.slug.trim()).await {
-            if let Err(rollback_err) = bears_db::delete_bear(state.sqlx_pool(), id).await {
-                tracing::warn!(
-                    %id,
-                    provision_error = %e,
-                    error = %rollback_err,
-                    "failed to roll back Bear after Bifrost virtual key provisioning failure"
-                );
+        let id = match crate::bear::model_setup::create_with_validated_model(&state, &form).await {
+            Ok(id) => id,
+            Err(failure) => {
+                let users = user_db::get_users(state.sqlx_pool()).await?;
+                let page = admin_bear_new_form_context(&state, &form).await;
+                let mut response = web::render_template(
+                    &state,
+                    "admin/bears/new.html",
+                    auth_session,
+                    context! {
+                        form, admin_form, users, provision_error => failure.message,
+                        saved_bear_slug => failure.saved_bear.map(|_| form.slug.trim()),
+                        ..page
+                    },
+                )
+                .await?;
+                *response.status_mut() = failure.status;
+                return Ok(response);
             }
-            tracing::warn!(%id, "Bifrost virtual key provision failed: {e}");
-            let users = user_db::get_users(state.sqlx_pool()).await?;
-            let page = admin_bear_new_form_context(&state, &form).await;
-            return web::render_template(
-                &state,
-                "admin/bears/new.html",
-                auth_session,
-                context! {
-                    form => form,
-                    admin_form => admin_form,
-                    users,
-                    provision_error => format!("Bifrost virtual key provisioning failed: {e}"),
-                    ..page
-                },
-            )
-            .await;
-        }
+        };
 
         if let Err(e) =
             provision::initialize_bear_native(state.sqlx_pool(), &state.memory_stores, id).await
@@ -434,7 +404,8 @@ pub async fn new_action(
                     form => form,
                     admin_form => admin_form,
                     users,
-                    provision_error => e.to_string(),
+                    provision_error => "The Bear and verified model were saved, but initialization failed. Inspect the saved Bear's diagnostics; do not create it again.",
+                    saved_bear_slug => form.slug.trim(),
                     ..page
                 },
             )
@@ -486,7 +457,7 @@ async fn edit_view(
         .await?
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
     let form = NewBearForm::from(&bear);
-    let page = admin_bear_edit_page_context(&state, &form).await;
+    let page = admin_bear_edit_page_context(&state, &bear, &form).await;
     web::render_template(
         &state,
         "admin/bears/edit.html",
@@ -511,24 +482,35 @@ async fn edit_action(
         .await?
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
 
-    let model_fetch = {
-        let (configured, options, _) = model_catalog_select_context(&state).await;
-        if !configured {
-            None
-        } else {
-            Some(Ok(options))
-        }
-    };
-
+    let mut availability_status = None;
     let mut validation_errors = ValidationErrors::new();
     if let Err(e) = form.validate() {
         validation_errors = e;
     }
 
     let default_model_trim = form.default_model.trim();
-    validate_default_model_for_catalog(&model_fetch, default_model_trim, &mut validation_errors);
-
     let default_model_opt = canonical_default_model_handle(default_model_trim);
+    if let Some(model) = default_model_opt.as_deref() {
+        let result: Result<(), CustomError> = async {
+            den_service::bears::model_configurations::validate_model_configuration(
+                state.sqlx_pool(),
+                model,
+                None,
+            )
+            .await?;
+            crate::model_availability::validate_model(&state, id.into(), model).await
+        }
+        .await;
+        if let Err(error) = result {
+            let Some((status, message)) = crate::model_availability::form_failure(&error) else {
+                return Err(error);
+            };
+            availability_status = Some(status);
+            let mut error = ValidationError::new("model_availability");
+            error.message = Some(message.into());
+            validation_errors.add("default_model", error);
+        }
+    }
 
     if bears_db::bear_slug_exists_excluding(state.sqlx_pool(), form.slug.trim(), id).await? {
         validation_errors.add(
@@ -565,7 +547,7 @@ async fn edit_action(
             let bear = bears_db::get_bear(state.sqlx_pool(), id)
                 .await?
                 .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
-            let page = admin_bear_edit_page_context(&state, &form).await;
+            let page = admin_bear_edit_page_context(&state, &bear, &form).await;
             return web::render_template(
                 &state,
                 "admin/bears/edit.html",
@@ -583,8 +565,8 @@ async fn edit_action(
 
         Ok(Redirect::to(&format!("/admin/bears/{id}")).into_response())
     } else {
-        let page = admin_bear_edit_page_context(&state, &form).await;
-        web::render_template(
+        let page = admin_bear_edit_page_context(&state, &bear, &form).await;
+        let mut response = web::render_template(
             &state,
             "admin/bears/edit.html",
             auth_session,
@@ -595,7 +577,11 @@ async fn edit_action(
                 ..page
             },
         )
-        .await
+        .await?;
+        if let Some(status) = availability_status {
+            *response.status_mut() = status;
+        }
+        Ok(response)
     }
 }
 

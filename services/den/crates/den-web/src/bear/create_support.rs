@@ -125,25 +125,34 @@ impl From<&Bear> for BearConfigurationEditForm {
     }
 }
 
-/// Model select for `/bear/{slug}/edit/configuration` (Bifrost availability enriched by Den metadata).
+/// Legacy edit options use the same fresh Bear-authenticated authority as Models.
 pub async fn bear_configuration_page_context(
     state: &AppState,
-    _bear: &Bear,
-    form: &BearConfigurationEditForm,
+    bear: &Bear,
+    _form: &BearConfigurationEditForm,
 ) -> minijinja::Value {
-    let (model_catalog_configured, model_options, models_fetch_error) =
-        model_catalog_select_context(state).await;
-    let model_trim = form.default_model.trim();
-    let model_handle = (!model_trim.is_empty()).then_some(model_trim);
-    let model_options = if model_catalog_configured {
-        ensure_stored_model_in_options_for_handle(model_handle, model_options)
-    } else {
-        model_options
-    };
-
+    let (model_options, models_fetch_error) =
+        match crate::model_availability::BearModelCatalog::load(state, bear.id.into()).await {
+            Ok(catalog) => match super::settings::model_configurations::selectable_model_options(
+                state.sqlx_pool(),
+                &catalog,
+            )
+            .await
+            {
+                Ok(options) => (options, catalog.diagnostic()),
+                Err(_) => (
+                    Vec::new(),
+                    Some("Could not load Den model metadata. Try again shortly.".into()),
+                ),
+            },
+            Err(_) => (
+                Vec::new(),
+                Some("Could not inspect model settings. Try again shortly.".into()),
+            ),
+        };
     context! {
         native_runtime => true,
-        model_catalog_configured,
+        model_catalog_configured => true,
         model_options,
         models_fetch_error,
     }
@@ -175,18 +184,11 @@ impl From<&Bear> for NewBearForm {
     }
 }
 
-/// Operator admin new-bear form: Bifrost availability enriched by Den metadata.
+/// New Bears have no credential yet: proposed handles are not availability grants.
 pub async fn admin_bear_new_form_context(state: &AppState, form: &NewBearForm) -> minijinja::Value {
     let (model_catalog_configured, model_options, models_fetch_error) =
         model_catalog_select_context(state).await;
-    let model_trim = form.default_model.trim();
-    let model_handle = (!model_trim.is_empty()).then_some(model_trim);
-    let model_options = if model_catalog_configured {
-        ensure_stored_model_in_options_for_handle(model_handle, model_options)
-    } else {
-        model_options
-    };
-
+    let _ = form;
     context! {
         model_catalog_configured,
         model_options,
@@ -297,29 +299,12 @@ pub fn curated_model_options_from_all(all_options: &[ModelOption]) -> Vec<ModelO
         .collect()
 }
 
-/// Stable Den-owned model list for normal Bear Admin/web selectors.
-///
-/// Bifrost availability is used as status/validation metadata elsewhere; the
-/// primary user-facing selector should not flicker when Bifrost's live catalog
-/// temporarily shrinks or expands.
+/// A new Bear cannot have authenticated model options before its key exists.
+/// Keep proposals explicit instead of presenting global/Den/static entries as usable.
 pub async fn model_catalog_select_context(
-    state: &AppState,
+    _state: &AppState,
 ) -> (bool, Vec<ModelOption>, Option<String>) {
-    match den_service::model_selection::list_selectable_model_options(state.sqlx_pool()).await {
-        Ok(options) if options.is_empty() => (
-            true,
-            Vec::new(),
-            Some("No Den model selection options are configured.".into()),
-        ),
-        Ok(options) => (true, options, None),
-        Err(err) => (
-            true,
-            den_llm::model_registry::selectable_model_options(),
-            Some(format!(
-                "Could not load Den model selection options; using static fallback: {err}."
-            )),
-        ),
-    }
+    (true, Vec::new(), Some("Model availability is unverified until this Bear's Bifrost key is provisioned. The proposed model must pass that authenticated check before it is saved.".into()))
 }
 
 pub fn default_model_available_in_catalog(models: &[ModelOption], requested: &str) -> bool {
@@ -394,17 +379,10 @@ pub fn canonical_default_model_handle(raw: &str) -> Option<String> {
     }
 }
 
-/// Native model list for the new-bear template, merging stored handles like the edit page.
-pub async fn bear_new_form_context(state: &AppState, form: &NewBearForm) -> minijinja::Value {
+/// Creation proposals are not advertised as available models.
+pub async fn bear_new_form_context(state: &AppState, _form: &NewBearForm) -> minijinja::Value {
     let (model_catalog_configured, model_options, models_fetch_error) =
         model_catalog_select_context(state).await;
-    let model_trim = form.default_model.trim();
-    let model_handle = (!model_trim.is_empty()).then_some(model_trim);
-    let model_options = if model_catalog_configured {
-        ensure_stored_model_in_options_for_handle(model_handle, model_options)
-    } else {
-        model_options
-    };
 
     context! {
         native_runtime => true,
@@ -417,32 +395,26 @@ pub async fn bear_new_form_context(state: &AppState, form: &NewBearForm) -> mini
 /// Edit bear template: merged model/tool lists. Per-role diagnostics live on the detail page.
 pub async fn bear_edit_page_context(
     state: &AppState,
-    _bear: &Bear,
+    bear: &Bear,
     form: &NewBearForm,
 ) -> minijinja::Value {
-    admin_bear_edit_page_context(state, form).await
+    admin_bear_edit_page_context(state, bear, form).await
 }
 
-/// Operator admin edit-bear form: Bifrost catalog for Den-native profiles.
+/// Operator edits use the current Bear's key, never a global or static catalog.
 pub async fn admin_bear_edit_page_context(
     state: &AppState,
+    bear: &Bear,
     form: &NewBearForm,
 ) -> minijinja::Value {
-    let (model_catalog_configured, model_options, models_fetch_error) =
-        model_catalog_select_context(state).await;
-    let model_trim = form.default_model.trim();
-    let model_handle = (!model_trim.is_empty()).then_some(model_trim);
-    let model_options = if model_catalog_configured {
-        ensure_stored_model_in_options_for_handle(model_handle, model_options)
-    } else {
-        model_options
-    };
-    context! {
-        native_runtime => true,
-        model_catalog_configured,
-        model_options,
-        models_fetch_error,
-    }
+    bear_configuration_page_context(
+        state,
+        bear,
+        &BearConfigurationEditForm {
+            default_model: form.default_model.clone(),
+        },
+    )
+    .await
 }
 
 #[derive(Validate, Serialize, Deserialize, Debug, Clone, Default)]

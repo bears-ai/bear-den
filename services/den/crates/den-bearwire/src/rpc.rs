@@ -463,6 +463,12 @@ fn method_response(
 ) -> JsonRpcResponse {
     match result {
         Ok(result) => JsonRpcResponse::ok(id, result),
+        Err(CustomError::ModelAvailability(failure)) => JsonRpcResponse::error(
+            id,
+            -32001,
+            message,
+            Some(crate::model_availability::error_data(&failure)),
+        ),
         Err(err) => JsonRpcResponse::error(
             id,
             -32001,

@@ -53,6 +53,10 @@ use crate::runtime::task_context::orientation_task_ref_from_item;
 #[path = "assembler_policy_tests.rs"]
 mod policy_tests;
 
+#[cfg(test)]
+#[path = "assembler_recall_tests.rs"]
+mod recall_tests;
+
 #[derive(Debug, Clone)]
 pub struct AssembleTurnContext<'a> {
     pub pool: &'a PgPool,
@@ -387,10 +391,20 @@ async fn build_recall_section(
     // with session focus + the primary work-surface context (see DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md).
     let query_text = ctx.human_message.map(str::trim).filter(|s| !s.is_empty())?;
     let qdrant = crate::recall::QdrantRecall::from_config(ctx.config)?;
-    let embedder = den_llm::EmbeddingClient::new(ctx.config);
-    if !embedder.is_enabled() {
-        return None;
-    }
+    let embedder = match den_service::recall::authenticated_embedder(
+        ctx.pool,
+        ctx.config,
+        BearId::new(ctx.bear_id),
+    )
+    .await
+    {
+        Ok(Some(embedder)) => embedder,
+        Ok(None) => return None,
+        Err(error) => {
+            tracing::warn!(bear_id = %ctx.bear_id, %error, "recall authentication unavailable; continuing without recalled memory");
+            return None;
+        }
+    };
     let recall = den_service::recall::query::recall_for_turn_with_grant(
         &qdrant,
         &embedder,

@@ -1,3 +1,6 @@
+#[path = "model_availability_tests.rs"]
+mod availability_tests;
+
 use super::*;
 use den_core::ThinkingEffort;
 use den_service::{
@@ -13,6 +16,7 @@ struct Fixture {
     session: String,
     state: DenState,
     canonical: Option<Uuid>,
+    catalog: crate::test_bifrost::CatalogFixture,
 }
 
 impl Fixture {
@@ -24,7 +28,15 @@ impl Fixture {
             create_test_bear(pool).await
         };
         let token = create_token_for_bear(pool, user, bear).await;
-        let state = test_state(pool.clone());
+        let catalog = crate::test_bifrost::CatalogFixture::start(
+            &["openai/gpt-4.1", "openai/gpt-5"],
+            "sk-bf-bearwire-test",
+        );
+        let mut config = den_core::config::Config::test_stub();
+        config.llm_api_url = catalog.url.clone();
+        config.den_secret_encryption_key = "acp-model-availability-test-secret".into();
+        seed_test_bifrost_virtual_key(pool, bear, &config).await;
+        let state = test_state_with_config(pool.clone(), config);
         let session = format!("model-display-{}", Uuid::new_v4().simple());
         let opened = rpc_value(
             state.clone(),
@@ -55,6 +67,7 @@ impl Fixture {
             session,
             state,
             canonical,
+            catalog,
         }
     }
 

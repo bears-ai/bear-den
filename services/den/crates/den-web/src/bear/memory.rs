@@ -2308,10 +2308,10 @@ async fn search_view(
         if want_semantic {
             let semantic = match &viewer {
                 MemoryLibraryViewer::AdminInspection => {
-                    semantic_search_for_bear(config, bear.id, q, 25).await
+                    semantic_search_for_bear(&state.sqlx_pool, config, bear.id, q, 25).await
                 }
                 MemoryLibraryViewer::Curated(grant) => {
-                    search_curated_library(config, bear.id, grant, q, 25).await
+                    search_curated_library(&state.sqlx_pool, config, bear.id, grant, q, 25).await
                 }
             };
             match semantic {

@@ -27,6 +27,7 @@ pub mod design;
 pub mod filters;
 pub mod home;
 pub mod management_hub;
+mod model_availability;
 pub mod onboarding;
 pub mod public;
 pub mod stack_health;
@@ -38,6 +39,8 @@ pub mod work;
 
 #[cfg(test)]
 mod ownership_ui_tests;
+#[cfg(test)]
+mod test_bifrost;
 #[cfg(test)]
 mod tests;
 

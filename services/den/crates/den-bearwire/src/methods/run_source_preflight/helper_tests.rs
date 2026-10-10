@@ -266,7 +266,10 @@ pub(super) async fn checkout(
     )
 }
 
-pub(super) async fn model_ready_state(pool: &PgPool, fixture: &Fixture) -> DenState {
+pub(super) async fn model_ready_state(
+    pool: &PgPool,
+    fixture: &Fixture,
+) -> (DenState, crate::test_bifrost::CatalogFixture) {
     model_ready_state_for_bear(pool, fixture.bear, &["openai/gpt-4.1"]).await
 }
 
@@ -274,43 +277,10 @@ pub(super) async fn model_ready_state_for_bear(
     pool: &PgPool,
     bear: BearId,
     models: &[&str],
-) -> DenState {
-    use std::{
-        io::{BufRead, BufReader, Write},
-        net::TcpListener,
-    };
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = listener.local_addr().unwrap();
-    let body = json!({"data": models.iter().map(|model| json!({
-        "id": model, "owned_by": "openai", "context_length": 128000,
-        "max_output_tokens": 4096, "supported_parameters": ["tools"],
-        "supported_methods": ["chat_completion"],
-    })).collect::<Vec<_>>()})
-    .to_string();
-    let server = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        stream
-            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
-            .unwrap();
-        let mut reader = BufReader::new(&stream);
-        let mut request = String::new();
-        reader.read_line(&mut request).unwrap();
-        assert!(request.starts_with("GET /models"));
-        loop {
-            let mut line = String::new();
-            assert!(
-                reader.read_line(&mut line).unwrap() > 0,
-                "catalog request ended before its headers"
-            );
-            if line == "\r\n" {
-                break;
-            }
-        }
-
-        write!(stream, "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}", body.len(), body).unwrap();
-    });
+) -> (DenState, crate::test_bifrost::CatalogFixture) {
+    let catalog_fixture = crate::test_bifrost::CatalogFixture::start(models, "sk-bf-startup-test");
     let mut config = den_core::config::Config::test_stub();
-    config.llm_api_url = format!("http://{address}");
+    config.llm_api_url = catalog_fixture.url.clone();
     config.default_llm_model = "openai/gpt-4.1".into();
     config.den_secret_encryption_key = "expected-source-test-secret".into();
     bears_db::set_bear_bifrost_virtual_key(
@@ -338,8 +308,7 @@ pub(super) async fn model_ready_state_for_bear(
     for model in models {
         assert!(catalog.resolve(model).is_some());
     }
-    server.join().unwrap();
-    state
+    (state, catalog_fixture)
 }
 
 pub(super) fn state(pool: PgPool) -> DenState {

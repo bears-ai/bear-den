@@ -26,7 +26,9 @@ pub(super) enum ChatApiError {
 struct ErrorDescriptor {
     status: StatusCode,
     code: &'static str,
-    message: &'static str,
+    message: String,
+    model: Option<String>,
+    recovery: Option<&'static str>,
 }
 
 impl ChatApiError {
@@ -38,6 +40,23 @@ impl ChatApiError {
     }
 
     fn descriptor(&self) -> ErrorDescriptor {
+        if let Self::Service(DenError::ModelAvailability(failure)) = self {
+            let descriptor = failure.descriptor();
+            return ErrorDescriptor {
+                status: crate::model_availability::availability_status(failure),
+                code: descriptor.code,
+                message: format!(
+                    "{} {} See Bear → Models.",
+                    failure.public_message(),
+                    descriptor.recovery
+                ),
+                model: failure
+                    .model
+                    .as_ref()
+                    .map(|model| model.as_str().to_owned()),
+                recovery: Some(descriptor.recovery),
+            };
+        }
         let (status, code, message) = match self {
             Self::InvalidQuery => (
                 StatusCode::BAD_REQUEST,
@@ -100,7 +119,9 @@ impl ChatApiError {
         ErrorDescriptor {
             status,
             code,
-            message,
+            message: message.into(),
+            model: None,
+            recovery: None,
         }
     }
 
@@ -108,8 +129,12 @@ impl ChatApiError {
         #[derive(Serialize)]
         struct ErrorBody {
             code: &'static str,
-            error: &'static str,
-            message: &'static str,
+            error: String,
+            message: String,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            model: Option<String>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            recovery: Option<&'static str>,
             request_id: Uuid,
         }
         let descriptor = self.descriptor();
@@ -118,8 +143,10 @@ impl ChatApiError {
             descriptor.status,
             Json(ErrorBody {
                 code: descriptor.code,
-                error: descriptor.message,
+                error: descriptor.message.clone(),
                 message: descriptor.message,
+                model: descriptor.model,
+                recovery: descriptor.recovery,
                 request_id,
             }),
         )

@@ -21,6 +21,7 @@ use super::super::{preflight_pair_run_model, ResolvedRunModel, ResolvedRunModelS
 use super::{admit, helpers, AdmittedRunSource};
 
 struct OrdinaryFixture {
+    user: i32,
     bear: Bear,
     hat: HatId,
     session: String,
@@ -91,6 +92,7 @@ impl OrdinaryFixture {
             .unwrap()
             .unwrap();
         Self {
+            user: user.get(),
             bear,
             hat,
             session,
@@ -129,7 +131,7 @@ impl OrdinaryFixture {
 #[sqlx::test(migrations = "../../migrations")]
 async fn inherited_config_preflight_uses_deployment_bear_then_verified_hat(pool: PgPool) {
     let fixture = OrdinaryFixture::new(&pool).await;
-    let state = helpers::model_ready_state_for_bear(
+    let (state, _catalog) = helpers::model_ready_state_for_bear(
         &pool,
         fixture.bear_id(),
         &["openai/gpt-4.1", "openai/gpt-5"],
@@ -175,7 +177,7 @@ async fn inherited_config_preflight_uses_deployment_bear_then_verified_hat(pool:
 #[sqlx::test(migrations = "../../migrations")]
 async fn work_preflight_uses_eligible_job_hat_not_transcript_hat_or_pin(pool: PgPool) {
     let fixture = helpers::Fixture::new(&pool).await;
-    let state = helpers::model_ready_state_for_bear(
+    let (state, _catalog) = helpers::model_ready_state_for_bear(
         &pool,
         fixture.bear,
         &["openai/gpt-4.1", "openai/gpt-5"],
@@ -284,7 +286,7 @@ async fn work_preflight_uses_eligible_job_hat_not_transcript_hat_or_pin(pool: Pg
 #[sqlx::test(migrations = "../../migrations")]
 async fn conversation_pin_wins_and_clearing_it_restores_hat_inheritance(pool: PgPool) {
     let fixture = OrdinaryFixture::new(&pool).await;
-    let state = helpers::model_ready_state_for_bear(
+    let (state, _catalog) = helpers::model_ready_state_for_bear(
         &pool,
         fixture.bear_id(),
         &["openai/gpt-4.1", "openai/gpt-5"],
@@ -353,7 +355,7 @@ async fn conversation_pin_wins_and_clearing_it_restores_hat_inheritance(pool: Pg
 #[sqlx::test(migrations = "../../migrations")]
 async fn revoked_choice_blocks_start_instead_of_using_auto_bear_or_deployment(pool: PgPool) {
     let fixture = OrdinaryFixture::new(&pool).await;
-    let state = helpers::model_ready_state_for_bear(
+    let (state, _catalog) = helpers::model_ready_state_for_bear(
         &pool,
         fixture.bear_id(),
         &["openai/gpt-4.1", "openai/gpt-5"],
@@ -466,7 +468,7 @@ async fn revoked_choice_blocks_start_instead_of_using_auto_bear_or_deployment(po
 #[sqlx::test(migrations = "../../migrations")]
 async fn historical_auto_diagnostic_cannot_mask_next_turn_configuration_changes(pool: PgPool) {
     let fixture = OrdinaryFixture::new(&pool).await;
-    let state = helpers::model_ready_state_for_bear(
+    let (state, _catalog) = helpers::model_ready_state_for_bear(
         &pool,
         fixture.bear_id(),
         &["openai/gpt-4.1", "openai/gpt-5"],
@@ -545,7 +547,7 @@ async fn historical_auto_diagnostic_cannot_mask_next_turn_configuration_changes(
 async fn provider_preflight_rejects_inherited_model_missing_from_bear_catalog(pool: PgPool) {
     let fixture = OrdinaryFixture::new(&pool).await;
     // Den admits both models, but this Bear's provider key only admits the lower-precedence one.
-    let state =
+    let (state, _catalog) =
         helpers::model_ready_state_for_bear(&pool, fixture.bear_id(), &["openai/gpt-4.1"]).await;
     let careful = configurations::create(&pool, fixture.bear_id(), "Careful", "gpt-5", None)
         .await
@@ -569,10 +571,8 @@ async fn provider_preflight_rejects_inherited_model_missing_from_bear_catalog(po
         .err()
         .expect("provider cannot supply selected model");
     assert!(
-        error
-            .to_string()
-            .contains("openai/gpt-5 is not present in the Bifrost catalog"),
-        "{error}"
+        matches!(error, den_http::errors::CustomError::ModelAvailability(ref failure)
+        if failure.kind == den_core::ModelAvailabilityFailureKind::ModelMissing)
     );
 }
 
@@ -596,10 +596,8 @@ async fn auto_diagnostic_cannot_bypass_provider_catalog_refresh(pool: PgPool) {
         .err()
         .expect("auto rows are not continuity pins");
     assert!(
-        error
-            .to_string()
-            .contains("catalog validation failed before run start"),
-        "{error}"
+        matches!(error, den_http::errors::CustomError::ModelAvailability(ref failure)
+        if failure.kind == den_core::ModelAvailabilityFailureKind::VirtualKeyMissing)
     );
     persistence::set_conversation_model_state(
         &pool,
@@ -611,7 +609,16 @@ async fn auto_diagnostic_cannot_bypass_provider_catalog_refresh(pool: PgPool) {
     )
     .await
     .unwrap();
-    let pin = fixture.preflight(&state).await.unwrap();
-    assert_eq!(pin.handle, "openai/gpt-4.1");
-    assert_eq!(pin.source, ResolvedRunModelSource::ConversationExplicit);
+    let error = fixture
+        .preflight(&state)
+        .await
+        .err()
+        .expect("pins cannot bypass a missing credential");
+    assert!(
+        matches!(error, den_http::errors::CustomError::ModelAvailability(ref failure)
+        if failure.kind == den_core::ModelAvailabilityFailureKind::VirtualKeyMissing)
+    );
 }
+
+#[path = "model_availability_tests.rs"]
+mod availability_tests;

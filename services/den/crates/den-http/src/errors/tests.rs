@@ -1,5 +1,44 @@
 use super::*;
 
+#[test]
+fn model_availability_roundtrip_retains_typed_reason_and_checked_model() {
+    for kind in [
+        ModelAvailabilityFailureKind::ModelMissing,
+        ModelAvailabilityFailureKind::ModelUnavailable,
+        ModelAvailabilityFailureKind::VirtualKeyMissing,
+        ModelAvailabilityFailureKind::VirtualKeyRejected,
+        ModelAvailabilityFailureKind::CatalogUnavailable,
+    ] {
+        let failure = ModelAvailabilityFailure::new(kind, Some("openai/gpt-6-sol"));
+        let boundary = CustomError::from(DenError::ModelAvailability(failure.clone()));
+        let DenError::ModelAvailability(roundtrip) = boundary.into_den() else {
+            panic!("typed model failure must roundtrip losslessly")
+        };
+        assert_eq!(roundtrip, failure);
+        let (status, html) = page(CustomError::ModelAvailability(failure.clone()));
+        assert_eq!(
+            status,
+            match kind {
+                ModelAvailabilityFailureKind::ModelMissing
+                | ModelAvailabilityFailureKind::ModelUnavailable => StatusCode::BAD_REQUEST,
+                ModelAvailabilityFailureKind::VirtualKeyMissing
+                | ModelAvailabilityFailureKind::VirtualKeyRejected => StatusCode::CONFLICT,
+                ModelAvailabilityFailureKind::CatalogUnavailable => StatusCode::SERVICE_UNAVAILABLE,
+            }
+        );
+        assert!(html.contains(failure.descriptor().code));
+        assert!(html.contains(failure.descriptor().recovery));
+        assert!(html.contains("openai/gpt-6-sol"));
+    }
+    let failure = ModelAvailabilityFailure::new(
+        ModelAvailabilityFailureKind::VirtualKeyRejected,
+        Some("https://gateway/models?key=PRIVATE"),
+    );
+    let (_, html) = page(CustomError::ModelAvailability(failure));
+    assert!(!html.contains("PRIVATE"));
+    assert!(!html.contains("https://gateway"));
+}
+
 fn page(error: CustomError) -> (StatusCode, String) {
     let response = error.into_response();
     let status = response.status();

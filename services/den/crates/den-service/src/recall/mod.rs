@@ -12,6 +12,7 @@
 //! - [`temporal`] — time-expression parsing for the temporal recall leg (Phase 3.5).
 //! - [`watermark`] — per-Bear recall consistency watermark (ADR-0038 §8).
 
+mod authenticated_embedder;
 pub mod chunking;
 pub mod indexer;
 pub mod policy;
@@ -22,6 +23,7 @@ pub mod registry;
 pub mod temporal;
 pub mod watermark;
 
+pub use authenticated_embedder::authenticated_embedder;
 pub use indexer::{IndexOutcome, PassageEmbedder, RecallIndexer};
 pub use policy::IndexRequest;
 pub use qdrant::{collection_name, QdrantPoint, QdrantRecall, RecallHit};

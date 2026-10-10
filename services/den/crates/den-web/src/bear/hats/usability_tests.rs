@@ -90,7 +90,12 @@ async fn management_controls_preserve_authorization_and_canonical_skill_uses(poo
     )
     .await
     .unwrap();
-    let app = app(&pool, config()).await;
+    crate::test_bifrost::seed_key(&pool, bear).await;
+    let gateway = crate::test_bifrost::MockBifrost::standard().await;
+    let mut configuration = config();
+    configuration.llm_api_url = gateway.url.clone();
+    configuration.den_secret_encryption_key = gateway.config().den_secret_encryption_key;
+    let (app, state) = app_with_state(&pool, configuration).await;
     let admin_cookie = cookie(&app, admin).await;
     let member_cookie = cookie(&app, member).await;
     let outsider_cookie = cookie(&app, outsider).await;
@@ -256,13 +261,17 @@ async fn management_controls_preserve_authorization_and_canonical_skill_uses(poo
     assert!(!page.contains("Save permitted uses"));
     assert!(!page.contains("<form"));
 
-    let model =
-        super::super::super::settings::model_configurations::selectable_model_options(&pool)
-            .await
-            .unwrap()
-            .into_iter()
-            .next()
-            .expect("migrations seed selectable models");
+    let catalog = crate::model_availability::BearModelCatalog::load(&state, BearId::new(bear))
+        .await
+        .unwrap();
+    let model = super::super::super::settings::model_configurations::selectable_model_options(
+        &pool, &catalog,
+    )
+    .await
+    .unwrap()
+    .into_iter()
+    .next()
+    .expect("migrations seed selectable models");
     let named = model_configurations::create(
         &pool,
         BearId::new(bear),
@@ -289,7 +298,8 @@ async fn management_controls_preserve_authorization_and_canonical_skill_uses(poo
             request(&app, viewer, "GET", "/bear/usabilitybear/models", "").await;
         assert_eq!(status, StatusCode::OK, "{page}");
         assert!(page.contains("Named default"));
-        assert!(page.contains("No Bifrost virtual key is configured"));
+        assert!(page.contains("Gateway key: <strong>configured</strong>"));
+        assert!(!page.contains("No Bifrost virtual key is configured"));
         assert_eq!(page.contains("Save Bear default"), viewer == &admin_cookie);
         assert_eq!(
             page.contains("Advanced settings: loop budgets"),

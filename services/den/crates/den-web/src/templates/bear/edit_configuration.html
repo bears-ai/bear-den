@@ -18,19 +18,20 @@
         <p class="form-errors">{{ models_fetch_error | e }}</p>
         {% endif %}
         <div class="form-field{% if errors and errors.default_model %} has-error{% endif %}">
-            <select id="default_model_field" name="default_model" required>
-                <option value="" disabled{% if not form or not form.default_model %} selected{% endif %}>— Choose a model —</option>
+            <select id="default_model_field" name="default_model">
+                <option value=""{% if not form or not form.default_model %} selected{% endif %}>Inherit deployment default</option>
+                {% if form.default_model and form.default_model not in model_options | map(attribute='handle') | list %}<option value="{{ form.default_model | e }}" selected disabled>{{ form.default_model | e }} · unavailable</option>{% endif %}
                 {% for m in model_options %}
                 <option value="{{ m.handle | e }}"{% if form and form.default_model == m.handle %} selected{% endif %}>{{ m.label | e }} — <code>{{ m.handle | e }}</code></option>
                 {% endfor %}
             </select>
-            <span class="form-hint">Loaded from Den model registry.</span>
+            <span class="form-hint">Available to this Bear in Bifrost, labelled using Den model metadata.</span>
             {% if errors and errors.default_model %}
             <span class="form-hint form-errors">Submission error: {{ errors.default_model | map(attribute="message", default="unknown error") | join(", ") }}</span>
             {% endif %}
         </div>
         {% else %}
-        {{ forms.input("default_model", "Default model (required)", "text", 'required maxlength="255" placeholder="provider/model-handle"', form) }}
+        {{ forms.input("default_model", "Default model (blank inherits)", "text", 'maxlength="255" placeholder="provider/model-handle"', form) }}
         {% if models_fetch_error %}
         <p class="form-errors">{{ models_fetch_error | e }}</p>
         {% endif %}

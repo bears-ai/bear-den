@@ -39,13 +39,21 @@ async fn editors_keep_admin_navigation_and_code_tokens_remain_member_readable(po
             StatusCode::FORBIDDEN
         );
     }
-    for (editor, body) in [
-        ("overview", "slug=&name=Preserved&description=Purpose"),
-        ("configuration", "default_model=missing%2Fmodel"),
+    for (editor, body, expected_status) in [
+        (
+            "overview",
+            "slug=&name=Preserved&description=Purpose",
+            StatusCode::OK,
+        ),
+        (
+            "configuration",
+            "default_model=missing%2Fmodel",
+            StatusCode::BAD_REQUEST,
+        ),
     ] {
         let path = format!("/bear/navrecovery/edit/{editor}");
         let (status, page, _) = request(&app, &admin_cookie, "POST", &path, body).await;
-        assert_eq!(status, StatusCode::OK, "{page}");
+        assert_eq!(status, expected_status, "{page}");
         assert_admin_navigation(&page, "navrecovery");
         assert_eq!(
             request(&app, &member_cookie, "POST", &path, body).await.0,

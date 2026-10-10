@@ -10,6 +10,8 @@ use super::*;
 mod backend_management;
 mod feedback;
 mod import_review_race;
+mod legacy_model_setup;
+mod model_availability;
 mod model_configurations;
 mod portability;
 mod portable_models;
@@ -118,7 +120,11 @@ async fn test_pool() -> Option<sqlx::PgPool> {
 }
 
 fn test_state(pool: sqlx::PgPool) -> AppState {
-    let config = Arc::new(Config::test_stub());
+    test_state_with_config(pool, Config::test_stub())
+}
+
+fn test_state_with_config(pool: sqlx::PgPool, config: Config) -> AppState {
+    let config = Arc::new(config);
     let mut template_env = crate::template_environment(config.as_ref());
     template_env
             .add_template("bear/settings/policy.html", "{{ message }} {{ web_sources | length }} {{ web_approvals | length }} {{ web_fetches | length }}{% for approval in web_approvals %} {{ approval.approved_by_user_label }}{% endfor %}")
@@ -248,6 +254,13 @@ async fn test_login(
     StatusCode::OK
 }
 
+async fn model_test_app(pool: sqlx::PgPool, bear: Uuid, models: &[&str]) -> axum::Router {
+    crate::test_bifrost::seed_key(&pool, bear).await;
+    let gateway = crate::test_bifrost::MockBifrost::start(models).await;
+    let state = test_state_with_config(pool.clone(), gateway.config());
+    test_app_with_state(pool, state).await
+}
+
 async fn test_app(pool: sqlx::PgPool) -> axum::Router {
     let state = test_state(pool.clone());
     test_app_with_state(pool, state).await
@@ -257,9 +270,10 @@ async fn test_app_with_state(pool: sqlx::PgPool, state: AppState) -> axum::Route
     let store = PostgresStore::new(pool.clone());
     store.migrate().await.expect("session store migration");
     Router::new()
-        .merge(router())
+        .merge(super::super::management::router())
+        .merge(crate::admin::bears::model_setup_test_router())
+        .nest("/test-admin-api", crate::admin::api::router())
         .merge(super::super::manage::router())
-        .merge(super::super::hats::router())
         .merge(crate::management_hub::router())
         .merge(crate::connections::router())
         .merge(super::super::skills::router())

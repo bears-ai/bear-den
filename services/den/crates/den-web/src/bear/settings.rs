@@ -1771,10 +1771,13 @@ async fn render_models_page_with_draft(
     advanced_form: Option<advanced_models::Draft>,
     field_errors: std::collections::BTreeMap<&'static str, String>,
 ) -> Result<Response, CustomError> {
-    let model_options = model_configurations::catalog_options(state.sqlx_pool()).await?;
     let bear_id = BearId::new(bear.id);
+    let catalog = crate::model_availability::BearModelCatalog::load(&state, bear_id).await?;
+    let catalog_error = catalog.diagnostic();
+    let model_options = model_configurations::catalog_options(state.sqlx_pool(), &catalog).await?;
     let configurations = model_configurations::configuration_views(
         state.sqlx_pool(),
+        &catalog,
         bear_id,
         pending.configuration.as_ref(),
     )
@@ -1798,6 +1801,7 @@ async fn render_models_page_with_draft(
         .unwrap_or_default();
     let effective_model = model_configurations::effective_model(
         state.sqlx_pool(),
+        &catalog,
         bear_id,
         None,
         &state.config.default_llm_model,
@@ -1821,6 +1825,7 @@ async fn render_models_page_with_draft(
         auth_session,
         context! {
             model_options,
+            catalog_error,
             configurations,
             default_selection,
             new_configuration,

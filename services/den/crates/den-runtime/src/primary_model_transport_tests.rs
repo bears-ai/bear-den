@@ -1,5 +1,6 @@
 use super::*;
 use crate::agent_loop::source_admission::tests::fixture;
+use den_core::ModelAvailabilityFailureKind;
 use den_service::{
     bears::{db, model_configurations as configurations},
     conversation::persistence,
@@ -16,7 +17,7 @@ use std::{
     time::Duration,
 };
 
-struct CatalogMock {
+pub(crate) struct CatalogMock {
     url: String,
     response: Arc<Mutex<(u16, String)>>,
     requests: Arc<Mutex<Vec<String>>>,
@@ -25,7 +26,7 @@ struct CatalogMock {
 }
 
 impl CatalogMock {
-    fn new(body: Value) -> Self {
+    pub(crate) fn new(body: Value) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         listener.set_nonblocking(true).unwrap();
@@ -76,7 +77,7 @@ impl CatalogMock {
         *self.response.lock().unwrap() = (status, body.to_string());
     }
 
-    fn request_count(&self) -> usize {
+    pub(crate) fn request_count(&self) -> usize {
         self.requests.lock().unwrap().len()
     }
 }
@@ -119,7 +120,7 @@ fn live_models(methods: Option<&[&str]>) -> Value {
     json!({"data": [model], "next_page_token": null})
 }
 
-async fn config_with_key(pool: &PgPool, bear_id: BearId, mock: &CatalogMock) -> Config {
+pub(crate) async fn config_with_key(pool: &PgPool, bear_id: BearId, mock: &CatalogMock) -> Config {
     let mut config = Config::test_stub();
     config.llm_api_url.clone_from(&mock.url);
     config.den_secret_encryption_key = "runtime-catalog-test-secret-key".into();
@@ -134,6 +135,53 @@ async fn config_with_key(pool: &PgPool, bear_id: BearId, mock: &CatalogMock) -> 
     .await
     .unwrap();
     config
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn explicit_pins_cannot_turn_missing_keys_or_auth_rejections_into_outage_continuity(
+    pool: PgPool,
+) {
+    let (session, _, _) = fixture(&pool).await;
+    let bear_id = session.bear_id.into();
+    let mock = CatalogMock::new(live_models(None));
+    let mut config = Config::test_stub();
+    config.llm_api_url.clone_from(&mock.url);
+    let client = BifrostClient::new(&config);
+    let primary = ResolvedPrimaryModel {
+        configuration_id: None,
+        configuration_name: None,
+        model_handle: "openai/gpt-6-sol".into(),
+        thinking_effort: None,
+        source: PrimaryModelSource::ConversationPin,
+    };
+    let result = execution_api_style_with_client(
+        &client,
+        &pool,
+        &config,
+        bear_id,
+        &primary,
+        PrimaryTransportPreference::ResponsesWhenUnknown,
+    )
+    .await;
+    assert!(matches!(result, Err(DenError::ModelAvailability(failure))
+        if failure.kind == ModelAvailabilityFailureKind::VirtualKeyMissing));
+    assert_eq!(mock.request_count(), 0);
+    let config = config_with_key(&pool, bear_id, &mock).await;
+    for status in [401, 403] {
+        mock.reply(status, json!({"error": "PRIVATE sk-bf-secret"}));
+        let result = execution_api_style_with_client(
+            &client,
+            &pool,
+            &config,
+            bear_id,
+            &primary,
+            PrimaryTransportPreference::ResponsesWhenUnknown,
+        )
+        .await;
+        assert!(matches!(result, Err(DenError::ModelAvailability(failure))
+            if failure.kind == ModelAvailabilityFailureKind::VirtualKeyRejected));
+    }
+    assert_eq!(mock.request_count(), 2);
 }
 
 #[test]
@@ -160,7 +208,9 @@ fn primary_transport_preference_is_context_owned_not_provider_inferred() {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn live_unknown_methods_use_responses_and_shared_client_reuses_catalog(pool: PgPool) {
+async fn live_unknown_methods_use_responses_and_new_turns_refresh_shared_client_catalog(
+    pool: PgPool,
+) {
     let (session, canonical, hat) = fixture(&pool).await;
     let bear_id = session.bear_id.into();
     super::tests::reasoning_support(&pool, Some(true)).await;
@@ -227,8 +277,8 @@ async fn live_unknown_methods_use_responses_and_shared_client_reuses_catalog(poo
     }
     assert_eq!(
         mock.request_count(),
-        1,
-        "runtime must retain the process client's catalog cache"
+        4,
+        "new turns must authenticate freshly while sharing the process client's cache"
     );
     let request = crate::llm::ChatCompletionRequest {
         model: primary.model_handle.clone(),
@@ -275,7 +325,7 @@ async fn successful_catalog_missing_selected_model_never_uses_pin_continuity(poo
     )
     .await;
     assert!(
-        matches!(result, Err(DenError::ValidationError(message)) if message.contains("missing from the Bifrost catalog"))
+        matches!(result, Err(DenError::ModelAvailability(failure)) if failure.kind == ModelAvailabilityFailureKind::ModelMissing)
     );
     assert_eq!(mock.request_count(), 1);
     assert_eq!(primary.model_handle, "openai/gpt-5");
@@ -312,23 +362,8 @@ async fn real_catalog_outage_retains_explicit_pin_using_other_layers_shared_cach
         .await
         .unwrap();
     mock.reply(503, json!({"error": "catalog temporarily unavailable"}));
-    // Force the refresh that TTL expiry would perform. Feed its real failed HTTP
-    // outcome into the same selector used by runtime; do not mutate the cache.
-    let refresh = state_client
-        .refresh_bear_catalog_snapshot(&pool, bear_id.as_uuid(), &config.den_secret_encryption_key)
-        .await;
-    assert!(refresh.is_err());
     let preference = PrimaryTransportPreference::ResponsesWhenUnknown;
-    assert_eq!(
-        catalog_api_style(&runtime_client, bear_id, &primary, preference, refresh).unwrap(),
-        LlmApiStyle::ChatCompletionsStream,
-        "cached false support must win; an isolated empty cache would choose Responses"
-    );
-    let requests_after_outage = mock.request_count();
-    assert!(
-        requests_after_outage > 1,
-        "exercise actual loopback outage retries"
-    );
+    let requests_before_outage = mock.request_count();
     assert_eq!(
         execution_api_style_with_client(
             &runtime_client,
@@ -344,20 +379,22 @@ async fn real_catalog_outage_retains_explicit_pin_using_other_layers_shared_cach
     );
     assert_eq!(
         mock.request_count(),
-        requests_after_outage,
-        "failed refresh must retain the shared successful snapshot"
+        requests_before_outage + 4,
+        "new turns must attempt a fresh catalog before using outage continuity"
     );
     assert_eq!(primary.model_handle, "openai/gpt-5");
 
     let uncached_client = BifrostClient::new(&config);
     assert_eq!(
-        catalog_api_style(
+        execution_api_style_with_client(
             &uncached_client,
+            &pool,
+            &config,
             bear_id,
             &primary,
             preference,
-            Err(DenError::System("catalog outage".into()))
         )
+        .await
         .unwrap(),
         LlmApiStyle::ResponsesStream,
         "preserve BearWire's same-pin continuity even without usable cached metadata"
@@ -365,33 +402,25 @@ async fn real_catalog_outage_retains_explicit_pin_using_other_layers_shared_cach
     let mut inherited = primary.clone();
     inherited.source = PrimaryModelSource::DeploymentDefault;
     assert!(
-        catalog_api_style(
+        execution_api_style_with_client(
             &runtime_client,
+            &pool,
+            &config,
             bear_id,
             &inherited,
             preference,
-            Err(DenError::System("catalog outage".into()))
         )
+        .await
         .is_err(),
         "an outage does not authorize default/configuration fallback"
     );
 
-    let mut unavailable = runtime_client
-        .cached_bear_catalog_snapshot(bear_id.as_uuid())
-        .unwrap();
-    unavailable
-        .models
-        .get_mut(&primary.model_handle)
-        .unwrap()
-        .available = false;
+    mock.reply(200, json!({"data": []}));
     assert!(matches!(
-        catalog_api_style(
-            &runtime_client,
-            bear_id,
-            &primary,
-            preference,
-            Ok(unavailable)
-        ),
-        Err(DenError::ValidationError(_))
+        execution_api_style_with_client(
+            &runtime_client, &pool, &config, bear_id, &primary, preference,
+        ).await,
+        Err(DenError::ModelAvailability(failure))
+            if failure.kind == ModelAvailabilityFailureKind::ModelMissing
     ));
 }

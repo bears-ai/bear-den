@@ -918,6 +918,46 @@ async fn build_session(
     let bear = den_service::bears::db::get_bear(deps.pool, bear_id)
         .await?
         .ok_or_else(|| DenError::NotFound("bear not found".to_string()))?;
+    // Admit the canonical source before any gateway, recall, prompt-provider or
+    // transcript effects. runtime_target is never a model-selection source.
+    let source = require_ordinary_session_source(
+        deps.pool,
+        ContinuationSource {
+            bear_id,
+            user_id,
+            origin,
+            profile: defaults.context_label,
+            conversation_id,
+            client_session_id,
+            work_run_id,
+        },
+    )
+    .await?;
+    let primary_model = crate::primary_model::resolve_for_source(
+        deps.pool,
+        bear_id.into(),
+        source,
+        &deps.config.default_llm_model,
+    )
+    .await?;
+    let model = primary_model.model_handle.clone();
+    let api_style = Some(
+        crate::primary_model::execution_api_style(
+            deps.pool,
+            deps.config,
+            bear.id.into(),
+            &primary_model,
+            crate::primary_model::transport_preference(origin, primary_model.thinking_effort),
+        )
+        .await?,
+    );
+    let capabilities = den_service::bears::model_configurations::validate_model_configuration(
+        deps.pool,
+        &model,
+        primary_model.thinking_effort,
+    )
+    .await?;
+    let supports_reasoning_effort = capabilities.supports_reasoning_effort;
     let include_prompt_memory = defaults.include_prompt_memory;
     let assembled = assemble_native_turn_for_bear(
         AssembleTurnContext {
@@ -944,6 +984,11 @@ async fn build_session(
         &bear,
     )
     .await?;
+    if assembled.primary_model != primary_model {
+        return Err(DenError::ValidationError(
+            "primary model configuration changed during assembly; start a new turn".into(),
+        ));
+    }
     let key_memory_projection_cache_key = assembled
         .key_memory_projection
         .as_ref()
@@ -1020,27 +1065,7 @@ async fn build_session(
         .or_else(|| request_id.map(|id| id.to_string()))
         .unwrap_or_else(|| format!("unbound-{}", Uuid::new_v4().simple()));
     let session_key = agent_loop_session_key(conversation_id, client_session_id, &execution_id);
-    // Assembly resolved the whole configuration from the canonical conversation
-    // or eligible Work Job hat; runtime_target is not a model-selection source.
-    let primary_model = assembled.primary_model;
-    let model = primary_model.model_handle.clone();
-    let capabilities = den_service::bears::model_configurations::validate_model_configuration(
-        deps.pool,
-        &model,
-        primary_model.thinking_effort,
-    )
-    .await?;
-    let supports_reasoning_effort = capabilities.supports_reasoning_effort;
-    let api_style = Some(
-        crate::primary_model::execution_api_style(
-            deps.pool,
-            deps.config,
-            bear.id.into(),
-            &primary_model,
-            crate::primary_model::transport_preference(origin, primary_model.thinking_effort),
-        )
-        .await?,
-    );
+
     let mut tool_budget_multiplier = bear.default_tool_budget_multiplier.unwrap_or(1.0);
     if let Some(model_multiplier) = deps.config.model_tool_budget_multipliers.get(&model) {
         tool_budget_multiplier *= *model_multiplier;
@@ -2487,6 +2512,10 @@ pub async fn continue_native_client_turn_event_stream(
 #[cfg(test)]
 #[path = "turn/model_configuration_tests.rs"]
 mod model_configuration_tests;
+
+#[cfg(test)]
+#[path = "turn/model_availability_tests.rs"]
+mod model_availability_tests;
 
 #[cfg(test)]
 mod tests {

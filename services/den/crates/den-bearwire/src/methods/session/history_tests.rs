@@ -139,6 +139,9 @@ async fn history_inspection_never_grants_configuration_or_hat_mutation(pool: sql
                 "{kind} {method}: {inspected}"
             );
         }
+        // Model inspection may read the authenticated catalog, but never infer.
+        assert_eq!(inference.completion_count(), 0);
+        let catalog_requests = inference.request_count();
         let actor = if kind == "other-owner" || kind == "null-owner" {
             admin
         } else {
@@ -172,7 +175,7 @@ async fn history_inspection_never_grants_configuration_or_hat_mutation(pool: sql
             assert_authorization_error(&denied, method, reason);
             assert_eq!(
                 inference.request_count(),
-                0,
+                catalog_requests,
                 "{kind} {method} reached provider preflight/inference"
             );
         }
@@ -208,7 +211,7 @@ async fn history_inspection_never_grants_configuration_or_hat_mutation(pool: sql
                 assert_authorization_error(&denied, method, reason);
                 assert_eq!(
                     inference.request_count(),
-                    0,
+                    catalog_requests,
                     "{kind} {method} rebind reached inference preflight"
                 );
                 assert_eq!(
@@ -314,7 +317,11 @@ async fn history_inspection_never_grants_configuration_or_hat_mutation(pool: sql
     )
     .await;
     assert_eq!(configured["result"]["ok"], true, "{configured}");
-    assert_eq!(inference.request_count(), 0);
+    assert_eq!(inference.completion_count(), 0);
+    assert!(
+        inference.request_count() >= 1,
+        "model inspection must validate catalog choices"
+    );
     let started = rpc_value(
         state,
         &owner_token,

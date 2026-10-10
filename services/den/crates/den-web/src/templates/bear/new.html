@@ -9,7 +9,7 @@
     <p>You become this Bear's Admin. Next, create a hat to start a conversation; creating a Bear does not start a Job.</p>
     {% if provision_error %}<p class="form-errors" role="alert">{{ provision_error | e }}</p>{% endif %}
     {% if saved_bear_slug %}
-    <p><strong>Your Bear was saved, but initialization failed.</strong> <a href="/bear/{{ saved_bear_slug | urlencode }}/edit/overview">Open the saved Bear and submit its saved values to retry initialization</a>, or <a href="/bear/{{ saved_bear_slug | urlencode }}/advanced">inspect diagnostics</a>. Do not create it again.</p>
+    <p><strong>Your Bear remains saved; setup needs attention.</strong> <a href="/bear/{{ saved_bear_slug | urlencode }}/models">Inspect its model and gateway setup</a>, or <a href="/bear/{{ saved_bear_slug | urlencode }}/advanced">inspect diagnostics</a>. Do not create it again.</p>
     {% else %}
     <form method="post">
         {{ forms.input("slug", "Handle", "text", 'required maxlength="120"', form, "Use lowercase letters, numbers, and single hyphens; no leading or trailing hyphen.") }}
@@ -25,9 +25,9 @@
         </div>
         </details>
         {% if model_catalog_configured %}
-        <label for="default_model_field" {% if errors and errors.default_model %}class="has-error"{% endif %}>Model</label>
+        <label for="default_model_field" {% if errors and errors.default_model %}class="has-error"{% endif %}>Proposed model</label>
         {% if models_fetch_error %}
-        <p class="form-errors">{{ models_fetch_error }}</p>
+        <p class="form-errors">{{ models_fetch_error | e }}</p>
         {% endif %}
         <div class="form-field{% if errors and errors.default_model %} has-error{% endif %}">
             {% if model_options and model_options | length > 0 %}

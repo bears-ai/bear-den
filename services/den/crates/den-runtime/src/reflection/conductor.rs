@@ -31,8 +31,8 @@ use crate::{
 };
 
 use crate::runtime_compaction::{run_compaction_job, TurnCompactionState, TurnCompactionTrigger};
+use den_core::ids::BearId;
 use den_core::{config::Config, DenError};
-use den_llm::EmbeddingClient;
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct ReflectionRunRow {
@@ -1083,6 +1083,27 @@ pub async fn run_next_recall_index_once(
         return Ok(Some(completed));
     };
 
+    let embedder =
+        match den_service::recall::authenticated_embedder(pool, config, BearId::new(bear_id)).await
+        {
+            Ok(Some(embedder)) => embedder,
+            Ok(None) => {
+                let completed = mark_recall_index_completed(
+                    pool,
+                    bear_id,
+                    run.id,
+                    serde_json::json!({ "skipped": "embeddings API is not configured" }),
+                )
+                .await?;
+                return Ok(Some(completed));
+            }
+            Err(error) => {
+                let failed =
+                    mark_recall_index_failed(pool, bear_id, run.id, &error.to_string()).await?;
+                return Ok(Some(failed));
+            }
+        };
+
     let store = match stores.store_for_bear(bear_id).await {
         Ok(store) => store,
         Err(error) => {
@@ -1092,7 +1113,6 @@ pub async fn run_next_recall_index_once(
         }
     };
 
-    let embedder = EmbeddingClient::new(config);
     match reconcile_bear(pool, &qdrant, &embedder, &store, &config.embedding_standard).await {
         Ok(outcome) => {
             let summary = serde_json::json!({

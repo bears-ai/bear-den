@@ -182,6 +182,56 @@ test("GET of an invalid pin still allows PATCH clear and valid replacement", asy
     assert.equal(modelError.hidden, true);
 });
 
+test("Den-known but gateway-absent stored primary is not offered as a usable pin", () => {
+    const { context, select, modelError } = fixture();
+    context.renderModelSelector({
+        selection_mode: "auto", source: "bear_default", configuration_name: "Chosen primary",
+        effective_model: null, unavailable_model: "openai/gpt-6-sol", error_code: "model_missing",
+        error: "The selected model openai/gpt-6-sol is not available to this Bear in Bifrost. Choose an available model in Bear → Models, or correct its Bifrost virtual-key access.",
+        model_options: [{ handle: "openai/gpt-4.1", label: "Den label" }],
+    });
+    assert.equal(select.value, "auto");
+    assert.equal(select.disabled, false);
+    assert.ok(!select.options.some((option) => option.value === "openai/gpt-6-sol"));
+    assert.match(modelError.textContent, /openai\/gpt-6-sol.*Bifrost.*Bear → Models/);
+    assert.equal(modelError.hidden, false);
+});
+
+for (const code of ["virtual_key_missing", "virtual_key_rejected", "catalog_unavailable"]) {
+    test(`${code} leaves unavailable pin inspectable and clearing available without synthesizing models`, () => {
+        const { context, select, modelError } = fixture();
+        context.renderModelSelector({
+            selection_mode: "explicit", selected_model: "openai/gpt-6-sol", effective_model: null,
+            error_code: code, error: "Repair this Bear's Bifrost access in Bear → Models.", model_options: [],
+        });
+        assert.equal(select.value, "openai/gpt-6-sol");
+        assert.equal(select.disabled, false);
+        assert.equal(select.options.length, 2);
+        assert.equal(select.options[0].value, "auto");
+        assert.equal(select.options[0].disabled, false);
+        assert.equal(select.options[1].disabled, true);
+        assert.match(select.options[1].text, /unavailable/);
+        assert.match(modelError.textContent, /Bear → Models/);
+    });
+}
+
+test("an existing pin during catalog outage stays effective but unverified, not offered as a new usable choice", () => {
+    const { context, select, modelError } = fixture();
+    context.renderModelSelector({
+        selection_mode: "explicit", source: "conversation_explicit", requested_model: "openai/gpt-6-sol",
+        selected_model: "openai/gpt-6-sol", effective_model: "openai/gpt-6-sol", availability: "unverified",
+        error_code: "catalog_unavailable", error: "Availability is unverified. The existing pin may attempt the same model; no substitute will be chosen.", model_options: [],
+    });
+    assert.equal(select.value, "openai/gpt-6-sol");
+    assert.equal(select.disabled, false);
+    assert.equal(select.options[1].disabled, true);
+    assert.match(select.options[1].text, /availability unverified/);
+    assert.match(select.title, /availability unverified/);
+    assert.doesNotMatch(select.title, /unavailable|reasoning model default/);
+    assert.equal(select.options[0].disabled, false);
+    assert.match(modelError.textContent, /same model.*no substitute/);
+});
+
 test("empty selectable catalog does not synthesize options or block clearing a pin", () => {
     const { context, select } = fixture();
     context.renderModelSelector({ selection_mode: "explicit", selected_model: "test/revoked", effective_model: null, error: "model unavailable", model_options: [] });

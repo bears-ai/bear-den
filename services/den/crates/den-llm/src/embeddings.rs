@@ -10,6 +10,11 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
+mod credential;
+mod failure;
+pub use credential::BearEmbeddingCredential;
+use failure::EmbeddingFailure;
+
 use den_core::{config::Config, DenError};
 
 use crate::client::normalize_llm_model_handle;
@@ -19,22 +24,25 @@ use crate::client::normalize_llm_model_handle;
 pub struct EmbeddingClient {
     http: reqwest::Client,
     base_url: String,
-    api_key: String,
+    credential: BearEmbeddingCredential,
     model: String,
     dimensions: u32,
 }
 
 impl EmbeddingClient {
-    pub fn new(config: &Config) -> Self {
+    /// Production callers resolve the current Bear's credential for each operation.
+    /// `llm_api_key` is not a substitute for Bear-scoped Bifrost authorization.
+    pub fn new(config: &Config, credential: BearEmbeddingCredential) -> Self {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_mins(1))
             .connect_timeout(Duration::from_secs(10))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .expect("reqwest client for embeddings");
         Self {
             http,
             base_url: config.llm_api_url.trim_end_matches('/').to_string(),
-            api_key: config.llm_api_key.clone(),
+            credential,
             model: normalize_llm_model_handle(&config.embedding_model),
             dimensions: config.embedding_dimensions,
         }
@@ -66,10 +74,7 @@ impl EmbeddingClient {
     /// Embed a batch of strings, returning vectors in input order.
     pub async fn embed(&self, inputs: &[String]) -> Result<Vec<Vec<f32>>, DenError> {
         if !self.is_enabled() {
-            return Err(DenError::System(
-                "embeddings API is not configured (set LLM_API_URL or BIFROST_BASE_URL)"
-                    .to_string(),
-            ));
+            return Err(EmbeddingFailure::NotConfigured.into());
         }
         if inputs.is_empty() {
             return Ok(Vec::new());
@@ -77,26 +82,31 @@ impl EmbeddingClient {
 
         let url = format!("{}/embeddings", self.base_url);
         let body = embedding_request_body(&self.model, inputs, self.dimensions);
-        let mut req = self.http.post(&url).json(&body);
-        if !self.api_key.is_empty() {
-            req = req.bearer_auth(&self.api_key);
-        }
-        let resp = req
+        let resp = self
+            .http
+            .post(&url)
+            .header("x-bf-vk", self.credential.header())
+            .json(&body)
             .send()
             .await
-            .map_err(|e| DenError::System(format!("embeddings request failed: {e}")))?;
+            .map_err(|error| {
+                DenError::from(if error.is_timeout() {
+                    EmbeddingFailure::Timeout
+                } else {
+                    EmbeddingFailure::Transport
+                })
+            })?;
         let status = resp.status();
+        // Error bodies may echo credentials and input. Never read or project them.
+        if !status.is_success() {
+            return Err(EmbeddingFailure::Http(status).into());
+        }
         let text = resp
             .text()
             .await
-            .map_err(|e| DenError::System(format!("embeddings response body: {e}")))?;
-        if !status.is_success() {
-            return Err(DenError::System(format!(
-                "embeddings HTTP {status}: {text}"
-            )));
-        }
+            .map_err(|_| DenError::from(EmbeddingFailure::ResponseRead))?;
         let value: Value = serde_json::from_str(&text)
-            .map_err(|e| DenError::System(format!("embeddings response parse: {e}")))?;
+            .map_err(|_| DenError::from(EmbeddingFailure::ResponseParse))?;
         parse_embedding_response(&value, inputs.len(), self.dimensions)
     }
 }
@@ -166,61 +176,4 @@ fn parse_embedding_response(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn disabled_when_no_inference_substrate() {
-        let cfg = Config::test_stub();
-        assert!(cfg.llm_api_url.is_empty());
-        let client = EmbeddingClient::new(&cfg);
-        assert!(!client.is_enabled());
-        assert_eq!(client.model(), "openai/text-embedding-3-small");
-        assert_eq!(client.dimensions(), 1536);
-    }
-
-    #[test]
-    fn request_body_includes_model_input_and_dimensions() {
-        let inputs = vec!["hello".to_string(), "world".to_string()];
-        let body = embedding_request_body("openai/text-embedding-3-small", &inputs, 1536);
-        assert_eq!(body["model"], "openai/text-embedding-3-small");
-        assert_eq!(body["input"][0], "hello");
-        assert_eq!(body["input"][1], "world");
-        assert_eq!(body["dimensions"], 1536);
-    }
-
-    #[test]
-    fn request_body_omits_dimensions_when_zero() {
-        let inputs = vec!["x".to_string()];
-        let body = embedding_request_body("m", &inputs, 0);
-        assert!(body.get("dimensions").is_none());
-    }
-
-    #[test]
-    fn parses_and_orders_vectors_by_index() {
-        let value = json!({
-            "data": [
-                { "index": 1, "embedding": [0.5, 0.5] },
-                { "index": 0, "embedding": [0.1, 0.2] }
-            ]
-        });
-        let vectors = parse_embedding_response(&value, 2, 2).expect("parse");
-        assert_eq!(vectors, vec![vec![0.1, 0.2], vec![0.5, 0.5]]);
-    }
-
-    #[test]
-    fn rejects_dimension_mismatch() {
-        let value = json!({ "data": [ { "index": 0, "embedding": [0.1, 0.2, 0.3] } ] });
-        let err = parse_embedding_response(&value, 1, 2).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("does not match configured dimensions"));
-    }
-
-    #[test]
-    fn rejects_count_mismatch() {
-        let value = json!({ "data": [ { "index": 0, "embedding": [0.1] } ] });
-        let err = parse_embedding_response(&value, 2, 1).unwrap_err();
-        assert!(err.to_string().contains("expected 2"));
-    }
-}
+mod tests;

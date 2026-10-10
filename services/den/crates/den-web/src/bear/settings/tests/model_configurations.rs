@@ -50,13 +50,13 @@ fn pending_configuration_selection_preserves_unchanged_inherit_and_named_drafts(
     );
 }
 
-fn escaped_html(value: &str) -> String {
+pub(super) fn escaped_html(value: &str) -> String {
     Environment::new()
         .render_str("{{ value | e }}", context! { value })
         .unwrap()
 }
 
-fn assert_input_value(page: &str, id: &str, value: &str) {
+pub(super) fn assert_input_value(page: &str, id: &str, value: &str) {
     let pattern = format!(r#"<input\b[^>]*\bid="{}"[^>]*>"#, regex::escape(id));
     let input = regex::Regex::new(&pattern).unwrap();
     let input = input
@@ -71,7 +71,12 @@ fn assert_input_value(page: &str, id: &str, value: &str) {
     );
 }
 
-async fn post_as(app: &Router, cookie: &str, uri: &str, body: &str) -> (StatusCode, String) {
+pub(super) async fn post_as(
+    app: &Router,
+    cookie: &str,
+    uri: &str,
+    body: &str,
+) -> (StatusCode, String) {
     let response = app
         .clone()
         .oneshot(
@@ -110,7 +115,7 @@ async fn named_configuration_crud_is_admin_only_and_preserves_invalid_forms() {
     )
     .await
     .unwrap();
-    let app = test_app(pool.clone()).await;
+    let app = model_test_app(pool.clone(), bear_id, &[&model]).await;
     let admin_cookie = login_cookie(&app, admin).await;
     let member_cookie = login_cookie(&app, member).await;
     let root = format!("/bear/{slug}/models");
@@ -312,7 +317,7 @@ async fn unsupported_effort_hat_inheritance_and_revoked_models_are_explicit() {
     )
     .await
     .unwrap();
-    let app = test_app(pool.clone()).await;
+    let app = model_test_app(pool.clone(), bear_id, &[&model]).await;
     let cookie = login_cookie(&app, admin).await;
     let uri = format!("/bear/{slug}/hats/{}", hat.id);
     let (status, page) = get_as(&app, &cookie, &uri).await;

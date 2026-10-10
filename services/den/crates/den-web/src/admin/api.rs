@@ -3,6 +3,7 @@
 
 use axum::{
     extract::{Path, State},
+    response::{IntoResponse, Response},
     routing::get,
     Json, Router,
 };
@@ -15,7 +16,7 @@ use crate::{
     web::{bear::create_support, AppState},
 };
 use den_service::bears::{
-    db::{self as bears_db, BearParams, MembershipRow},
+    db::{self as bears_db, MembershipRow},
     model::Bear,
     provision,
 };
@@ -61,7 +62,7 @@ pub struct IdResponse {
 async fn create_bear(
     State(state): State<AppState>,
     Json(body): Json<CreateBearRequest>,
-) -> Result<(axum::http::StatusCode, Json<IdResponse>), CustomError> {
+) -> Result<Response, CustomError> {
     let slug = body.slug.trim();
     if slug.is_empty() {
         return Err(CustomError::ValidationError("slug is required".to_string()));
@@ -76,42 +77,27 @@ async fn create_bear(
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty());
-    if let Some(model) = default_model {
-        let catalog_models =
-            den_service::model_selection::list_selectable_model_options(state.sqlx_pool()).await?;
-        if catalog_models.is_empty() {
-            return Err(CustomError::ValidationError(
-                "No Den model selection options are configured; cannot validate default_model"
-                    .to_string(),
-            ));
-        }
-        if !create_support::default_model_available_in_catalog(&catalog_models, model) {
-            return Err(CustomError::ValidationError(format!(
-                "default_model `{model}` is not configured as a selectable Den model"
-            )));
-        }
-    }
+    let form = create_support::NewBearForm {
+        slug: slug.into(),
+        name: body.name.trim().into(),
+        description: body.description.trim().into(),
+        system_prompt: body.system_prompt.trim().into(),
+        default_model: default_model.unwrap_or("").into(),
+    };
     let _ = body.tools_enabled;
-    let id = bears_db::create_bear(
-        state.sqlx_pool(),
-        BearParams {
-            slug,
-            name: body.name.trim(),
-            description: body.description.trim(),
-            system_prompt: body.system_prompt.trim(),
-            default_model,
-            tools_enabled: None,
-            context_profile: None,
-        },
-    )
-    .await?;
-
-    if let Err(e) = create_support::provision_bifrost_virtual_key_for_bear(&state, id, slug).await {
-        let _ = bears_db::delete_bear(state.sqlx_pool(), id).await;
-        return Err(CustomError::System(format!(
-            "Bifrost virtual key provisioning failed: {e}"
-        )));
-    }
+    let id = match crate::bear::model_setup::create_with_validated_model(&state, &form).await {
+        Ok(id) => id,
+        Err(failure) => {
+            return Ok((
+                failure.status,
+                Json(serde_json::json!({
+                    "error": failure.message, "saved_bear_id": failure.saved_bear,
+                    "saved_bear_slug": failure.saved_bear.map(|_| slug),
+                })),
+            )
+                .into_response())
+        }
+    };
 
     if let Err(e) =
         provision::initialize_bear_native(state.sqlx_pool(), &state.memory_stores, id).await
@@ -119,7 +105,7 @@ async fn create_bear(
         tracing::warn!(%id, "Bear initialization failed after admin API create: {e}");
     }
 
-    Ok((axum::http::StatusCode::CREATED, Json(IdResponse { id })))
+    Ok((axum::http::StatusCode::CREATED, Json(IdResponse { id })).into_response())
 }
 
 async fn list_membership(

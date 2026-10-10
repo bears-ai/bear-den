@@ -1497,6 +1497,16 @@ async fn chat_send_native_inner(
     let turn_binding_id =
         hats::turn_binding::NativeTurnSource::Conversation(canonical_conversation.id)
             .binding_id(BearId::new(bear.id));
+    // Reject gateway drift before context work, user-turn persistence, or runtime invocation.
+    let primary = den_service::model_selection::resolve_conversation_primary_model(
+        state.sqlx_pool(),
+        BearId::new(bear.id),
+        canonical_conversation.id,
+        &state.config.default_llm_model,
+    )
+    .await?;
+    crate::model_availability::validate_execution(&state, BearId::new(bear.id), &primary).await?;
+
     if let Some(response) = maybe_handle_direct_set_conversation_title(
         &state,
         ConversationTitleRequest {
@@ -1684,6 +1694,8 @@ mod chat_model_access_tests;
 mod conversation_selection_tests;
 #[cfg(test)]
 mod current_task_tests;
+#[cfg(test)]
+mod model_availability_tests;
 #[cfg(test)]
 mod model_configuration_tests;
 #[cfg(test)]

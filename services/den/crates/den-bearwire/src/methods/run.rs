@@ -374,10 +374,6 @@ enum ResolvedRunModelSource {
 }
 
 impl ResolvedRunModelSource {
-    const fn is_persisted_conversation_model(self) -> bool {
-        matches!(self, Self::ConversationExplicit)
-    }
-
     const fn is_inherited(self) -> bool {
         matches!(
             self,
@@ -414,48 +410,17 @@ impl fmt::Display for ResolvedRunModelSource {
 
 struct ResolvedRunModel {
     handle: String,
-    provider_model_id: String,
     /// Set authoritatively by `preflight_pair_run_model` from the catalog
     /// snapshot; `resolve_pair_run_model` leaves it at a placeholder.
     api_style: den_llm::LlmApiStyle,
     supports_reasoning_effort: Option<bool>,
     source: ResolvedRunModelSource,
+    primary_source: PrimaryModelSource,
 }
 
 /// Placeholder used while resolving model identity; overwritten by preflight.
 const RESOLVE_PLACEHOLDER_API_STYLE: den_llm::LlmApiStyle =
     den_llm::LlmApiStyle::ChatCompletionsStream;
-
-fn provider_model_id_for_den_handle(handle: &str) -> String {
-    den_llm::model_registry::provider_model_id_for_handle(handle)
-        .unwrap_or_else(|| handle.trim())
-        .to_string()
-}
-
-fn available_model_matches(
-    model: &den_service::bifrost::BifrostModelMetadata,
-    resolved: &ResolvedRunModel,
-) -> bool {
-    // Either of the catalog model's identifiers matching either resolved identifier is a hit.
-    let model_ids = [model.handle.as_str(), model.model.as_str()];
-    let resolved_ids = [
-        resolved.handle.as_str(),
-        resolved.provider_model_id.as_str(),
-    ];
-    model_ids
-        .iter()
-        .any(|model_id| resolved_ids.contains(model_id))
-}
-
-fn available_model_sample(models: &[den_service::bifrost::BifrostModelMetadata]) -> String {
-    let mut handles = models
-        .iter()
-        .map(|model| model.handle.as_str())
-        .take(20)
-        .collect::<Vec<_>>();
-    handles.sort_unstable();
-    handles.join(", ")
-}
 
 fn pair_api_style_for_catalog_support(
     supports_responses_api: Option<bool>,
@@ -508,9 +473,10 @@ async fn resolve_pair_run_model(
     Ok(ResolvedRunModel {
         api_style: RESOLVE_PLACEHOLDER_API_STYLE,
         supports_reasoning_effort: None,
-        provider_model_id: provider_model_id_for_den_handle(&handle),
+
         handle,
         source: primary.source.into(),
+        primary_source: primary.source,
     })
 }
 
@@ -522,83 +488,35 @@ async fn preflight_pair_run_model(
     turn_source: NativeTurnSource,
 ) -> Result<ResolvedRunModel, CustomError> {
     let resolved = resolve_pair_run_model(state, bear, turn_source).await?;
-    let snapshot = match state
+    let catalog_entry = state
         .bifrost
-        .bear_catalog_snapshot(
+        .validate_bear_model_execution(
             &state.sqlx_pool,
             bear.id,
+            &resolved.handle,
             &state.config.den_secret_encryption_key,
+            resolved.primary_source,
         )
-        .await
-    {
-        Ok(snapshot) => snapshot,
-        Err(err) => {
-            let cached_snapshot = state.bifrost.cached_bear_catalog_snapshot(bear.id);
-            if resolved.source.is_persisted_conversation_model() {
-                if let Some(snapshot) = cached_snapshot {
-                    if let Some(entry) = snapshot.resolve(&resolved.handle) {
-                        ensure_pair_model_capabilities(entry, &resolved.handle)?;
-                        tracing::warn!(
-                            error = %err,
-                            session_id,
-                            bear_id = %bear.id,
-                            conversation_id,
-                            model_handle = %resolved.handle,
-                            model_selection_source = %resolved.source,
-                            catalog_fetched_at = ?snapshot.fetched_at,
-                            catalog_stale = snapshot.stale,
-                            catalog_fallback = "stale_cached_snapshot",
-                            "Bifrost catalog refresh failed; continuing Pair with the persisted conversation model"
-                        );
-                        return Ok(ResolvedRunModel {
-                            api_style: pair_api_style_for_catalog_support(
-                                entry.supports_responses_api,
-                            ),
-                            supports_reasoning_effort: entry.supports_reasoning_effort,
-                            ..resolved
-                        });
-                    }
-                }
-
-                tracing::warn!(
-                    error = %err,
-                    session_id,
-                    bear_id = %bear.id,
-                    conversation_id,
-                    model_handle = %resolved.handle,
-                    model_selection_source = %resolved.source,
-                    catalog_fallback = "persisted_conversation_model",
-                    "Bifrost catalog refresh failed with no usable cached snapshot; continuing Pair with the persisted conversation model"
-                );
-                return Ok(ResolvedRunModel {
-                    api_style: den_llm::LlmApiStyle::ResponsesStream,
-                    supports_reasoning_effort: None,
-                    ..resolved
-                });
-            }
-
-            tracing::error!(
-                error = %err,
-                bear_id = %bear.id,
-                model_handle = %resolved.handle,
-                model_selection_source = %resolved.source,
-                "Bear-scoped Bifrost catalog refresh before Pair preflight failed"
-            );
-            return Err(CustomError::System(format!(
-                "Bifrost model catalog validation failed before run start: {err}"
-            )));
-        }
+        .await?;
+    let Some(catalog_entry) = catalog_entry else {
+        // The shared validator permits this only for a canonical conversation
+        // pin during a genuine catalog outage without credential-matched cache.
+        tracing::warn!(
+            session_id,
+            bear_id = %bear.id,
+            conversation_id,
+            model_handle = %resolved.handle,
+            model_selection_source = %resolved.source,
+            "Bifrost catalog unavailable; retaining the conversation pin via Responses"
+        );
+        return Ok(ResolvedRunModel {
+            api_style: den_llm::LlmApiStyle::ResponsesStream,
+            supports_reasoning_effort: None,
+            ..resolved
+        });
     };
-    let available = snapshot.models_vec();
-    let catalog_entry = snapshot.resolve(&resolved.handle).ok_or_else(|| {
-        CustomError::ValidationError(format!(
-            "selected model {} is not present in the Bifrost catalog; available models: {}",
-            resolved.handle,
-            available_model_sample(&available)
-        ))
-    })?;
-    ensure_pair_model_capabilities(catalog_entry, &resolved.handle)?;
-    let unknown_capabilities = unknown_capability_metadata(catalog_entry);
+    ensure_pair_model_capabilities(&catalog_entry, &resolved.handle)?;
+    let unknown_capabilities = unknown_capability_metadata(&catalog_entry);
     if !unknown_capabilities.is_empty() {
         tracing::warn!(
             session_id,
@@ -606,7 +524,7 @@ async fn preflight_pair_run_model(
             conversation_id,
             model_handle = %resolved.handle,
             unknown_capabilities = %unknown_capabilities.join(", "),
-            catalog_source = %snapshot.source,
+
             "Bifrost omitted optional model capability metadata; using runtime fallbacks"
         );
     }
@@ -615,37 +533,14 @@ async fn preflight_pair_run_model(
         supports_reasoning_effort: catalog_entry.supports_reasoning_effort,
         ..resolved
     };
-    if available
-        .iter()
-        .any(|model| available_model_matches(model, &resolved))
-    {
-        tracing::info!(
-            session_id,
-            bear_id = %bear.id,
-            conversation_id,
-            model_handle = %resolved.handle,
-            provider_model_id = %resolved.provider_model_id,
-            model_selection_source = %resolved.source,
-            api_style = %resolved.api_style.as_str(),
-            catalog_stale = snapshot.stale,
-            catalog_fetched_at = ?snapshot.fetched_at,
-            "BearWire model preflight passed"
-        );
-        return Ok(resolved);
-    }
-
-    tracing::warn!(
+    tracing::info!(
         session_id,
         bear_id = %bear.id,
         conversation_id,
         model_handle = %resolved.handle,
-        provider_model_id = %resolved.provider_model_id,
         model_selection_source = %resolved.source,
         api_style = %resolved.api_style.as_str(),
-        available_models = %available_model_sample(&available),
-        catalog_stale = snapshot.stale,
-        catalog_fetched_at = ?snapshot.fetched_at,
-        "BearWire model preflight did not find selected model in catalog snapshot; proceeding and letting Bifrost execution validate"
+        "BearWire model preflight admitted the selected model"
     );
     Ok(resolved)
 }
@@ -3718,11 +3613,7 @@ mod tests {
     }
 
     #[test]
-    fn only_explicit_conversation_pins_may_bypass_catalog_refresh() {
-        assert!(ResolvedRunModelSource::ConversationExplicit.is_persisted_conversation_model());
-        assert!(!ResolvedRunModelSource::HatOverride.is_persisted_conversation_model());
-        assert!(!ResolvedRunModelSource::BearDefault.is_persisted_conversation_model());
-        assert!(!ResolvedRunModelSource::SystemDefault.is_persisted_conversation_model());
+    fn inherited_sources_exclude_conversation_pins() {
         assert!(ResolvedRunModelSource::HatOverride.is_inherited());
         assert!(ResolvedRunModelSource::BearDefault.is_inherited());
         assert!(ResolvedRunModelSource::SystemDefault.is_inherited());
@@ -3935,46 +3826,6 @@ mod tests {
             runtime_upstream_target("conv-existing", Some("   ")),
             "conv-existing"
         );
-    }
-
-    fn available_model(handle: &str, model: &str) -> den_service::bifrost::BifrostModelMetadata {
-        den_service::bifrost::BifrostModelMetadata {
-            handle: handle.to_string(),
-            provider: "openai".to_string(),
-            model: model.to_string(),
-            display_name: None,
-            context_window: 0,
-            max_output_tokens: None,
-            enabled: true,
-            supports_tools: None,
-            supports_responses_api: None,
-            supports_vision: None,
-            supports_reasoning_effort: None,
-        }
-    }
-
-    #[test]
-    fn available_model_matches_den_handle_or_provider_model_id() {
-        let resolved = ResolvedRunModel {
-            handle: "openai/gpt-5.5".to_string(),
-            provider_model_id: "gpt-5.5".to_string(),
-            api_style: den_llm::LlmApiStyle::ResponsesStream,
-            supports_reasoning_effort: None,
-            source: ResolvedRunModelSource::ConversationExplicit,
-        };
-
-        assert!(available_model_matches(
-            &available_model("openai/gpt-5.5", "gpt-5.5"),
-            &resolved
-        ));
-        assert!(available_model_matches(
-            &available_model("gpt-5.5", "gpt-5.5"),
-            &resolved
-        ));
-        assert!(!available_model_matches(
-            &available_model("openai/gpt-5.1", "gpt-5.1"),
-            &resolved
-        ));
     }
 
     #[test]

@@ -26,8 +26,6 @@ use crate::{
     web::{
         bear::create_support::{
             bear_configuration_page_context, bear_new_form_context, canonical_default_model_handle,
-            insert_new_bear_row, model_catalog_select_context,
-            provision_bifrost_virtual_key_for_bear, validate_default_model_for_catalog,
             BearConfigurationEditForm, BearOverviewEditForm, BearPromptEditForm, NewBearForm,
         },
         render_template, AppState,
@@ -887,19 +885,10 @@ async fn new_bear_post(
         return Ok(r.into_response());
     }
 
-    let (catalog_configured, catalog_models, _catalog_error) =
-        model_catalog_select_context(&state).await;
-    let model_fetch = catalog_configured.then(|| Ok::<_, CustomError>(catalog_models));
-
     let mut validation_errors = ValidationErrors::new();
     if let Err(e) = form.validate() {
         validation_errors = e;
     }
-
-    let default_model_trim = form.default_model.trim();
-    validate_default_model_for_catalog(&model_fetch, default_model_trim, &mut validation_errors);
-
-    let default_model_opt = canonical_default_model_handle(default_model_trim);
 
     if bears_db::bear_slug_exists(state.sqlx_pool(), form.slug.trim()).await? {
         validation_errors.add(
@@ -909,25 +898,41 @@ async fn new_bear_post(
     }
 
     if validation_errors.is_empty() {
-        let id =
-            insert_new_bear_row(state.sqlx_pool(), &form, default_model_opt.as_deref()).await?;
-
-        if let Err(e) = provision_bifrost_virtual_key_for_bear(&state, id, form.slug.trim()).await {
-            let _ = bears_db::delete_bear(state.sqlx_pool(), id).await;
-            let page = bear_new_form_context(&state, &form).await;
-            return render_template(
-                &state,
-                "bear/new.html",
-                auth_session,
-                context! {
-                    form => form,
-                    errors => validation_errors,
-                    provision_error => format!("Bear setup failed while provisioning its gateway key: {e}. Your draft is preserved."),
-                    ..page
-                },
-            )
-            .await;
-        }
+        let id = match super::model_setup::create_with_validated_model(&state, &form).await {
+            Ok(id) => id,
+            Err(mut failure) => {
+                if let Some(id) = failure.saved_bear {
+                    // Expose a refused compensation to the creating human, without deleting work.
+                    if bears_db::grant_membership(
+                        state.sqlx_pool(),
+                        user_id,
+                        id.as_uuid(),
+                        Some(BEAR_ROLE_ADMIN),
+                    )
+                    .await
+                    .is_err()
+                    {
+                        failure.message.push_str(
+                            " Ask a Den operator to repair your access to this saved Bear.",
+                        );
+                    }
+                }
+                let page = bear_new_form_context(&state, &form).await;
+                let mut response = render_template(
+                    &state,
+                    "bear/new.html",
+                    auth_session,
+                    context! {
+                        form, errors => validation_errors, provision_error => failure.message,
+                        saved_bear_slug => failure.saved_bear.map(|_| form.slug.trim()),
+                        ..page
+                    },
+                )
+                .await?;
+                *response.status_mut() = failure.status;
+                return Ok(response);
+            }
+        };
 
         bears_db::grant_membership(state.sqlx_pool(), user_id, id, Some(BEAR_ROLE_ADMIN)).await?;
 
@@ -1285,19 +1290,40 @@ async fn bear_edit_configuration_post(
         ));
     }
 
-    let (catalog_configured, catalog_models, _catalog_error) =
-        model_catalog_select_context(&state).await;
-    let catalog_fetch = catalog_configured.then(|| Ok::<_, CustomError>(catalog_models));
-
+    let mut availability_status = None;
     let mut validation_errors = ValidationErrors::new();
     if let Err(e) = form.validate() {
         validation_errors = e;
     }
 
     let default_model_trim = form.default_model.trim();
-    validate_default_model_for_catalog(&catalog_fetch, default_model_trim, &mut validation_errors);
-
     let default_model_opt = canonical_default_model_handle(default_model_trim);
+    if let Some(model) = default_model_opt.as_deref() {
+        let result: Result<(), CustomError> = async {
+            den_service::bears::model_configurations::validate_model_configuration(
+                state.sqlx_pool(),
+                model,
+                None,
+            )
+            .await?;
+            crate::model_availability::validate_model(
+                &state,
+                den_core::ids::BearId::new(bear.id),
+                model,
+            )
+            .await
+        }
+        .await;
+        if let Err(error) = result {
+            let Some((status, message)) = crate::model_availability::form_failure(&error) else {
+                return Err(error);
+            };
+            availability_status = Some(status);
+            let mut error = ValidationError::new("model_availability");
+            error.message = Some(message.into());
+            validation_errors.add("default_model", error);
+        }
+    }
 
     if validation_errors.is_empty() {
         bears_db::update_bear(
@@ -1347,7 +1373,7 @@ async fn bear_edit_configuration_post(
     }
 
     let page = bear_configuration_page_context(&state, &bear, &form).await;
-    render_template(
+    let mut response = render_template(
         &state,
         "bear/edit_configuration.html",
         auth_session,
@@ -1360,7 +1386,11 @@ async fn bear_edit_configuration_post(
             ..page
         },
     )
-    .await
+    .await?;
+    if let Some(status) = availability_status {
+        *response.status_mut() = status;
+    }
+    Ok(response)
 }
 
 #[derive(Debug, Deserialize, Validate)]

@@ -86,6 +86,8 @@ fn purpose_uses_resolved_configuration_and_member_readable_models() {
 
 #[test]
 fn models_lead_with_configuration_and_usage_not_disabled_member_forms() {
+    let disabled_control =
+        regex::Regex::new(r"<(?:form|input|button|select)\b[^>]*\bdisabled").unwrap();
     for can_manage_bear in [false, true] {
         let page = render(
             "bear/settings/models.html",
@@ -115,7 +117,11 @@ fn models_lead_with_configuration_and_usage_not_disabled_member_forms() {
         assert!(main.contains("<h3>Bear default configuration</h3>"));
         assert!(!main.contains("</h2></h2>"));
         assert!(!main.contains("<h3></h3>"));
-        assert!(!main.contains(" disabled"));
+        assert!(!disabled_control.is_match(main));
+        assert_eq!(
+            main.contains("value=\"config\" selected disabled"),
+            can_manage_bear
+        );
         assert_eq!(main.contains("<form"), can_manage_bear);
         assert_eq!(main.contains("Preserved &lt;draft&gt;"), can_manage_bear);
         if can_manage_bear {
@@ -277,7 +283,9 @@ fn saved_editors_show_failure_preserve_drafts_and_post_to_current_handle() {
         "bear/new.html",
         context! {saved_bear_slug => "saved", provision_error => "Initialization failed"},
     );
-    assert!(saved.contains("/bear/saved/edit/overview"));
+    assert!(saved.contains("/bear/saved/models"));
+    assert!(saved.contains("/bear/saved/advanced"));
+    assert!(saved.contains("Do not create it again"));
     assert!(!saved.contains(">Create Bear</button>"));
 }
 

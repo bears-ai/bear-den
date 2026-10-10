@@ -80,6 +80,24 @@ test("network exceptions never expose a URL, credentials or browser/proxy except
     assert.match(errors.failure(new Error("offline")), /Check your connection and retry/);
 });
 
+for (const [code, status, message] of [
+    ["model_missing", 400, "The selected model openai/gpt-6-sol is missing from this Bear's Bifrost catalog. Choose an available model in Bear → Models."],
+    ["virtual_key_rejected", 409, "This Bear's Bifrost virtual key could not authorize model access. Repair its gateway setup in Bear → Models."],
+    ["catalog_unavailable", 503, "The Bifrost model catalog could not be checked. Try again shortly."],
+]) {
+    test(`${code} displays model-specific recovery and the header reference without treating gateway auth as Den login`, async () => {
+        const res = response({ code, error: message, model: "openai/gpt-6-sol", request_id: "wrong-body-ref",
+            detail: "provider-password-secret-CANARY", virtual_key: "vk-web-fixture-secret-CANARY" }, status, "application/json", "REF-availability-exact");
+        assert.equal(errors.requiresLogin(res, "https://den.test"), false);
+        await assert.rejects(errors.readJson(res, "Could not send message"), (error) => {
+            assert.ok(error.message.includes(message));
+            assert.match(error.message, /Reference: REF-availability-exact$/);
+            assert.doesNotMatch(error.message, /wrong-body-ref|CANARY|vk-web|provider-password/);
+            return true;
+        });
+    });
+}
+
 test("login-required checks retain 401, redirected POST 405 and login-page redirect handling", () => {
     for (const item of [{ status: 401 }, { status: 405 }, { status: 200, redirected: true, url: "https://den.test/login?next=%2Fchat" }]) {
         assert.equal(errors.requiresLogin(item, "https://den.test"), true);

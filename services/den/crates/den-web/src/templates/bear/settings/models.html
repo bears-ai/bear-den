@@ -5,6 +5,8 @@
   <h2>Models</h2>
   {% if message %}<p role="status"><strong>{{ message | e }}</strong></p>{% endif %}
   {% if error %}<p class="form-errors" role="alert">{{ error | e }}</p>{% endif %}
+  {% if catalog_error %}<p class="form-errors" role="alert">{{ catalog_error | e }}</p>{% endif %}
+  <p class="form-hint">Model choices are verified with this Bear's Bifrost virtual key. Den catalog entries alone do not grant gateway access.</p>
 
   {% macro configuration_fields(fields, suffix) %}
   <label for="configuration-name-{{ suffix }}">Name</label>
@@ -30,7 +32,7 @@
     <label for="default-configuration">Default configuration</label>
     <select id="default-configuration" name="configuration_id">
       <option value=""{% if not default_selection %} selected{% endif %}>Inherit deployment default</option>
-      {% for view in configurations %}<option value="{{ view.configuration.id }}"{% if default_selection == view.configuration.id | string %} selected{% endif %}>{{ view.configuration.name | e }} · {{ view.configuration.model_handle | e }} · {{ view.effort_label | e }} · {{ view.status | e }}</option>{% endfor %}
+      {% for view in configurations %}<option value="{{ view.configuration.id }}"{% if default_selection == view.configuration.id | string %} selected{% endif %}{% if view.status == 'unavailable' %} disabled{% endif %}>{{ view.configuration.name | e }} · {{ view.configuration.model_handle | e }} · {{ view.effort_label | e }} · {{ view.status | e }}</option>{% endfor %}
     </select>
     <p class="form-hint">Applies on future turns. Hats may override this default; a conversation pin replaces the whole configuration, including reasoning.</p>
     <button type="submit">Save Bear default</button>

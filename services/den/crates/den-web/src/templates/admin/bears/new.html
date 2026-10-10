@@ -7,8 +7,9 @@
 <div class="box">
 <h3>New bear</h3>
 <p>Create a bear. Required: slug, prompt, model. Optional: initial user access.</p>
-{% if provision_error %}<p class="form-errors"><strong>Provisioning failed</strong> (bear saved): {{ provision_error | e }}</p>{% endif %}
-
+{% if provision_error %}<p class="form-errors" role="alert">{{ provision_error | e }}</p>{% endif %}
+{% if saved_bear_slug %}<p>The Bear remains saved. <a href="/bear/{{ saved_bear_slug | urlencode }}/models">Inspect its model and gateway setup</a>; do not create it again.</p>{% else %}
+{% if models_fetch_error %}<p class="form-hint">{{ models_fetch_error | e }}</p>{% endif %}
 <form method="post">
   {{ forms.input("slug", "Slug", "text", 'required maxlength="120"', form) }}
   {{ forms.input("name", "Name", "text", 'maxlength="255"', form) }}
@@ -27,7 +28,7 @@
     </select>
   </div>
   {% else %}
-  {{ forms.input("default_model", "Default model (required)", "text", 'required maxlength="255"', form) }}
+  {{ forms.input("default_model", "Proposed model", "text", 'required maxlength="255"', form) }}
   {% endif %}
 
   <label for="grant_user_id">Grant access to user (optional)</label>
@@ -49,5 +50,6 @@
 
   <button type="submit">Create bear</button>
 </form>
+{% endif %}
 </div>
 {% endblock %}

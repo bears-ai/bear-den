@@ -123,8 +123,11 @@ async fn identity_view(
             short_summary: hat.short_summary,
         })
         .collect::<Vec<_>>();
+    let catalog =
+        crate::model_availability::BearModelCatalog::load(&state, BearId::new(bear.id)).await?;
     let effective_model = super::settings::model_configurations::effective_model(
         state.sqlx_pool(),
+        &catalog,
         BearId::new(bear.id),
         None,
         &state.config.default_llm_model,

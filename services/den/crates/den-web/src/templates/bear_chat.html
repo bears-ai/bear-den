@@ -220,6 +220,7 @@ block head %} {{ super() }}
         };
         var source = sourceLabels[data.source] || "Inherited default";
         var unavailable = !data.effective_model;
+        var unverified = data.availability === "unverified";
         var effective = unavailable ? "unavailable" :
             (data.configuration_name ? data.configuration_name + " · " : "") +
             data.effective_model +
@@ -242,16 +243,16 @@ block head %} {{ super() }}
         }
         if (mode === "explicit" && !listedPin) {
             html.push('<option value="' + escapeHtml(selected) + '"' +
-                (unavailable ? " disabled" : "") + '>Pin · ' +
+                (unavailable || unverified ? " disabled" : "") + '>Pin · ' +
                 escapeHtml(selected || "missing model") +
-                (unavailable ? " · unavailable" : "") + "</option>");
+                (unavailable ? " · unavailable" : unverified ? " · availability unverified" : "") + "</option>");
         }
         select.innerHTML = html.join("");
         select.value = selected;
         select.title =
             mode === "explicit"
                 ? "Conversation pin: " + (selected || "missing model") +
-                    (unavailable ? " · unavailable" : " · reasoning model default")
+                    (unavailable ? " · unavailable" : unverified ? " · availability unverified" : " · reasoning model default")
                 : unavailable ? "Inherited default · unavailable" : "Inherited · " + source + ": " + effective;
         DEN_MODEL_AVAILABLE = true;
         syncModelSelectorDisabled();

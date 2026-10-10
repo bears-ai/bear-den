@@ -3,7 +3,10 @@
 //! This is a filter, not an authority source: callers must resolve the grant
 //! from canonical Den state, and the index may lag or omit entire scopes.
 
-use den_core::{config::Config, DenError};
+use den_core::{config::Config, ids::BearId, DenError};
+use sqlx::PgPool;
+
+use crate::recall::authenticated_embedder;
 use den_memory::scoped::MemoryReadGrant;
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -55,6 +58,7 @@ pub async fn recall_for_turn_with_grant<E: PassageEmbedder + ?Sized>(
 }
 
 pub async fn search_bear_memory_with_grant(
+    pool: &PgPool,
     config: &Config,
     bear_id: Uuid,
     grant: MemoryReadGrant,
@@ -64,10 +68,9 @@ pub async fn search_bear_memory_with_grant(
     let Some(qdrant) = QdrantRecall::from_config(config) else {
         return Ok(disabled_projection(DisabledRecallReason::QdrantUnset));
     };
-    let embedder = den_llm::EmbeddingClient::new(config);
-    if !embedder.is_enabled() {
+    let Some(embedder) = authenticated_embedder(pool, config, BearId::new(bear_id)).await? else {
         return Ok(disabled_projection(DisabledRecallReason::EmbeddingsUnset));
-    }
+    };
     recall_for_turn_with_grant(
         &qdrant,
         &embedder,

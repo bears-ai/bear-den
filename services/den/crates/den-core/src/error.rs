@@ -44,6 +44,7 @@ pub enum DenError {
     Email(String),
     NotFound(String),
     ValidationError(String),
+    ModelAvailability(crate::model_availability::ModelAvailabilityFailure),
 }
 
 impl std::error::Error for DenError {}
@@ -82,6 +83,7 @@ impl fmt::Display for DenError {
             DenError::Email(ref cause) => write!(f, "Email Error: {cause}"),
             DenError::NotFound(ref cause) => write!(f, "Not Found: {cause}"),
             DenError::ValidationError(ref cause) => write!(f, "Validation Error: {cause}"),
+            DenError::ModelAvailability(ref failure) => write!(f, "{failure}"),
         }
     }
 }
