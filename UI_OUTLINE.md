@@ -54,6 +54,12 @@
 ##### Connections
 ##### Network (resources)
 
+#### Cabinet awareness (planned)
+- Bear-level Cabinet capability/enablement settings
+- authorized access, review and retention summaries
+- links to the distinct Cabinet surface for live page details, content operations and page access/review policy; no duplicate inline Cabinet browser/editor
+- lifecycle blockers stay in Bear admin; readable Cabinet remediation opens on Cabinet without granting access to private evidence
+
 #### Docket
 #### People
 #### Activity
@@ -63,3 +69,15 @@
 - details
 - import
 - export
+
+## Cabinet surface (planned)
+
+Target, not current deployment: [Cabinet Phase 5](docs/roadmap/CABINET_IMPLEMENTATION_PLAN.md#phase-5--distinct-cabinet-surface-and-external-mcp).
+
+- distinct public hostname and dedicated Cabinet-only container, still using Den's shared implementation, identity/policy and canonical Postgres database
+- distinct Cabinet landing page and primary navigation: browse/search and page tree, reviews, your uploads and saved copies as authorized
+- page content/details, history, create/edit, organization, page membership/policy, review, lifecycle, sources and attachment/file workflows
+- explicit authorized links back to Den/Bear/Job context, not the full Bear/chat/Work/operator navigation rail
+- authenticated MCP access for external agent runtimes over the same Cabinet facade; not a second knowledge or permission store
+
+Docket retains Job→Mission reference and evidence controls, linking to Cabinet for the live page. Bear-specific Domains and private memory remain Bear-owned, not Cabinet Missions.

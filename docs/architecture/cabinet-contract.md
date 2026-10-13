@@ -13,6 +13,16 @@ This document is the provider-neutral contract for Cabinet: the typed identities
 - Every operation takes an **explicit actor scope** (user or Bear). The Phase 1 Bear provenance still records a compatibility stance; native tool admission and write eligibility use verified origin and governance rather than that label. No ambient identity.
 - Cabinet items are knowledge records. Artifact refs hold content payloads (ADR-0004). External sources stay external. Derived recall passages are rebuildable projections. These four never merge.
 
+## Planned surface separation (not implemented)
+
+The [implementation plan's Phase 5](../roadmap/CABINET_IMPLEMENTATION_PLAN.md#phase-5--distinct-cabinet-surface-and-external-mcp) targets a perceptually distinct Cabinet service: a dedicated container, public hostname, Cabinet-focused UI/navigation and authenticated MCP access for other agent runtimes. This is a new surface/composition of Den, not extraction of the Cabinet domain, identity or database.
+
+- The Cabinet-only process reuses the Den workspace's contract and facade with the same canonical Den Postgres database and migration owner. Native Bear tools, the human UI and MCP honor the same actor, policy, revision, artifact and provenance rules; no separate writable policy store or HTTP hop between internal callers and the facade is required.
+- Bear administration retains Cabinet capability configuration and authorized summaries/handoffs. Live Cabinet page details and manipulation belong to the new surface; Docket retains its Job references and evidence ownership. Cross-host links are not access grants.
+- The dedicated composition must exclude Bear runtime/memory initialization and canonical Bear SQLite access. Existing web/worker flags are not evidence of that isolation. External MCP authentication must establish actor/delegation at the boundary, never accept arbitrary actor identity from tool arguments.
+
+These are target constraints, not a claim that the distinct hostname/container, navigation or MCP endpoint is available today. Current human routes remain in Den's `/cabinet` web surface.
+
 ## Identities
 
 All Cabinet refs are Den-minted, opaque, and stable for the entity lifetime. Following the artifact-ref convention, a ref is a fixed prefix plus a 32-character lowercase hex suffix. Models and clients never invent refs.

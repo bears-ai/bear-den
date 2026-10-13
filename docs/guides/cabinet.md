@@ -13,6 +13,14 @@ work. The web UI supports child pages, sibling order and inherited access. A Job
 Contract and design: [cabinet-contract.md](../architecture/cabinet-contract.md).
 Plan and phase status: [CABINET_IMPLEMENTATION_PLAN.md](../roadmap/CABINET_IMPLEMENTATION_PLAN.md).
 
+## Planned distinct Cabinet surface
+
+**Planned, not available today:** [Phase 5](../roadmap/CABINET_IMPLEMENTATION_PLAN.md#phase-5--distinct-cabinet-surface-and-external-mcp) targets a dedicated Cabinet container and hostname, with knowledge-focused navigation rather than Den's Bear/chat/Work/admin rail. It remains part of Den, using the shared Cabinet facade, identity/policy and canonical Postgres database; it is not a second knowledge store.
+
+Bear administration will remain Cabinet-aware: capability settings and authorized status/summaries stay there, while live page details, content editing, organization, access/review policy and file workflows open on the Cabinet surface. Docket continues to own Job→Mission references and evidence. Authentication and cross-host links must preserve existing permissions, including private attachments and saved copies.
+
+The same composition will expose an authenticated MCP adapter for other agent runtimes; supported operations and the credential/delegation flow still need implementation and validation. No external MCP endpoint or cross-host SSO is claimed by this guide. Until that phase ships, use the current `/cabinet` routes described below.
+
 ## Using the wiki (people)
 
 Open **`/cabinet`** while logged in.

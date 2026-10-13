@@ -1,10 +1,12 @@
 # Cabinet implementation plan
 
-**Status:** In progress — Phase 0 landed (contract doc + `den-cabinet` types/checks); Phase 1 implemented (Postgres storage + `den_service::cabinet` facade, `cabinet_search/read/history/create/update/source_link/lifecycle` tools with the per-Bear `bears.cabinet_enabled` gate, person-only item deletion, `/cabinet` wiki UI, [user guide](../guides/cabinet.md)); Phase 2 page hierarchy, inherited access, Bear-write review, web administration, Docket Mission annotations and private immutable document copies are implemented in the local branch. Phase 3 artifact linking/detach, retention, permission-rechecking downloads and bounded human uploads with configured S3 storage are implemented; derived recall remains open. Phase 4 remains open.
-**Scope:** Shared, human-editable, policy-controlled knowledge for Den.
+**Status:** In progress — Phase 0 landed (contract doc + `den-cabinet` types/checks); Phase 1 implemented (Postgres storage + `den_service::cabinet` facade, `cabinet_search/read/history/create/update/source_link/lifecycle` tools with the per-Bear `bears.cabinet_enabled` gate, person-only item deletion, `/cabinet` wiki UI, [user guide](../guides/cabinet.md)); Phase 2 page hierarchy, inherited access, Bear-write review, web administration, Docket Mission annotations and private immutable document copies are implemented in the local branch. Phase 3 artifact linking/detach, retention, permission-rechecking downloads and bounded human uploads with configured S3 storage are implemented; derived recall remains open. Phase 4 remains open. Phase 5 is planned: a distinct Cabinet UI/hostname and dedicated Cabinet-only container, plus an external MCP adapter, without extracting Cabinet's domain or database from Den.
+**Scope:** Shared, human-editable, policy-controlled knowledge for Den, with a perceptually distinct human and external-agent surface.
 **Decisions (2026-08):** one Cabinet layer per Den; humans and authorized Bears edit directly (true wiki — every write publishes an immutable version, revision history is the safety net); review/approval is Phase 2 policy, not a Phase 1 gate; Phase 1 storage is Den Postgres behind the provider-neutral facade.
 **Decision (2026-09) — one structural concept:** Cabinet has a **page tree** and nothing else. There are no collection or Mission containers: a Mission *is* a page (optionally `kind: mission`) carrying a goal description, whose child pages are the grouped material. Access policy and membership live on pages and inherit down the tree, narrowing only. A Docket Job may name a page's `cabinet_ref`; Cabinet stores no Job identity, so work management never leaks into the knowledge layer.
+**Surface direction (2026-10-13, planned):** Cabinet should feel like a distinct service to people and external agent runtimes: its own hostname, Cabinet-focused navigation, and a dedicated container. This is a surface/deployment separation, not extraction from Den: reuse the Den workspace's Cabinet implementation, authorization, identity and canonical Postgres database. Bear administration remains Cabinet-aware, but live Cabinet page details and content manipulation belong to the Cabinet surface.
 **Related architecture:** [Cabinet contract](../architecture/cabinet-contract.md), [Bear charter and Cabinet Missions](../architecture/bear-charter-and-cabinet-missions.md), [ADR-0004 — Artifacts, Garage, and Cabinet separation](../decisions/adr-0004-artifacts-garage.md)
+**Topic home:** [Cabinet guide](../guides/cabinet.md) (current behavior and linked planned surface).
 
 ## Boundary
 
@@ -14,10 +16,15 @@ Cabinet is **not** the reading stack, a bookmark manager, a highlight store, or 
 
 Den owns the agent-facing facade, authorization, and policy. The backing provider is an implementation decision behind that boundary; no active plan assumes Outline, Karakeep, or another provider is Cabinet itself.
 
+The planned Cabinet container is another narrow composition of this same Den implementation. Its human UI and MCP adapter call the shared Cabinet facade with authenticated, explicit actor scope; existing Den Bear tools continue to use that facade. Sharing the canonical Den Postgres database is intentional. This does not require a new Cabinet HTTP service between internal callers and the facade, a separately owned database, or an MCP-based internal application protocol. A dedicated container is the end goal, not merely a second hostname proxying the full Den web app.
+
 ## Goals
 
 - Give humans a durable, editable shared-knowledge surface.
 - Give authorized Bears a bounded Den-mediated API for finding, reading, creating, and updating Cabinet material.
+- Give people a distinct Cabinet hostname and knowledge-focused UI, deployed in a dedicated container without extracting the shared Den domain implementation.
+- Let other agent runtimes interact through an authenticated MCP adapter over the same operations, policy and provenance rules.
+- Keep Bear administration Cabinet-aware without duplicating Cabinet detail views or content-editing workflows.
 - Support pages, page hierarchy, source links, metadata, and artifact attachments without conflating them.
 - Preserve provenance, review state, authorization, and immutable citations/snapshots where needed.
 
@@ -27,6 +34,8 @@ Den owns the agent-facing facade, authorization, and policy. The backing provide
 - Implementing research/reader synchronization or owning third-party reading data.
 - Defining artifact blob storage or derived-vector indexing internals.
 - Selecting a provider before the Cabinet contract and constraints are validated.
+- Extracting Cabinet into an autonomous data/identity service, duplicating policy or state, or creating a second Cabinet per Den.
+- Running a second full Den runtime or sharing canonical Bear SQLite files between processes to support the Cabinet surface.
 
 ## Phases
 
@@ -83,6 +92,56 @@ Den owns the agent-facing facade, authorization, and policy. The backing provide
 - Keep provider-specific adapters behind the Phase 0 contract.
 
 **Exit:** provider changes do not change model tool semantics, authority checks, or Cabinet identities.
+
+### Phase 5 — Distinct Cabinet surface and external MCP
+
+**Status:** Planned; the current UI remains `/cabinet` in Den's shared web shell. This phase is not delivered by the existing `RUN_WEB`/`RUN_API`/`RUN_WORKERS` switches. It can proceed alongside the remaining recall/provider work; it does not depend on extracting storage or completing a provider migration.
+
+#### 5a — Narrow composition and dedicated deployment
+
+- Add a typed Cabinet-only startup composition in the Den workspace, reusing Cabinet contract/facade/storage code rather than forking it. Whether packaged as a dedicated entrypoint or a mode of the existing image is an implementation choice; the runtime boundary must be explicit and testable.
+- Deploy that composition in a dedicated Cabinet container with its own public hostname. Use the same canonical Den Postgres database and migration set, preserving page/version refs, memberships, policy, artifact links and transaction semantics. No data copy or provider migration is required for the surface split.
+- Do not initialize Bear turns, BearWire, chat, Work dispatch, reflection, sandbox infrastructure or `MemoryStoreManager` in the Cabinet-only process; do not mount/open canonical Bear SQLite files there. Disabling workers in a second full Den process is not an acceptable substitute. Preserve the [memory write topology](../guides/infrastructure-and-ops.md#memory-write-topology).
+- Keep migrations under the existing deploy-time migration owner; the Cabinet process verifies schema compatibility rather than independently evolving it. Coordinate Den/Cabinet release compatibility and budget both processes' Postgres connections.
+- Assign one canonical owner for Cabinet upload recovery and other background work; keep the existing owner until explicitly moved. A new surface must not accidentally start another general Den worker set or duplicate cleanup scheduling/state. Reuse existing artifact/storage services and configuration for authorized byte access.
+- Keep deployment compatible with the single root Compose file. A future dedicated service definition requires explicit approval before modifying `docker-compose.yaml`; this plan makes no deployment/configuration changes.
+
+#### 5b — Cabinet identity, navigation and route ownership
+
+- Provide a distinct Cabinet shell and landing page. At minimum its primary navigation is Cabinet-focused: browse/search and page tree, reviews, your uploads and saved copies as authorized. Do not inherit Den's Bear/chat/Work/operator rail. An explicit return link to Den/Bear administration is appropriate; separate navigation does not grant separate authority.
+- Make the Cabinet surface canonical for live page content/detail views, history, creation/editing, organization, page membership/policy, version review, lifecycle, source links and attachment upload/inspection/download. Reuse existing handlers/application operations beneath surface-specific routing and templates; do not keep two independently maintained Cabinet workflows.
+- Include the supporting login/logout/account handoff, assets and attachment byte routes needed to complete those workflows on the Cabinet origin. Route mounting and the hostname root landing path are implementation choices, not new page identity schemes.
+- Use one configured Cabinet public origin and a shared typed URL resolver for cross-surface links, including page/version/review/attachment links and saved-copy remediation. Bear management, Docket Mission links, review entry points and deletion blockers must link to the correct authorized Cabinet destination rather than hardcoding local `/cabinet` paths.
+- Preserve existing Den Cabinet links through deliberate compatibility handling: safe GET links can redirect, while legacy mutating endpoints must be removed or explicitly retired rather than blindly redirecting POST requests across hosts. Handle missing/unavailable Cabinet origins honestly; never fall back to a second inline editor.
+- Keep browser sessions and credentials scoped to the correct origin; host-only secure cookies are the default. Establish explicit authentication/return-link handling for Den ↔ Cabinet, including unrelated domains, without requiring broad cookie sharing. Shared Postgres identity/session storage alone is not browser SSO. Validate return destinations, CSRF/origin boundaries and the independent authorization of same-origin attachment byte requests.
+
+#### Bear administration remains Cabinet-aware
+
+| Surface | Retained responsibility | Cabinet handoff |
+|---|---|---|
+| Bear administration | Configure Bear-level Cabinet capability/enablement; show authorized access/review/retention summaries and actionable status | Open Cabinet for page details, content, history, page policy/membership and content operations |
+| Docket/Job UI | Own Job→Mission page annotations, Job evidence and existing evidence/capture authorization | Open the referenced live page on Cabinet; any selector is an access-filtered reference picker, not another page browser/editor |
+| Bear deletion/lifecycle | Own deletion preview, confirmation and blockers without disclosing private evidence | Link readable Cabinet-owned upload/saved-copy remediation to Cabinet; no access elevation or borrowed private-copy ownership |
+| Cabinet UI | Own knowledge browsing, detail and manipulation workflows | Link back to the relevant Bear/Job when authorized; do not absorb Bear capability, Job state or runtime administration |
+
+Bear-specific Domains and private memory remain under their existing Bear-owned boundaries, not Cabinet Missions. Summaries and links are projections over canonical state, not new editable copies of page policy or membership. Surface handoffs preserve existing page and artifact authorization, including private-copy ownership; no Den/Bear admin shortcut may create borrowed private-copy access.
+
+#### 5c — Authenticated MCP for external runtimes
+
+- Expose a network-accessible MCP adapter from the Cabinet-only composition over the same typed operations used by the UI and native Den tools. MCP is an external protocol edge, not the internal transport the UI or Bear tools must use.
+- Resolve authenticated principals and delegated authority at the boundary into typed actor scope. External runtimes may act on a person's delegated authority or a supported explicitly provisioned agent identity; they do not become Bears by supplying a `bear_id`, and tool arguments cannot select arbitrary actor identity. Select and document the supported credential/delegation flow before enabling external writes.
+- Use descriptor-owned operation names, schemas, audiences and permission metadata rather than maintaining independent MCP aliases/allowlists. Preserve existing native tool naming and admission rules; an MCP connection is not an ACP armature or a Den run.
+- Define the initial read/write/history/source operation set explicitly. Apply the same current membership, Bear enablement where applicable, review requirements, person-only deletion, optimistic version conflicts and attachment privacy as the facade. Do not advertise every human workflow as an agent tool merely because the UI supports it.
+- Audit principal, delegation/client provenance and mutations without inventing a native Bear run or weakening review/retention checks. Document token audience, revocation, transport/session protections and error semantics; enforce fresh operation authorization rather than treating MCP connection establishment as a durable permission grant.
+
+#### Delivery checks / exit
+
+- [ ] A dedicated Cabinet container serves its own hostname and distinct navigation while Den remains the single domain/schema owner; an edit is visible to native Den Cabinet tools and the reverse without synchronization or duplicate state.
+- [ ] Cabinet-only startup has no Bear runtime/memory initialization or SQLite mount, no unintended Den routes and no duplicate migration/general-worker ownership. A two-process startup test proves Cabinet upload recovery runs only in its designated owner and remains available after old routes are retired; web composition must not start it implicitly in both processes. Postgres readiness, storage-unavailable behavior and coordinated release/rollback are documented and tested.
+- [ ] Bear administration still configures Cabinet capability and shows authorized status, but live Cabinet details/manipulation use the new surface. Docket references/evidence remain Docket-owned; cross-host page, review, attachment and lifecycle-remediation links work without widening access.
+- [ ] Browser tests on distinct origins cover authentication/return paths, Cabinet navigation, stale edits, reviews, uploads/previews/downloads, unavailable service behavior and legacy-link handling. Revocation and private-content non-disclosure hold across both surfaces.
+- [ ] An external MCP client can authenticate and perform the supported Cabinet operations without a Den-native run. Tests cover actor spoofing, credential revocation, inaccessible-page non-disclosure, review/enablement policy, concurrent-edit conflicts and audit provenance.
+- [ ] Guides describe the actually shipped hostname, login, navigation, MCP setup and operations; current `/cabinet` documentation is replaced only after delivery is verified. No surface-only milestone is counted as completion of recall or provider work.
 
 ## Documentation obligations
 

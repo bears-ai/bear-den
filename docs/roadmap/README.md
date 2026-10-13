@@ -10,6 +10,10 @@ The older [planning hub](PLAN.md) contains useful priorities and delivery histor
 
 - [Bears app client evolution](MACOS_BEARS_CLIENT_APP_PLAN.md) — agreed separation of human administration/Docket APIs, a conversation client and optional local armature management. UI design and AHP-versus-AG-UI evaluation remain open; implementation is gated on review and approval. Real-time voice/video and external agent interoperability are excluded.
 
+## Active product delivery
+
+- [Cabinet implementation](CABINET_IMPLEMENTATION_PLAN.md) — shared Den knowledge, page policy/review, artifacts and recall. [Phase 5](CABINET_IMPLEMENTATION_PLAN.md#phase-5--distinct-cabinet-surface-and-external-mcp) adds the planned distinct Cabinet hostname/UI and dedicated Cabinet-only container sharing Den Postgres, plus an authenticated external MCP adapter; it does not extract Cabinet from Den. Bear administration remains Cabinet-aware and hands off live content details/manipulation. Current behavior and delivery caveats live in the [Cabinet guide](../guides/cabinet.md).
+
 ## Active contract and validation work
 
 - [Hats and session memory boundaries](HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md) — validate the memory and authority contract and hat UX with one isolated workflow before any general migration or stance removal. Includes the [approved credential-mediation and external key-management direction](HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md#runtime-mediated-credentials-and-external-key-management-planned): runtime-wrapped credential use, `secrecy`/`zeroize`, existing Connections ownership, and one external backend/vertical slice before expansion. Backend selection and implementation remain pending. The current-system evidence and target are separated in the [Bear memory and hats topic](../topics/bear-memory-hats.md).
