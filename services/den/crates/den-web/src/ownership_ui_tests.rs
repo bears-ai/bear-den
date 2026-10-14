@@ -34,6 +34,7 @@ fn render(name: &str, values: Value) -> String {
             ..values
         })
         .unwrap_or_else(|error| panic!("render {name}: {error:#}"))
+        .replace("&#x2f;", "/")
 }
 
 #[test]

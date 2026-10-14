@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Discussion: {{ item_title }}{% endblock %}
+{% block breadcrumb %}{% include "cabinet/_breadcrumb.html" %} / Discussion{% endblock %}
+{% block content %}
+<div class="usability-work cabinet-page">
+    {% include "cabinet/_page_tabs.html" %}
+    <h1>Discussion: {{ item_title | e }}</h1>
+    <p class="cabinet-notice">Current page discussion — shared across all revisions, not a discussion of the revision you previously viewed. Posts do not publish or change page content.</p>
+    <section id="discussion-entries" aria-labelledby="discussion-heading">
+        <h2 id="discussion-heading">Latest messages</h2>
+        <p class="form-hint">Up to the latest 100 messages, oldest first. Messages are append-only; they cannot be edited or deleted here.</p>
+        {% if entries %}
+        <ol class="cabinet-discussion-list">
+            {% for entry in entries %}
+            <li id="{{ entry.discussion_ref }}">
+                <article class="box">
+                    <p class="cabinet-message-meta"><strong>{{ entry.author_name | default(author_labels[loop.index0], true) | e }}</strong> · <time datetime="{{ entry.authored_at }}" title="{{ entry.authored_at }}">{{ entry.authored_at | timeago }}</time></p>
+                    <div class="cabinet-discussion-content">{{ entry.content | e }}</div>
+                </article>
+            </li>
+            {% endfor %}
+        </ol>
+        {% else %}<p>No messages yet.</p>{% endif %}
+    </section>
+    {% if error %}<p class="form-errors" id="discussion-error" role="alert">{{ error | e }}</p>{% endif %}
+    {% if can_post %}
+    <form method="post" action="/cabinet/{{ cabinet_ref }}/discussion" class="cabinet-discussion-form">
+        <label for="discussion-content">Add to the discussion</label>
+        <textarea id="discussion-content" name="content" rows="6" required maxlength="16000" aria-describedby="discussion-help{% if error %} discussion-error{% endif %}"{% if error %} aria-invalid="true"{% endif %}>{{ draft | e }}</textarea>
+        <p id="discussion-help" class="form-hint">Plain text, at most 16,000 characters. Posted as your signed-in account, visible to the current page audience. Write access is checked again when you post.</p>
+        <button type="submit">Post message</button>
+    </form>
+    {% else %}
+    <p>{% if archived %}This page is archived. Restore it before adding a message.{% else %}This page is read only for you. Page write access is required to post.{% endif %}</p>
+    {% if draft %}<label for="discussion-preserved-draft">Your unposted draft</label><textarea id="discussion-preserved-draft" rows="6" readonly>{{ draft | e }}</textarea>{% endif %}
+    {% endif %}
+</div>
+{% endblock %}

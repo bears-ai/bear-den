@@ -38,7 +38,7 @@
 <section class="box">
   <h2>Recent Jobs</h2>
   {% if overview_summary.jobs %}<ul class="den-record-list">{% for job in overview_summary.jobs %}<li><a href="/bear/{{ bear.slug | urlencode }}/jobs/{{ job.id }}">{{ job.goal | e }}</a><span class="form-hint">{{ job.status | e }}</span></li>{% endfor %}</ul>{% else %}<p>No visible Jobs yet.</p>{% endif %}
-  <p class="button-row"><a class="button-link" href="/bear/{{ bear.slug | urlencode }}/jobs/new">New Job</a><a href="/bear/{{ bear.slug | urlencode }}/jobs">All Jobs</a><a href="/cabinet">Shared pages in Cabinet</a></p>
+  <p class="button-row"><a class="button-link" href="/bear/{{ bear.slug | urlencode }}/jobs/new">New Job</a><a href="/bear/{{ bear.slug | urlencode }}/jobs">All Jobs</a><a href="{{ "/cabinet" | cabinet_url }}">Shared pages in Cabinet</a></p>
 </section>
 {% if can_manage_bear %}
 <section class="box">

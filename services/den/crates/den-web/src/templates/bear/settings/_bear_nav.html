@@ -18,7 +18,7 @@
     <li><a href="/bear/{{ bear.slug | urlencode }}/connections"{% if nav_active == "connections" %} aria-current="page"{% endif %}>Connections</a></li>
     <li><a href="/bear/{{ bear.slug | urlencode }}/resources"{% if nav_active == "resources" %} aria-current="page"{% endif %}>What it can use</a></li>
     <li><a href="/bear/{{ bear.slug | urlencode }}/jobs"{% if nav_active == "docket" %} aria-current="page"{% endif %}>Jobs</a></li>
-    <li><a href="/cabinet">Cabinet</a></li>
+    <li><a href="{{ "/cabinet" | cabinet_url }}">Cabinet</a></li>
     {% if can_manage_bear %}<li><a href="/bear/{{ bear.slug | urlencode }}/activity"{% if nav_active == "activity" %} aria-current="page"{% endif %}>Activity</a></li>{% endif %}
     <li><a href="/bear/{{ bear.slug | urlencode }}/people"{% if nav_active == "people" %} aria-current="page"{% endif %}>People</a></li>
   </ul>

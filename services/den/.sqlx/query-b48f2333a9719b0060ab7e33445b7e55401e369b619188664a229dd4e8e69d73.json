@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE cabinet_items SET lifecycle='archived' WHERE cabinet_ref=$1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b48f2333a9719b0060ab7e33445b7e55401e369b619188664a229dd4e8e69d73"
+}

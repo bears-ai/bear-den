@@ -4,7 +4,8 @@
 # Base Directory: `.` (repo root), Compose file: `docker-compose.yaml`.
 #
 # Default stack: `bears-bifrost`, `bears-den`, `bears-sandbox-provider` +
-# `bears-sandbox-engine` (work sandboxes), optional `bears-postgres` (profile `bundled`).
+# `bears-sandbox-engine` (work sandboxes), optional `bears-postgres` (profile `bundled`)
+# and the dedicated `bears-cabinet` surface (profile `cabinet`; set CABINET_URL).
 # The Den-native in-process agent loop and per-Bear SQLite (`BEAR_SQLITE_DATA_DIR` /
 # `bears-den-sqlite-data`) are the only runtime; Letta/Codepool/MemFS have been removed.
 #
@@ -205,9 +206,13 @@ services:
                 condition: service_completed_successfully
             bears-bifrost:
                 condition: service_healthy
+            bears-cabinet:
+                condition: service_healthy
+                required: false
         command: ["serve"]
         environment:
             BEARS_INSTANCE_SUFFIX: ${BEARS_INSTANCE_SUFFIX:-}
+            CABINET_URL: ${CABINET_URL:-${SERVICE_URL_CABINET:-}}
             BEAR_SQLITE_DATA_DIR: ${BEAR_SQLITE_DATA_DIR:-/var/lib/den/bear-sqlite}
             DATABASE_URL: ${DATABASE_URL:-SETME}
             DB_MAX_CONNECTIONS: ${DB_MAX_CONNECTIONS:-5}
@@ -290,6 +295,63 @@ services:
             - "${DEN_PORT:-3000}"
             - "${DEN_API_PORT:-3001}"
 
+    # Enable the cabinet profile only after configuring its public origin. The
+    # surface is Den code over shared Postgres, not another Bear runtime or store.
+    bears-cabinet:
+        hostname: bears-cabinet${BEARS_INSTANCE_SUFFIX:-}
+        profiles:
+            - cabinet
+        image: ${DEN_IMAGE:-bears-den:${SOURCE_COMMIT:-local}}
+        pull_policy: always
+        restart: unless-stopped
+        depends_on:
+            bears-den-migrate:
+                condition: service_completed_successfully
+        command: ["cabinet-serve"]
+        read_only: true
+        tmpfs:
+            - /tmp:rw,noexec,nosuid,size=32m
+        environment:
+            BEARS_INSTANCE_SUFFIX: ${BEARS_INSTANCE_SUFFIX:-}
+            DATABASE_URL: ${DATABASE_URL:-SETME}
+            DB_MAX_CONNECTIONS: ${CABINET_DB_MAX_CONNECTIONS:-${DB_MAX_CONNECTIONS:-5}}
+            DB_ACQUIRE_TIMEOUT_SECS: ${DB_ACQUIRE_TIMEOUT_SECS:-3}
+            DB_IDLE_TIMEOUT_SECS: ${DB_IDLE_TIMEOUT_SECS:-600}
+            JWT_SECRET: ${JWT_SECRET:-SETME}
+            DEN_SECRET_ENCRYPTION_KEY: ${DEN_SECRET_ENCRYPTION_KEY:-}
+            CABINET_URL: ${CABINET_URL:-${SERVICE_URL_CABINET:-}}
+            WEB_SERVER_URL: ${DEN_WEB_ORIGIN:-${SERVICE_URL_DEN:-SETME}}
+            API_SERVER_URL: ${DEN_API_ORIGIN:-${SERVICE_URL_DEN:-SETME}}
+            PORT: ${CABINET_PORT:-3000}
+            RUST_LOG: ${RUST_LOG:-info}
+            DEN_GIT_SHA_OVERRIDE: ${DEN_GIT_SHA_OVERRIDE:-${SOURCE_COMMIT:-}}
+            APP_DISPLAY_NAME: ${APP_DISPLAY_NAME:-Bear Den}
+            APP_SLUG: ${APP_SLUG:-bears-den}
+            TEMPLATES_DIR: ${TEMPLATES_DIR:-crates/den-web/src/templates}
+            RUN_WEB: "false"
+            RUN_API: "false"
+            RUN_WORKERS: "false"
+            RUN_SANDBOX: "false"
+            S3_ENDPOINT: ${S3_ENDPOINT:-}
+            S3_BUCKET: ${S3_BUCKET:-}
+            S3_REGION: ${S3_REGION:-garage}
+            S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+            S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+            S3_PUBLIC_URL: ${S3_PUBLIC_URL:-}
+            S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+        healthcheck:
+            test:
+                [
+                    "CMD-SHELL",
+                    "wget --no-verbose --tries=1 -O /dev/null http://127.0.0.1:$${PORT:-3000}/health/ready || exit 1",
+                ]
+            interval: 30s
+            timeout: 15s
+            retries: 5
+            start_period: 30s
+        expose:
+            - "${CABINET_PORT:-3000}"
+
     bears-den-migrate:
         # Must use the same CI-published image as bears-den so migrations and the
         # serving binary always come from one artifact.
@@ -306,6 +368,7 @@ services:
         command: ["migrate"]
         environment:
             BEARS_INSTANCE_SUFFIX: ${BEARS_INSTANCE_SUFFIX:-}
+            CABINET_URL: ${CABINET_URL:-${SERVICE_URL_CABINET:-}}
             BEAR_SQLITE_DATA_DIR: ${BEAR_SQLITE_DATA_DIR:-/var/lib/den/bear-sqlite}
             DATABASE_URL: ${DATABASE_URL:-SETME}
             DB_MAX_CONNECTIONS: ${DB_MAX_CONNECTIONS:-5}

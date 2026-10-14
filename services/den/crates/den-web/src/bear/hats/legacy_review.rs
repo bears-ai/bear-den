@@ -94,7 +94,7 @@ async fn render_review(
     let hat = manage::get_hat(state.sqlx_pool(), bear_id, hat_id).await?;
     let page = legacy_review::inventory_page(
         state.sqlx_pool(),
-        &state.memory_stores,
+        state.memory_stores()?,
         bear_id,
         reviewer,
         hat_id,
@@ -105,7 +105,7 @@ async fn render_review(
         Some(
             legacy_review::candidate(
                 state.sqlx_pool(),
-                &state.memory_stores,
+                state.memory_stores()?,
                 bear_id,
                 reviewer,
                 hat_id,
@@ -117,7 +117,7 @@ async fn render_review(
         None
     };
     let current_head = if let Some(ref selected) = selected {
-        let store = state.memory_stores.store_for_bear(bear.id).await?;
+        let store = state.memory_stores()?.store_for_bear(bear.id).await?;
         den_memory::hat_promotion::current_hat_head(
             &store,
             hat_id,
@@ -172,7 +172,7 @@ async fn review_post(
     }
     let result = legacy_review::reauthor(
         state.sqlx_pool(),
-        &state.memory_stores,
+        state.memory_stores()?,
         BearId::new(bear.id),
         UserId::new(session_user(&auth).await?.id),
         LegacyReviewDecision {

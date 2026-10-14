@@ -67,7 +67,7 @@ pub(crate) async fn pending_memory_reviews(
     state: &AppState,
     bear_id: Uuid,
 ) -> Result<i64, CustomError> {
-    let store = state.memory_stores.store_for_bear(bear_id).await?;
+    let store = state.memory_stores()?.store_for_bear(bear_id).await?;
     let mut total = 0;
     for status in ["pending", "needs_human_review"] {
         total +=

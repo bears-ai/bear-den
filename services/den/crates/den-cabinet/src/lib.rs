@@ -8,12 +8,14 @@
 //! provider and client must honor. No storage, transport, or policy engine
 //! lives here — the Phase 1 facade builds on these types.
 
+pub mod discussion;
 pub mod error;
 pub mod ops;
 pub mod records;
 pub mod refs;
 pub mod scope;
 
+pub use discussion::{DiscussionEntry, MAX_DISCUSSION_CHARS};
 pub use error::{CabinetError, ContractViolation};
 pub use ops::{
     ArchiveItemRequest, CreateItemRequest, HistoryRequest, ItemSummary, LinkAttachmentRequest,
@@ -27,7 +29,7 @@ pub use records::{
     ReviewRecord, ReviewState, SourceKind, SourceLink, SourceRole,
 };
 pub use refs::{
-    CabinetAttachmentRef, CabinetCollectionRef, CabinetItemRef, CabinetReviewRef, CabinetSourceRef,
-    CabinetVersionRef, MissionRef,
+    CabinetAttachmentRef, CabinetCollectionRef, CabinetDiscussionRef, CabinetItemRef,
+    CabinetReviewRef, CabinetSourceRef, CabinetVersionRef, MissionRef,
 };
 pub use scope::{Actor, ActorScope, Authority, AuthorizationOutcome, DenialReason};

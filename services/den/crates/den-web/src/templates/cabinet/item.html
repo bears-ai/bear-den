@@ -1,19 +1,20 @@
 {% extends "base.html" %}
 {% block title %}{{ item_title }}{% endblock %}
-{% block breadcrumb %}<a href="/">Bears</a> / <a href="/cabinet">Cabinet</a>{% endblock %}
+{% block breadcrumb %}{% include "cabinet/_breadcrumb.html" %}{% endblock %}
 {% block content %}
-<div class="usability-work">
-<p><a href="/cabinet">← Cabinet</a></p>
+<div class="usability-work cabinet-page">
+{% include "cabinet/_page_tabs.html" %}
 
 {% if message %}
-<p><strong>{{ message }}</strong></p>
+<p role="status"><strong>{{ message | e }}</strong></p>
 {% endif %}
 
-{% if review=="pending" %}<p role="status"><strong>Pending review — not published.</strong></p>{% endif %}
+{% if review=="pending" %}<p role="status"><strong>Pending review — not published.</strong></p>{% elif review=="rejected" %}<p role="status"><strong>Rejected version — not published.</strong></p>{% endif %}
 {% if not is_current %}
 <p>
     <strong>You are viewing revision {{ revision }}, not the current version.</strong>
     {% if has_published %}<a href="/cabinet/{{ cabinet_ref }}">View current</a>{% else %}No version has been published yet.{% endif %}
+        Page access and maintenance controls reflect current policy, not this revision's historical audience.
 </p>
 {% endif %}
 
@@ -21,13 +22,13 @@
 <p>
     <strong>This page is archived.</strong>
 </p>
-<form method="post" action="/cabinet/{{ cabinet_ref }}/restore">
+{% if page.can_write %}<form method="post" action="/cabinet/{{ cabinet_ref }}/restore">
     <button type="submit">Restore</button>
-</form>
+</form>{% endif %}
 {% endif %}
 
 <h1>{{ item_title | e }}</h1>
-<p class="button-row">{% if is_current and lifecycle == "active" and page.can_write %}<a class="button-link" href="/cabinet/{{ cabinet_ref }}/edit">Edit page</a>{% endif %}<a href="/cabinet/{{ cabinet_ref }}/history">Versions &amp; authors</a><a href="#sources">Sources</a></p>
+<p class="button-row">{% if is_current and lifecycle == "active" and page.can_write %}<a class="button-link" href="/cabinet/{{ cabinet_ref }}/edit">Edit page</a>{% endif %}{% if not is_current %}<a href="/cabinet/{{ cabinet_ref }}/discussion">Discuss the current page</a>{% endif %}<a href="#sources">Sources</a></p>
 <article>
 {{ content | markdown }}
 </article>
@@ -139,15 +140,15 @@
 <details class="box"><summary>Page history details &amp; maintenance</summary>
 <hr>
 <p>
-    Revision {{ revision }} · {{ authored_at | timeago }} ·
-    {% if authored_by.actor_kind == "bear" %}by a Bear ({{ authored_by.stance }} stance){% else %}by a person{% endif %}
+    <a href="/cabinet/{{ cabinet_ref }}?version={{ version_ref }}">Link to revision {{ revision }}</a> · {{ authored_at | timeago }} ·
+    {{ author_label | default("Author not recorded", true) | e }}
 </p>
-{% if is_current and lifecycle == "active" %}
+{% if is_current and lifecycle == "active" and page.can_write %}
 <form method="post" action="/cabinet/{{ cabinet_ref }}/archive">
     <label><input type="checkbox" required>Archive this page from active browsing; published history remains available.</label><button type="submit">Archive page</button>
 </form>
 {% endif %}
-{% if is_current and lifecycle != "deleted" %}
+{% if is_current and lifecycle != "deleted" and page.can_write %}
 <form method="post" action="/cabinet/{{ cabinet_ref }}/delete">
     <label><input type="checkbox" required>Delete this page from Cabinet for everyone. Existing revision citations remain, but ordinary navigation and access to this subtree stop. This does not erase independent saved copies. Bears cannot delete pages.</label>
     <button type="submit">Delete page</button>

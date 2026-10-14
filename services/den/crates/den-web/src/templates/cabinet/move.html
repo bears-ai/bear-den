@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Review page move{% endblock %}
-{% block breadcrumb %}<a href="/cabinet">Cabinet</a> / Review move{% endblock %}
+{% block breadcrumb %}{% include "cabinet/_breadcrumb.html" %} / Review move{% endblock %}
 {% block content %}
-<section class="usability-work">
+<section class="usability-work cabinet-page">
   <h1>Review page move</h1>
   <p>Moving <a href="/cabinet/{{ cabinet_ref }}">{{ page_title | e }}</a> {% if parent %}under <a href="/cabinet/{{ parent }}">{{ destination_title | e }}</a>{% else %}to the Cabinet root{% endif %} at position {{ position }}.</p>
   <section aria-labelledby="current-audience"><h2 id="current-audience">Current audience</h2>

@@ -1,10 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Saved copy · {{ view.title | e }}{% endblock %}
+{% block breadcrumb %}{% include "cabinet/_breadcrumb.html" %} / <a href="/cabinet/saved-copies">Saved copies</a>{% endblock %}
 {% block content %}
-<main class="den-hub"><section class="box">
+<main class="den-hub cabinet-page"><section class="box">
 <h1>{{ view.title | e }}</h1>
 <p>Private saved copy · {{ view.bear_name | e }}</p>
-<p><a href="/cabinet/saved-copies">Your saved copies</a> · <a href="/bear/{{ view.bear_slug | urlencode }}/identity">Bear purpose</a></p>
+<p><a href="/cabinet/saved-copies">Your saved copies</a>{% if not (cabinet_surface | default(false)) %} · <a href="/bear/{{ view.bear_slug | urlencode }}/identity">Bear purpose</a>{% endif %}</p>
 {% if error %}<p class="form-errors" role="alert">{{ error | e }}</p>{% endif %}
 {% if view.receipt %}
 <h2>Retired</h2>

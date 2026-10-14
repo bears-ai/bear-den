@@ -1,0 +1,6 @@
+{% set page_tab = template_tag | default("") %}
+<nav class="cabinet-page-tabs" aria-label="Page sections">
+    <a href="/cabinet/{{ cabinet_ref }}"{% if page_tab in ["cabinet-item", "cabinet-edit"] %} aria-current="page"{% endif %}>Overview</a>
+    <a href="/cabinet/{{ cabinet_ref }}/discussion"{% if page_tab == "cabinet-discussion" %} aria-current="page"{% endif %}>Discussion</a>
+    <a href="/cabinet/{{ cabinet_ref }}/history"{% if page_tab == "cabinet-history" %} aria-current="page"{% endif %}>History</a>
+</nav>

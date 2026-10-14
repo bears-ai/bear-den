@@ -94,7 +94,7 @@ async fn render_review(
     let hat = manage::get_hat(state.sqlx_pool(), bear_id, hat_id).await?;
     let mut snapshot = match work_review::snapshot_page_for_admin(
         state.sqlx_pool(),
-        &state.memory_stores,
+        state.memory_stores()?,
         bear_id,
         hat_id,
         reviewer,
@@ -107,7 +107,7 @@ async fn render_review(
             error = Some(format!("{message}. Restart the review at page 1."));
             work_review::snapshot_page_for_admin(
                 state.sqlx_pool(),
-                &state.memory_stores,
+                state.memory_stores()?,
                 bear_id,
                 hat_id,
                 reviewer,
@@ -125,7 +125,7 @@ async fn render_review(
         error = Some("Hat memory or identity changed during review. No Work permission was granted; review the new snapshot from page 1.".into());
         snapshot = work_review::snapshot_page_for_admin(
             state.sqlx_pool(),
-            &state.memory_stores,
+            state.memory_stores()?,
             bear_id,
             hat_id,
             reviewer,
@@ -182,7 +182,7 @@ async fn review_post(
     } else {
         work_review::review_and_enable(
             state.sqlx_pool(),
-            &state.memory_stores,
+            state.memory_stores()?,
             BearId::new(bear.id),
             HatId::new(hat_uuid),
             UserId::new(session_user(&auth).await?.id),

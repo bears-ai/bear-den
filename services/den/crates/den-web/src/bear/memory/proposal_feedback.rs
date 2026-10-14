@@ -22,7 +22,7 @@ pub(super) async fn load_proposal(
     {
         return Ok(proposal_view_from_postgres(proposal));
     }
-    let store = state.memory_stores.store_for_bear(bear_id).await?;
+    let store = state.memory_stores()?.store_for_bear(bear_id).await?;
     get_sqlite_memory_proposal(&store, &proposal_id.to_string())
         .await?
         .map(proposal_view_from_sqlite)

@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory'\n                   AND database=(SELECT oid FROM pg_database WHERE datname=current_database())\n                   AND classid=0 AND objid=791004812 AND NOT granted) AS \"waiting!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "waiting!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "72524c99b77f549600a02aac52e1eb23eeacd5f5ea0bce0f68f3ac132be7eab5"
+}

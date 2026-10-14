@@ -1,18 +1,33 @@
 {% extends "base.html" %}
 {% block title %}Cabinet{% endblock %}
-{% block breadcrumb %}<a href="/">Bears</a> / This Den / Cabinet{% endblock %}
+{% block breadcrumb %}{% include "cabinet/_breadcrumb.html" %}{% endblock %}
 {% block content %}
-<div class="usability-work">
+<div class="usability-work cabinet-page">
 <main class="den-hub">
+{% set view = index_view | default("browse") %}
+{% if view != "reviews" %}
 <section class="box">
-<h2>{% if roots_only %}Cabinet page tree{% else %}Matching pages{% endif %}</h2>
+<h1>{% if view == "search" %}Search Cabinet{% elif view == "pages" %}Pages{% elif roots_only %}Cabinet{% else %}Matching pages{% endif %}</h1>
+{% if roots_only %}<p>Shared knowledge, organized as pages and child pages. Open a page to read, discuss, or explore its history.</p>{% endif %}
 {% if message %}<p role="status">{{ message | e }}</p>{% endif %}
-<form method="get" action="/cabinet" class="den-management-form-row"><label for="cabinet-search">Search pages</label><input id="cabinet-search" type="text" name="q" value="{{ q | default("", true) | e }}" placeholder="Titles and content"><button type="submit">Search</button></form>
-<p class="button-row"><a class="button-link" href="/cabinet/new">New page</a> <a href="/cabinet/uploads">Your uploads</a> <a href="/cabinet/saved-copies">Your saved copies</a>{% if archived %}<a href="/cabinet">Active pages</a>{% else %}<a href="/cabinet?lifecycle=archived">Archived pages</a>{% endif %}</p>
-{% if items %}<table><thead><tr><th>Page</th><th>Updated</th></tr></thead><tbody>{% for item in items %}<tr><td><a href="/cabinet/{{ item.cabinet_ref }}">{{ item.title | e }}</a></td><td>{{ item.updated_at | timeago }}</td></tr>{% endfor %}</tbody></table>{% else %}<p>{% if q %}No pages match that search.{% else %}No pages yet.{% endif %}</p>{% endif %}
+<form method="get" action="/cabinet" class="den-management-form-row">
+    <input type="hidden" name="view" value="search">
+    {% if archived %}<input type="hidden" name="lifecycle" value="archived">{% endif %}
+    <label for="cabinet-search">Search pages</label><input id="cabinet-search" type="search" name="q" value="{{ q | default("", true) | e }}" placeholder="Titles and content"><button type="submit">Search</button>
+</form>
+<p class="button-row"><a class="button-link" href="/cabinet/new">New page</a>{% if archived %}<a href="/cabinet?view={{ view }}">Active pages</a>{% else %}<a href="/cabinet?view={{ view }}&amp;lifecycle=archived">Archived pages</a>{% endif %}</p>
+<h2 id="cabinet-pages">{% if archived %}Archived {% endif %}{% if roots_only %}Page tree{% else %}Visible pages{% endif %}</h2>
+{% if items %}<table><thead><tr><th>Page</th><th>Updated</th></tr></thead><tbody>{% for item in items %}<tr><td><a href="/cabinet/{{ item.cabinet_ref }}">{{ item.title | e }}</a></td><td>{{ item.updated_at | timeago }}</td></tr>{% endfor %}</tbody></table>{% else %}<p>{% if q %}No visible pages match that search. Try another title or phrase.{% else %}No visible pages in this view.{% endif %}</p>{% endif %}
 </section>
 <details class="box"><summary>Access &amp; organization</summary><p>Open-wiki access applies only where no page or ancestor narrows membership. Child pages inherit restrictions; page owners manage access and Bear-write review. A Mission is an ordinary page with children. Attachments keep their own file access; page access does not share private files.</p></details>
-{% if review_items %}<section class="box"><h2>Versions awaiting your review</h2><ul>{% for entry in review_items %}<li><a href="/cabinet/{{ entry.cabinet_ref }}?version={{ entry.version_ref }}">{{ entry.title | e }} · revision {{ entry.revision }}</a></li>{% endfor %}</ul></section>{% endif %}
+{% endif %}
+{% if view == "reviews" or review_items %}
+<section class="box" id="cabinet-reviews"><h2>Versions awaiting your review</h2>
+<p>Unpublished changes you are currently authorized to review. Open a version to inspect its content and audience before deciding.</p>
+{% if review_items %}<ul>{% for entry in review_items %}<li><a href="/cabinet/{{ entry.cabinet_ref }}?version={{ entry.version_ref }}">{{ entry.title | e }} · revision {{ entry.revision }}</a></li>{% endfor %}</ul>{% else %}<p>No versions are awaiting your review.</p>{% endif %}
+</section>
+{% endif %}
+{% if not (cabinet_surface | default(false)) %}<p class="button-row"><a href="/cabinet/uploads">Your uploads</a><a href="/cabinet/saved-copies">Your saved copies</a></p>{% endif %}
 </main>
 </div>
 {% endblock %}

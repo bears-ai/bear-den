@@ -283,6 +283,7 @@ fn chat_task_picker_renders_through_the_management_shell_and_fixture() {
     )));
     for name in [
         "hexadecimal",
+        "cabinet_url",
         "urlencode",
         "markdown",
         "timeago",

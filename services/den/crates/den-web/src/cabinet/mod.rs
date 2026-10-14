@@ -1,20 +1,19 @@
 // ROUTES: When modifying routes in this file, update /src/ROUTES.md.
-//! Cabinet wiki UI: Den's shared, human-editable knowledge layer (Phase 1).
+//! Cabinet's session-authenticated, ACL-filtered page UI.
 //!
-//! Every logged-in user can browse, create, and edit items; each edit
-//! publishes an immutable version through the same `den_service::cabinet`
-//! facade the model tools use. Stale-base edits re-render the edit form with
-//! the conflict, never merging silently.
+//! Content edits publish immutable versions through the shared service facade;
+//! discussions are separate append-only records and never publish a revision.
 
 use axum::{
     extract::{Path, Query, State},
+    http::{header, HeaderValue, StatusCode},
     response::{IntoResponse, Redirect, Response},
     routing::get,
     Router,
 };
 use axum_extra::extract::Form;
 use minijinja::context;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     auth_backend::AuthSession,
@@ -22,26 +21,31 @@ use crate::{
     web::{self, AppState},
 };
 use den_cabinet::{
-    ActorScope, CabinetError, CabinetItemRef, CabinetSourceRef, CabinetVersionRef,
+    Actor, ActorScope, CabinetError, CabinetItemRef, CabinetSourceRef, CabinetVersionRef,
     CreateItemRequest, HistoryRequest, ItemKind, Lifecycle, LinkSourceRequest, NewSourceLink,
-    ReadRequest, SearchFilters, SearchRequest, SourceKind, SourceRole, UnlinkSourceRequest,
-    UpdateItemRequest,
+    ReadRequest, ReviewState, SearchFilters, SearchRequest, SourceKind, SourceRole,
+    UnlinkSourceRequest, UpdateItemRequest,
 };
 use den_core::ids::UserId;
 use den_service::cabinet as cabinet_service;
 mod attachments;
 mod audience;
 pub(crate) mod cleanup;
+mod discussion;
 mod pages;
 mod previews;
 mod saved_copies;
 mod uploads;
+
+#[cfg(test)]
+mod tests;
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .merge(pages::router())
         .merge(attachments::router())
         .merge(cleanup::router())
+        .merge(discussion::router())
         .merge(saved_copies::router())
         .merge(previews::router())
         .merge(uploads::router())
@@ -89,8 +93,20 @@ fn item_url(cabinet_ref: &CabinetItemRef) -> String {
     format!("/cabinet/{}", cabinet_ref.as_str())
 }
 
+#[derive(Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum IndexView {
+    #[default]
+    Browse,
+    Search,
+    Pages,
+    Reviews,
+}
+
 #[derive(Debug, Default, Deserialize)]
 struct IndexQuery {
+    #[serde(default)]
+    view: IndexView,
     #[serde(default)]
     q: Option<String>,
     #[serde(default)]
@@ -109,7 +125,8 @@ async fn index(
     let review_items = cabinet_service::pages::pending_reviews(state.sqlx_pool(), &scope)
         .await
         .map_err(cabinet_error)?;
-    let roots_only = query.q.as_deref().is_none_or(|q| q.trim().is_empty());
+    let roots_only =
+        query.view == IndexView::Browse && query.q.as_deref().is_none_or(|q| q.trim().is_empty());
     let request = SearchRequest {
         scope: scope.clone(),
         query: query.q.clone().unwrap_or_default(),
@@ -122,7 +139,9 @@ async fn index(
             ..SearchFilters::default()
         },
     };
-    let items = if roots_only {
+    let items = if query.view == IndexView::Reviews {
+        Ok(Vec::new())
+    } else if roots_only {
         cabinet_service::search_roots(state.sqlx_pool(), request).await
     } else {
         cabinet_service::search(state.sqlx_pool(), request).await
@@ -147,6 +166,7 @@ async fn index(
             items => items,
             review_items,
             roots_only,
+            index_view => query.view,
             q => query.q,
             archived => archived,
             message => query.message,
@@ -306,7 +326,7 @@ async fn item(
             })
         })
         .collect();
-    web::render_template(
+    let mut response = web::render_template(
         &state,
         "cabinet/item.html",
         auth_session,
@@ -320,6 +340,7 @@ async fn item(
             is_current => is_current,
             lifecycle => view.item.lifecycle,
             authored_by => view.version.authored_by(),
+            author_label => actor_label(view.version.authored_by(), &scope),
             authored_at => view.version.authored_at(),
             sources => sources,
             page,
@@ -327,7 +348,7 @@ async fn item(
             children,
             attachments,
             byte_storage_enabled => state.media.is_some(),
-                        upload_bears,
+            upload_bears,
             people_names,
             bear_names,
             reviewer_names,
@@ -338,7 +359,11 @@ async fn item(
             message => query.message,
         },
     )
-    .await
+    .await?;
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(response)
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -373,6 +398,7 @@ async fn edit_form(
         view.version.content(),
         view.version.version_ref().as_str(),
         query.error.as_deref(),
+        StatusCode::OK,
     )
     .await
 }
@@ -386,10 +412,24 @@ async fn render_edit_form(
     content: &str,
     base_version: &str,
     error: Option<&str>,
+    status: StatusCode,
 ) -> Result<Response, CustomError> {
     let scope = require_user_scope(&auth_session)?;
+    let page = cabinet_service::pages::metadata(state.sqlx_pool(), &scope, cabinet_ref)
+        .await
+        .map_err(cabinet_error)?;
+    let current = cabinet_service::read(
+        state.sqlx_pool(),
+        ReadRequest {
+            scope: scope.clone(),
+            cabinet_ref: cabinet_ref.clone(),
+            version_ref: None,
+        },
+    )
+    .await
+    .map_err(cabinet_error)?;
     let audience = audience::for_page(state.sqlx_pool(), &scope, cabinet_ref).await?;
-    web::render_template(
+    let mut response = web::render_template(
         state,
         "cabinet/edit.html",
         auth_session,
@@ -400,10 +440,17 @@ async fn render_edit_form(
             content => content,
             base_version => base_version,
             audience,
+            can_publish => page.can_write && current.item.lifecycle == Lifecycle::Active,
+            archived => current.item.lifecycle == Lifecycle::Archived,
             error => error,
         },
     )
-    .await
+    .await?;
+    *response.status_mut() = status;
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(response)
 }
 
 #[derive(Debug, Deserialize)]
@@ -421,8 +468,17 @@ async fn update(
 ) -> Result<Response, CustomError> {
     let scope = require_user_scope(&auth_session)?;
     let cabinet_ref = parse_item_ref(&cabinet_ref)?;
-    let base_version = CabinetVersionRef::parse(&form.base_version)
-        .map_err(|error| CustomError::ValidationError(error.to_string()))?;
+    let base_version = match CabinetVersionRef::parse(&form.base_version) {
+        Ok(version) => version,
+        Err(_) => {
+            return render_edit_form(
+                &state, auth_session, &cabinet_ref, &form.title, &form.content,
+                &form.base_version,
+                Some("The base revision is invalid. Your draft is preserved; reopen the current page before publishing."),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ).await;
+        }
+    };
     let result = cabinet_service::update_item(
         state.sqlx_pool(),
         UpdateItemRequest {
@@ -455,17 +511,63 @@ async fn update(
                     "Someone else published a newer revision while you were editing. \
                      Your draft is preserved below; review the latest revision before saving.",
                 ),
+                StatusCode::CONFLICT,
             )
             .await
         }
+        Err(CabinetError::Validation(_) | CabinetError::Policy(_)) => {
+            render_edit_form(
+                &state, auth_session, &cabinet_ref, &form.title, &form.content,
+                &form.base_version,
+                Some("The revision was not published. Check the title and content, and restore an archived page before publishing. Your draft is preserved."),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ).await
+        }
+        Err(CabinetError::NotAuthorized) => {
+            render_edit_form(
+                &state, auth_session, &cabinet_ref, &form.title, &form.content,
+                &form.base_version,
+                Some("Your write access changed. The revision was not published and your draft is preserved; ask a page owner for access."),
+                StatusCode::FORBIDDEN,
+            ).await
+        }
         Err(error) => Err(cabinet_error(error)),
     }
+}
+
+fn actor_label(author: &ActorScope, viewer: &ActorScope) -> String {
+    match &author.actor {
+        Actor::User { .. } if author.actor == viewer.actor => "You".into(),
+        Actor::User { user_id } => format!("Person (user {user_id})"),
+        Actor::Bear { bear_id, stance } => format!("Bear {bear_id} ({stance})"),
+    }
+}
+
+fn published(review: ReviewState) -> bool {
+    matches!(review, ReviewState::None | ReviewState::Approved)
+}
+
+#[derive(Default, Deserialize)]
+struct HistoryQuery {
+    before: Option<CabinetVersionRef>,
+}
+
+#[derive(Serialize)]
+struct VersionComparison {
+    before_ref: CabinetVersionRef,
+    before_revision: u32,
+    before_content: String,
+    current_ref: CabinetVersionRef,
+    current_revision: u32,
+    current_content: String,
+    unchanged: bool,
 }
 
 async fn history(
     State(state): State<AppState>,
     auth_session: AuthSession,
     Path(cabinet_ref): Path<String>,
+    Query(query): Query<HistoryQuery>,
 ) -> Result<Response, CustomError> {
     let scope = require_user_scope(&auth_session)?;
     let cabinet_ref = parse_item_ref(&cabinet_ref)?;
@@ -479,27 +581,74 @@ async fn history(
     )
     .await
     .map_err(cabinet_error)?;
+    let page = cabinet_service::pages::metadata(state.sqlx_pool(), &scope, &cabinet_ref)
+        .await
+        .map_err(cabinet_error)?;
     let versions = cabinet_service::history(
         state.sqlx_pool(),
         HistoryRequest {
-            scope,
+            scope: scope.clone(),
             cabinet_ref: cabinet_ref.clone(),
         },
     )
     .await
     .map_err(cabinet_error)?;
-    let versions: Vec<serde_json::Value> = versions
+    // History metadata must not advertise private review versions to ordinary readers.
+    let versions: Vec<_> = versions
         .into_iter()
-        .map(|version| {
-            serde_json::json!({
-                "version_ref": version.version_ref.as_str(),
-                "revision": version.revision,
-                "authored_by": version.authored_by,
-                "authored_at": version.authored_at,
-            })
+        .filter(|version| {
+            published(version.review) || page.can_review || version.authored_by.actor == scope.actor
         })
         .collect();
-    web::render_template(
+    let mut comparison = None;
+    let mut comparison_notice = None;
+    if let Some(before_ref) = query.before {
+        let before_summary = versions
+            .iter()
+            .find(|version| version.version_ref == before_ref)
+            .ok_or_else(|| CustomError::NotFound("no such version".into()))?;
+        if !published(before_summary.review) || !published(item_view.version.review()) {
+            comparison_notice = Some("Only published revisions can be compared here. Open a pending or rejected version explicitly to review it; it is not included in this comparison.");
+        } else {
+            let before = cabinet_service::read(
+                state.sqlx_pool(),
+                ReadRequest {
+                    scope: scope.clone(),
+                    cabinet_ref: cabinet_ref.clone(),
+                    version_ref: Some(before_ref),
+                },
+            )
+            .await
+            .map_err(cabinet_error)?;
+            // Re-check the actual read, not just the earlier history metadata.
+            if published(before.version.review()) {
+                comparison = Some(VersionComparison {
+                    before_ref: before.version.version_ref().clone(),
+                    before_revision: before.version.revision(),
+                    before_content: before.version.content().to_owned(),
+                    current_ref: item_view.version.version_ref().clone(),
+                    current_revision: item_view.version.revision(),
+                    current_content: item_view.version.content().to_owned(),
+                    unchanged: before.version.content() == item_view.version.content(),
+                });
+            }
+        }
+    }
+    let current_ref = item_view.item.current_version.as_ref();
+    let versions: Vec<serde_json::Value> = versions.into_iter().map(|version| {
+        serde_json::json!({
+            "version_ref": version.version_ref,
+            "revision": version.revision,
+            "author_label": actor_label(&version.authored_by, &scope),
+            "authored_at": version.authored_at.format(&time::format_description::well_known::Rfc3339)
+                            .unwrap_or_else(|_| version.authored_at.to_string()),
+            "review": version.review,
+            "is_current": current_ref == Some(&version.version_ref),
+            "can_compare": published(version.review) && current_ref.is_some()
+                && current_ref != Some(&version.version_ref),
+        })
+    }).collect();
+    let mut response = web::render_template(
         &state,
         "cabinet/history.html",
         auth_session,
@@ -508,9 +657,15 @@ async fn history(
             cabinet_ref => cabinet_ref.as_str(),
             item_title => item_view.item.title,
             versions => versions,
+            comparison,
+            comparison_notice,
         },
     )
-    .await
+    .await?;
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(response)
 }
 
 async fn archive(

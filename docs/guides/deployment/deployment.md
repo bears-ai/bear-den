@@ -20,6 +20,7 @@ Optional compose profiles:
 | Profile | Service | Purpose |
 | ------- | ------- | ------- |
 | `bundled` | `bears-postgres` | Local/dev Den Postgres when you do not use a managed database |
+| `cabinet` | `bears-cabinet` | Distinct Cabinet hostname/UI and read-only MCP, using the same Den image/database without native-memory volumes |
 | `volume-backup` | `bears-den-sqlite-data-backup` | S3-compatible archive of per-Bear SQLite data |
 
 **Database:** set **`DATABASE_URL`** for `bears-den` (managed Postgres is preferred in Coolify). For local compose only, `COMPOSE_PROFILES=bundled` starts `bears-postgres` with dev defaults.
@@ -59,7 +60,13 @@ In the Compose resource general configuration:
 3. Under **Build**, enable **Preserve Repository During Deployment**.
 4. Save.
 
-Den web is the browser-facing UI. Den API is the bearer-token machine-client surface and hosts BearWire for local armatures such as `bear-armature`.
+Den web is the Bear administration/chat UI. Den API is the bearer-token machine-client surface and hosts BearWire for local armatures such as `bear-armature`.
+
+### Dedicated Cabinet hostname
+
+For the new Cabinet surface, add `cabinet` to `.env`'s `COMPOSE_PROFILES` and set `CABINET_URL` to its public HTTPS URL, with or without a trailing slash. Configure that hostname on `bears-cabinet` with port suffix `:3000` (or `CABINET_PORT` when overridden). The platform's `SERVICE_URL_CABINET` may supply the origin fallback, but explicit origin configuration is preferable. Do not change `DEN_WEB_ORIGIN` to the Cabinet hostname: it remains the return destination for Bear administration.
+
+The service runs `cabinet-serve`, shares `DEN_IMAGE`, `DATABASE_URL`, identity and configured S3 storage, and mounts no Bear SQLite/sandbox volumes. Migrations run first; with the profile enabled, Den waits for Cabinet readiness before activating its cross-host handoffs. Den's legacy read links redirect and old Cabinet mutations return `410 Gone`; humans sign in separately on Cabinet with their existing Den account. Review [Cabinet-only deployment and validation](../den-deploy.md#cabinet-only-composition-next-release) before rollout. Without a configured Cabinet origin, the existing local Cabinet remains available. A remotely hosted Cabinet may use the origin without enabling a local Cabinet container; coordinate that deployment's readiness separately.
 
 ## 4. Connect The Network
 
@@ -84,6 +91,8 @@ Set these on the Compose resource:
 | `DATABASE_URL` | Den Postgres **Postgres URL (internal)** from Coolify |
 | `DEN_WEB_ORIGIN` | Public Den web origin, e.g. `https://bears.[domain]`; compose derives `WEB_SERVER_URL` from this |
 | `DEN_API_ORIGIN` | Public Den API origin, e.g. `https://api.bears.[domain]` or `https://bears.[domain]:3001`; compose derives `API_SERVER_URL` from this |
+| `CABINET_URL` | Required when enabling profile `cabinet`: the public Cabinet HTTPS URL; optional trailing slash; shared by Den, Cabinet and migrations |
+| `COMPOSE_PROFILES` | Include `cabinet` for the dedicated surface; preserve any needed `bundled`/backup profiles |
 | `BEAR_SQLITE_DATA_DIR` | Leave default `/var/lib/den/bear-sqlite` unless you customize the volume mount |
 
 For GitHub-built Den images, also set:
@@ -155,6 +164,7 @@ From Coolify's terminal for a service on the same network:
 | Den web | Open the public Den URL |
 | Den API | `curl ${API_SERVER_URL}/healthcheck` |
 | Den readiness | `curl ${API_SERVER_URL}/health/ready` |
+| Cabinet (profile `cabinet`) | Open `${CABINET_URL}` (the root redirects to `/cabinet`); internal readiness is `http://bears-cabinet:3000/health/ready` (adjust port/suffix as configured) |
 | Stack status | Open `${WEB_SERVER_URL}/status` or `curl ${WEB_SERVER_URL}/status.json` |
 | BearWire auth check | `curl -i ${API_SERVER_URL}/bearwire/v1/sessions/smoke-session/events?bear_slug=test-bear` should return `401` without a bearer token |
 
@@ -163,6 +173,7 @@ End-to-end check: create or open a bear in Den, go to its chat page, and send a 
 ## Troubleshooting
 
 - If Den cannot start, confirm `DATABASE_URL`, `JWT_SECRET`, `WEB_SERVER_URL`, `API_SERVER_URL`, and `LLM_API_URL`.
+- If Cabinet is enabled but unavailable, confirm the `cabinet` profile, consistent `CABINET_URL`, matching image/migrations and Cabinet readiness. Keep its `WEB_SERVER_URL` pointed at Den; a missing/invalid origin fails Cabinet startup, and no native-memory volume is required.
 - If chat does not stream, confirm `bears-den` can reach `${BIFROST_ORIGIN}/v1` and `OPENAI_API_KEY` is set for Bifrost.
 - If Bifrost is unhealthy, confirm `OPENAI_API_KEY` and `services/bifrost/config.json`.
 - If Bear memory does not persist across redeploys, confirm the `bears-den-sqlite-data` volume is attached and `BEAR_SQLITE_DATA_DIR` matches the mount path.

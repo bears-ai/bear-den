@@ -13,17 +13,17 @@ work. The web UI supports child pages, sibling order and inherited access. A Job
 Contract and design: [cabinet-contract.md](../architecture/cabinet-contract.md).
 Plan and phase status: [CABINET_IMPLEMENTATION_PLAN.md](../roadmap/CABINET_IMPLEMENTATION_PLAN.md).
 
-## Planned distinct Cabinet surface
+## Distinct Cabinet surface — implementation, not deployed
 
-**Planned, not available today:** [Phase 5](../roadmap/CABINET_IMPLEMENTATION_PLAN.md#phase-5--distinct-cabinet-surface-and-external-mcp) targets a dedicated Cabinet container and hostname, with knowledge-focused navigation rather than Den's Bear/chat/Work/admin rail. It remains part of Den, using the shared Cabinet facade, identity/policy and canonical Postgres database; it is not a second knowledge store.
+**Branch implementation (2026-10-13):** [Phase 5](../roadmap/CABINET_IMPLEMENTATION_PLAN.md#phase-5--distinct-cabinet-surface-and-external-mcp) now includes a Cabinet-only entrypoint (`den cabinet-serve`), knowledge-focused shell/navigation, page discussion and enhanced revision history. It reuses Den's Cabinet facade, identity/policy and canonical Postgres database; it is not a second knowledge store. The root Compose `cabinet` profile and production image are now validated, including password login and page/discussion/history over local HTTPS in an isolated database. Actual public-host rollout, native-browser and live-storage acceptance remain pending; see the [deployment notes](den-deploy.md#cabinet-only-composition-next-release).
 
-Bear administration will remain Cabinet-aware: capability settings and authorized status/summaries stay there, while live page details, content editing, organization, access/review policy and file workflows open on the Cabinet surface. Docket continues to own Job→Mission references and evidence. Authentication and cross-host links must preserve existing permissions, including private attachments and saved copies.
+The dedicated UI offers Browse, Search, Pages, Reviews, Uploads and Saved copies instead of Den's Bear/chat/Work/operator rail. Bear administration retains capability settings and authorized status/summaries; live page details, content editing, organization, page access/review policy and file workflows open on Cabinet. Docket continues to own Job→Mission references and evidence. Cross-host links do not widen permissions, including private attachments and saved copies.
 
-The same composition will expose an authenticated MCP adapter for other agent runtimes; supported operations and the credential/delegation flow still need implementation and validation. No external MCP endpoint or cross-host SSO is claimed by this guide. Until that phase ships, use the current `/cabinet` routes described below.
+Both processes must receive the same `CABINET_URL` setting: a full URL such as `https://cabinet.example.com` or `https://cabinet.example.com/`. The optional trailing slash is normalized; subpaths, credentials, query parameters and fragments are not allowed. When configured, old Den `/cabinet` GET/HEAD links redirect to that origin and Den's old Cabinet mutation endpoints return `410 Gone`; forms must be submitted anew on Cabinet. Without it, Den retains its local `/cabinet` rollout fallback. Cabinet signs in against the shared Den user database using a distinct host-only session cookie; this is independent login, not cross-host SSO.
 
 ## Using the wiki (people)
 
-Open **`/cabinet`** while logged in.
+Open **`/cabinet`** while logged in, on the configured Cabinet hostname after rollout or on Den while using the local fallback. Each page has **Page**, **Discussion** and **History** tabs in the branch implementation.
 
 - **Browse and search** — the index searches titles and current content.
   Archived items are hidden by default (`Show archived items` toggles).
@@ -34,8 +34,8 @@ Open **`/cabinet`** while logged in.
   the form comes back with your draft preserved and the conflict explained —
   review the latest revision, fold your change in, and save again. Nothing is
   ever merged silently and nothing is overwritten.
-- **History** — every revision is immutable and permanently viewable at
-  `/cabinet/{item}/history`, with author kind and timestamp.
+- **Discussion** — `/cabinet/{item}/discussion` shows the latest 100 messages, oldest first within that window. Authorized people with current page write access may append plain-text messages of up to 16,000 Unicode scalar values on active pages. Archived pages are read-only. Discussion follows the page's current inherited audience, is shared across revisions, and never edits or publishes page content. Messages and author provenance are retained/append-only; editing, deletion, replies and older-message pagination are not implemented. Invalid or denied posts preserve a draft while page readership still permits rendering it.
+- **History** — every revision is immutable and viewable at `/cabinet/{item}/history`, with author, timestamp, publication/review state and current-revision marker. Open an exact revision, or compare a published revision with current published content using escaped side-by-side source text. Pending/rejected versions are shown only under the facade's author/reviewer authority; comparison does not expose unpublished content.
 - **Sources** — record where an item's knowledge came from (a URL, a book, an
   artifact, a conversation). Cabinet stores the link, not the linked content,
   and adding or removing one does not publish a revision.
@@ -68,6 +68,16 @@ Linked attachments and captured copies retain their artifacts: expiration/GC and
 **Your uploads** on the Cabinet index opens `/cabinet/uploads`. It shows your latest 64 upload records under current Bear membership, including unfinished, retained, cleanup-pending and removed states. It does not expose another member's uploads, even to a Bear admin, or reveal a source page ref/title you can no longer read. Historical visibility does not grant access to expired/deleted file bytes. **Retry cleanup** is available only for your eligible unretained records after the safety grace; the action rechecks ownership, membership and retention, and cannot force removal of a live/retained file. Without configured storage, cleanup and retry are explicitly unavailable.
 
 The worker polls every minute in batches of ten, throttles automatic retries and preserves registry audit rows after deletion. It targets registered `cabinet_file` uploads only: other artifact types, unindexed bucket objects, objects whose registry row was removed by an operator/Bear cascade, old storage namespaces, versions/backups remain operator work. Snapshot-retention release instead uses the separate creator-authorized saved-copy workflow; it does not use upload byte cleanup. It deletes the current canonical key in the configured bucket; provider migration and bucket-version retention are not a secure-erasure promise.
+
+## External runtimes via MCP — initial read-only adapter
+
+**Branch implementation, not a deployed endpoint:** the dedicated Cabinet composition mounts `/mcp` outside browser cookie authentication. The initial stateless Streamable HTTP adapter exposes descriptor-backed `cabinet_search`, `cabinet_read` and `cabinet_history` as a delegated human. It does not expose writes, discussion posting, review/lifecycle actions or Bear impersonation. Native Den Bear tools are unchanged.
+
+Register/use a Den OAuth client and obtain an authorization-code access token with `data:read` (PKCE for public clients). Supply it manually as `Authorization: Bearer …`; Cabinet requires the same nonempty `JWT_SECRET` as Den. The existing issuer/audience are `den-oauth` / `den-api`, not a Cabinet-specific resource audience. The adapter rechecks the token, client grants and live user on every request and after result assembly; page and attachment access remain independently enforced.
+
+POST JSON with `Accept: application/json, text/event-stream`: first `initialize`, then `notifications/initialized`, then `tools/list`, `tools/call` or `ping`. Supported protocol versions are `2025-06-18` and `2025-03-26`; use the negotiated `MCP-Protocol-Version` header after initialization. No session ID, SSE stream, OAuth auto-discovery, browser CORS/cookie flow or query-token authentication is provided. Expose only through trusted HTTPS ingress. An existing `rmcp` SDK loopback probe is kept as an opt-in test; production OAuth consent and ingress acceptance remain release checks.
+
+Write support remains a follow-on requiring a resource-audience/write-scope decision and durable delegated-client provenance. Do not treat successful connection or a supplied actor ID as a write grant.
 
 ## What Bears can do
 

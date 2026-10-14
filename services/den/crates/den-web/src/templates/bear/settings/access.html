@@ -39,7 +39,7 @@
 
 {% if can_manage_bear %}
 <h3 id="grant-access">Grant or change access</h3>
-<p class="form-hint">Removing membership stops this person's Bear access; Cabinet page membership is managed in <a href="/cabinet">Cabinet</a>.</p>
+<p class="form-hint">Removing membership stops this person's Bear access; Cabinet page membership is managed in <a href="{{ "/cabinet" | cabinet_url }}">Cabinet</a>.</p>
 <form method="post" action="/bear/{{ bear.slug | e }}/members/grant" class="form-field">
   <label>Username<br>
     <input type="text" name="username" value="{{ member_form.username | default('') | e }}" required maxlength="120" autocomplete="username" />

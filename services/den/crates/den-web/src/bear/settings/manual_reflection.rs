@@ -145,7 +145,7 @@ pub(super) async fn run(
             }
         }
         if result.error.is_none() {
-            let memory_stores = state.memory_stores.clone();
+            let memory_stores = state.memory_stores()?.clone();
             match create_pair_reflection_proposals_from_latest_summary(
                 state.sqlx_pool(),
                 &state.config,

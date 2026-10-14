@@ -103,7 +103,7 @@ pub(super) async fn create(
     let intent = portable.iter().map(|hat| portable_hats::ReconnectionIntent { imported_hat_id: mapping[&hat.original_id], intent: hat.clone() }).collect::<Vec<_>>();
     sqlx::query!("INSERT INTO bear_import_receipts(bear_id,imported_by_user_id,hat_intent) VALUES($1,$2,$3)", bear_id, actor.get(), sqlx::types::Json(&intent) as _).execute(state.sqlx_pool()).await?;
     stage = CreationStage::KnowledgeMapping;
-    let store = state.memory_stores.store_for_bear(bear_id).await?;
+    let store = state.memory_stores()?.store_for_bear(bear_id).await?;
     let mut tx =
         store.pool().begin().await.map_err(|error| {
             CustomError::System(format!("begin memory import mapping: {error}"))
@@ -136,7 +136,7 @@ pub(super) async fn create(
         }
 
     stage = CreationStage::Initialization;
-    provision::initialize_bear_native(state.sqlx_pool(), &state.memory_stores, bear_id).await?;
+    provision::initialize_bear_native(state.sqlx_pool(), state.memory_stores()?, bear_id).await?;
 
     stage = CreationStage::Membership;
     bears_db::grant_membership(state.sqlx_pool(), actor.get(), bear_id, Some(BEAR_ROLE_ADMIN)).await?;
@@ -153,7 +153,7 @@ pub(super) async fn create(
             bears_db::delete_bear(state.sqlx_pool(), bear_id),
             || async {
                 // This closure is never called if the Bear survives deletion.
-                if let Ok(store) = state.memory_stores.store_for_bear(bear_id).await {
+                if let Ok(store) = state.memory_stores()?.store_for_bear(bear_id).await {
                     store.pool().close().await;
                 }
                 let path = memory_sqlite_path(state.config.as_ref(), bear_id);

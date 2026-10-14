@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE cabinet_items SET parent_item_id=(SELECT id FROM cabinet_items WHERE cabinet_ref=$2) WHERE cabinet_ref=$1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "21643b864049751162763ddf8e0552dcd544a2de02c7887d0fa81624ae6d8baa"
+}

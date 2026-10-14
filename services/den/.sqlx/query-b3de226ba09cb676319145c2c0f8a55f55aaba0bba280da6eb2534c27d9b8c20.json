@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM cabinet_discussion_entries WHERE discussion_ref=$1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b3de226ba09cb676319145c2c0f8a55f55aaba0bba280da6eb2534c27d9b8c20"
+}

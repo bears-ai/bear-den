@@ -18,6 +18,7 @@ use den_cabinet::{
 };
 pub mod attachment_read;
 pub mod attachments;
+pub mod discussion;
 pub mod pages;
 pub mod snapshots;
 pub mod uploads;

@@ -28,6 +28,13 @@ async fn run_main() -> anyhow::Result<()> {
             den::serve_without_migrations().await?;
             Ok(())
         }
+        Some("cabinet-serve") => {
+            if args.len() != 1 {
+                anyhow::bail!("Usage: den cabinet-serve");
+            }
+            den::cabinet_serve().await?;
+            Ok(())
+        }
         Some("seed") => run_seed(&args).await,
         Some("reindex") => match den::reindex::parse_args(&args)? {
             Some(target) => den::reindex::run_reindex(target).await,

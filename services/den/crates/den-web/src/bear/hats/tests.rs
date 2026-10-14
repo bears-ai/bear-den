@@ -722,7 +722,12 @@ async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
             .unwrap(),
         None
     );
-    let memory = state.memory_stores.store_for_bear(bear_id).await.unwrap();
+    let memory = state
+        .memory_stores()
+        .unwrap()
+        .store_for_bear(bear_id)
+        .await
+        .unwrap();
     den_memory::append_memory_record(
         &memory,
         &den_memory::LogicalMemoryPath::hat(hat.id, "reviewed-note"),
@@ -789,7 +794,7 @@ async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
     );
     let snapshot = hats::work_review::snapshot_for_admin(
         &pool,
-        &state.memory_stores,
+        state.memory_stores().unwrap(),
         BearId::new(bear_id),
         hat.id,
         UserId::new(admin),
@@ -823,7 +828,7 @@ async fn hat_admin_setup_and_binding_are_scoped_and_one_way(pool: PgPool) {
     );
     let snapshot = hats::work_review::snapshot_for_admin(
         &pool,
-        &state.memory_stores,
+        state.memory_stores().unwrap(),
         BearId::new(bear_id),
         hat.id,
         UserId::new(admin),
@@ -1422,7 +1427,12 @@ async fn reviewed_hat_promotion_is_admin_only_and_does_not_copy_raw_notes(pool: 
         crate::template_environment(&config),
         config,
     );
-    let memory = state.memory_stores.store_for_bear(bear_id).await.unwrap();
+    let memory = state
+        .memory_stores()
+        .unwrap()
+        .store_for_bear(bear_id)
+        .await
+        .unwrap();
     let raw = append_memory_record(
         &memory,
         &LogicalMemoryPath::source_local(MemorySource::Conversation(conversation.id), "note"),

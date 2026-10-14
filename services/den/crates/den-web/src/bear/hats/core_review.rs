@@ -104,7 +104,7 @@ async fn render_review(
     let hat = manage::get_hat(state.sqlx_pool(), bear_id, hat_id).await?;
     let sources: Vec<CandidateView> = core_review::candidates(
         state.sqlx_pool(),
-        &state.memory_stores,
+        state.memory_stores()?,
         bear_id,
         reviewer,
         hat_id,
@@ -117,7 +117,7 @@ async fn render_review(
         Some(
             core_review::candidate(
                 state.sqlx_pool(),
-                &state.memory_stores,
+                state.memory_stores()?,
                 bear_id,
                 reviewer,
                 hat_id,
@@ -132,7 +132,7 @@ async fn render_review(
     let current_head = if let Some(ref selected) = selected {
         core_review::core_head(
             state.sqlx_pool(),
-            &state.memory_stores,
+            state.memory_stores()?,
             bear_id,
             reviewer,
             hat_id,
@@ -180,7 +180,7 @@ async fn review_post(
     }
     let result = core_review::promote(
         state.sqlx_pool(),
-        &state.memory_stores,
+        state.memory_stores()?,
         BearId::new(bear.id),
         UserId::new(session_user(&auth).await?.id),
         CoreReviewDecision {

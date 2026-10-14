@@ -100,7 +100,7 @@ async fn create_bear(
     };
 
     if let Err(e) =
-        provision::initialize_bear_native(state.sqlx_pool(), &state.memory_stores, id).await
+        provision::initialize_bear_native(state.sqlx_pool(), state.memory_stores()?, id).await
     {
         tracing::warn!(%id, "Bear initialization failed after admin API create: {e}");
     }

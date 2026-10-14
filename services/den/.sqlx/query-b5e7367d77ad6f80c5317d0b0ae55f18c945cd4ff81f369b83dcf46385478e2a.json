@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE cabinet_discussion_entries SET content='rewritten', authored_by=$2, authored_by_user_id=$3, authored_at=now() WHERE discussion_ref=$1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Jsonb",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b5e7367d77ad6f80c5317d0b0ae55f18c945cd4ff81f369b83dcf46385478e2a"
+}

@@ -86,7 +86,7 @@ async fn test_app(
         crate::template_environment(&config),
         config,
     );
-    let manager = state.memory_stores.clone();
+    let manager = state.memory_stores().unwrap().clone();
     let session_store = PostgresStore::new(pool.clone());
     session_store
         .migrate()

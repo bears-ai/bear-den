@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE cabinet_items SET user_members=$2 WHERE cabinet_ref=$1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int4Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8e84d0c7060b75bbfc739dd421b8fdeddd4160294428e5b47d29dc7226c3debc"
+}

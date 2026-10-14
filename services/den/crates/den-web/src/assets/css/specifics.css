@@ -1150,3 +1150,127 @@ body.page-bears-health .bears-health-row-fail td:first-of-type {
     height: 70vh;
     border: var(--thin-line-unit) solid var(--border-color);
 }
+
+/* Cabinet-only shell and page sections; shared Den chrome remains unchanged. */
+.cabinet-skip-link {
+    position: absolute;
+    inset-inline-start: var(--spacing-unit);
+    top: -10rem;
+    z-index: 10;
+    padding: var(--spacing-unit);
+    background: var(--page-color);
+}
+.cabinet-skip-link:focus {
+    top: var(--spacing-unit);
+}
+body.cabinet-surface a:focus-visible,
+.cabinet-page [tabindex="0"]:focus-visible {
+    outline: var(--thin-line-unit) solid var(--accent-color);
+    outline-offset: var(--thin-line-unit);
+}
+body.cabinet-surface {
+    background-image: none;
+}
+body.cabinet-surface > header {
+    height: auto;
+    min-height: 3rem;
+    flex-wrap: wrap;
+    gap: var(--spacing-unit);
+    align-items: center;
+    padding-block: var(--spacing-unit);
+}
+body.cabinet-surface > header .cabinet-account-nav {
+    height: auto;
+    margin: 0;
+    padding: 0;
+}
+body.cabinet-surface > header .cabinet-account-nav ul {
+    flex-wrap: wrap;
+    align-items: center;
+}
+body.cabinet-surface > header .cabinet-account-nav li {
+    margin: 0;
+    text-align: start;
+}
+body.cabinet-surface .cabinet-nav ul {
+    list-style: none;
+    padding: 0;
+}
+.cabinet-page {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+.cabinet-page .cabinet-page-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-unit);
+    border-bottom: var(--thin-line-unit) solid var(--border-color);
+    margin-bottom: calc(var(--spacing-unit) * 2);
+}
+.cabinet-page .cabinet-page-tabs a {
+    display: block;
+    padding: var(--spacing-unit);
+    text-decoration: none;
+}
+.cabinet-page .cabinet-page-tabs a[aria-current="page"] {
+    border-bottom: var(--chunky-line-unit) solid var(--accent-color);
+    font-weight: bold;
+}
+.cabinet-page .cabinet-notice {
+    border-inline-start: var(--chunky-line-unit) solid var(--accent-color);
+    padding: var(--spacing-unit);
+    background: var(--surface-color);
+}
+.cabinet-page .cabinet-discussion-list {
+    list-style: none;
+    padding: 0;
+}
+.cabinet-page .cabinet-discussion-list > li {
+    margin-bottom: var(--spacing-unit);
+}
+.cabinet-page .cabinet-message-meta {
+    color: var(--meta-color);
+    font-size: smaller;
+    margin-bottom: var(--spacing-unit);
+}
+.cabinet-page .cabinet-discussion-content {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+.cabinet-page .cabinet-discussion-form textarea,
+.cabinet-page #discussion-preserved-draft {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    margin-block: var(--spacing-unit);
+}
+.cabinet-page .cabinet-history-table {
+    max-width: 100%;
+    overflow-x: auto;
+}
+.cabinet-page .cabinet-comparison {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: calc(var(--spacing-unit) * 2);
+}
+.cabinet-page .cabinet-comparison section {
+    min-width: 0;
+}
+.cabinet-page .cabinet-comparison pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 36rem;
+    overflow: auto;
+    padding: var(--spacing-unit);
+    border: var(--thin-line-unit) solid var(--border-color);
+    background: var(--field-fill-color);
+    font-family: var(--data-font-family);
+}
+@media (max-width: 699px) {
+    body.cabinet-surface > header .cabinet-account-nav {
+        width: auto;
+    }
+    .cabinet-page .cabinet-comparison {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}

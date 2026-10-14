@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Your uploads · Cabinet{% endblock %}
-{% block breadcrumb %}<a href="/">Bears</a> / <a href="/cabinet">Cabinet</a> / Your uploads{% endblock %}
+{% block breadcrumb %}{% include "cabinet/_breadcrumb.html" %} / Your uploads{% endblock %}
 {% block content %}
-<div class="usability-work">
+<div class="usability-work cabinet-page">
 <p><a href="/cabinet">← Cabinet</a></p>
 <h1>Your uploads</h1>
 {% if not storage_enabled %}<p role="status">Automatic cleanup and retry are unavailable: this Den has no file storage configured.</p>{% endif %}

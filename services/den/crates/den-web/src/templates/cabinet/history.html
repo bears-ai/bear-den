@@ -1,23 +1,39 @@
 {% extends "base.html" %}
 {% block title %}History: {{ item_title }}{% endblock %}
-{% block breadcrumb %}<a href="/">Bears</a> / <a href="/cabinet">Cabinet</a>{% endblock %}
+{% block breadcrumb %}{% include "cabinet/_breadcrumb.html" %} / History{% endblock %}
 {% block content %}
-<div class="usability-work">
-<p><a href="/cabinet/{{ cabinet_ref }}">← Back to page</a></p>
-<h1>History: {{ item_title }}</h1>
-<table>
-    <thead>
-        <tr><th>Revision</th><th>Authored</th><th>Author</th></tr>
-    </thead>
-    <tbody>
+<div class="usability-work cabinet-page">
+    {% include "cabinet/_page_tabs.html" %}
+    <h1>History: {{ item_title | e }}</h1>
+    <p>Immutable page revisions, newest first. Discussion is separate from page content history.</p>
+    <div class="cabinet-history-table" role="region" aria-label="Page revision history" tabindex="0">
+    <table>
+        <caption>Revisions visible under your current page access</caption>
+        <thead><tr><th scope="col">Revision</th><th scope="col">Publication</th><th scope="col">Author</th><th scope="col">Authored</th><th scope="col">Comparison</th></tr></thead>
+        <tbody>
         {% for version in versions %}
         <tr>
-            <td><a href="/cabinet/{{ cabinet_ref }}?version={{ version.version_ref }}">{{ version.revision }}</a></td>
-            <td>{{ version.authored_at | timeago }}</td>
-            <td>{% if version.authored_by.actor_kind == "bear" %}Bear ({{ version.authored_by.stance }}){% else %}Person{% endif %}</td>
+            <td><a href="/cabinet/{{ cabinet_ref }}?version={{ version.version_ref }}">Revision {{ version.revision }}</a></td>
+            <td>{% if version.is_current %}<strong>Current</strong> · {% endif %}{% if version.review == "pending" %}Pending review · unpublished{% elif version.review == "rejected" %}Rejected · unpublished{% elif version.review == "approved" %}Approved{% else %}Published directly{% endif %}</td>
+            <td>{{ version.author_name | default(version.author_label, true) | e }}</td>
+            <td><time datetime="{{ version.authored_at }}" title="{{ version.authored_at }}">{{ version.authored_at | timeago }}</time></td>
+            <td>{% if version.can_compare %}<a href="/cabinet/{{ cabinet_ref }}/history?before={{ version.version_ref }}#comparison">Compare with current</a>{% elif version.is_current %}Current revision{% else %}No published comparison{% endif %}</td>
         </tr>
-        {% endfor %}
-    </tbody>
-</table>
+        {% else %}<tr><td colspan="5">No visible revisions.</td></tr>{% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% if comparison_notice %}<p class="cabinet-notice" role="status">{{ comparison_notice | e }}</p>{% endif %}
+    {% if comparison %}
+    <section id="comparison" aria-labelledby="comparison-heading">
+        <h2 id="comparison-heading">Revision {{ comparison.before_revision }} → current revision {{ comparison.current_revision }}</h2>
+        <p>Side-by-side source text. Only published revisions are compared; pending and rejected review content is not included.</p>
+        {% if comparison.unchanged %}<p role="status">The page content is unchanged between these revisions.</p>{% endif %}
+        <div class="cabinet-comparison">
+            <section><h3><a href="/cabinet/{{ cabinet_ref }}?version={{ comparison.before_ref }}">Before · revision {{ comparison.before_revision }}</a></h3><pre tabindex="0" aria-label="Before revision source">{{ comparison.before_content | e }}</pre></section>
+            <section><h3><a href="/cabinet/{{ cabinet_ref }}?version={{ comparison.current_ref }}">Current · revision {{ comparison.current_revision }}</a></h3><pre tabindex="0" aria-label="Current revision source">{{ comparison.current_content | e }}</pre></section>
+        </div>
+    </section>
+    {% endif %}
 </div>
 {% endblock %}

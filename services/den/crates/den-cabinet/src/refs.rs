@@ -144,6 +144,13 @@ cabinet_ref!(
 );
 
 cabinet_ref!(
+    /// An append-only discussion entry on a Cabinet page, not a page revision.
+    CabinetDiscussionRef,
+    "cabinet discussion entry",
+    "cabinet_discussion_"
+);
+
+cabinet_ref!(
     /// A review record accompanying a review-state transition (Phase 2).
     CabinetReviewRef,
     "cabinet review",

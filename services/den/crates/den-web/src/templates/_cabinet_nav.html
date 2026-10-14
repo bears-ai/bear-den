@@ -1,0 +1,13 @@
+{% set cabinet_page = template_tag | default("") %}
+{% set cabinet_index = index_view | default("browse") %}
+<nav class="bear-manage-nav cabinet-nav" aria-label="Cabinet navigation">
+    <p class="bear-manage-nav-title"><strong>Knowledge &amp; pages</strong></p>
+    <ul>
+        <li><a href="/cabinet"{% if cabinet_page == "cabinet-index" and cabinet_index == "browse" %} aria-current="page"{% endif %}>Browse</a></li>
+        <li><a href="/cabinet?view=search"{% if cabinet_page == "cabinet-index" and cabinet_index == "search" %} aria-current="page"{% endif %}>Search</a></li>
+        <li><a href="/cabinet?view=pages"{% if cabinet_page == "cabinet-index" and cabinet_index == "pages" %} aria-current="page"{% endif %}>Pages</a></li>
+        <li><a href="/cabinet?view=reviews"{% if cabinet_page == "cabinet-index" and cabinet_index == "reviews" %} aria-current="page"{% endif %}>Reviews</a></li>
+        <li><a href="/cabinet/uploads"{% if cabinet_page == "cabinet-uploads" %} aria-current="page"{% endif %}>Uploads</a></li>
+        <li><a href="/cabinet/saved-copies"{% if cabinet_page in ["cabinet-saved_copies", "cabinet-retire_snapshot"] %} aria-current="page"{% endif %}>Saved copies</a></li>
+    </ul>
+</nav>

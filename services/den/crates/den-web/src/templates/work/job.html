@@ -2,7 +2,7 @@
 {% block title %}Job · {{ bear_slug | e }}{% endblock %}
 {% block manage %}
 <div class="usability-work">
-<p><a href="/bear/{{ bear_slug }}/jobs">← Jobs</a> · <a href="/cabinet">Shared pages</a></p>
+<p><a href="/bear/{{ bear_slug }}/jobs">← Jobs</a> · <a href="{{ "/cabinet" | cabinet_url }}">Shared pages</a></p>
 <h1>Job <code class="entity-reference-id">{{ job_display_id }}</code></h1>
 <h2>{{ goal }}</h2>
 {% if edit_error %}<p role="alert"><strong>{{ edit_error }}</strong> No Job settings were changed. Your draft is preserved in <a href="#job-settings">Edit Job settings</a>; review unavailable choices before saving again.</p>{% endif %}
@@ -214,7 +214,7 @@
 <section class="box">
     <h2>Mission page &amp; saved evidence</h2>
     {% if mission.reference %}
-    <p><a href="/cabinet/{{ mission.reference }}">{{ mission.title | e }}</a></p>
+    <p><a href="{{ ("/cabinet/" ~ (mission.reference | urlencode)) | cabinet_url }}">{{ mission.title | e }}</a></p>
     {% else %}
     <p>No accessible Mission page linked.</p>
     {% endif %}
@@ -243,9 +243,9 @@
     </details>
     {% endif %}
     <h3>Saved document evidence</h3>
-    <p><a href="/cabinet/saved-copies">Your saved copies</a></p>
+    <p><a href="{{ "/cabinet/saved-copies" | cabinet_url }}">Your saved copies</a></p>
     {% if mission.saved_copies %}<ul>{% for copy in mission.saved_copies %}
-    <li>{{ copy.title | e }} · {% if copy.retired %}<strong>Retired</strong> · <a href="/cabinet/saved-copies/{{ copy.reference }}/retire">View retirement receipt</a>{% else %}{% if copy.readable %}<a href="/bear/{{ bear_slug | urlencode }}/jobs/{{ job_id }}/evidence/{{ copy.reference }}/content">Download saved copy</a> · {% endif %}<a href="/cabinet/saved-copies/{{ copy.reference }}/retire">Review retirement</a>{% endif %}</li>
+    <li>{{ copy.title | e }} · {% if copy.retired %}<strong>Retired</strong> · <a href="{{ ("/cabinet/saved-copies/" ~ (copy.reference | urlencode) ~ "/retire") | cabinet_url }}">View retirement receipt</a>{% else %}{% if copy.readable %}<a href="/bear/{{ bear_slug | urlencode }}/jobs/{{ job_id }}/evidence/{{ copy.reference }}/content">Download saved copy</a> · {% endif %}<a href="{{ ("/cabinet/saved-copies/" ~ (copy.reference | urlencode) ~ "/retire") | cabinet_url }}">Review retirement</a>{% endif %}</li>
     {% endfor %}</ul>{% endif %}
     {% if mission.evidence %}
     <ul>

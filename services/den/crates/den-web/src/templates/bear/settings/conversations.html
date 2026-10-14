@@ -63,7 +63,7 @@
 <p><em>No persisted conversations yet.</em></p>
 {% endif %}
 
-<p><a href="/bear/{{ bear.slug | e }}/jobs">Inspect Jobs</a> · <a href="/cabinet">Open Cabinet</a>.</p>
+<p><a href="/bear/{{ bear.slug | e }}/jobs">Inspect Jobs</a> · <a href="{{ "/cabinet" | cabinet_url }}">Open Cabinet</a>.</p>
 <details><summary>Help: live and manual reflection</summary><p>Live sweeps check open conversations using normal compaction policy. Manual reflection requests a fresh checkpoint before discovering memory proposals. Conversation pages retain their scoped artifacts and reflection evidence.</p></details>
 </div>
 {% endblock %}

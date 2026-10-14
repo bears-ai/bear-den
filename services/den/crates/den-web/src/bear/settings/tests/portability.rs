@@ -79,7 +79,12 @@ async fn bundle_roundtrip_remints_hats_and_memory_without_restoring_authority() 
     .await
     .unwrap();
     let state = test_state(pool.clone());
-    let store = state.memory_stores.store_for_bear(bear_id).await.unwrap();
+    let store = state
+        .memory_stores()
+        .unwrap()
+        .store_for_bear(bear_id)
+        .await
+        .unwrap();
     let path = LogicalMemoryPath::hat(original.id, "entry");
     store
         .append_record(
@@ -236,7 +241,8 @@ async fn bundle_roundtrip_remints_hats_and_memory_without_restoring_authority() 
         Some(restored.id)
     );
     let imported_store = state
-        .memory_stores
+        .memory_stores()
+        .unwrap()
         .store_for_bear(imported_bear.id)
         .await
         .unwrap();

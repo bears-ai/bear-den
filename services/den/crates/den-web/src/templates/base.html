@@ -1,4 +1,7 @@
 <!doctype html>
+{% set is_cabinet = cabinet_surface | default(false) %}
+{% set cabinet_home = cabinet_home_url | default("/cabinet", true) %}
+{% set den_url = den_home_url | default("/", true) %}
 {% import "icons.jinja" as icons %} {% if session is defined and session.theme
 %}
 <html lang="en" class="theme-{{ session.theme }}">
@@ -27,10 +30,10 @@
             />
             <link rel="manifest" href="/manifest.json" />
             <meta name="mobile-web-app-capable" content="yes" />
-            <meta name="application-name" content="{{ app_display_name }}" />
+            <meta name="application-name" content="{% if is_cabinet %}Cabinet{% else %}{{ app_display_name }}{% endif %}" />
             <meta
                 name="apple-mobile-web-app-title"
-                content="{{ app_display_name }}"
+                content="{% if is_cabinet %}Cabinet{% else %}{{ app_display_name }}{% endif %}"
             />
             <link
                 rel="apple-touch-icon"
@@ -40,8 +43,24 @@
             <link rel="icon" sizes="96x96" href="/assets/icons/logo.png" />
             {% block head %}{% endblock %}
         </head>
-        <body class="{{ template_tag }}">
+        <body class="{{ template_tag }}{% if is_cabinet %} cabinet-surface{% endif %}">
+            {% if is_cabinet %}<a class="cabinet-skip-link" href="#cabinet-content">Skip to content</a>{% endif %}
             <header>
+                {% if is_cabinet %}
+                <a href="{{ cabinet_home }}" class="logo cabinet-logo">
+                    <svg class="logo-symbol" viewBox="0 0 32 32" aria-hidden="true"><path d="M3 2h26v28H3V2zm3 3v10h20V5H6zm0 13v9h20v-9H6zm7-10h6v3h-6V8zm0 13h6v3h-6v-3z" /></svg>
+                    <span class="logo-wordmark">Cabinet</span>
+                </a>
+                <nav class="cabinet-account-nav" aria-label="Cabinet account">
+                    <ul>
+                        <li><a href="{{ den_url }}">Return to Den</a></li>
+                        {% if session is defined and session.username is defined %}
+                        <li><span>{{ session.username }}</span></li>
+                        <li><a href="/logout">Logout</a></li>
+                        {% else %}<li><a href="/login">Login</a></li>{% endif %}
+                    </ul>
+                </nav>
+                {% else %}
                 <a href="/" class="logo">
                     {{ icons.logo("logo-symbol", "") }}
                     <span class="logo-wordmark">{{ app_display_name }}</span>
@@ -53,7 +72,7 @@
                         </li>
 
                         {% if session is defined and session.username is defined %}
-                        <li class="den-header-destination"><a href="/cabinet">Cabinet</a></li>
+                        <li class="den-header-destination"><a href="{{ "/cabinet" | cabinet_url }}">Cabinet</a></li>
                         <li class="den-header-destination"><a href="/connections">Connections</a></li>
                         <li class="den-header-destination"><a href="/reviews">Reviews</a></li>
                         {% endif %}
@@ -109,8 +128,9 @@
                         });
                     });
                 </script>
+                {% endif %}
             </header>
-            {% set management_sidebar %}{% block sidebar %}{% if session is defined and session.username is defined %}{% include "_den_nav.html" %}{% endif %}{% endblock %}{% endset %}
+            {% set management_sidebar %}{% if is_cabinet %}{% if session is defined and session.username is defined %}{% include "_cabinet_nav.html" %}{% endif %}{% else %}{% block sidebar %}{% if session is defined and session.username is defined %}{% include "_den_nav.html" %}{% endif %}{% endblock %}{% endif %}{% endset %}
             <section id="content">
                 {% if self.title() %}
                 <header>
@@ -137,13 +157,13 @@
                 {% if management_sidebar | trim %}
                 <div class="bear-manage">
                     {{ management_sidebar }}
-                    <div class="bear-manage-main">
-                {% endif %}
+                    <div class="bear-manage-main"{% if is_cabinet %} id="cabinet-content" tabindex="-1"{% endif %}>
+                {% elif is_cabinet %}<div id="cabinet-content" tabindex="-1">{% endif %}
                 {% block content %}{% endblock %}
                 {% if management_sidebar | trim %}
                     </div>
                 </div>
-                {% endif %}
+                {% elif is_cabinet %}</div>{% endif %}
             </section>
         </body>
     </html>

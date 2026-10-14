@@ -12,7 +12,7 @@ The older [planning hub](PLAN.md) contains useful priorities and delivery histor
 
 ## Active product delivery
 
-- [Cabinet implementation](CABINET_IMPLEMENTATION_PLAN.md) — shared Den knowledge, page policy/review, artifacts and recall. [Phase 5](CABINET_IMPLEMENTATION_PLAN.md#phase-5--distinct-cabinet-surface-and-external-mcp) adds the planned distinct Cabinet hostname/UI and dedicated Cabinet-only container sharing Den Postgres, plus an authenticated external MCP adapter; it does not extract Cabinet from Den. Bear administration remains Cabinet-aware and hands off live content details/manipulation. Current behavior and delivery caveats live in the [Cabinet guide](../guides/cabinet.md).
+- [Cabinet implementation](CABINET_IMPLEMENTATION_PLAN.md) — shared Den knowledge, page policy/review, artifacts and recall. [Phase 5](CABINET_IMPLEMENTATION_PLAN.md#phase-5--distinct-cabinet-surface-and-external-mcp) is in progress: code/test implementation includes the Cabinet-only entrypoint, distinct UI/cross-host links, page discussion/history and an initial authenticated read-only MCP adapter. The approved root Compose `cabinet` profile, production image and isolated local-HTTPS acceptance are validated; actual public-host rollout and native-browser/live-storage acceptance remain open. It does not extract Cabinet from Den. Bear administration remains Cabinet-aware and hands off live content details/manipulation. Current behavior and delivery caveats live in the [Cabinet guide](../guides/cabinet.md).
 
 ## Active contract and validation work
 

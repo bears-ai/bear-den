@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block title %}{{ details.title | e }} · Cabinet{% endblock %}
-{% block breadcrumb %}<a href="/">Bears</a> / <a href="/cabinet">Cabinet</a> / <a href="{{ page_url }}">Page</a> / Attachment{% endblock %}
+{% block breadcrumb %}{% include "cabinet/_breadcrumb.html" %} / <a href="{{ page_url }}">Page</a> / Attachment{% endblock %}
 {% block content %}
-<div class="usability-work">
+<div class="usability-work cabinet-page">
 <section class="cabinet-attachment-preview">
     <p><a href="{{ page_url }}#attachments">← Back to page</a></p>
     <h1>{{ details.title | e }}</h1>

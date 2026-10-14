@@ -1603,7 +1603,7 @@ async fn member_scope_labels(
         .into_iter()
         .map(|hat| (hat.id, hat.name))
         .collect();
-    let store = state.memory_stores.store_for_bear(bear_id).await?;
+    let store = state.memory_stores()?.store_for_bear(bear_id).await?;
     let ids = serde_json::to_string(memory_ids)
         .map_err(|err| CustomError::System(format!("serialize memory IDs: {err}")))?;
     let rows = sqlx::query(
@@ -1821,7 +1821,7 @@ async fn clear_review_queue_post(
         cleared += 1;
     }
 
-    let manager = state.memory_stores.clone();
+    let manager = state.memory_stores()?.clone();
     if let Ok(store) = manager.store_for_bear(bear.id).await {
         for proposal in list_reviewable_memory_proposals(&store).await? {
             let source_refs = proposal
@@ -1880,7 +1880,7 @@ async fn import_staged_bundle(
     bear_id: Uuid,
     bundle_path: &FsPath,
 ) -> Result<den_memory::LegacyMemoryImportReport, CustomError> {
-    let stores = state.memory_stores.clone();
+    let stores = state.memory_stores()?.clone();
     let store = stores.store_for_bear(bear_id).await?;
     let record_count: i64 =
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM memory_records WHERE bear_id = ?")
@@ -1941,7 +1941,7 @@ async fn own_note_preview(
     let sources = viewer.recent_own_note_sources(state.sqlx_pool()).await?;
     let ids: Vec<Uuid> = sources.iter().map(|source| source.id).collect();
     let notes = den_memory::scoped::recent_own_conversation_notes(
-        &state.memory_stores.store_for_bear(bear_id).await?,
+        &state.memory_stores()?.store_for_bear(bear_id).await?,
         &ids,
         8,
     )
@@ -1988,7 +1988,7 @@ async fn dashboard_view(
     let own_notes = own_note_preview(&state, id, user_id).await?;
     let viewer = MemoryLibraryViewer::resolve(&state, id, can_manage_bear).await?;
     let config = state.config.as_ref();
-    let manager = state.memory_stores.clone();
+    let manager = state.memory_stores()?.clone();
 
     if let MemoryLibraryViewer::Curated(ref grant) = viewer {
         let mut recent: Vec<_> = viewer
@@ -2248,7 +2248,7 @@ async fn recent_view(
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
-    let manager = state.memory_stores.clone();
+    let manager = state.memory_stores()?.clone();
     let viewer = MemoryLibraryViewer::resolve(&state, bear.id, can_manage_bear).await?;
     let mut records: Vec<RecordListItem> = viewer
         .recent(&manager, bear.id, 50)
@@ -2288,7 +2288,7 @@ async fn search_view(
         Err(r) => return Ok(r.into_response()),
     };
     let config = state.config.as_ref();
-    let manager = state.memory_stores.clone();
+    let manager = state.memory_stores()?.clone();
     let viewer = MemoryLibraryViewer::resolve(&state, bear.id, can_manage_bear).await?;
     let q = query.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
     // Qdrant only proposes IDs. Member scopes and displayed snippets must be
@@ -2512,7 +2512,7 @@ async fn import_legacy_memory_post(
             "Upload must be a self-contained git bundle, not a .bear archive or an incremental bundle.".into()).await;
     }
 
-    let stores = state.memory_stores.clone();
+    let stores = state.memory_stores()?.clone();
     let empty_store = async {
         let store = stores.store_for_bear(bear.id).await?;
         let record_count: i64 =
@@ -2626,7 +2626,7 @@ async fn record_view(
         Err(r) => return Ok(r.into_response()),
     };
     let config = state.config.as_ref();
-    let manager = state.memory_stores.clone();
+    let manager = state.memory_stores()?.clone();
     let viewer = MemoryLibraryViewer::resolve(&state, bear.id, can_manage_bear).await?;
     let record = viewer
         .detail(&manager, bear.id, &memory_id)
@@ -2763,7 +2763,7 @@ async fn entities_view(
     MemoryLibraryViewer::resolve(&state, bear.id, can_manage_bear)
         .await?
         .require_admin_review()?;
-    let manager = state.memory_stores.clone();
+    let manager = state.memory_stores()?.clone();
     let store = manager.store_for_bear(bear.id).await?;
     let type_filter = query
         .r#type
@@ -2832,7 +2832,7 @@ async fn entity_detail_view(
     MemoryLibraryViewer::resolve(&state, bear.id, can_manage_bear)
         .await?
         .require_admin_review()?;
-    let manager = state.memory_stores.clone();
+    let manager = state.memory_stores()?.clone();
     let store = manager.store_for_bear(bear.id).await?;
     let row = store::get_entity(&store, &entity_id)
         .await?
@@ -2922,7 +2922,7 @@ async fn reflection_run_get(
     MemoryLibraryViewer::resolve(&state, bear.id, can_manage_bear)
         .await?
         .require_admin_review()?;
-    let manager = state.memory_stores.clone();
+    let manager = state.memory_stores()?.clone();
     let detail = get_reflection_run_detail(state.sqlx_pool(), &manager, bear.id, run_id)
         .await?
         .ok_or_else(|| CustomError::NotFound("reflection run not found".to_string()))?;
@@ -2956,7 +2956,7 @@ async fn reflection_evidence_get(
     MemoryLibraryViewer::resolve(&state, bear.id, can_manage_bear)
         .await?
         .require_admin_review()?;
-    let manager = state.memory_stores.clone();
+    let manager = state.memory_stores()?.clone();
     let evidence =
         get_reflection_evidence(state.sqlx_pool(), &manager, bear.id, &bear.slug, run_id)
             .await?
@@ -3061,7 +3061,7 @@ async fn proposal_post(
             .map(|_| ())
             .map_err(CustomError::from)
         } else {
-            let manager = state.memory_stores.clone();
+            let manager = state.memory_stores()?.clone();
             let store = manager.store_for_bear(bear.id).await?;
             let review_payload = json!({
                 "reviewer_profile": RuntimeContextLabel::Curation.as_str(),
@@ -3090,7 +3090,7 @@ async fn proposal_post(
         ).await;
     }
     if form.after_save.as_deref() == Some("next") {
-        let manager = state.memory_stores.clone();
+        let manager = state.memory_stores()?.clone();
         if let Some(next) = next_review_proposal(&state, &manager, bear.id, proposal_id).await {
             return Ok(Redirect::to(&format!(
                 "/bear/{}/memory/proposals/{}?saved=true",

@@ -1077,7 +1077,7 @@ fn manifest_for_bear(bear: &den_service::bears::Bear) -> Result<BearBundleManife
 }
 
 async fn snapshot_memory_sqlite(state: &AppState, bear_id: Uuid) -> Result<Vec<u8>, CustomError> {
-    let manager = state.memory_stores.clone();
+    let manager = state.memory_stores()?.clone();
     let store = manager.store_for_bear(bear_id).await?;
     let snapshot_path =
         std::env::temp_dir().join(format!("bear-export-{bear_id}-{}.sqlite", Uuid::new_v4()));
@@ -1101,7 +1101,7 @@ async fn rewrite_imported_memory_bear_id(
     state: &AppState,
     bear_id: Uuid,
 ) -> Result<(), CustomError> {
-    let manager = state.memory_stores.clone();
+    let manager = state.memory_stores()?.clone();
     let store = manager.store_for_bear(bear_id).await?;
     let new_id = bear_id.to_string();
     for table in [
@@ -1184,7 +1184,7 @@ async fn memory_stats_for_bear(
     state: &AppState,
     bear_id: Uuid,
 ) -> Result<Option<BearMemoryAdminStats>, CustomError> {
-    let manager = state.memory_stores.clone();
+    let manager = state.memory_stores()?.clone();
     match bear_memory_admin_stats(&manager, state.config.as_ref(), bear_id).await {
         Ok(stats) => Ok(Some(stats)),
         Err(err) => {
@@ -1204,13 +1204,19 @@ struct RecallHealthView {
 }
 
 async fn recall_health_for_bear(state: &AppState, bear_id: Uuid) -> RecallHealthView {
-    match recall_watermark_for_bear(
-        state.sqlx_pool(),
-        state.config.as_ref(),
-        &state.memory_stores,
-        bear_id,
-    )
-    .await
+    let stores = match state.memory_stores() {
+        Ok(stores) => stores,
+        Err(error) => {
+            return RecallHealthView {
+                status: "unavailable",
+                detail: error.to_string(),
+                lag_count: None,
+                failed_run_count: None,
+                last_success_at: None,
+            }
+        }
+    };
+    match recall_watermark_for_bear(state.sqlx_pool(), state.config.as_ref(), stores, bear_id).await
     {
         Ok(None) => RecallHealthView {
             status: "unavailable",
@@ -1286,7 +1292,7 @@ async fn overview_view(
     let id = bear.id;
     let member_count = bears_db::count_bear_members(state.sqlx_pool(), id).await?;
     let memory_stats = {
-        let manager = state.memory_stores.clone();
+        let manager = state.memory_stores()?.clone();
         match bear_memory_admin_stats(&manager, state.config.as_ref(), id).await {
             Ok(stats) => Some(stats),
             Err(err) => {

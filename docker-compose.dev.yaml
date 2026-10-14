@@ -15,6 +15,15 @@ services:
                 CARGO_BUILD_JOBS: ${CARGO_BUILD_JOBS:-2}
         pull_policy: never
 
+    bears-cabinet:
+        build:
+            context: ./services/den
+            dockerfile: Dockerfile
+            args:
+                SQLX_OFFLINE: ${SQLX_OFFLINE:-true}
+                CARGO_BUILD_JOBS: ${CARGO_BUILD_JOBS:-2}
+        pull_policy: never
+
     bears-den-migrate:
         build:
             context: ./services/den

@@ -1,6 +1,6 @@
 # Cabinet Contract
 
-**Status:** Adopted; branch implementation now enforces page hierarchy, inherited membership, Bear-write policy and human version review through the facade. Legacy Phase 0 structs still retain rejected collection/Mission fields at compatibility boundaries; page-only helpers own the new state. Docket-owned Mission annotations, private snapshot citations, retained attachments/uploads and creator-authorized saved-copy retirement are implemented in the branch; retirement is non-erasure and preserves audit while the Bear survives. General artifact/bucket cleanup and live-provider acceptance remain pending. See the [implementation plan](../roadmap/CABINET_IMPLEMENTATION_PLAN.md).
+**Status:** Adopted; branch implementation now enforces page hierarchy, inherited membership, Bear-write policy and human version review through the facade. Legacy Phase 0 structs still retain rejected collection/Mission fields at compatibility boundaries; page-only helpers own the new state. Docket-owned Mission annotations, private snapshot citations, retained attachments/uploads and creator-authorized saved-copy retirement are implemented in the branch; retirement is non-erasure and preserves audit while the Bear survives. The branch also implements a Cabinet-only surface, initial read-only delegated-human MCP and append-only human page discussion; production surface rollout/acceptance remains pending alongside general artifact/bucket cleanup and live-provider acceptance. See the [implementation plan](../roadmap/CABINET_IMPLEMENTATION_PLAN.md).
 **Related:** [Bear charter and Cabinet Missions](bear-charter-and-cabinet-missions.md), [ADR-0004 — Artifacts, Garage, and Cabinet separation](../decisions/adr-0004-artifacts-garage.md), [ADR-0008 — Research ingestion uses Cabinet](../decisions/adr-0008-cabinet-reading-pipeline.md), [Identity and membership](identity-and-membership.md)
 
 This document is the provider-neutral contract for Cabinet: the typed identities, minimum records, Den facade operations, and authorization inputs/outcomes that every Cabinet implementation and client must honor. The backing provider (Den Postgres first; anything later) is an implementation detail behind this contract and must not leak into it.
@@ -13,7 +13,7 @@ This document is the provider-neutral contract for Cabinet: the typed identities
 - Every operation takes an **explicit actor scope** (user or Bear). The Phase 1 Bear provenance still records a compatibility stance; native tool admission and write eligibility use verified origin and governance rather than that label. No ambient identity.
 - Cabinet items are knowledge records. Artifact refs hold content payloads (ADR-0004). External sources stay external. Derived recall passages are rebuildable projections. These four never merge.
 
-## Planned surface separation (not implemented)
+## Surface separation (branch implementation; rollout pending)
 
 The [implementation plan's Phase 5](../roadmap/CABINET_IMPLEMENTATION_PLAN.md#phase-5--distinct-cabinet-surface-and-external-mcp) targets a perceptually distinct Cabinet service: a dedicated container, public hostname, Cabinet-focused UI/navigation and authenticated MCP access for other agent runtimes. This is a new surface/composition of Den, not extraction of the Cabinet domain, identity or database.
 
@@ -21,7 +21,7 @@ The [implementation plan's Phase 5](../roadmap/CABINET_IMPLEMENTATION_PLAN.md#ph
 - Bear administration retains Cabinet capability configuration and authorized summaries/handoffs. Live Cabinet page details and manipulation belong to the new surface; Docket retains its Job references and evidence ownership. Cross-host links are not access grants.
 - The dedicated composition must exclude Bear runtime/memory initialization and canonical Bear SQLite access. Existing web/worker flags are not evidence of that isolation. External MCP authentication must establish actor/delegation at the boundary, never accept arbitrary actor identity from tool arguments.
 
-These are target constraints, not a claim that the distinct hostname/container, navigation or MCP endpoint is available today. Current human routes remain in Den's `/cabinet` web surface.
+The branch now implements `den cabinet-serve`, a distinct Cabinet shell, typed public-origin/link resolution and an initial read-only MCP adapter. The Cabinet-only process has no native memory manager, and schema admission is read-only; the existing migration job owns SQLx and shared browser-session DDL. Configured Den GET/HEAD links redirect; legacy mutations are retired rather than forwarded. The approved root Compose `cabinet` profile now packages this service with shared image/database/origin, read-only root, no memory mounts and a Den health dependency. Production Alpine/musl image and isolated local-HTTPS acceptance checks pass. Actual public-host rollout, native-browser and live-provider acceptance remain pending, so this is not a deployed-surface claim. Den's local `/cabinet` remains the unconfigured fallback. MCP writes and durable delegated-client provenance remain open.
 
 ## Identities
 
@@ -34,6 +34,7 @@ All Cabinet refs are Den-minted, opaque, and stable for the entity lifetime. Fol
 | Source link | `cabinet_source_` | `cabinet_source_be55…` |
 | Attachment link | `cabinet_attachment_` | `cabinet_attachment_0c9f…` |
 | Review record | `cabinet_review_` | `cabinet_review_d21a…` |
+| Discussion entry | `cabinet_discussion_` | `cabinet_discussion_123a…` |
 
 Notes:
 
@@ -222,6 +223,16 @@ The decision is `allow` or `deny` with a structured, logged reason. Rules:
 - **Bears are members, not superusers**: a Bear's access derives from the same ancestor chain a person's does. Verified execution origin, governance, and future page policy may narrow an action; a stored stance label never widens it.
 - **Search and read denial is silent**: filtered from search, `NotFound` on read. A page whose parent is unreadable is itself unreadable, and its existence is not disclosed through the tree.
 - Every mutating decision (allow or deny) is auditable: actor scope, operation, target refs, resolved policy inputs, outcome.
+
+## Page discussion and human history
+
+**Branch implementation (2026-10-13):** discussion is page-local retained content, not another container, Den conversation/run or immutable page revision. `DiscussionEntry` carries a typed discussion ref, page ref, content, exact actor provenance and timestamp. The facade lists only currently readable pages and accepts human appends only under current inherited write access on an active page. Posts trim whitespace and permit 1–16,000 Unicode scalar values, excluding NUL; no caller-supplied author identity is accepted. Bear posting and MCP discussion tools are not exposed in this slice.
+
+Discussion appends acquire the Cabinet write fence and recheck authorization/lifecycle in the transaction. Reads combine current page authority with content in one statement snapshot. The current view returns the latest 100 messages in chronological order within that window; older-message pagination, reply threading, edits and deletion are not implemented. Messages remain durable after page tombstoning but tombstones do not make them readable; author account deletion cannot silently erase their provenance.
+
+Database guards reject update, delete and truncate; populated-feature rollback is refused. A partial downgrade of the retention guard pauses inserts until reapplication, closing the gap between rollback transactions without rewriting an applied migration. These scripts and guards are covered by isolated-database tests; they are not a hard-purge/compliance workflow.
+
+The human History tab projects immutable revision metadata under current page access and author/reviewer visibility, with exact revision links and escaped side-by-side comparison of published content only. Discussion never moves `current_version`, publishes a pending Bear proposal or changes revision history. Neither surface is a new authority cache or automatic model context.
 
 ## Distinctions (what Cabinet is not)
 

@@ -767,7 +767,7 @@ async fn chat_notes(
             conversation.id,
         )
         .await?;
-    let store = state.memory_stores.store_for_bear(q.bear_id).await?;
+    let store = state.memory_stores()?.store_for_bear(q.bear_id).await?;
     let notes = den_memory::scoped::recent_source(&store, grant, 50)
         .await?
         .into_iter()

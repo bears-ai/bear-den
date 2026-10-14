@@ -281,7 +281,7 @@ async fn first_bear_post(
     bears_db::grant_membership(state.sqlx_pool(), user_id, id, Some(BEAR_ROLE_ADMIN)).await?;
 
     if let Err(e) =
-        provision::initialize_bear_native(state.sqlx_pool(), &state.memory_stores, id).await
+        provision::initialize_bear_native(state.sqlx_pool(), state.memory_stores()?, id).await
     {
         tracing::warn!(%id, "Bear initialization failed during first-bear onboarding: {e}");
         return render_first_bear_form(

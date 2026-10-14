@@ -1,28 +1,35 @@
 {% extends "base.html" %}
 {% block title %}Edit: {{ item_title }}{% endblock %}
-{% block breadcrumb %}<a href="/">Bears</a> / <a href="/cabinet">Cabinet</a>{% endblock %}
+{% block breadcrumb %}{% include "cabinet/_breadcrumb.html" %}{% endblock %}
 {% block content %}
-<div class="usability-work">
+<div class="usability-work cabinet-page">
+{% include "cabinet/_page_tabs.html" %}
 <p><a href="/cabinet/{{ cabinet_ref }}">← Back to page</a></p>
 <h1>Edit Cabinet page</h1>
 
 {% if error %}
-<p role="alert"><strong>{{ error }}</strong> <a href="/cabinet/{{ cabinet_ref }}">Inspect the latest revision</a> and reconcile it with your preserved draft before publishing again.</p>
+<p id="edit-error" class="form-errors" role="alert"><strong>{{ error | e }}</strong> <a href="/cabinet/{{ cabinet_ref }}">Inspect the latest revision</a> and reconcile it with your preserved draft before publishing again.</p>
 {% endif %}
 
+{% if can_publish | default(true) %}
 <form method="post" action="/cabinet/{{ cabinet_ref }}/edit">
     <input type="hidden" name="base_version" value="{{ base_version }}">
     <p>
         <label for="title">Title</label><br>
-        <input type="text" id="title" name="title" value="{{ item_title }}" required>
+        <input type="text" id="title" name="title" value="{{ item_title | e }}" required{% if error %} aria-describedby="edit-error"{% endif %}>
     </p>
     <p>
         <label for="content">Content (Markdown)</label><br>
-        <textarea id="content" name="content" rows="20" cols="100">{{ content }}</textarea>
+        <textarea id="content" name="content" rows="20" cols="100"{% if error %} aria-describedby="edit-error"{% endif %}>{{ content | e }}</textarea>
     </p>
     {% include "cabinet/_audience.html" %}
     <p>Publishing makes this revision readable to the effective page audience immediately. It does not change page membership or share private attachments.</p>
     <button type="submit">Publish revision</button>
 </form>
+{% else %}
+<p>{% if archived %}This page is archived. Restore it before publishing a revision.{% else %}This page is read only for you. Page write access is required to publish.{% endif %}</p>
+<label for="draft-title">Your unposted title</label><input id="draft-title" value="{{ item_title | e }}" readonly>
+<label for="draft-content">Your unposted content</label><textarea id="draft-content" rows="20" readonly>{{ content | e }}</textarea>
+{% endif %}
 </div>
 {% endblock %}

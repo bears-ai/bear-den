@@ -23,6 +23,7 @@ pub mod observability;
 pub mod admin;
 pub mod bear;
 pub mod cabinet;
+pub mod cabinet_mcp;
 pub mod design;
 pub mod filters;
 pub mod home;
@@ -32,6 +33,7 @@ pub mod onboarding;
 pub mod public;
 pub mod stack_health;
 pub mod status;
+pub mod surface;
 pub mod user;
 pub mod v1;
 pub mod web_chat_runtime;
@@ -118,12 +120,24 @@ pub struct AppState {
     pub media: Option<crate::core::s3::MediaStore>,
     /// Clone of the process-wide per-Bear memory store manager (ADR-0031:
     /// one `MemoryStoreManager` instance per process; clones share pools).
-    pub memory_stores: den_memory::MemoryStoreManager,
+    memory_stores: Option<den_memory::MemoryStoreManager>,
+    pub surface: config::WebSurface,
 }
 
 impl AppState {
     pub fn sqlx_pool(&self) -> &PgPool {
         &self.sqlx_pool
+    }
+
+    /// Native memory is deliberately unavailable on the Cabinet-only surface.
+    pub fn memory_stores(&self) -> Result<&den_memory::MemoryStoreManager, CustomError> {
+        self.memory_stores.as_ref().ok_or_else(|| {
+            CustomError::System("native memory is unavailable on this web surface".into())
+        })
+    }
+
+    pub fn has_native_runtime(&self) -> bool {
+        self.memory_stores.is_some()
     }
 
     #[cfg(test)]
@@ -159,7 +173,8 @@ impl AppState {
             bifrost_catalog: den_service::bifrost::new_catalog_store(),
             web_chat_runtime,
             media: None,
-            memory_stores,
+            memory_stores: Some(memory_stores),
+            surface: config::WebSurface::Den,
         }
     }
 }
@@ -218,10 +233,13 @@ pub async fn server_with_state(
 }
 
 pub fn template_environment(config: &Config) -> Environment<'static> {
-    #[cfg(feature = "production")]
-    let _ = config;
-
     let mut env = Environment::new();
+    let cabinet_destination = config.cabinet_destination();
+    env.add_filter("cabinet_url", move |path: String| {
+        cabinet_destination.resolve_path(&path).map_err(|error| {
+            minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, error.to_string())
+        })
+    });
     env.add_filter("hexadecimal", filters::hexadecimal);
     env.add_filter("urlencode", filters::urlencode);
     env.add_filter("markdown", filters::markdown);
@@ -275,7 +293,8 @@ pub async fn server_with_state_and_runtime(
             bifrost_catalog,
             web_chat_runtime,
             media,
-            memory_stores,
+            memory_stores: Some(memory_stores),
+            surface: config::WebSurface::Den,
         },
         session_store,
     )
@@ -297,7 +316,9 @@ pub async fn server(
     let import_cleanup = Arc::new(ImportStagingCleanup(
         bear::settings::start_import_staging_cleanup(state.config.clone()).abort_handle(),
     ));
-    crate::cabinet::cleanup::spawn(state.clone());
+    if state.config.owns_cabinet_recovery(state.surface) {
+        crate::cabinet::cleanup::spawn(state.clone());
+    }
     let mut session_layer = SessionManagerLayer::new(session_store)
         .with_same_site(SameSite::Lax)
         .with_expiry(Expiry::OnInactivity(Duration::days(1)));
@@ -327,6 +348,11 @@ pub async fn server(
     let auth_layer = AuthManagerLayerBuilder::new(backend, session_layer).build();
 
     let asset_router = Arc::as_ref(&state.asset_router).clone();
+    let cabinet_router = surface::den_cabinet_router(state.config.as_ref());
+    let cabinet_router = match state.config.cabinet_destination() {
+        config::CabinetDestination::Local => cabinet_router.layer(auth_layer.clone()),
+        config::CabinetDestination::Dedicated(_) => cabinet_router,
+    };
 
     // Register liveness/readiness, manifest, and BEARS `/status` **first** (before admin,
     // `/bear/*`, and `public::router()`'s fallback) so `/health/*` and `/status*` resolve before fallbacks.
@@ -368,7 +394,6 @@ pub async fn server(
                 .merge(onboarding::router())
                 .merge(management_hub::router())
                 .merge(connections::router())
-                .merge(cabinet::router())
                 .merge(work::router())
                 .nest("/bear/{bear_slug}", work::docket_router())
                 // TSR: conversation links use `/bear/{slug}/?conversation_id=…`; plain `/bear/{slug}` is the canonical chat URL.
@@ -382,6 +407,10 @@ pub async fn server(
         .merge(public::router())
         .nest("/assets", asset_router)
         .layer(auth_layer)
+        // Dedicated-origin links and retired mutations must resolve even when
+        // Den authentication/session storage is unavailable. Local Cabinet keeps
+        // the same cookie authentication as the other Den browser routes.
+        .merge(cabinet_router)
         .layer(axum::Extension(import_cleanup))
         .layer(
             TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
@@ -440,9 +469,12 @@ pub async fn render_template(
     let ctx = minijinja::context! {
         app_display_name => state.config.app_display_name.clone(),
         app_slug => state.config.app_slug.clone(),
-        public_web_origin => state.config.web_public_origin(),
+        public_web_origin => state.config.surface_public_origin(state.surface),
+        cabinet_surface => state.surface == config::WebSurface::Cabinet,
+        cabinet_home_url => state.config.cabinet_home_url(state.surface),
+        den_home_url => state.config.web_public_origin(),
         ui_fixture_profile => state.config.ui_fixture_profile.map(|p| p.as_str().to_string()),
-        native_runtime => true,
+        native_runtime => state.has_native_runtime(),
         ..ctx
     };
     let template_env = state.template_env.clone();

@@ -937,7 +937,7 @@ async fn new_bear_post(
         bears_db::grant_membership(state.sqlx_pool(), user_id, id, Some(BEAR_ROLE_ADMIN)).await?;
 
         if let Err(e) =
-            provision::initialize_bear_native(state.sqlx_pool(), &state.memory_stores, id).await
+            provision::initialize_bear_native(state.sqlx_pool(), state.memory_stores()?, id).await
         {
             tracing::warn!(%id, "Bear initialization failed: {e}");
             let page = bear_new_form_context(&state, &form).await;
@@ -1080,7 +1080,7 @@ async fn bear_edit_overview_post(
         .await?;
 
         if let Err(e) =
-            provision::initialize_bear_native(state.sqlx_pool(), &state.memory_stores, bear.id)
+            provision::initialize_bear_native(state.sqlx_pool(), state.memory_stores()?, bear.id)
                 .await
         {
             tracing::warn!(bear_id = %bear.id, "Bear initialization after overview edit failed: {e}");
@@ -1204,7 +1204,7 @@ async fn bear_edit_prompt_post(
         .await?;
 
         if let Err(e) =
-            provision::initialize_bear_native(state.sqlx_pool(), &state.memory_stores, bear.id)
+            provision::initialize_bear_native(state.sqlx_pool(), state.memory_stores()?, bear.id)
                 .await
         {
             tracing::warn!(bear_id = %bear.id, "Bear initialization after prompt edit failed: {e}");
@@ -1342,7 +1342,7 @@ async fn bear_edit_configuration_post(
         .await?;
 
         if let Err(e) =
-            provision::initialize_bear_native(state.sqlx_pool(), &state.memory_stores, bear.id)
+            provision::initialize_bear_native(state.sqlx_pool(), state.memory_stores()?, bear.id)
                 .await
         {
             tracing::warn!(bear_id = %bear.id, "Bear initialization after configuration edit failed: {e}");

@@ -391,7 +391,7 @@ pub async fn new_action(
         };
 
         if let Err(e) =
-            provision::initialize_bear_native(state.sqlx_pool(), &state.memory_stores, id).await
+            provision::initialize_bear_native(state.sqlx_pool(), state.memory_stores()?, id).await
         {
             tracing::warn!(%id, "Bear provision failed: {e}");
             let users = user_db::get_users(state.sqlx_pool()).await?;
@@ -541,7 +541,7 @@ async fn edit_action(
         .await?;
 
         if let Err(e) =
-            provision::initialize_bear_native(state.sqlx_pool(), &state.memory_stores, id).await
+            provision::initialize_bear_native(state.sqlx_pool(), state.memory_stores()?, id).await
         {
             tracing::warn!(%id, "Native profile refresh after bear edit failed: {e}");
             let bear = bears_db::get_bear(state.sqlx_pool(), id)
@@ -670,7 +670,7 @@ async fn edit_prompt_action(
         )
         .await?;
 
-        provision::initialize_bear_native(state.sqlx_pool(), &state.memory_stores, id).await?;
+        provision::initialize_bear_native(state.sqlx_pool(), state.memory_stores()?, id).await?;
 
         Ok(Redirect::to(&format!("/admin/bears/{id}")).into_response())
     } else {

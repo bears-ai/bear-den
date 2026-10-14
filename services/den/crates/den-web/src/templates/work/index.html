@@ -16,7 +16,7 @@
 
 
 <section>
-    <p class="button-row"><a class="button-link" href="/bear/{{ bear_slug }}/jobs/new">New Job</a><a href="/work/surfaces">Repositories</a><a href="/cabinet">Shared pages</a></p>
+    <p class="button-row"><a class="button-link" href="/bear/{{ bear_slug }}/jobs/new">New Job</a><a href="/work/surfaces">Repositories</a><a href="{{ "/cabinet" | cabinet_url }}">Shared pages</a></p>
     {% if show_completed %}<p><a href="/bear/{{ bear_slug }}/jobs{% if show_archived %}?archived=show{% endif %}">Hide completed jobs</a></p>{% else %}<p><a href="/bear/{{ bear_slug }}/jobs?completed=show{% if show_archived %}&archived=show{% endif %}">Show completed jobs</a></p>{% endif %}
     {% if show_archived %}<p><a href="/bear/{{ bear_slug }}/jobs{% if show_completed %}?completed=show{% endif %}">Hide archived jobs</a></p>{% else %}<p><a href="/bear/{{ bear_slug }}/jobs?archived=show{% if show_completed %}&completed=show{% endif %}">Show archived jobs</a></p>{% endif %}
     {% if jobs %}

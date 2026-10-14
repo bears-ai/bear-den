@@ -7,7 +7,7 @@
     {% if repositories %}<ul>{% for repository in repositories %}<li><strong>{{ repository.name | e }}</strong>{% if repository.description %} · {{ repository.description | e }}{% endif %}</li>{% endfor %}</ul>{% else %}<p>No repositories assigned to this Bear.</p>{% endif %}
     <p><a href="/work/surfaces">Inspect permitted repositories</a> · <a href="/connections">Manage connections</a></p>
   </section>
-  <section class="box"><h2>Shared pages</h2><p><a class="button-link" href="/cabinet">Open Cabinet</a></p><p class="form-hint">Shared Den knowledge, separate from Bear memory.</p></section>
+  <section class="box"><h2>Shared pages</h2><p><a class="button-link" href="{{ "/cabinet" | cabinet_url }}">Open Cabinet</a></p><p class="form-hint">Shared knowledge, separate from Bear memory. Page content and page access are managed in Cabinet; Bear capabilities stay here in Den.</p></section>
   <section class="box"><h2>Tools &amp; hats</h2><p><a href="/bear/{{ bear.slug | urlencode }}/tools">Inspect tools by origin</a></p>{% if can_manage_bear %}<p><a href="/bear/{{ bear.slug | urlencode }}/hats">Manage exact destinations and permitted uses</a></p>{% else %}<p><a href="/bear/{{ bear.slug | urlencode }}/identity#hats">View responsibilities</a></p>{% endif %}</section>
 </div>
 <section class="box">

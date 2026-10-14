@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO cabinet_discussion_entries(discussion_ref,item_id,content,authored_by,authored_by_user_id,authored_at)\n             SELECT $1,id,'Same timestamp',$3,$4,'2026-10-13T13:01:43Z'::timestamptz FROM cabinet_items WHERE cabinet_ref=$2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Jsonb",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3d4b3b0ba632ca66945f2e8a18db429065620d669601e2bd3e7986be4bdd7db4"
+}

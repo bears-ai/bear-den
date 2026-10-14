@@ -18,7 +18,7 @@ pub(super) async fn render(
     let viewer = MemoryLibraryViewer::resolve(state, bear.id, can_manage_bear).await?;
     let mut errors = Vec::new();
     let summaries = inspection::read_result(
-        viewer.browse(&state.memory_stores, bear.id).await,
+        viewer.browse(state.memory_stores()?, bear.id).await,
         "Memory paths",
         &mut errors,
     );
@@ -149,7 +149,7 @@ pub(super) async fn apply(
                     "Type the profile name or Bear slug to confirm deletion.".into(),
                 ));
             }
-            let store = state.memory_stores.store_for_bear(bear.id).await?;
+            let store = state.memory_stores()?.store_for_bear(bear.id).await?;
             let mut deleted = 0;
             for path in paths {
                 // Per-Bear SQLite is not described by the workspace's Postgres SQLx cache.

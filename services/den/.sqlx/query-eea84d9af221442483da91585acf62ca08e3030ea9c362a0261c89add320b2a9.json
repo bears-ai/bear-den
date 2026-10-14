@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "TRUNCATE cabinet_discussion_entries",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "eea84d9af221442483da91585acf62ca08e3030ea9c362a0261c89add320b2a9"
+}

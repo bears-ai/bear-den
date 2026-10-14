@@ -237,7 +237,12 @@ async fn work_review_rationale_survives_pagination_is_scoped_and_clears_on_succe
     .await
     .unwrap();
     let (app, state) = app_with_state(&pool, config()).await;
-    let memory = state.memory_stores.store_for_bear(bear).await.unwrap();
+    let memory = state
+        .memory_stores()
+        .unwrap()
+        .store_for_bear(bear)
+        .await
+        .unwrap();
     for index in 0..=den_memory::hat_review::REVIEW_PAGE_SIZE {
         append_memory_record(
             &memory,
@@ -275,7 +280,7 @@ async fn work_review_rationale_survives_pagination_is_scoped_and_clears_on_succe
         .unwrap();
     let snapshot = hats::work_review::snapshot_for_admin(
         &pool,
-        &state.memory_stores,
+        state.memory_stores().unwrap(),
         BearId::new(bear),
         hat.id,
         UserId::new(admin),
@@ -408,7 +413,12 @@ async fn knowledge_review_stale_conflicts_keep_authoring_in_authorized_forms(poo
     .await
     .unwrap();
     let (app, state) = app_with_state(&pool, config()).await;
-    let memory = state.memory_stores.store_for_bear(bear).await.unwrap();
+    let memory = state
+        .memory_stores()
+        .unwrap()
+        .store_for_bear(bear)
+        .await
+        .unwrap();
     let conversation = persistence::ensure_conversation_for_external_id(
         &pool,
         bear,

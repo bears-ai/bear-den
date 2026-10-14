@@ -28,6 +28,14 @@ Validation rehearses up → down → up on a populated isolated database, checks
 
 Rollback drops the index, check and new acknowledgement column, so it loses removal acknowledgements but preserves the pre-existing artifact fields/audit rows. Reapplying starts those acknowledgements at NULL; already-retired keys can be deleted again idempotently, but removed content is not restored. Stop the new cleanup worker/use the matching older binary before dropping the column. Do not restart an older binary after applying this migration while its embedded migrator is behind the database.
 
+#### Cabinet discussion retention and rollback
+
+`20261013130143_add_cabinet_discussion` adds append-only, human-authored page discussion without altering published page versions. It has been applied to the bundled development `den` database and an isolated validation database; do not rewrite either migration file. `20261013194208_harden_cabinet_discussion_retention` is the forward correction, validated/applied in the isolated database: it rejects `TRUNCATE` and expands the existing guard with an insert barrier keyed to its successfully applied migration version.
+
+Both downs refuse populated discussion rather than destroy retained author/content audit. The hardening down acquires an exclusive table lock before its emptiness check, drops the truncate trigger only on an empty table and deliberately retains the insert barrier. When SQLx removes its bookkeeping row, new posts remain blocked between downgrade transactions, preventing a concurrent insert from racing the original table-removal script. Reapplying hardening resumes posts. An empty full down/up rehearsal and populated refusal tests cover these paths; neither migration is a compliance-erasure workflow.
+
+Stop Cabinet and every remaining Den surface that could post before a downgrade; preserve/export any discussion audit before selecting an operator-approved retention action. Never manually remove migration bookkeeping or disable triggers to make a rollback pass. Deploy matching Den/Cabinet migration sets, and keep shared browser-session DDL owned by `den migrate`, not Cabinet startup.
+
 #### Existing client-session ID collisions
 
 `20260928101801_guard_client_session_id_ownership` adds a database trigger that serializes claims for the same opaque client-session ID and rejects any new cross-user or cross-Bear reuse. It deliberately does **not** delete, rename, or automatically deduplicate older bindings: event and Work records still refer to those IDs as text, and their ownership cannot be reconstructed by renaming only `client_sessions`. The down migration removes the guard without modifying historical data. BearWire preflight continues to fail closed on ambiguous IDs. Review a historical collision with its event/run provenance before a separate, explicit repair; never promote a NULL-owner conversation from a client-session match alone.

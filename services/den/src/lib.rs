@@ -10,10 +10,12 @@ pub use den_http::auth_backend;
 pub use den_http::build_info;
 pub mod core;
 pub use den_http::errors;
+pub mod cabinet_startup;
 pub mod import_legacy_memory;
 pub mod reindex;
 pub mod seeds;
 pub mod startup;
+pub use cabinet_startup::cabinet_serve;
 // The web edge (server-rendered UI + /v1) moved to the `den-web` crate (v1.5
 // split). Re-exported as `crate::web` so the binary's `run()` resolves unchanged.
 pub use den_web as web;
@@ -119,15 +121,25 @@ pub async fn migrate_only() -> Result<(), StartupError> {
         "Starting migration job",
     );
 
-    let config = Arc::new(Config::load());
+    let config = Arc::new(Config::try_load().map_err(std::io::Error::other)?);
     validate_runtime_config(config.as_ref())?;
     let sqlx_pool = connect_database(config.as_ref()).await?;
-    ensure_database_schema_supported(&sqlx_pool).await?;
-    run_sqlx_migrations(&sqlx_pool).await?;
+    migrate_database_schema(&sqlx_pool).await?;
     tracing::info!(
         schema_version = crate::startup::embedded_schema_version(),
         "SQLx migrations completed successfully"
     );
+    Ok(())
+}
+
+/// The deploy-time migration job owns both SQLx and shared browser-session DDL.
+async fn migrate_database_schema(pool: &sqlx::PgPool) -> Result<(), StartupError> {
+    ensure_database_schema_supported(pool).await?;
+    run_sqlx_migrations(pool).await?;
+    PostgresStore::new(pool.clone())
+        .migrate()
+        .await
+        .map_err(|error| StartupError::SessionStore(format!("{error:?}")))?;
     Ok(())
 }
 
@@ -145,7 +157,7 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
         "Starting build",
     );
 
-    let config = Arc::new(Config::load());
+    let config = Arc::new(Config::try_load().map_err(std::io::Error::other)?);
     validate_runtime_config(config.as_ref())?;
     let needs_db = crate::startup::needs_database(config.as_ref());
     if needs_db {
@@ -211,7 +223,7 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
                 "Skipping startup SQLx migrations; assuming deploy-time migration job already succeeded"
             );
         } else {
-            run_sqlx_migrations(&sqlx_pool).await?;
+            migrate_database_schema(&sqlx_pool).await?;
         }
         ensure_database_schema_supported(&sqlx_pool).await?;
 
@@ -232,11 +244,7 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
             crate::core::tools::runtime_invoker::DenRuntimeToolInvoker::new(den_state.clone()),
         ));
 
-        let session_store = PostgresStore::new(sqlx_pool.clone());
-        session_store
-            .migrate()
-            .await
-            .map_err(|e| StartupError::SessionStore(format!("{e:?}")))?;
+        let session_store = cabinet_startup::verify_shared_session_schema(&sqlx_pool).await?;
 
         let deletion_task = tokio::task::spawn(
             session_store

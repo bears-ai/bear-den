@@ -4,6 +4,9 @@ use std::collections::{HashMap, HashSet};
 
 use url::Url;
 
+pub mod cabinet;
+pub use cabinet::{CabinetDestination, CabinetOriginError, WebSurface};
+
 /// Human-facing product name (browser title, emails, PWA). Override with `APP_DISPLAY_NAME`.
 const DEFAULT_APP_DISPLAY_NAME: &str = "BEARS";
 
@@ -143,6 +146,8 @@ pub struct Config {
 
     /// Public base URL for the **web** service (no trailing slash). Links, redirects, CORS.
     pub web_server_url: String,
+    /// Optional dedicated Cabinet origin; never a path, credential-bearing URL, or query.
+    pub cabinet_web_origin: Option<Url>,
     /// Public base URL for the **API** service (no trailing slash).
     pub api_server_url: String,
 
@@ -312,6 +317,11 @@ impl Config {
     ///
     /// Call once at process startup; thread an [`std::sync::Arc`] through services that need it.
     pub fn load() -> Self {
+        Self::try_load().expect("invalid Den configuration")
+    }
+
+    /// Fallible startup entrypoint, including strict Cabinet origin validation.
+    pub fn try_load() -> Result<Self, CabinetOriginError> {
         if dotenvy::dotenv().is_ok() {
             tracing::info!("Loaded .env file");
         }
@@ -698,7 +708,10 @@ impl Config {
         let checkpoint_audit_mode =
             parse_choice_env("BEARS_CHECKPOINT_AUDIT", "work", &["off", "work", "all"]);
 
-        Config {
+        let cabinet_web_origin =
+            cabinet::parse_optional_origin(std::env::var("CABINET_URL").ok().as_deref())?;
+
+        Ok(Config {
             templates_dir: std::env::var("TEMPLATES_DIR")
                 .unwrap_or_else(|_| "crates/den-web/src/templates".to_string()),
             // Required only when a DB-backed service runs; enforced by the
@@ -727,6 +740,7 @@ impl Config {
             api_port,
             sandbox_port,
             web_server_url,
+            cabinet_web_origin,
             api_server_url,
 
             den_secret_encryption_key,
@@ -780,7 +794,7 @@ impl Config {
             agent_loop_control_mode,
             checkpoint_audit_mode,
             ui_fixture_profile,
-        }
+        })
     }
 }
 
@@ -954,6 +968,7 @@ impl Config {
             api_port: 3001,
             sandbox_port: 3002,
             web_server_url: "http://localhost:3000".into(),
+            cabinet_web_origin: None,
             api_server_url: "http://localhost:3001".into(),
 
             den_secret_encryption_key: String::new(),
