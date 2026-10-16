@@ -33,6 +33,15 @@ This is the `audience` access-bearing relation from ADR-0042, not a new global â
 - Trusting a model-provided user ID, entity ID, or textual name as identity authority.
 - Automatically preserving arbitrary biographical or sensitive statements.
 - Replacing source-local memory, ordinary hat memory, or unrestricted Bear/core memory.
+- Introducing privacy isolation between hats.
+
+### Hat organization versus Bear-level privacy
+
+Hats separate working context and organize curation so hat-specific material does not accumulate indiscriminately in core memory. **Hat separation is a memory-maintenance boundary, not a privacy boundary.** Moving information between hats of the same Bear is not, by itself, leakage.
+
+Privacy is enforced at the Bear level: records remain bound to their Bear, and personal context within that Bear is restricted to its authenticated-user audience. Changing hats must neither grant nor revoke access to an otherwise eligible personal fact. Publishing an audience-bound fact as unrestricted Bear/core knowledge is a privacy violation because it widens the user audience, not because it crosses a hat boundary.
+
+Source provenance, selected-hat retrieval, and explicit core-promotion rules still serve context quality, traceability, and a clean core. They must not be described or tested as confidentiality guarantees between hats.
 
 ### Non-negotiable invariants
 
@@ -68,7 +77,7 @@ Before schema or tool work, amend/accept ADR-0042 or add an implementation decis
 5. Establish the minimal source-retention rule: curated output must contain only the fact needed for future assistance, while private source evidence follows existing lifecycle policy.
 6. Identify every retrieval surface: initial turn projection, ordinary browse/search, semantic/index-assisted recall, curator views, diagnostics, exports, and API/MCP surfaces.
 
-**Exit criteria:** reviewed threat model covers cross-user leakage, stale identity mappings, index bypasses, curator authority, deletion propagation, and token/account semantics.
+**Exit criteria:** reviewed threat model covers cross-Bear and cross-user leakage, stale identity mappings, index bypasses, curator authority, deletion propagation, and token/account semantics. Cross-hat movement within the same Bear is not a privacy threat in itself; core cleanliness is a separate curation concern.
 
 ## Phase 1 â€” Authenticated-user entity resolution
 
@@ -95,7 +104,7 @@ Implement ADR-0042's two-table relation model as the privacy foundation.
 3. Require a typed `AccessContext` as input to every recall assembler and repository query that can return memory. It must be constructed from the verified principal and resolved Bear entity.
 4. Query audience rules as an enforced gate, not a ranking hint. If access context or a valid current-user entity is absent, do not return audience-gated records.
 5. Apply equivalent gating before snippets, embeddings, graph expansion, caches, derived indexes, error messages, exports, and diagnostics are returned. Derived systems may index protected content only if they preserve record identity and are filtered before any text/snippet reaches a caller.
-6. Keep existing source-local, selected-hat, and unrestricted core semantics unchanged; audience-gated Bear records are an additional eligible class only after the access gate succeeds.
+6. Keep existing source-local, selected-hat, and unrestricted core semantics unchanged; audience-gated Bear records are an additional eligible class only after the access gate succeeds. Hat selection organizes recall, not personal-memory authorization; do not add hat-specific privacy gates.
 
 **Exit criteria:** omission of access context is impossible or rejected by API shape, and integration tests demonstrate no User B path can retrieve User A's audience-gated record.
 
@@ -196,7 +205,8 @@ Provide tightly controlled curation/administrator workflows with decision audit 
 
 ### Identity and isolation
 
-- The same authenticated Den user receives their approved personal context in a fresh conversation and under a different hat.
+- The same authenticated Den user receives their approved personal context in a fresh conversation and under a different hat; changing hats does not change the fact's audience authorization.
+- A record from one Bear cannot be retrieved through another Bear, even for the same authenticated user, outside an explicitly authorized import flow.
 - A different authenticated user sharing the Bear/hat receives none of it through prompt projection, browse, exact search, semantic search, graph expansion, cache, API/MCP, diagnostics, or error snippets.
 - A session/token authenticating as the same Den user does receive that user's context; this is expected credential semantics.
 - Same display name, different Den users remain distinct entities.
@@ -212,7 +222,7 @@ Provide tightly controlled curation/administrator workflows with decision audit 
 
 ### Regression and storage
 
-- Existing source-local, hat-scoped, and unrestricted core records retain current behavior.
+- Existing source-local, hat-scoped, and unrestricted core records retain current behavior. Hat-specific material is not automatically promoted into core; this is a curation-quality regression check, not a cross-hat privacy test.
 - All recall assemblers require `AccessContext`.
 - Indexes and cached projections cannot bypass access rules.
 - Imported/package data retains entity/relation lifecycle and does not become visible without a matched principal.
