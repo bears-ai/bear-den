@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "CREATE TRIGGER fail_personal_operation BEFORE UPDATE ON personal_memory_settings\n                  WHEN NEW.capture_enabled = 0\n                  BEGIN SELECT RAISE(ABORT, 'injected imported consent disable failure'); END",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "d1a4cf71acd090c2078d5716a1d23a31544474f8b82db4c8019ff158dc528429"
+}

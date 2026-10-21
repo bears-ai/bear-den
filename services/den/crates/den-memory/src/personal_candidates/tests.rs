@@ -19,7 +19,7 @@ mod authority;
 mod consent;
 mod deduplication;
 mod isolation;
-mod portability;
+
 mod reconnection;
 mod snapshots;
 mod sources;

@@ -134,6 +134,17 @@ let total_count: i64 = query_builder.build_query_scalar().fetch_one(pool).await?
 - `.build_query_as::<Struct>()` for typed results
 - `.build()` for untyped queries
 
+## Keep test query shapes small
+
+Test-only macros also generate committed metadata, one entry per distinct SQL string. Prefer:
+
+- Existing repository APIs for ordinary fixture creation and reads; reserve direct fixture SQL for malformed states, fault injection, and assertions that public APIs cannot express.
+- Shared, typed fixture helpers with bound parameters instead of new SQL literals for each value or test case. Merely moving distinct queries into helpers does not reduce metadata.
+- A small number of coherent snapshot queries for exact rollback checks, rather than a separate query for every table and assertion.
+- Real import/export integration coverage over a second hand-written simulation of the same table-rewrite workflow.
+
+Keep static SQL in macros; do not switch to unchecked/runtime SQL solely to shrink the cache. After consolidation, remove only metadata proven obsolete and verify every target offline. Do not broadly prune unrelated query entries.
+
 ## SQLx Preparation Workflow
 
 ### Critical: Always Prepare Every Cargo Target

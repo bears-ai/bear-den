@@ -32,7 +32,7 @@ async fn source_kind_scope_and_uuid_are_canonical_columns_not_path_or_metadata_c
         let metadata =
             serde_json::json!({"conversation_id": conversation, "owner_user_id": ALICE.get()})
                 .to_string();
-        let memory = insert_note(&store, &logical, &metadata, "normal").await;
+        let memory = insert_note(&store, &logical, &metadata, NoteVisibility::Normal).await;
         let id = memory.to_string();
         let claimed_path =
             LogicalMemoryPath::source_local(MemorySource::Conversation(conversation), "note")
@@ -98,7 +98,12 @@ async fn only_normal_visibility_and_active_valid_lifecycle_metadata_are_admissib
     let alice = opted_in(&store, ALICE).await;
     let conversation = Uuid::new_v4();
     let logical = LogicalMemoryPath::source_local(MemorySource::Conversation(conversation), "note");
-    for visibility in ["quarantined", "hidden", "private", "withdrawn"] {
+    for visibility in [
+        NoteVisibility::Quarantined,
+        NoteVisibility::Hidden,
+        NoteVisibility::Private,
+        NoteVisibility::Withdrawn,
+    ] {
         let memory = insert_note(&store, &logical, "{}", visibility).await;
         reject_source(
             &store,
@@ -121,7 +126,7 @@ async fn only_normal_visibility_and_active_valid_lifecycle_metadata_are_admissib
         r#"{"lifecycle":{"status":"unknown"}}"#,
         r#"{"lifecycle":{"status":42}}"#,
     ] {
-        let memory = insert_note(&store, &logical, metadata, "normal").await;
+        let memory = insert_note(&store, &logical, metadata, NoteVisibility::Normal).await;
         reject_source(
             &store,
             &alice,
@@ -133,7 +138,7 @@ async fn only_normal_visibility_and_active_valid_lifecycle_metadata_are_admissib
         .await;
     }
     for metadata in ["{}", r#"{"lifecycle":{"status":"active"}}"#] {
-        let memory = insert_note(&store, &logical, metadata, "normal").await;
+        let memory = insert_note(&store, &logical, metadata, NoteVisibility::Normal).await;
         assert_eq!(
             stage(
                 &store,
@@ -151,31 +156,51 @@ async fn only_normal_visibility_and_active_valid_lifecycle_metadata_are_admissib
     }
 }
 
+async fn set_invalidated(store: &BearMemoryStore, source: Note, invalidated: bool) {
+    let id = source.memory.to_string();
+    let invalid_at = invalidated.then_some("2026-01-02T00:00:00Z");
+    sqlx::query!(
+        "UPDATE memory_records SET invalid_at = ? WHERE memory_id = ?",
+        invalid_at,
+        id,
+    )
+    .execute(store.pool())
+    .await
+    .unwrap();
+}
+
 #[tokio::test]
 async fn invalidation_and_any_superseder_reject_the_exact_old_note_without_following_a_path_head() {
     let store = new_test_store().await;
     let alice = opted_in(&store, ALICE).await;
     let source = note(&store).await;
-    let old_id = source.memory.to_string();
-    sqlx::query!(
-        "UPDATE memory_records SET invalid_at = '2026-01-02T00:00:00Z' WHERE memory_id = ?",
-        old_id
-    )
-    .execute(store.pool())
-    .await
-    .unwrap();
+    set_invalidated(&store, source, true).await;
     reject_source(&store, &alice, source).await;
-    sqlx::query!(
-        "UPDATE memory_records SET invalid_at = NULL WHERE memory_id = ?",
-        old_id
-    )
-    .execute(store.pool())
-    .await
-    .unwrap();
-    let newer = note_in(&store, source.conversation).await;
+    let old_id = source.memory.to_string();
+    let row = store
+        .append_record_with_options(
+            &LogicalMemoryPath::source_local(
+                MemorySource::Conversation(source.conversation),
+                "note",
+            ),
+            "note",
+            "pair",
+            None,
+            "Superseding source note.",
+            &serde_json::json!({}),
+            NoteVisibility::Quarantined.as_str(),
+            "normal",
+            Some(&old_id),
+        )
+        .await
+        .unwrap();
+    let newer = Note {
+        conversation: source.conversation,
+        memory: Uuid::parse_str(&row.memory_id).unwrap(),
+    };
     let newer_id = newer.memory.to_string();
-    sqlx::query!("UPDATE memory_records SET supersedes_memory_id = ?, visibility = 'quarantined' WHERE memory_id = ?", old_id, newer_id)
-        .execute(store.pool()).await.unwrap();
+    // append_record invalidates its predecessor; clear that to isolate the superseder check.
+    set_invalidated(&store, source, false).await;
     // Even an inadmissible superseder with the same logical path blocks the old note.
     reject_source(&store, &alice, source).await;
     reject_source(&store, &alice, newer).await;
@@ -194,30 +219,58 @@ async fn invalidation_and_any_superseder_reject_the_exact_old_note_without_follo
     );
 }
 
+#[derive(Clone, Copy)]
+enum AccessRuleState {
+    Active,
+    Detached,
+    Superseded,
+    Withdrawn,
+}
+
+async fn insert_access_rule(
+    store: &BearMemoryStore,
+    source: Note,
+    binding: &AuthenticatedUserEntity,
+    state: AccessRuleState,
+) {
+    let state = match state {
+        AccessRuleState::Active => "active",
+        AccessRuleState::Detached => "detached",
+        AccessRuleState::Superseded => "superseded",
+        AccessRuleState::Withdrawn => "withdrawn",
+    };
+    let memory = source.memory.to_string();
+    let bear = store.bear_id().to_string();
+    let entity = binding.entity_id();
+    let link = Uuid::new_v4().to_string();
+    sqlx::query!(
+        r"INSERT INTO memory_access_rules (link_id, bear_id, sequence_no, src_memory_id,
+            entity_id, relation, author_profile, state, created_at)
+          VALUES (?, ?, (SELECT next_sequence FROM bear_sequence WHERE id = 1),
+                  ?, ?, 'audience', 'curate', ?, '2026-01-01T00:00:00Z')",
+        link,
+        bear,
+        memory,
+        entity,
+        state,
+    )
+    .execute(store.pool())
+    .await
+    .unwrap();
+}
+
 #[tokio::test]
 async fn all_access_rule_history_blocks_capture_even_after_detachment_or_withdrawal() {
     let store = new_test_store().await;
     let alice = opted_in(&store, ALICE).await;
-    for rule_state in ["active", "detached", "superseded", "withdrawn"] {
+    for rule_state in [
+        AccessRuleState::Active,
+        AccessRuleState::Detached,
+        AccessRuleState::Superseded,
+        AccessRuleState::Withdrawn,
+    ] {
         let source = note(&store).await;
-        let memory = source.memory.to_string();
-        let bear = store.bear_id().to_string();
-        let entity = alice.entity_id();
-        let link = Uuid::new_v4().to_string();
-        sqlx::query!(
-            r"INSERT INTO memory_access_rules (link_id, bear_id, sequence_no, src_memory_id,
-                entity_id, relation, author_profile, state, created_at)
-              VALUES (?, ?, (SELECT next_sequence FROM bear_sequence WHERE id = 1),
-                      ?, ?, 'audience', 'curate', ?, '2026-01-01T00:00:00Z')",
-            link,
-            bear,
-            memory,
-            entity,
-            rule_state,
-        )
-        .execute(store.pool())
-        .await
-        .unwrap();
+        insert_access_rule(&store, source, &alice, rule_state).await;
         reject_source(&store, &alice, source).await;
     }
 }
@@ -229,33 +282,10 @@ async fn unrelated_rule_history_does_not_block_an_unprotected_note_and_dedup_rec
     let alice = opted_in(&store, ALICE).await;
     let source = note(&store).await;
     let unrelated = note_in(&store, source.conversation).await;
-    let memory = unrelated.memory.to_string();
-    let bear = store.bear_id().to_string();
-    let entity = alice.entity_id();
-    let link = Uuid::new_v4().to_string();
-    sqlx::query!(
-        r"INSERT INTO memory_access_rules (link_id, bear_id, sequence_no, src_memory_id,
-            entity_id, relation, author_profile, state, created_at)
-          VALUES (?, ?, 1, ?, ?, 'audience', 'curate', 'withdrawn', '2026-01-01T00:00:00Z')",
-        link,
-        bear,
-        memory,
-        entity,
-    )
-    .execute(store.pool())
-    .await
-    .unwrap();
+    insert_access_rule(&store, unrelated, &alice, AccessRuleState::Withdrawn).await;
     let candidate = stage(&store, &alice, source, "Alice").await;
     reject_source(&store, &alice, unrelated).await;
-    let memory = source.memory.to_string();
-    sqlx::query!(
-        "UPDATE memory_access_rules SET src_memory_id = ? WHERE link_id = ?",
-        memory,
-        link
-    )
-    .execute(store.pool())
-    .await
-    .unwrap();
+    insert_access_rule(&store, source, &alice, AccessRuleState::Withdrawn).await;
     reject_source(&store, &alice, source).await;
     assert_eq!(state(&store, candidate.id()).await, CandidateState::Pending);
 }
@@ -277,13 +307,7 @@ async fn staging_neither_decodes_copies_nor_interprets_the_source_body_as_author
     .execute(store.pool())
     .await
     .unwrap();
-    assert!(sqlx::query!(
-        "SELECT content_text FROM memory_records WHERE memory_id = ?",
-        id,
-    )
-    .fetch_one(store.pool())
-    .await
-    .is_err());
+    assert!(crate::fetch_record_by_id(&store, &id).await.is_err());
     let candidate = stage(&store, &alice, source, "Minimized value only").await;
     assert_eq!(candidate.preferred_name().as_str(), "Minimized value only");
     let bytes = sqlx::query_scalar!(

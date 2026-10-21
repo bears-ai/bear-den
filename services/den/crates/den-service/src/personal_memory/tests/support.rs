@@ -158,6 +158,24 @@ impl Fixture {
             .unwrap();
     }
 
+    pub async fn set_conversation_state(
+        &self,
+        status: &str,
+        owner: Option<UserId>,
+        hat: Option<HatId>,
+    ) {
+        sqlx::query!(
+            "UPDATE conversations SET status = $2, created_by_user_id = $3, hat_id = $4 WHERE id = $1",
+            self.conversation,
+            status,
+            owner.map(UserId::get),
+            hat.map(HatId::as_uuid),
+        )
+        .execute(&self.pool)
+        .await
+        .unwrap();
+    }
+
     pub async fn stage_as(
         &self,
         user: UserId,

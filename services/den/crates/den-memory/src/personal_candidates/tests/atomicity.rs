@@ -1,36 +1,16 @@
 use super::*;
 
-#[derive(Clone, Copy, Debug)]
-enum StageFailure {
-    CandidateInsert,
-    SequenceAllocation,
-}
+mod faults;
 
-async fn staging_rollback(failure: StageFailure) {
+use faults::{clear_failure, inject_failure, FailurePoint};
+
+async fn staging_rollback(failure: FailurePoint) {
     let store = new_test_store().await;
     let alice = opted_in(&store, ALICE).await;
     let source = note(&store).await;
     let existing = stage(&store, &alice, source, "Existing").await;
     let generic_before = generic_snapshot(&store).await;
-    match failure {
-        StageFailure::CandidateInsert => {
-            sqlx::query!(
-                r"CREATE TRIGGER fail_personal_candidate_insert BEFORE INSERT ON personal_memory_candidates
-                  BEGIN SELECT RAISE(ABORT, 'injected candidate insertion failure'); END",
-            ).execute(store.pool()).await.unwrap();
-        }
-        StageFailure::SequenceAllocation => {
-            // The authority serialization no-op remains permitted; fail the real allocation.
-            sqlx::query!(
-                r"CREATE TRIGGER fail_personal_sequence BEFORE UPDATE ON bear_sequence
-                  WHEN NEW.next_sequence <> OLD.next_sequence
-                  BEGIN SELECT RAISE(ABORT, 'injected candidate sequence failure'); END",
-            )
-            .execute(store.pool())
-            .await
-            .unwrap();
-        }
-    }
+    inject_failure(&store, failure).await;
     let before = snapshot(&store).await;
     let sequence = next_sequence(&store).await;
     for _ in 0..2 {
@@ -54,20 +34,7 @@ async fn staging_rollback(failure: StageFailure) {
         stage(&store, &alice, source, "Existing").await.id(),
         existing.id()
     );
-    match failure {
-        StageFailure::CandidateInsert => {
-            sqlx::query!("DROP TRIGGER IF EXISTS fail_personal_candidate_insert")
-                .execute(store.pool())
-                .await
-                .unwrap();
-        }
-        StageFailure::SequenceAllocation => {
-            sqlx::query!("DROP TRIGGER IF EXISTS fail_personal_sequence")
-                .execute(store.pool())
-                .await
-                .unwrap();
-        }
-    }
+    clear_failure(&store).await;
     let fresh = stage(&store, &alice, source, "New request").await;
     assert_eq!(candidate_sequence(&store, fresh.id()).await, sequence);
     assert_eq!(next_sequence(&store).await, sequence + 1);
@@ -75,12 +42,12 @@ async fn staging_rollback(failure: StageFailure) {
 
 #[tokio::test]
 async fn candidate_insert_failure_rolls_back_the_allocated_sequence_and_all_candidate_state() {
-    staging_rollback(StageFailure::CandidateInsert).await;
+    staging_rollback(FailurePoint::CandidateInsert).await;
 }
 
 #[tokio::test]
 async fn sequence_failure_cannot_create_a_candidate_or_change_consent() {
-    staging_rollback(StageFailure::SequenceAllocation).await;
+    staging_rollback(FailurePoint::SequenceAllocation).await;
 }
 
 #[tokio::test]
@@ -97,24 +64,14 @@ async fn opt_out_withdrawal_failure_rolls_back_consent_and_every_candidate_trans
         .await
         .unwrap();
     let bobs = stage(&store, &bob, source, "Bob").await;
-    sqlx::query!(
-        r"CREATE TRIGGER fail_personal_withdrawal BEFORE UPDATE ON personal_memory_candidates
-          WHEN NEW.state = 'withdrawn' AND OLD.value_text = 'Block withdrawal'
-          BEGIN SELECT RAISE(ABORT, 'injected candidate withdrawal failure'); END",
-    )
-    .execute(store.pool())
-    .await
-    .unwrap();
+    inject_failure(&store, FailurePoint::CandidateWithdrawal).await;
     let before = snapshot(&store).await;
     for _ in 0..2 {
         assert_database_error(set_capture_enabled(&store, &alice, false).await);
         assert_eq!(snapshot(&store).await, before);
         assert!(capture_enabled(&store, &alice).await.unwrap());
     }
-    sqlx::query!("DROP TRIGGER IF EXISTS fail_personal_withdrawal")
-        .execute(store.pool())
-        .await
-        .unwrap();
+    clear_failure(&store).await;
     set_capture_enabled(&store, &alice, false).await.unwrap();
     for id in [pending.id(), quarantined.id(), withdrawn.id()] {
         assert_eq!(state(&store, id).await, CandidateState::Withdrawn);
@@ -128,22 +85,12 @@ async fn single_withdrawal_failure_preserves_pending_body_and_audit_fields() {
     let store = new_test_store().await;
     let alice = opted_in(&store, ALICE).await;
     let source = note(&store).await;
-    let pending = stage(&store, &alice, source, "Alice").await;
-    sqlx::query!(
-        r"CREATE TRIGGER fail_single_personal_withdrawal BEFORE UPDATE ON personal_memory_candidates
-          WHEN NEW.state = 'withdrawn'
-          BEGIN SELECT RAISE(ABORT, 'injected single withdrawal failure'); END",
-    )
-    .execute(store.pool())
-    .await
-    .unwrap();
+    let pending = stage(&store, &alice, source, "Block withdrawal").await;
+    inject_failure(&store, FailurePoint::CandidateWithdrawal).await;
     let before = snapshot(&store).await;
     assert_database_error(withdraw_candidate(&store, &alice, pending.id()).await);
     assert_eq!(snapshot(&store).await, before);
-    sqlx::query!("DROP TRIGGER IF EXISTS fail_single_personal_withdrawal")
-        .execute(store.pool())
-        .await
-        .unwrap();
+    clear_failure(&store).await;
     assert!(withdraw_candidate(&store, &alice, pending.id())
         .await
         .unwrap());
@@ -186,13 +133,7 @@ async fn receipt_rollback(operation: IdentityOperation) {
             )
         }
     };
-    sqlx::query!(
-        r"CREATE TRIGGER fail_personal_identity_receipt BEFORE INSERT ON user_identity_receipts
-          BEGIN SELECT RAISE(ABORT, 'injected personal identity receipt failure'); END",
-    )
-    .execute(store.pool())
-    .await
-    .unwrap();
+    inject_failure(&store, FailurePoint::IdentityReceipt).await;
     let before = snapshot(&store).await;
     let generic_before = generic_snapshot(&store).await;
     for _ in 0..2 {
@@ -211,10 +152,7 @@ async fn receipt_rollback(operation: IdentityOperation) {
         );
         assert!(capture_enabled(&store, &parked).await.unwrap());
     }
-    sqlx::query!("DROP TRIGGER IF EXISTS fail_personal_identity_receipt")
-        .execute(store.pool())
-        .await
-        .unwrap();
+    clear_failure(&store).await;
     commit_review(&store, &review, consent).await.unwrap();
     assert_eq!(
         state(&store, parked_candidate).await,
@@ -234,13 +172,7 @@ async fn reconnection_receipt_failure_rolls_back_displaced_pending_quarantine_an
     receipt_rollback(IdentityOperation::Replace).await;
 }
 
-#[derive(Clone, Copy, Debug)]
-enum ImportFailure {
-    CandidateQuarantine,
-    ConsentDisable,
-}
-
-async fn import_rollback(failure: ImportFailure) {
+async fn import_rollback(failure: FailurePoint) {
     let store = new_test_store().await;
     let alice = opted_in(&store, ALICE).await;
     let bob = opted_in(&store, BOB).await;
@@ -253,23 +185,7 @@ async fn import_rollback(failure: ImportFailure) {
     withdraw_candidate(&store, &alice, withdrawn.id())
         .await
         .unwrap();
-    match failure {
-        ImportFailure::CandidateQuarantine => {
-            sqlx::query!(
-                r"CREATE TRIGGER fail_imported_personal_quarantine BEFORE UPDATE ON personal_memory_candidates
-                  WHEN OLD.state = 'pending' AND NEW.state = 'quarantined'
-                  BEGIN SELECT RAISE(ABORT, 'injected imported candidate quarantine failure'); END",
-            ).execute(store.pool()).await.unwrap();
-        }
-        ImportFailure::ConsentDisable => {
-            // Runs after authority, handles, generations AND candidate quarantine were changed.
-            sqlx::query!(
-                r"CREATE TRIGGER fail_imported_personal_settings BEFORE UPDATE ON personal_memory_settings
-                  WHEN NEW.capture_enabled = 0
-                  BEGIN SELECT RAISE(ABORT, 'injected imported consent disable failure'); END",
-            ).execute(store.pool()).await.unwrap();
-        }
-    }
+    inject_failure(&store, failure).await;
     let before = snapshot(&store).await;
     let generic_before = generic_snapshot(&store).await;
     for _ in 0..2 {
@@ -283,20 +199,7 @@ async fn import_rollback(failure: ImportFailure) {
         assert!(capture_enabled(&store, &alice).await.unwrap());
         assert!(capture_enabled(&store, &bob).await.unwrap());
     }
-    match failure {
-        ImportFailure::CandidateQuarantine => {
-            sqlx::query!("DROP TRIGGER IF EXISTS fail_imported_personal_quarantine")
-                .execute(store.pool())
-                .await
-                .unwrap();
-        }
-        ImportFailure::ConsentDisable => {
-            sqlx::query!("DROP TRIGGER IF EXISTS fail_imported_personal_settings")
-                .execute(store.pool())
-                .await
-                .unwrap();
-        }
-    }
+    clear_failure(&store).await;
     let imported = quarantine_imported_authenticated_users(&store)
         .await
         .unwrap();
@@ -316,10 +219,10 @@ async fn import_rollback(failure: ImportFailure) {
 
 #[tokio::test]
 async fn imported_candidate_quarantine_failure_rolls_back_all_authentication_and_personal_state() {
-    import_rollback(ImportFailure::CandidateQuarantine).await;
+    import_rollback(FailurePoint::ImportedCandidateQuarantine).await;
 }
 
 #[tokio::test]
 async fn imported_consent_failure_rolls_back_authority_handles_epochs_and_candidate_quarantine() {
-    import_rollback(ImportFailure::ConsentDisable).await;
+    import_rollback(FailurePoint::ImportedConsentDisable).await;
 }

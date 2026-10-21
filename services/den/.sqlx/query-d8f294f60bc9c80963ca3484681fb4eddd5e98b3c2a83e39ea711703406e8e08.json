@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT json_object(\n            'records', (\n                SELECT json_group_array(json_array(memory_id, bear_id, sequence_no, scope_type, scope_profile,\n                    scope_source_kind, scope_source_id, scope_hat_id, kind, author_profile, author_agent_id,\n                    created_at, content_text, metadata_json, supersedes_memory_id, visibility,\n                    logical_path, work_surface_ref, valid_from, invalid_at, salience))\n                FROM (SELECT * FROM memory_records ORDER BY memory_id)\n            ),\n            'proposals', (\n                SELECT json_group_array(json_array(proposal_id, bear_id, sequence_no, source_memory_id,\n                    target_hat_id, suggested_action, sensitivity, requires_human, status, payload_json,\n                    created_at, reviewed_at))\n                FROM (SELECT * FROM memory_proposals ORDER BY proposal_id)\n            ),\n            'observations', (\n                SELECT json_group_array(json_array(observation_id, bear_id, sequence_no, summary,\n                    salience, payload_ref, source_json, logical_path, status, proposal_id, created_at, reviewed_at))\n                FROM (SELECT * FROM memory_observations ORDER BY observation_id)\n            ),\n            'relations', (\n                SELECT json_group_array(json_array(link_id, bear_id, sequence_no, src_memory_id,\n                    entity_id, relation, qualifiers_json, author_profile, author_agent_id, confidence,\n                    state, supersedes_link_id, created_at))\n                FROM (SELECT * FROM memory_relations ORDER BY link_id)\n            ),\n            'rules', (\n                SELECT json_group_array(json_array(link_id, bear_id, sequence_no, src_memory_id,\n                    entity_id, relation, qualifiers_json, author_profile, author_agent_id, confidence,\n                    state, supersedes_link_id, created_at))\n                FROM (SELECT * FROM memory_access_rules ORDER BY link_id)\n            ),\n            'promotions', (\n                SELECT json_group_array(json_array(promotion_id, bear_id, sequence_no, source_memory_id,\n                    target_memory_id, review_agent_id, action, created_at, notes))\n                FROM (SELECT * FROM memory_promotions ORDER BY promotion_id)\n            ),\n            'harvest', (\n                SELECT json_group_array(json_array(mark_id, bear_id, sequence_no, source_kind, source_ref,\n                    source_hash, harvested_at, run_id, proposal_ids_json))\n                FROM (SELECT * FROM memory_harvest_marks ORDER BY mark_id)\n            ),\n            'reflection', (\n                SELECT json_group_array(json_array(run_id, bear_id, sequence_no, lane, trigger, status,\n                    input_summary, output_summary, proposal_ids_json, created_at, completed_at))\n                FROM (SELECT * FROM reflection_run_outcomes ORDER BY run_id)\n            )\n        ) AS \"snapshot!: String\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "snapshot!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "d8f294f60bc9c80963ca3484681fb4eddd5e98b3c2a83e39ea711703406e8e08"
+}

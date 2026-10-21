@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE memory_records SET invalid_at = ? WHERE memory_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "603f9d66a0d4adcfbaaca2d386852e3baea2a6b860d72fd533eb3ed2861816ed"
+}

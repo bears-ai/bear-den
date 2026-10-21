@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "CREATE TRIGGER fail_personal_operation BEFORE UPDATE ON personal_memory_candidates\n                  WHEN OLD.state = 'pending' AND NEW.state = 'quarantined'\n                  BEGIN SELECT RAISE(ABORT, 'injected imported candidate quarantine failure'); END",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "9f346a2d0ad530a9cbb106a15c27238791b2d93bbfe5f2849c5eff85b3243a27"
+}

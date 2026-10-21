@@ -121,16 +121,34 @@ async fn corrupt(store: &BearMemoryStore, alice: &AuthenticatedUserEntity, corru
             .unwrap();
         }
         Corruption::DifferentGeneration => {
-            sqlx::query!("UPDATE user_identity_generations SET generation = generation + 1 WHERE bear_id = ? AND entity_id = ?", bear_id, entity_id)
-                .execute(store.pool()).await.unwrap();
+            let generation = alice.authority_generation + 1;
+            sqlx::query!(
+                "UPDATE user_identity_generations SET generation = ? WHERE bear_id = ? AND entity_id = ?",
+                generation,
+                bear_id,
+                entity_id,
+            )
+            .execute(store.pool())
+            .await
+            .unwrap();
         }
-        Corruption::Quarantined => {
-            sqlx::query!("UPDATE authenticated_user_entities SET state = 'quarantined' WHERE bear_id = ? AND entity_id = ?", bear_id, entity_id)
-                .execute(store.pool()).await.unwrap();
-        }
-        Corruption::DifferentUser => {
-            sqlx::query!("UPDATE authenticated_user_entities SET user_id = 22 WHERE bear_id = ? AND entity_id = ?", bear_id, entity_id)
-                .execute(store.pool()).await.unwrap();
+        Corruption::Quarantined | Corruption::DifferentUser => {
+            let (state, user) = match corruption {
+                Corruption::Quarantined => ("quarantined", alice.user_id()),
+                Corruption::DifferentUser => ("active", BOB),
+                _ => unreachable!(),
+            };
+            let user_id = user.get();
+            sqlx::query!(
+                "UPDATE authenticated_user_entities SET state = ?, user_id = ? WHERE bear_id = ? AND entity_id = ?",
+                state,
+                user_id,
+                bear_id,
+                entity_id,
+            )
+            .execute(store.pool())
+            .await
+            .unwrap();
         }
         Corruption::MissingBinding => {
             sqlx::query!(

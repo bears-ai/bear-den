@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO memory_access_rules (link_id, bear_id, sequence_no, src_memory_id,\n            entity_id, relation, author_profile, state, created_at)\n          VALUES (?, ?, (SELECT next_sequence FROM bear_sequence WHERE id = 1),\n                  ?, ?, 'audience', 'curate', ?, '2026-01-01T00:00:00Z')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "cf7ebe03f84644f0967f917ccd1fe180cf2348f067e9a43e626a129b27cbfa27"
+}

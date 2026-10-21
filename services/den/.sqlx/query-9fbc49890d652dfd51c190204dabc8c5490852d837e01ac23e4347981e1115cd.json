@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "CREATE TRIGGER fail_personal_operation BEFORE UPDATE ON bear_sequence\n                  WHEN NEW.next_sequence <> OLD.next_sequence\n                  BEGIN SELECT RAISE(ABORT, 'injected candidate sequence failure'); END",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "9fbc49890d652dfd51c190204dabc8c5490852d837e01ac23e4347981e1115cd"
+}

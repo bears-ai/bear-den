@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "CREATE TRIGGER fail_personal_operation BEFORE INSERT ON personal_memory_candidates\n                  BEGIN SELECT RAISE(ABORT, 'injected candidate insertion failure'); END",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "3a826c5356b54ef4cf4dd4e6d16d8f6b62e84c5bd2090c40ac8a43f20eebcb79"
+}

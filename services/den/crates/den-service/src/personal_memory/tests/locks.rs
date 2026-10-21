@@ -61,7 +61,7 @@ async fn user_lock_precedes_bear_lock(pool: PgPool) {
     fixture.enable(fixture.owner).await;
     let mut deletion = fixture.pool.begin().await.unwrap();
     sqlx::query_scalar!(
-        "SELECT id FROM users WHERE id = $1 FOR UPDATE",
+        "SELECT id FROM users WHERE id = $1 FOR UPDATE NOWAIT",
         fixture.owner.get(),
     )
     .fetch_one(&mut *deletion)
@@ -95,7 +95,7 @@ async fn membership_is_rechecked_after_waiting_for_bear(pool: PgPool) {
     fixture.enable(fixture.owner).await;
     let mut revocation = fixture.pool.begin().await.unwrap();
     sqlx::query_scalar!(
-        "SELECT id FROM bears WHERE id = $1 FOR UPDATE",
+        "SELECT id FROM bears WHERE id = $1 FOR UPDATE NOWAIT",
         fixture.bear.as_uuid(),
     )
     .fetch_one(&mut *revocation)

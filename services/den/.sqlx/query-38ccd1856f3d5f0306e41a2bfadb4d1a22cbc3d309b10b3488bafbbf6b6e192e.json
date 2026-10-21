@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "CREATE TRIGGER fail_personal_operation BEFORE UPDATE ON personal_memory_candidates\n                  WHEN NEW.state = 'withdrawn' AND OLD.value_text = 'Block withdrawal'\n                  BEGIN SELECT RAISE(ABORT, 'injected candidate withdrawal failure'); END",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "38ccd1856f3d5f0306e41a2bfadb4d1a22cbc3d309b10b3488bafbbf6b6e192e"
+}

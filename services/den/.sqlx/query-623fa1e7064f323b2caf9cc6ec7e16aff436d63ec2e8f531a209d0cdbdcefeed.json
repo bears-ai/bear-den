@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT json_object(\n            'candidates', (\n                SELECT json_group_array(json_array(candidate_id, bear_id, person_entity_id, sequence_no,\n                    fact_type, value_text, evidence_kind, retention, source_conversation_id, source_memory_id,\n                    source_bear_id, source_user_id, source_binding_generation, state, created_at,\n                    withdrawn_at, withdrawn_on_bear_id, withdrawn_by_user_id))\n                FROM (SELECT * FROM personal_memory_candidates ORDER BY candidate_id)\n            ),\n            'settings', (\n                SELECT json_group_array(json_array(bear_id, person_entity_id, capture_enabled,\n                    authority_generation, updated_at, updated_on_bear_id, updated_by_user_id))\n                FROM (SELECT * FROM personal_memory_settings ORDER BY bear_id, person_entity_id)\n            ),\n            'bindings', (\n                SELECT json_group_array(json_array(bear_id, user_id, entity_id, state))\n                FROM (SELECT * FROM authenticated_user_entities ORDER BY bear_id, entity_id)\n            ),\n            'generations', (\n                SELECT json_group_array(json_array(bear_id, entity_id, generation))\n                FROM (SELECT * FROM user_identity_generations ORDER BY bear_id, entity_id)\n            ),\n            'entities', (\n                SELECT json_group_array(json_array(entity_id, bear_id, sequence_no, type, display_name,\n                    resolution, trust, canonical_ref, superseded_by_entity_id, metadata_json, created_at))\n                FROM (SELECT * FROM entities ORDER BY entity_id)\n            ),\n            'handles', (\n                SELECT json_group_array(json_array(handle_id, bear_id, entity_id, handle_type,\n                    handle_value, source, trust, state, created_at))\n                FROM (SELECT * FROM entity_handles ORDER BY handle_id)\n            ),\n            'receipts', (\n                SELECT json_group_array(json_array(receipt_id, bear_id, recorded_bear_id, actor_user_id,\n                    entity_id, destination_user_id, previous_user_id, displaced_entity_id, prior_generation,\n                    resulting_generation, recorded_at))\n                FROM (SELECT * FROM user_identity_receipts ORDER BY receipt_id)\n            ),\n            'sequence', (SELECT next_sequence FROM bear_sequence WHERE id = 1)\n        ) AS \"snapshot!: String\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "snapshot!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "623fa1e7064f323b2caf9cc6ec7e16aff436d63ec2e8f531a209d0cdbdcefeed"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "CREATE TRIGGER fail_personal_operation BEFORE INSERT ON user_identity_receipts\n                  BEGIN SELECT RAISE(ABORT, 'injected personal identity receipt failure'); END",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "aeb61d5c6daf817665823c799e4263083154a5dc9bbf7efd3a35205e86ab27a2"
+}

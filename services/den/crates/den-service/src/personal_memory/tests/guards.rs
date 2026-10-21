@@ -3,7 +3,7 @@ use crate::{
     bears::{db, hats},
     personal_memory as service,
 };
-use den_core::ids::UserId;
+use den_core::ids::{HatId, UserId};
 use den_memory::{
     append_memory_record, append_relation, fetch_record_by_id, list_memory_proposals,
     LogicalMemoryPath, MemorySource,
@@ -216,40 +216,26 @@ async fn conversation_must_be_active_owned_and_hat_bound(pool: PgPool) {
             .await,
     );
     for status in ["archived", "deleted", "migrated"] {
-        sqlx::query!(
-            "UPDATE conversations SET status = $2 WHERE id = $1",
-            fixture.conversation,
-            status,
-        )
-        .execute(&fixture.pool)
-        .await
-        .unwrap();
+        fixture
+            .set_conversation_state(status, Some(fixture.owner), Some(fixture.hat))
+            .await;
         assert_denied(
             fixture
                 .stage_as(fixture.owner, fixture.conversation, fixture.source)
                 .await,
         );
     }
-    sqlx::query!(
-        "UPDATE conversations SET status = 'active', hat_id = NULL WHERE id = $1",
-        fixture.conversation,
-    )
-    .execute(&fixture.pool)
-    .await
-    .unwrap();
+    fixture
+        .set_conversation_state("active", Some(fixture.owner), None)
+        .await;
     assert_denied(
         fixture
             .stage_as(fixture.owner, fixture.conversation, fixture.source)
             .await,
     );
-    sqlx::query!(
-        "UPDATE conversations SET hat_id = $2, created_by_user_id = NULL WHERE id = $1",
-        fixture.conversation,
-        fixture.hat.as_uuid(),
-    )
-    .execute(&fixture.pool)
-    .await
-    .unwrap();
+    fixture
+        .set_conversation_state("active", None, Some(fixture.hat))
+        .await;
     assert_denied(
         fixture
             .stage_as(fixture.owner, fixture.conversation, fixture.source)
@@ -297,15 +283,10 @@ async fn a_hat_locator_must_resolve_to_a_real_hat_of_this_bear(pool: PgPool) {
         .execute(&fixture.pool)
         .await
         .unwrap();
-    for hat in [Uuid::new_v4(), foreign_hat.id.as_uuid()] {
-        sqlx::query!(
-            "UPDATE conversations SET hat_id = $2 WHERE id = $1",
-            fixture.conversation,
-            hat,
-        )
-        .execute(&fixture.pool)
-        .await
-        .unwrap();
+    for hat in [HatId::new(Uuid::new_v4()), foreign_hat.id] {
+        fixture
+            .set_conversation_state("active", Some(fixture.owner), Some(hat))
+            .await;
         assert_denied(
             fixture
                 .stage_as(fixture.owner, fixture.conversation, fixture.source)

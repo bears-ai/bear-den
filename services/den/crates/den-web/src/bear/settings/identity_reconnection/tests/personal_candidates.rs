@@ -62,11 +62,26 @@ async fn assert_hidden(
     }
 }
 
+async fn assert_source_unchanged(
+    store: &BearMemoryStore,
+    binding: &AuthenticatedUserEntity,
+    originals: &[PersonalCandidate],
+) {
+    assert!(capture_enabled(store, binding).await.unwrap());
+    let rows = list_candidates(store, binding, 100).await.unwrap();
+    assert_eq!(rows.len(), originals.len());
+    for original in originals {
+        let row = rows.iter().find(|row| row.id() == original.id()).unwrap();
+        assert_preserved(row, original, original.state());
+    }
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_provenance(
     pool: PgPool,
 ) {
     let fixture = fixture(pool).await;
+    assert_ne!(fixture.actor, fixture.destination);
     let source = fixture.store().await;
     let alice = resolve_authenticated_user_entity(&source, fixture.actor)
         .await
@@ -195,6 +210,14 @@ async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_p
         .unwrap()
         .unwrap();
     assert_ne!(imported.id, fixture.bear_id.as_uuid());
+    bears_db::grant_membership(
+        &fixture.pool,
+        fixture.destination.get(),
+        imported.id,
+        Some(BEAR_ROLE_MEMBER),
+    )
+    .await
+    .unwrap();
     let destination = fixture
         .state
         .memory_stores()
@@ -211,17 +234,31 @@ async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_p
     assert_eq!(imported_identity.origins, original_identity.origins);
 
     // Even the same authenticated account number must get a fresh destination person.
-    let fresh = resolve_authenticated_user_entity(&destination, fixture.actor)
+    let numeric_collision = resolve_authenticated_user_entity(&destination, fixture.actor)
+        .await
+        .unwrap();
+    assert_ne!(numeric_collision.entity_id(), alice.entity_id());
+    assert!(!capture_enabled(&destination, &numeric_collision)
+        .await
+        .unwrap());
+    assert_hidden(&destination, &numeric_collision, &originals).await;
+    assert!(
+        !withdraw_candidate(&destination, &numeric_collision, originals[0].id())
+            .await
+            .unwrap()
+    );
+    let fresh = resolve_authenticated_user_entity(&destination, fixture.destination)
         .await
         .unwrap();
     assert_ne!(fresh.entity_id(), alice.entity_id());
+    assert_ne!(fresh.entity_id(), numeric_collision.entity_id());
     assert!(!capture_enabled(&destination, &fresh).await.unwrap());
     assert_hidden(&destination, &fresh, &originals).await;
     let review = core::review_reconnection(
         &destination,
         fixture.actor,
         alice.entity_id(),
-        fixture.actor,
+        fixture.destination,
     )
     .await
     .unwrap();
@@ -237,7 +274,9 @@ async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_p
         receipt.displaced_entity_id.as_deref(),
         Some(fresh.entity_id())
     );
-    let owner = resolve_authenticated_user_entity(&destination, fixture.actor)
+    assert_eq!(receipt.actor_user_id, fixture.actor);
+    assert_eq!(receipt.destination_user_id, Some(fixture.destination));
+    let owner = resolve_authenticated_user_entity(&destination, fixture.destination)
         .await
         .unwrap();
     assert_eq!(owner.entity_id(), alice.entity_id());
@@ -271,23 +310,7 @@ async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_p
             .unwrap();
         assert_preserved(&fetched, original, state);
     }
-    for user in [UserId::new(4343), fixture.member] {
-        let unrelated = resolve_authenticated_user_entity(&destination, user)
-            .await
-            .unwrap();
-        assert_hidden(&destination, &unrelated, &originals).await;
-    }
-
-    assert!(capture_enabled(&source, &current).await.unwrap());
-    let source_rows = list_candidates(&source, &current, 100).await.unwrap();
-    assert_eq!(source_rows.len(), originals.len());
-    for original in &originals {
-        let row = source_rows
-            .iter()
-            .find(|row| row.id() == original.id())
-            .unwrap();
-        assert_preserved(row, original, original.state());
-    }
+    assert_source_unchanged(&source, &current, &originals).await;
     for store in [&source, &destination] {
         for (id, body) in &bodies {
             let record = den_memory::fetch_record_by_id(store, id)
@@ -297,4 +320,77 @@ async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_p
             assert_eq!(serde_json::to_value(record).unwrap(), *body);
         }
     }
+
+    let conversation = Uuid::new_v4();
+    let note = destination
+        .append_record(
+            &LogicalMemoryPath::source_local(MemorySource::Conversation(conversation), "note"),
+            "note",
+            "pair",
+            None,
+            "Please remember my preferred name here with fresh consent.",
+            &json!({}),
+            "normal",
+        )
+        .await
+        .unwrap();
+    let proof = VerifiedPersonalSource::for_authorized_conversation(
+        &owner,
+        conversation,
+        Uuid::parse_str(&note.memory_id).unwrap(),
+    );
+    let name = originals[0].preferred_name().clone();
+    assert!(matches!(
+        stage_preferred_name(&destination, &proof, name.clone()).await,
+        Err(den_core::DenError::Authorization(_))
+    ));
+    set_capture_enabled(&destination, &owner, true)
+        .await
+        .unwrap();
+    let fresh = stage_preferred_name(&destination, &proof, name)
+        .await
+        .unwrap();
+    assert!(originals.iter().all(|original| original.id() != fresh.id()));
+    assert_eq!(fresh.person_entity_id(), alice.entity_id());
+    assert_eq!(fresh.preferred_name(), originals[0].preferred_name());
+    assert_eq!(fresh.state(), CandidateState::Pending);
+    assert_eq!(fresh.source_bear_id().as_uuid(), imported.id);
+    assert_eq!(fresh.source_user_id(), fixture.destination);
+    assert_eq!(
+        fresh.source_binding_generation(),
+        receipt.resulting_generation
+    );
+    assert_eq!(fresh.source_conversation_id(), conversation);
+    assert_eq!(fresh.source_memory_id().to_string(), note.memory_id);
+    assert!(capture_enabled(&destination, &owner).await.unwrap());
+    let rows = list_candidates(&destination, &owner, 100).await.unwrap();
+    assert_eq!(rows.len(), originals.len() + 1);
+    assert_preserved(
+        rows.iter().find(|row| row.id() == fresh.id()).unwrap(),
+        &fresh,
+        CandidateState::Pending,
+    );
+    for original in &originals {
+        let state = match original.state() {
+            CandidateState::Pending | CandidateState::Quarantined => CandidateState::Quarantined,
+            CandidateState::Withdrawn => CandidateState::Withdrawn,
+        };
+        assert_preserved(
+            rows.iter().find(|row| row.id() == original.id()).unwrap(),
+            original,
+            state,
+        );
+    }
+    let mut protected = originals.to_vec();
+    protected.push(fresh);
+    for user in [fixture.actor, UserId::new(4343), fixture.member] {
+        let unrelated = resolve_authenticated_user_entity(&destination, user)
+            .await
+            .unwrap();
+        if user == fixture.actor {
+            assert_eq!(unrelated.entity_id(), numeric_collision.entity_id());
+        }
+        assert_hidden(&destination, &unrelated, &protected).await;
+    }
+    assert_source_unchanged(&source, &current, &originals).await;
 }

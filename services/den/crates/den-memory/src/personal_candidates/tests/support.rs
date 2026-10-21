@@ -29,10 +29,12 @@ pub(super) async fn opted_in(store: &BearMemoryStore, user: UserId) -> Authentic
 }
 
 pub(super) async fn next_sequence(store: &BearMemoryStore) -> i64 {
-    sqlx::query_scalar!(r#"SELECT next_sequence AS "value!: i64" FROM bear_sequence WHERE id = 1"#)
-        .fetch_one(store.pool())
-        .await
-        .unwrap()
+    sqlx::query_scalar!(
+        r#"SELECT next_sequence AS "sequence!: i64" FROM bear_sequence WHERE id = 1"#
+    )
+    .fetch_one(store.pool())
+    .await
+    .unwrap()
 }
 
 pub(super) async fn candidate_sequence(store: &BearMemoryStore, id: PersonalCandidateId) -> i64 {
@@ -43,40 +45,59 @@ pub(super) async fn candidate_sequence(store: &BearMemoryStore, id: PersonalCand
     ).fetch_one(store.pool()).await.unwrap()
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum NoteVisibility {
+    Normal,
+    Quarantined,
+    Hidden,
+    Private,
+    Withdrawn,
+}
+
+impl NoteVisibility {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::Quarantined => "quarantined",
+            Self::Hidden => "hidden",
+            Self::Private => "private",
+            Self::Withdrawn => "withdrawn",
+        }
+    }
+}
+
 pub(super) async fn insert_note(
     store: &BearMemoryStore,
     logical: &LogicalMemoryPath,
     metadata: &str,
-    visibility: &str,
+    visibility: NoteVisibility,
 ) -> Uuid {
-    let memory = Uuid::new_v4();
-    let memory_id = memory.to_string();
-    let bear_id = store.bear_id().to_string();
-    let scope = logical.scope_type.as_str();
-    let source_kind = logical.source.map(MemorySource::kind);
-    let source_id = logical.source.map(|source| source.id().to_string());
-    let hat_id = logical.hat_id.map(|hat| hat.to_string());
-    let path = logical.to_logical_path();
-    let mut tx = store.pool().begin().await.unwrap();
-    let sequence = sqlx::query_scalar!(
-        r#"UPDATE bear_sequence SET next_sequence = next_sequence + 1 WHERE id = 1
-           RETURNING next_sequence - 1 AS "value!: i64""#,
-    )
-    .fetch_one(&mut *tx)
-    .await
-    .unwrap();
-    sqlx::query!(
-        r"INSERT INTO memory_records (
-            memory_id, bear_id, sequence_no, scope_type, scope_profile,
-            scope_source_kind, scope_source_id, scope_hat_id, kind, author_profile,
-            created_at, content_text, metadata_json, visibility, logical_path
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'note', 'pair',
-                  '2026-01-01T00:00:00Z', 'Source text is not a personal candidate or identity grant.', ?, ?, ?)",
-        memory_id, bear_id, sequence, scope, logical.scope_profile,
-        source_kind, source_id, hat_id, metadata, visibility, path,
-    ).execute(&mut *tx).await.unwrap();
-    tx.commit().await.unwrap();
-    memory
+    let parsed_metadata = serde_json::from_str::<serde_json::Value>(metadata);
+    let default_metadata = serde_json::json!({});
+    let row = store
+        .append_record(
+            logical,
+            "note",
+            "pair",
+            None,
+            "Source text is not a personal candidate or identity grant.",
+            parsed_metadata.as_ref().unwrap_or(&default_metadata),
+            visibility.as_str(),
+        )
+        .await
+        .unwrap();
+    if parsed_metadata.is_err() {
+        // Malformed JSON cannot pass through append_record's typed metadata boundary.
+        sqlx::query!(
+            "UPDATE memory_records SET metadata_json = ? WHERE memory_id = ?",
+            metadata,
+            row.memory_id,
+        )
+        .execute(store.pool())
+        .await
+        .unwrap();
+    }
+    Uuid::parse_str(&row.memory_id).unwrap()
 }
 
 pub(super) async fn note_in(store: &BearMemoryStore, conversation: Uuid) -> Note {
@@ -84,7 +105,7 @@ pub(super) async fn note_in(store: &BearMemoryStore, conversation: Uuid) -> Note
         store,
         &LogicalMemoryPath::source_local(MemorySource::Conversation(conversation), "note"),
         "{}",
-        "normal",
+        NoteVisibility::Normal,
     )
     .await;
     Note {
