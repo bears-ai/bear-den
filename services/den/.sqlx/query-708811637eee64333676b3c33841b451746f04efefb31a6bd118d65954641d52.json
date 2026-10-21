@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        UPDATE entity_handles SET state = 'detached'\n        WHERE bear_id = ? AND entity_id IN (\n            SELECT entity_id FROM authenticated_user_entities WHERE bear_id = ?\n        )\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "708811637eee64333676b3c33841b451746f04efefb31a6bd118d65954641d52"
+}

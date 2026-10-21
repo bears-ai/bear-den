@@ -5,6 +5,7 @@
 
 pub mod access;
 pub mod admin_inspect;
+pub mod authenticated_user;
 mod claim_fingerprint;
 mod clock;
 mod conflicts;
@@ -14,6 +15,7 @@ pub mod harvest;
 pub mod hat_promotion;
 pub mod hat_review;
 pub mod import;
+mod import_schema;
 pub mod legacy_review;
 pub mod library;
 mod logical_path;
@@ -31,8 +33,8 @@ pub mod tools;
 
 #[cfg(test)]
 mod memory_scope_tests;
-#[cfg(test)]
-mod test_support;
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_support;
 
 pub use access::{record_visible, AccessContext};
 pub use admin_inspect::{
@@ -40,6 +42,10 @@ pub use admin_inspect::{
     get_memory_record_by_id, get_memory_record_detail, head_entry_count, list_all_logical_paths,
     list_path_summaries, list_recent_memory_records, search_memory_records, BearMemoryAdminStats,
     MemoryCountBucket, MemoryRecordDetail, PathSummary,
+};
+pub use authenticated_user::{
+    quarantine_imported_authenticated_users, resolve_authenticated_user_entity,
+    AuthenticatedUserEntity,
 };
 pub use conflicts::{
     conflict_candidates, detect_conflicts, memory_conflicts_among, record_conflict_observation,
@@ -59,6 +65,7 @@ pub use import::{
     import_legacy_memory_bundle, import_legacy_memory_git_dir, LegacyMemoryBranchReport,
     LegacyMemoryImportOptions, LegacyMemoryImportReport, LegacyMemoryImportSource,
 };
+pub use import_schema::validate_imported_memory_schema;
 pub use logical_path::{entity_anchor_path, LogicalMemoryPath, MemoryScopeType, MemorySource};
 pub use manager::MemoryStoreManager;
 pub use observations::{

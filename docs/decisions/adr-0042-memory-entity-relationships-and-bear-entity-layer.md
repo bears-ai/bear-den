@@ -183,6 +183,18 @@ The **bear entity layer travels in the bear package** so relations never dangle 
 - Weak-candidate promotion, merge/split, and **all** access-bearing relations: `curate` (+ human via UI), consistent with `curate` owning cross-profile governance.
 - Session/ACP-token identity ⇒ a `person` at `confirmed` + asserted trust; **never inferred from chat text** (per `AGENTS.md`).
 
+#### Authenticated-principal binding amendment (2026-10-21)
+
+The [user-associated memory plan](../roadmap/USER_ASSOCIATED_BEAR_MEMORY_PLAN.md) implements a narrow authentication foundation over the existing `person` entity type. This amendment does not mark the broader ADR or the full personal-memory feature complete; current implementation and validation live in the [memory topic](../topics/bear-memory-hats.md#authenticated-user-identity-foundation).
+
+- `authenticated_user_entities` is the canonical Bear/principal-to-entity authority, separate from the portable descriptive identity/reference. Its `active` or `quarantined` state is not a second entity-resolution lifecycle: it answers whether a local authenticated principal currently authorizes that exact entity.
+- Only server-side resolution from the verified typed Den user ID creates an active binding and its confirmed/asserted person atomically. Matching names, canonical refs, or historical strong handles never establish that authority.
+- Bound and quarantined user entities/handles are not subject to generic merge/split/reassignment. Ordinary descriptive-person reconciliation cannot widen a principal's audience through a merge forward pointer.
+- Import never treats source-host numeric user IDs as destination authority. It rejects triggers, foreign keys, virtual tables, and noncanonical views before any store initialization writes, retains quarantined identity markers, and demotes/clears their external bindings atomically. Reusing the same Den account on the destination creates a fresh entity; old protected records remain inaccessible pending a future explicitly authorized re-link policy.
+- User-audience recall requires the exact current verified Bear/user/entity binding. Raw entity IDs, missing or invalid targets, and retired access-rule histories are not grants. Audience restrictions apply independently of hat selection: hats organize context and maintain a clean core, not privacy between hats.
+
+Protected publication, derived information flow, export/operator authority, replay-aware removal, user controls, and the remaining product policy are still delivery gates in the plan; no personal-fact tool or recall projection is enabled by this foundation.
+
 ### 12. Portability: package placement and import re-linking (settled — "fork E")
 
 The entity layer needs **no new package tier**: `entities`, `entity_handles`, `memory_relations`, and `memory_access_rules` live in per-Bear SQLite (bear cognition), so they ship automatically in the existing **cognition export** (`memory.sqlite`) alongside `memory_records` ([bear package](../guides/bear-package.md)). `memory_links` is a view, recreated by schema. This bumps `memory_schema_version`.

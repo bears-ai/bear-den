@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        UPDATE entities\n        SET type = ?, display_name = ?, resolution = ?, trust = ?, canonical_ref = ?,\n            superseded_by_entity_id = ?, metadata_json = ?\n        WHERE bear_id = ? AND entity_id = ?\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 9
+    },
+    "nullable": []
+  },
+  "hash": "393ce2bc3f4519aa211c1a847b80a3573771bf3f1b0d29ceba290afef1eacbe6"
+}

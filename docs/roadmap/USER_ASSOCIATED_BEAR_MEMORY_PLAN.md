@@ -1,8 +1,27 @@
 # User-Associated Bear Memory Plan
 
-**Status:** proposed implementation plan  
+**Status:** Active — identity and read-gate foundation implemented; personal-fact writes, curation, recall integration, and user controls remain gated
+
+**Topic:** [Bear memory and hats](../topics/bear-memory-hats.md)
+
 **Parent:** [ADR-0042 — Memory–Entity Relationships and the Bear Entity Layer](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md)  
 **Goal:** Let a Bear remember durable, user-specific context across that user's conversations and hats without exposing it to other authenticated users of the same Bear.
+
+## Implementation baseline and delivery gates
+
+**2026-10-21, code/test only; not deployed:** the generic entity/handle tables, descriptor registry, descriptive/access-bearing relation tables, and `AccessContext` already existed. This plan reuses that infrastructure rather than introducing a parallel entity model.
+
+The first implementation slice adds an atomic authenticated-user resolver over the existing `person` type, a canonical `authenticated_user_entities` authority table, immutable principal bindings, and trusted `session_info.entities.human` wiring. Names, historical handles, and imported references never establish authentication authority. The read gate requires an exact current verified binding for a user audience; unknown rules, invalid targets, withdrawn-last-rule histories, and quarantined identities fail closed. Bundle import rejects executable/noncanonical schema (including triggers and foreign-key cascades) before initialization and retains quarantined user-identity markers so old audiences cannot become generic grants. See the [ADR-0042 amendment](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md#authenticated-principal-binding-amendment-2026-10-21).
+
+This is **not** an enabled personal-memory feature. Ordinary recall callers still use their existing empty user-audience contexts. No personal-fact model tool, promotion path, user-context projection, or management UI is enabled by this slice. Phase 0's remaining product policy and the following implementation gates must be satisfied before enabling personal-fact storage/promotion:
+
+- **Atomic protected publication:** record, mandatory audience, provenance, curation decision, and correction/supersession commit together; withdrawal never turns retained content unrestricted.
+- **Audience-preserving derivation:** personal context rewritten into ordinary notes or summaries must not reach unrestricted hat/core publication without separately authorized audience widening. Crossing hats itself is not leakage.
+- **Protected secondary outputs:** exports/backups, admin inspection, curation briefings/transcripts, diagnostics, and worker artifacts must honor personal audiences; today's Bear-admin SQLite bundle snapshot is not an authorized personal-data export.
+- **Removal and replay semantics:** define historical evidence retention separately from active model reuse; cover persisted tool results, summaries, resumed sessions, harvest, delayed retries, and in-flight corrections/removal.
+- **User control and rollout:** inspection/correction/removal/opt-out and scoped pending-candidate deduplication must be available and tested before ordinary users can create durable personal context.
+
+These are release gates, not claims that the remaining privacy paths have been implemented or reviewed end to end.
 
 ## Problem
 
@@ -81,15 +100,15 @@ Before schema or tool work, amend/accept ADR-0042 or add an implementation decis
 
 ## Phase 1 — Authenticated-user entity resolution
 
-Implement the minimum Bear entity layer required by ADR-0042.
+**Identity foundation implemented; broader entry-point integration remains part of the recall rollout.**
 
-1. Add canonical `entities` and `entity_handles` storage, migrations, typed IDs, lifecycle state, trust/provenance, and canonical references.
-2. Register the descriptor-owned `user` entity type and relevant handle types. A confirmed Den user should use a canonical reference such as `den:user:<uuid>`; display name and username are handles, not authority.
+1. Reuse existing canonical `entities`, `entity_handles`, descriptors, and lifecycle. Add only the Bear-local authenticated-principal binding with typed `BearId`/`UserId` and a privately constructed `AuthenticatedUserEntity`.
+2. Keep the existing descriptor-owned `person` type, as specified by ADR-0042; do not add a parallel `user` type. The derived canonical reference is `den:user:<authenticated-user-id>` (Den currently uses numeric user IDs). Display name, username, canonical reference, and even a historical `den_user` handle are not authority.
 3. Implement an idempotent server-side resolver:
    ```text
    resolve_authenticated_user_entity(bear_id, authenticated_user_id)
    ```
-   The resolver is the only normal write path for the current human entity and creates authoritative identities directly at the ADR-0042 confirmed/resolved lifecycle stage.
+   The resolver is the only normal write path for the current human entity and atomically creates a fresh confirmed/asserted person, derived handle, and active binding. The canonical binding table—not the portable person row—is the authority. Generic entity/handle mutation, merge, and split cannot modify active or quarantined user identities. Import retains quarantined markers, never restores source-host numeric identity authority, and requires a fresh destination binding.
 4. Ensure equivalent authenticated sessions for the same Bear and Den user resolve to the same Bear entity across supported clients; different Bear/user pairs resolve separately.
 5. Do not infer or backfill person identity from historical transcript text. Any migration of existing data must be explicitly selected and auditable.
 
@@ -97,10 +116,10 @@ Implement the minimum Bear entity layer required by ADR-0042.
 
 ## Phase 2 — Access-bearing audience rules and fail-closed recall
 
-Implement ADR-0042's two-table relation model as the privacy foundation.
+**Read-gate hardening implemented; complete recall/repository integration remains pending.**
 
-1. Add descriptor-routed descriptive relations (`memory_relations`) and access-bearing rules (`memory_access_rules`), with append-only lifecycle/supersession and a read view for cross-cutting inspection.
-2. Register `subject` as descriptive and `audience` as access-bearing. Restrict access-rule writes to curation/authorized service paths.
+1. Reuse existing descriptor-routed descriptive relations (`memory_relations`), access-bearing rules (`memory_access_rules`), and the cross-cutting read view. Preserve append-only lifecycle/supersession.
+2. Reuse the existing descriptive `subject` and access-bearing `audience` descriptors. Restrict access-rule writes to curation/authorized service paths. Verified-user contexts must match the current Bear/principal/entity binding; raw entity IDs cannot authorize user audiences. Missing/unresolved/quarantined targets, unknown rules, and a history with no remaining active rules deny access.
 3. Require a typed `AccessContext` as input to every recall assembler and repository query that can return memory. It must be constructed from the verified principal and resolved Bear entity.
 4. Query audience rules as an enforced gate, not a ranking hint. If access context or a valid current-user entity is absent, do not return audience-gated records.
 5. Apply equivalent gating before snippets, embeddings, graph expansion, caches, derived indexes, error messages, exports, and diagnostics are returned. Derived systems may index protected content only if they preserve record identity and are filtered before any text/snippet reaches a caller.

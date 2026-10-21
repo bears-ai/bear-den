@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 use den_core::DenError;
 
+use super::authenticated_user::{ensure_entity_mutable, ensure_handle_mutable};
 use super::clock::now_rfc3339;
 use super::descriptors::{self, EntityTrust, ResolutionState};
 use super::records::BearMemoryStore;
@@ -186,6 +187,7 @@ pub async fn attach_handle(
     source: Option<&str>,
     trust: EntityTrust,
 ) -> Result<EntityHandleRow, DenError> {
+    ensure_entity_mutable(store, entity_id).await?;
     if let Some(existing) = sqlx::query_as::<_, EntityHandleSqlRow>(
         r"
         SELECT handle_id, entity_id, handle_type, handle_value, source, trust, state, created_at
@@ -239,6 +241,7 @@ pub async fn attach_handle(
 }
 
 pub async fn detach_handle(store: &BearMemoryStore, handle_id: &str) -> Result<(), DenError> {
+    ensure_handle_mutable(store, handle_id).await?;
     sqlx::query("UPDATE entity_handles SET state = 'detached' WHERE bear_id = ? AND handle_id = ?")
         .bind(store.bear_id().to_string())
         .bind(handle_id)
@@ -302,6 +305,7 @@ pub async fn set_resolution(
     resolution: ResolutionState,
     trust: Option<EntityTrust>,
 ) -> Result<(), DenError> {
+    ensure_entity_mutable(store, entity_id).await?;
     if let Some(trust) = trust {
         sqlx::query(
             "UPDATE entities SET resolution = ?, trust = ? WHERE bear_id = ? AND entity_id = ?",
@@ -330,6 +334,7 @@ pub async fn set_canonical_ref(
     entity_id: &str,
     canonical_ref: Option<&str>,
 ) -> Result<(), DenError> {
+    ensure_entity_mutable(store, entity_id).await?;
     sqlx::query("UPDATE entities SET canonical_ref = ? WHERE bear_id = ? AND entity_id = ?")
         .bind(canonical_ref)
         .bind(store.bear_id().to_string())
@@ -353,9 +358,12 @@ pub async fn merge_entities(
             "cannot merge an entity into itself".to_string(),
         ));
     }
+    ensure_entity_mutable(store, survivor_entity_id).await?;
+    ensure_entity_mutable(store, loser_entity_id).await?;
     let survivor = resolve_live_entity(store, survivor_entity_id)
         .await?
         .ok_or_else(|| DenError::NotFound(format!("survivor entity {survivor_entity_id}")))?;
+    ensure_entity_mutable(store, &survivor.entity_id).await?;
     if get_entity(store, loser_entity_id).await?.is_none() {
         return Err(DenError::NotFound(format!(
             "loser entity {loser_entity_id}"
@@ -404,6 +412,10 @@ pub async fn split_entity(
     resolution: ResolutionState,
     trust: EntityTrust,
 ) -> Result<EntityRow, DenError> {
+    // Validate the entire move before creating an entity or re-homing any handles.
+    for handle_id in handle_ids_to_move {
+        ensure_handle_mutable(store, handle_id).await?;
+    }
     let new_entity = create_entity(
         store,
         new_entity_type,
@@ -487,159 +499,4 @@ impl EntityHandleSqlRow {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test_support::new_test_store;
-
-    async fn new_person(store: &BearMemoryStore, name: &str) -> EntityRow {
-        create_entity(
-            store,
-            "person",
-            Some(name),
-            ResolutionState::Resolved,
-            EntityTrust::Inferred,
-            None,
-            &Value::Object(Default::default()),
-        )
-        .await
-        .unwrap()
-    }
-
-    #[tokio::test]
-    async fn create_get_and_handle_lookup_round_trip() {
-        let store = new_test_store().await;
-        let ryan = new_person(&store, "Ryan").await;
-        attach_handle(
-            &store,
-            &ryan.entity_id,
-            "email",
-            "ryan@acme.com",
-            None,
-            EntityTrust::Asserted,
-        )
-        .await
-        .unwrap();
-
-        let fetched = get_entity(&store, &ryan.entity_id).await.unwrap().unwrap();
-        assert_eq!(fetched.display_name.as_deref(), Some("Ryan"));
-
-        let by_handle = find_entity_by_handle(&store, "email", "ryan@acme.com")
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(by_handle.entity_id, ryan.entity_id);
-
-        let handles = list_handles(&store, &ryan.entity_id).await.unwrap();
-        assert_eq!(handles.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn unknown_entity_type_rejected() {
-        let store = new_test_store().await;
-        let err = create_entity(
-            &store,
-            "not_a_type",
-            None,
-            ResolutionState::Observed,
-            EntityTrust::Inferred,
-            None,
-            &Value::Object(Default::default()),
-        )
-        .await
-        .unwrap_err();
-        assert!(matches!(err, DenError::ValidationError(_)));
-    }
-
-    #[tokio::test]
-    async fn merge_forward_points_and_rehomes_handles() {
-        let store = new_test_store().await;
-        let survivor = new_person(&store, "Ryan").await;
-        let loser = new_person(&store, "Ryan (dup)").await;
-        attach_handle(
-            &store,
-            &loser.entity_id,
-            "slack_user",
-            "T01:U07",
-            None,
-            EntityTrust::Asserted,
-        )
-        .await
-        .unwrap();
-
-        let returned = merge_entities(&store, &survivor.entity_id, &loser.entity_id)
-            .await
-            .unwrap();
-        assert_eq!(returned.entity_id, survivor.entity_id);
-
-        // Loser is dead with a forward pointer; reads resolve to the survivor — no history loss.
-        let dead = get_entity(&store, &loser.entity_id).await.unwrap().unwrap();
-        assert_eq!(dead.resolution, ResolutionState::Merged);
-        assert_eq!(
-            dead.superseded_by_entity_id.as_deref(),
-            Some(survivor.entity_id.as_str())
-        );
-        let live = resolve_live_entity(&store, &loser.entity_id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(live.entity_id, survivor.entity_id);
-
-        // The loser's handle now resolves to the survivor.
-        let by_handle = find_entity_by_handle(&store, "slack_user", "T01:U07")
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(by_handle.entity_id, survivor.entity_id);
-    }
-
-    #[tokio::test]
-    async fn split_rehomes_offending_handle_to_new_entity() {
-        let store = new_test_store().await;
-        let merged = new_person(&store, "Ryan").await;
-        let h_email = attach_handle(
-            &store,
-            &merged.entity_id,
-            "email",
-            "ryan@acme.com",
-            None,
-            EntityTrust::Asserted,
-        )
-        .await
-        .unwrap();
-        let h_slack = attach_handle(
-            &store,
-            &merged.entity_id,
-            "slack_user",
-            "T01:U07",
-            None,
-            EntityTrust::Asserted,
-        )
-        .await
-        .unwrap();
-
-        // The Slack Ryan turns out to be someone else — split it off.
-        let split = split_entity(
-            &store,
-            "person",
-            Some("Other Ryan"),
-            std::slice::from_ref(&h_slack.handle_id),
-            ResolutionState::Provisional,
-            EntityTrust::Inferred,
-        )
-        .await
-        .unwrap();
-
-        let slack_owner = find_entity_by_handle(&store, "slack_user", "T01:U07")
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(slack_owner.entity_id, split.entity_id);
-
-        let email_owner = find_entity_by_handle(&store, "email", "ryan@acme.com")
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(email_owner.entity_id, merged.entity_id);
-        assert_ne!(h_email.handle_id, h_slack.handle_id);
-    }
-}
+mod tests;

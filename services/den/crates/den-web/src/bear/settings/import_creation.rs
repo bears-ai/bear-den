@@ -7,7 +7,7 @@ use super::{
 use crate::{errors::CustomError, web::AppState};
 use den_core::ids::{BearId, UserId};
 use den_service::bears::{db as bears_db, db::BEAR_ROLE_ADMIN, provision};
-use std::{io::Write, os::unix::fs::OpenOptionsExt};
+use std::{collections::HashSet, io::Write, os::unix::fs::OpenOptionsExt};
 
 pub(super) async fn create(
     state: &AppState,
@@ -61,6 +61,7 @@ pub(super) async fn create(
     .map_err(|_| CreationFailure::unconfirmed(CreationStage::Creation))?;
 
     let mut stage = CreationStage::Birthday;
+    let mut memory_schema_validated = false;
     let setup: Result<(), CustomError> = async {
     let birthdate = birthdate.trim();
     if !birthdate.is_empty() {
@@ -85,6 +86,8 @@ pub(super) async fn create(
     memory_file.write_all(&memory_sqlite)?;
     memory_file.sync_all()?;
     drop(memory_file);
+    den_memory::validate_imported_memory_schema(&memory_path).await?;
+    memory_schema_validated = true;
     rewrite_imported_memory_bear_id(state, bear_id).await?;
     stage = CreationStage::Hats;
     let mapping = portable_hats::import(
@@ -129,7 +132,9 @@ pub(super) async fn create(
         stage = CreationStage::Entities;
         let entities = den_memory::list_entities(&store, None, 10_001).await?;
         if entities.len() > 10_000 { return Err(CustomError::ValidationError("bundle contains too many entity bindings".into())); }
+        let quarantined: HashSet<_> = den_memory::quarantine_imported_authenticated_users(&store).await?.into_iter().collect();
         for entity in entities {
+            if quarantined.contains(&entity.entity_id) { continue; }
             den_memory::set_resolution(&store, &entity.entity_id, den_memory::ResolutionState::Provisional, None).await?;
             den_memory::set_canonical_ref(&store, &entity.entity_id, None).await?;
             for handle in den_memory::list_handles(&store, &entity.entity_id).await? { den_memory::detach_handle(&store, &handle.handle_id).await?; }
@@ -152,9 +157,11 @@ pub(super) async fn create(
             stage,
             bears_db::delete_bear(state.sqlx_pool(), bear_id),
             || async {
-                // This closure is never called if the Bear survives deletion.
-                if let Ok(store) = state.memory_stores()?.store_for_bear(bear_id).await {
-                    store.pool().close().await;
+                // Never open a rejected schema, even while compensating a deleted Bear.
+                if memory_schema_validated {
+                    if let Ok(store) = state.memory_stores()?.store_for_bear(bear_id).await {
+                        store.pool().close().await;
+                    }
                 }
                 let path = memory_sqlite_path(state.config.as_ref(), bear_id);
                 let mut failed = false;

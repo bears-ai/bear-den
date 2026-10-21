@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "CREATE VIRTUAL TABLE imported_search USING fts5(content)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "63d6a4f52479efdef613b0f588ae0c895541a5f32c50ab8ff38ef7662afa2bee"
+}

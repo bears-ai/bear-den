@@ -64,6 +64,18 @@ CREATE TABLE IF NOT EXISTS entities (
 CREATE INDEX IF NOT EXISTS idx_entities_bear_sequence ON entities (bear_id, sequence_no);
 CREATE INDEX IF NOT EXISTS idx_entities_bear_type ON entities (bear_id, type);
 
+-- Permanent user-identity classification, never inferred from portable refs or handles.
+-- Quarantine revokes authority without turning a former user identity into a generic entity.
+CREATE TABLE IF NOT EXISTS authenticated_user_entities (
+    bear_id TEXT NOT NULL,
+    user_id INTEGER NOT NULL,
+    entity_id TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('active', 'quarantined')),
+    PRIMARY KEY (bear_id, entity_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_authenticated_user_entities_active_user
+    ON authenticated_user_entities (bear_id, user_id) WHERE state = 'active';
+
 CREATE TABLE IF NOT EXISTS entity_handles (
     handle_id TEXT PRIMARY KEY,
     bear_id TEXT NOT NULL,

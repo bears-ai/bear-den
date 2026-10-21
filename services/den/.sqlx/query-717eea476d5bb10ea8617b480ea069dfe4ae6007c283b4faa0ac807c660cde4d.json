@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT name AS \"name!: String\", sql AS \"definition!: String\"\n        FROM sqlite_schema WHERE type = 'view'\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "name!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "definition!: String",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "717eea476d5bb10ea8617b480ea069dfe4ae6007c283b4faa0ac807c660cde4d"
+}

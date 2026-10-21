@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE entities SET resolution = 'merged', superseded_by_entity_id = ? WHERE bear_id = ? AND entity_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "470d73b6847923026121b1a39fdd71b2eac9a2ad1d5eb9a4b6278bfadcfd17bd"
+}

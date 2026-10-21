@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT name AS \"name!: String\" FROM sqlite_schema WHERE type = 'trigger' LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "name!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "3b8abd764e2dc1fb4d99bb2b481beb96dc593fc7e0265e8fe8a492f7209af568"
+}

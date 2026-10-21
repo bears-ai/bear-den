@@ -4,7 +4,7 @@ This document explains the correct patterns for using SQLx in this project, incl
 
 ## Overview
 
-This starter uses **SQLx** for all database operations with compile-time query validation. This provides:
+Den uses **SQLx** query macros for compile-time query validation. Most workspace queries use PostgreSQL; `den-memory` queries use SQLite against its [canonical schema](../../services/den/crates/den-memory/src/schema.sql). Both databases' real macro-generated metadata share `services/den/.sqlx/`. This provides:
 - Type safety at compile time
 - SQL syntax validation
 - Protection against SQL injection
@@ -152,17 +152,32 @@ let total_count: i64 = query_builder.build_query_scalar().fetch_one(pool).await?
 ```
 
 **What it does**:
-1. Connects to your database (via `DATABASE_URL`)
-2. Validates all SQL queries in every Cargo target against the current schema
-3. Generates `.sqlx/` directory with query metadata
-4. Enables offline compilation (no database needed at build time)
+1. Starts/verifies bundled Postgres and uses `SQLX_DATABASE_URL` if supplied for PostgreSQL validation.
+2. Creates a temporary SQLite database by applying `den-memory/src/schema.sql` with Python 3's standard-library `sqlite3` module.
+3. Uses a preparation-only `RUSTC_WORKSPACE_WRAPPER` to give `den-memory` the SQLite URL; other packages retain the PostgreSQL URL. This applies to workspace, per-crate, and `prepare --check` passes.
+4. Generates real query metadata, including member-crate test queries, into the shared `.sqlx/` cache. Before the full refresh, it backs up the existing cache and restores missing files additively by default, including on failure. This preserves untracked/local entries without any Git restore. `--allow-prune` permits deliberate pruning only after a successful refresh and offline gate.
+5. Runs an offline completeness build with the normal wrapper environment; temporary databases, wrapper copies, and backups are cleaned up on exit.
 
 **Important**:
 - The repository commits metadata for every Cargo target, including test-only queries. Use `prepare-all`, never a bare `prepare --workspace -- --all-targets`: that command does **not** expand member-crate test targets, and because `prepare` replaces `.sqlx/` wholesale it deletes every previously captured member-test entry (measured: 644 -> 499 entries, independent of cargo cache state). `prepare-all` adds a per-crate pass to recover them, keeps the refresh additive by default, and fails if any query is left unresolved.
-- `scripts/sqlx.sh` supplies `DATABASE_URL` and starts the bundled database; it must have current migrations applied. Set `SQLX_DATABASE_URL` to use an isolated validation database for `database create`, `migrate run` and every `prepare-all` pass. This prevents a pending migration from putting the running Den database ahead of its binary. Infra readiness output still describes bundled Postgres; Cargo uses the override. For tests, set `DATABASE_URL` and `TEST_DATABASE_URL` to the same isolated URL and keep `SQLX_OFFLINE=true`. Keep credentials in environment/configuration, not checked-in commands.
+- Except for the SQLite-only command below, `scripts/sqlx.sh` supplies the PostgreSQL `DATABASE_URL` and starts the bundled database; it must have current migrations applied. Set `SQLX_DATABASE_URL` to use an isolated PostgreSQL validation database for `database create`, `migrate run` and every PostgreSQL preparation pass; this never overrides `den-memory`'s temporary SQLite URL. This prevents a pending migration from putting the running Den database ahead of its binary. Infra readiness output still describes bundled Postgres; Cargo uses the override. For PostgreSQL tests, set `DATABASE_URL` and `TEST_DATABASE_URL` to the same isolated URL and keep `SQLX_OFFLINE=true`. Keep credentials in environment/configuration, not checked-in commands.
 - Database must be migrated to latest schema
 - Validates both SQL syntax AND Rust compilation
 - CI runs `./scripts/sqlx.sh migrate run` then `./scripts/sqlx.sh prepare --check --workspace -- --all-targets`. Note `--check` only *warns* about extra entries in `.sqlx/`, so it cannot detect metadata that was never regenerated; the step that actually catches missing entries is the following `SQLX_OFFLINE=true cargo clippy --workspace --all-targets`, where absent query data is a hard error.
+
+### SQLite-only preparation (`den-memory`)
+
+For changes confined to `den-memory` queries or `schema.sql`, run from the repository root:
+
+```bash
+./scripts/sqlx.sh prepare-memory
+```
+
+This command requires Python 3 (with `sqlite3`) and Cargo, but does **not** invoke Docker, start/restart Postgres, run migrations, or regenerate the whole workspace. It applies the checked-in SQLite schema to a temporary database and runs the equivalent of `cargo check -p den-memory --all-targets` online, with `SQLX_OFFLINE_DIR` pointing at a temporary output directory. The crate must enable SQLx's `macros` feature. The command fails if compilation fails or no query metadata is emitted; it never fabricates cache files.
+
+Only after a successful check are generated `query-*.json` files merged into `services/den/.sqlx/`. Regenerated entries replace their previous metadata (including schema-only changes); all unrelated PostgreSQL/SQLite entries remain untouched. No stale entries are pruned. Commit the generated files with the Rust/schema changes. Use `prepare-all` instead when PostgreSQL queries or other crates also change.
+
+All online preparation commands force `SQLX_OFFLINE=false` and use a fresh temporary workspace-wrapper path, so Cargo re-expands workspace macros even with a warm target directory, without `cargo clean` or source-file touches. Normal builds are unchanged. Cargo keeps the user's `RUSTC_WRAPPER` in its outer position; an environment-supplied `RUSTC_WORKSPACE_WRAPPER` is chained inside the preparation wrapper. Any existing wrappers must support Cargo's wrapper chaining convention. Compiler/version probes without `CARGO_PKG_NAME` pass through unchanged. Temporary files are cleaned up on success, failure, or a handled interrupt; do not run concurrent preparation commands against the same cache/target directory.
 
 ### Development Workflow
 

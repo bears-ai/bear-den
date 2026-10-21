@@ -180,7 +180,7 @@ async fn retire_legacy_memory_links_table(pool: &SqlitePool) -> Result<(), DenEr
 }
 
 /// `memory_links` read view (must mirror `schema.sql`).
-const MEMORY_LINKS_VIEW_SQL: &str = r"
+pub(crate) const MEMORY_LINKS_VIEW_SQL: &str = r"
 CREATE VIEW IF NOT EXISTS memory_links AS
     SELECT link_id, bear_id, sequence_no, src_memory_id, entity_id, relation,
            qualifiers_json, author_profile, author_agent_id, confidence, state,

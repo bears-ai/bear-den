@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT\n            (SELECT COUNT(*) FROM authenticated_user_entities\n             WHERE bear_id = ? AND state = 'active') AS \"bindings!: i64\",\n            (SELECT COUNT(*) FROM entities WHERE bear_id = ?) AS \"entities!: i64\",\n            (SELECT COUNT(*) FROM entity_handles WHERE bear_id = ?) AS \"handles!: i64\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "bindings!: i64",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "entities!: i64",
+        "ordinal": 1,
+        "type_info": "Integer"
+      },
+      {
+        "name": "handles!: i64",
+        "ordinal": 2,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "b7e5b5429951bd8421cae6eae9ffa3f55ec78be92092ffd95e6673ef7ee8fcae"
+}

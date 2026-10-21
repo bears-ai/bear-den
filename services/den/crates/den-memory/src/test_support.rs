@@ -36,3 +36,23 @@ pub async fn new_test_store() -> BearMemoryStore {
         .expect("migrate test schema");
     BearMemoryStore::new(Uuid::new_v4(), pool)
 }
+
+/// Install executable, untrusted schema for import-rejection tests, never normal store use.
+/// Kept here so SQLite fixture SQL is validated against SQLite, not a caller's Postgres.
+pub async fn install_untrusted_import_trigger(
+    store: &BearMemoryStore,
+) -> Result<(), den_core::DenError> {
+    sqlx::query!(
+        r"
+        CREATE TRIGGER imported_authentication_rebind
+        AFTER INSERT ON authenticated_user_entities
+        BEGIN
+            INSERT OR IGNORE INTO authenticated_user_entities (bear_id, user_id, entity_id, state)
+            VALUES (NEW.bear_id, 2147483647, NEW.entity_id || ':forged', 'active');
+        END
+        ",
+    )
+    .execute(store.pool())
+    .await?;
+    Ok(())
+}

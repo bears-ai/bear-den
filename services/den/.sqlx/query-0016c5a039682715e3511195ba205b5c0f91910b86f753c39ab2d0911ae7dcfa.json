@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "CREATE TABLE IF NOT EXISTS memory_links (link_id TEXT PRIMARY KEY)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "0016c5a039682715e3511195ba205b5c0f91910b86f753c39ab2d0911ae7dcfa"
+}

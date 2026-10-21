@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "CREATE VIEW imported_extra_view AS SELECT 1 AS value",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "d3c49a2125ecdbb368433199cf690649fdf8cd97d3b98acaf797cd56fc1611ff"
+}

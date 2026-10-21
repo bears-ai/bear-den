@@ -81,6 +81,7 @@ minijinja-embed.workspace = true
 
 [dev-dependencies]
 den-core = { path = "../den-core", features = ["test-util"] }
+den-memory = { path = "../den-memory", features = ["test-util"] }
 den-runtime = { path = "../den-runtime", features = ["test-util"] }
 dotenvy.workspace = true
 http-body-util = "0.1"

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DROP TABLE entity_handles",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "51ac6bf7ae740519a60d0cd86f5d6525479ef13395a9edf55f957385289c22ac"
+}

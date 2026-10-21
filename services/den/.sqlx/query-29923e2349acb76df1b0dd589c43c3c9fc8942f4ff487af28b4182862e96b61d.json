@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT h.entity_id FROM entity_handles AS h\n        INNER JOIN authenticated_user_entities AS a\n            ON a.bear_id = h.bear_id AND a.entity_id = h.entity_id\n        WHERE h.bear_id = ? AND h.handle_id = ?\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "entity_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "29923e2349acb76df1b0dd589c43c3c9fc8942f4ff487af28b4182862e96b61d"
+}

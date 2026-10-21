@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO authenticated_user_entities (bear_id, user_id, entity_id, state)\n        VALUES (?, ?, ?, 'active')\n        ON CONFLICT (bear_id, user_id) WHERE state = 'active' DO NOTHING\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "4f8a3df3ab0f2923e07168d5922222e3e76aa798cfb006c743d3f6380ffd7b86"
+}

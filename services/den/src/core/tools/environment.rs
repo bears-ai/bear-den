@@ -1,6 +1,7 @@
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
+use den_core::ids::UserId;
 use den_core::tools::environment::EnvironmentOps;
 use den_core::tools::prompt_memory::PromptMemoryVisibility;
 
@@ -55,28 +56,13 @@ impl EnvironmentOps for DenEnvironmentOps<'_> {
         _role: RuntimeContextLabel,
     ) -> Result<Value, DenError> {
         let store = self.stores.store_for_bear(context.bear_id).await?;
-        let mut human = Value::Null;
-        for (handle_type, handle_value) in [
-            ("den_user", Some(context.user_id.to_string())),
-            ("session_human", context.username.clone()),
-        ] {
-            let Some(value) = handle_value
-                .as_deref()
-                .map(str::trim)
-                .filter(|v| !v.is_empty())
-            else {
-                continue;
-            };
-            if let Some(entity) =
-                memory_store::find_entity_by_handle(&store, handle_type, value).await?
-            {
-                human = json!({
-                    "source": handle_type,
-                    "entity": entity,
-                });
-                break;
-            }
-        }
+        let binding =
+            memory_store::resolve_authenticated_user_entity(&store, UserId::new(context.user_id))
+                .await?;
+        let human = json!({
+            "source": "den_user",
+            "entity": binding.entity(),
+        });
 
         let mut work_surface = Value::Null;
         let mut candidates: Vec<(&str, String)> = Vec::new();
@@ -144,3 +130,6 @@ impl EnvironmentOps for DenEnvironmentOps<'_> {
         }))
     }
 }
+
+#[cfg(test)]
+mod tests;

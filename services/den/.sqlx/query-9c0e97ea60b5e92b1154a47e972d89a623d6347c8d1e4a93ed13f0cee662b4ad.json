@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT state FROM entity_handles WHERE bear_id = ? AND entity_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "state",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "9c0e97ea60b5e92b1154a47e972d89a623d6347c8d1e4a93ed13f0cee662b4ad"
+}

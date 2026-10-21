@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DROP TABLE entities",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "d657abba99ea9d4b89186c4d6a159ca4f1f3e500e25e034fd3e94a75dff6d4a8"
+}

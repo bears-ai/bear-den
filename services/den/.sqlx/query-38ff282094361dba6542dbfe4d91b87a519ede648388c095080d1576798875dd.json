@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "CREATE VIEW IF NOT EXISTS entities AS SELECT 'forged' AS entity_id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "38ff282094361dba6542dbfe4d91b87a519ede648388c095080d1576798875dd"
+}

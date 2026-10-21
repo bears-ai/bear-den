@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT entity_id FROM authenticated_user_entities WHERE bear_id = ? ORDER BY entity_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "entity_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "38a47a9ba2bb5ef61f37014877a1e6e938375f32918049cb06ce5ffbfc90ceed"
+}

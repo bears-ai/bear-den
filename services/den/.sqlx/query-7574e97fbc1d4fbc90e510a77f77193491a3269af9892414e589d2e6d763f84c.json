@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT CAST(s.name AS TEXT) AS \"name!: String\"\n        FROM sqlite_schema AS s, pragma_foreign_key_list(s.name) AS fk\n        WHERE s.type = 'table'\n        LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "name!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "7574e97fbc1d4fbc90e510a77f77193491a3269af9892414e589d2e6d763f84c"
+}

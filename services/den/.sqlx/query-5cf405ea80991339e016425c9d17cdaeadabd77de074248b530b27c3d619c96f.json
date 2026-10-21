@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DROP TABLE IF EXISTS authenticated_user_entities",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "5cf405ea80991339e016425c9d17cdaeadabd77de074248b530b27c3d619c96f"
+}

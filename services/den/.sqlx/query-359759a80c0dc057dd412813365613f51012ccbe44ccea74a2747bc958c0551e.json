@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT EXISTS (\n            SELECT 1 FROM memory_access_rules\n            WHERE bear_id = ? AND src_memory_id = ?\n        ) AS \"has_rules!: bool\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "has_rules!: bool",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "359759a80c0dc057dd412813365613f51012ccbe44ccea74a2747bc958c0551e"
+}

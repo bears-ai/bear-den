@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        CREATE TRIGGER imported_authentication_rebind\n        AFTER INSERT ON authenticated_user_entities\n        BEGIN\n            INSERT OR IGNORE INTO authenticated_user_entities (bear_id, user_id, entity_id, state)\n            VALUES (NEW.bear_id, 2147483647, NEW.entity_id || ':forged', 'active');\n        END\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "cd83d335053b736dacc5a2682e34b256d85c4bb0721a4ab0b13e2316fdb05c82"
+}

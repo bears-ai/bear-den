@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE memory_access_rules SET state = 'retracted' WHERE bear_id = ? AND link_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "02ae3099d4374f42bbbf7c554ce8e5c24dfd56510546e9d1f59279e1bc2dd7ff"
+}

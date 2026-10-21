@@ -10,6 +10,8 @@ The implemented `.bear` ZIP contains `bear.yaml` and `memory.sqlite`, not the fu
 
 **Review-before-import (code/test only, not deployed):** uploading a bundle stages a private copy and creates no Bear. The authenticated review page shows identity, prompts, hats, procedure versions, destination-model compatibility and knowledge audience before a separate consent/confirmation step. It does not inflate or display the full SQLite snapshot; review imported memory through the new Bear's web Memory/hat screens before granting members or enabling Work/sharing. The copy expires after 15 minutes, belongs to the uploader's exact signed-in session and is atomically consumed once. Cancellation, expiry, replay and hash mismatch cannot create a Bear; compatibility is rechecked on confirmation. Startup/periodic cleanup is bounded and protects active uploads/reads/claims. Creation failures report rollback versus an incomplete/uncertain Bear, preserve any surviving Bear's memory and require a fresh review rather than automatic retry.
 
+**Authenticated-user identity foundation (2026-10-21, code/test only; not deployed):** before any initialization or migration writes, import inspects SQLite read-only and rejects triggers, foreign keys (including cascades), virtual/shadow tables, and views other than the canonical `memory_links`. Custom executable schema is not supported. Imported `authenticated_user_entities` rows retain a permanent quarantined classification; their persons are demoted, canonical refs cleared, and handles detached atomically. Source-host numeric user IDs never grant destination access, even when an importing account has the same ID. A fresh authenticated destination binding does not regain the imported personal audiences. This transfers records, not identity authority; any future re-link needs a separate authorized policy. See the [active plan and remaining gates](../roadmap/USER_ASSOCIATED_BEAR_MEMORY_PLAN.md).
+
 Conversations, Docket work, Cabinet pages, memberships, host credentials, raw secrets and derived indexes remain outside the bundle. Canonical SQLite includes private/source-local memory: this is a private backup, not a shared-knowledge export. Export snapshots current memory; **there is no pre-export curation flush yet**. The rest of this guide describes the fuller portability target, not deployed support for every tier or artifact type.
 
 ## What a portable Bear is (and is not)
@@ -63,19 +65,22 @@ YAML is the canonical interchange format (not JSON). It carries:
 
 Single SQLite file per Bear, named **`memory.sqlite`** (not `cognition.sqlite`). It is the authoritative store for append-only memory and curation audit per [ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md).
 
-Tables included in a standard cognition export (see `services/den/src/core/memory/store/schema.sql`):
+Tables included in a standard cognition export (see the [canonical schema](../../services/den/crates/den-memory/src/schema.sql)):
 
 | Table | Purpose |
 |-------|---------|
 | `memory_records` | Append-only notes, summaries, decisions; role-local and shared |
-| `memory_links` | Links from memory to artifacts, URLs, work surfaces, other memory |
+| `entities`, `entity_handles` | Bear-local descriptive identities and handles |
+| `authenticated_user_entities` | Local principal bindings and permanent imported/quarantined user-identity markers; never destination authentication authority on import |
+| `memory_relations`, `memory_access_rules` | Descriptive relations and access-bearing rules |
+| `memory_links` | Read view over descriptive relations and access-bearing rules |
 | `memory_promotions` | Review/curate promotion audit trail |
 | `memory_proposals` | Pending and resolved promotion proposals |
 | `memory_observations` | Watch-lane observations pending or reviewed |
 | `reflection_run_outcomes` | Canonical reflection run records and outcomes |
 | `bear_sequence` | Monotonic sequence allocator (required for ordering/replay) |
 
-> **Pending [ADR-0042](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md):** the Bear entity layer — `entities`, `entity_handles`, `memory_relations`, `memory_access_rules` — ships in this same cognition export, and `memory_links` becomes a read view over the two relation tables. Import keeps each opaque `entity_id` stable and **re-links `canonical_ref`** against the destination registries via strong handles (entities that fail to re-resolve are demoted to `provisional`; access-bearing rules stay inert until re-resolved — fail-closed). Adds to `memory_schema_version`.
+> **Target relinking ([ADR-0042](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md)):** keep opaque `entity_id`s stable and re-link ordinary entity references against destination registries via strong handles; current browser import quarantines rather than implementing that general resolver. Authenticated-user identities are an exception: imported authority remains quarantined, not automatically reactivated from a canonical ref, matching numeric ID, or handle. The plan's personal-memory feature and scoped export policy are not enabled by the identity foundation.
 
 Operational SQLite settings at rest: `journal_mode=WAL`, `synchronous=NORMAL`, `busy_timeout=5000` (same as runtime defaults).
 

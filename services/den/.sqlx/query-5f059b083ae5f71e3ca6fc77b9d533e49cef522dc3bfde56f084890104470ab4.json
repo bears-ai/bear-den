@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DROP TABLE memory_access_rules",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "5f059b083ae5f71e3ca6fc77b9d533e49cef522dc3bfde56f084890104470ab4"
+}

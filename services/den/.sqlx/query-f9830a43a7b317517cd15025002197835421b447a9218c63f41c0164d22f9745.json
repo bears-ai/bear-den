@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "CREATE TABLE IF NOT EXISTS memory_access_rules (\n            link_id TEXT PRIMARY KEY,\n            imported_link TEXT REFERENCES memory_links(link_id) ON DELETE CASCADE\n        )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "f9830a43a7b317517cd15025002197835421b447a9218c63f41c0164d22f9745"
+}

@@ -1107,6 +1107,7 @@ async fn rewrite_imported_memory_bear_id(
     for table in [
         "memory_records",
         "entities",
+        "authenticated_user_entities",
         "entity_handles",
         "memory_relations",
         "memory_access_rules",

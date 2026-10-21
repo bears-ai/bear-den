@@ -1,29 +1,39 @@
 //! Access-bearing enforcement (ADR-0042 §7, §11): the recall gate.
 //!
-//! `memory_access_rules` is the only table consulted here, and `AccessContext` is the only
-//! way to ask "may the current run see this record?". Every recall/projection read must thread
-//! an `AccessContext`; an empty context is **fail-closed** — any record carrying an
-//! access-bearing relation is hidden unless the context explicitly grants it. This is what
-//! lets access-rule writes (Phase 6) be enabled only after the gate is structurally in place.
+//! Every recall/projection read must thread an `AccessContext`. An empty context hides
+//! access-gated records; authenticated-user audiences additionally require a verified
+//! binding. Rule history remains protective even after the last active rule is withdrawn.
 
 use std::collections::BTreeSet;
 
+use den_core::ids::{BearId, UserId};
 use den_core::DenError;
 
+use super::authenticated_user::{
+    user_entity_authority, AuthenticatedUserEntity, UserEntityAuthority,
+};
 use super::descriptors;
-use super::entity::resolve_live_entity;
+use super::entity::{get_entity, resolve_live_entity};
 use super::records::BearMemoryStore;
-use super::relations::list_access_rules_for_source;
+use super::relations::{has_access_rule_history_for_source, list_access_rules_for_source};
 
 /// The caller's current access context: which entities the Bear is acting with/for
 /// (`audience`) and which scopes the run is confined to (`confined_to`).
 ///
 /// Entity ids should be **live** ids; rule targets are resolved through the merge forward
-/// pointer before comparison, so a merged audience still matches its survivor.
+/// pointer before comparison, so a merged non-user audience still matches its survivor.
 #[derive(Debug, Clone, Default)]
 pub struct AccessContext {
     audience: BTreeSet<String>,
     confinement: BTreeSet<String>,
+    authenticated_user: Option<VerifiedAudience>,
+}
+
+#[derive(Debug, Clone)]
+struct VerifiedAudience {
+    bear_id: BearId,
+    user_id: UserId,
+    entity_id: String,
 }
 
 impl AccessContext {
@@ -32,7 +42,23 @@ impl AccessContext {
         Self::default()
     }
 
-    /// Entities the run is acting with/for — satisfies `audience` rules.
+    /// A verified user audience, scoped to the Bear that owns the binding.
+    /// Protected reads revalidate this binding; keeping this context does not preserve
+    /// access after the identity is quarantined.
+    pub fn for_authenticated_user(binding: &AuthenticatedUserEntity) -> Self {
+        Self {
+            audience: BTreeSet::from([binding.entity_id().to_string()]),
+            confinement: BTreeSet::new(),
+            authenticated_user: Some(VerifiedAudience {
+                bear_id: binding.bear_id(),
+                user_id: binding.user_id(),
+                entity_id: binding.entity_id().to_string(),
+            }),
+        }
+    }
+
+    /// Entities the run is acting with/for. Raw ids only satisfy non-user audiences;
+    /// authenticated-user audiences require `for_authenticated_user`.
     pub fn with_audience<I, S>(mut self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -67,12 +93,13 @@ impl AccessContext {
 
 /// Whether `src_memory_id` may be surfaced under `ctx`.
 ///
-/// - No access-bearing relations ⇒ always visible.
-/// - `audience` rules ⇒ the context must include **at least one** addressed entity (a note
-///   addressed to several people is visible when acting with any of them).
-/// - `confined_to` rules ⇒ the context must include **every** confinement scope (hard
-///   non-leak: a record confined to two scopes only surfaces inside both).
-/// - Both classes must pass.
+/// - No access-rule history ⇒ always visible.
+/// - Historical rules but no active rules ⇒ hidden.
+/// - `audience` rules ⇒ at least one addressed entity must match; bound user identities
+///   require a verified binding for the same Bear, user, and entity.
+/// - `confined_to` rules ⇒ every confinement scope must match.
+/// - Both classes must pass. Missing, non-resolved, quarantined, or unknown targets/rules
+///   deny access. Verified contexts must still have the same active Bear/user/entity binding.
 pub async fn record_visible(
     store: &BearMemoryStore,
     src_memory_id: &str,
@@ -80,246 +107,79 @@ pub async fn record_visible(
 ) -> Result<bool, DenError> {
     let rules = list_access_rules_for_source(store, src_memory_id).await?;
     if rules.is_empty() {
-        return Ok(true);
+        return Ok(!has_access_rule_history_for_source(store, src_memory_id).await?);
     }
-
-    let mut audience_targets: BTreeSet<String> = BTreeSet::new();
-    let mut confinement_targets: BTreeSet<String> = BTreeSet::new();
-
-    for rule in &rules {
-        // Resolve the rule's target through the merge forward pointer to the live survivor.
-        let live_id = match resolve_live_entity(store, &rule.entity_id).await? {
-            Some(e) => e.entity_id,
-            None => rule.entity_id.clone(),
-        };
-        match descriptors::relation(&rule.relation).map(|d| d.alias) {
-            Some("audience") => {
-                audience_targets.insert(live_id);
-            }
-            Some("confined_to") => {
-                confinement_targets.insert(live_id);
-            }
-            // Unknown access-bearing relation: fail-closed (treat as a confinement we can't satisfy).
-            _ => {
-                confinement_targets.insert(live_id);
-            }
+    if let Some(verified) = &ctx.authenticated_user {
+        if verified.bear_id != BearId::from(store.bear_id()) {
+            return Ok(false);
+        }
+        match user_entity_authority(store, &verified.entity_id).await? {
+            Some(UserEntityAuthority::Active(user_id)) if user_id == verified.user_id => {}
+            _ => return Ok(false),
         }
     }
 
-    if !audience_targets.is_empty() && audience_targets.is_disjoint(&ctx.audience) {
-        return Ok(false);
+    let mut has_audience = false;
+    let mut audience_matches = false;
+
+    for rule in &rules {
+        let descriptor = match descriptors::relation(&rule.relation) {
+            Some(descriptor) if matches!(descriptor.alias, "audience" | "confined_to") => {
+                descriptor
+            }
+            // Unknown access semantics cannot be satisfied by any raw context id.
+            _ => return Ok(false),
+        };
+        // A quarantined identity must never become generic by following a forward pointer.
+        // Active bindings also name this exact entity, not a possible merge survivor.
+        let authority = user_entity_authority(store, &rule.entity_id).await?;
+        let target = match &authority {
+            Some(UserEntityAuthority::Quarantined) => return Ok(false),
+            Some(UserEntityAuthority::Active(_)) => get_entity(store, &rule.entity_id).await?,
+            None => resolve_live_entity(store, &rule.entity_id).await?,
+        };
+        let target = match target {
+            Some(entity)
+                if entity.resolution.can_bear_access()
+                    && entity.superseded_by_entity_id.is_none() =>
+            {
+                entity
+            }
+            _ => return Ok(false),
+        };
+        let authority = if target.entity_id == rule.entity_id {
+            authority
+        } else {
+            user_entity_authority(store, &target.entity_id).await?
+        };
+        let bound_target_matches = match authority {
+            Some(UserEntityAuthority::Quarantined) => return Ok(false),
+            Some(UserEntityAuthority::Active(user_id)) => {
+                Some(ctx.authenticated_user.as_ref().is_some_and(|verified| {
+                    verified.user_id == user_id && verified.entity_id == target.entity_id
+                }))
+            }
+            None => None,
+        };
+        match descriptor.alias {
+            "audience" => {
+                has_audience = true;
+                audience_matches |= bound_target_matches
+                    .unwrap_or_else(|| ctx.audience.contains(&target.entity_id));
+            }
+            "confined_to" => {
+                if bound_target_matches == Some(false)
+                    || !ctx.confinement.contains(&target.entity_id)
+                {
+                    return Ok(false);
+                }
+            }
+            _ => return Ok(false),
+        }
     }
-    if !confinement_targets.is_empty() && !confinement_targets.is_subset(&ctx.confinement) {
-        return Ok(false);
-    }
-    Ok(true)
+
+    Ok(!has_audience || audience_matches)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::entity::merge_entities;
-    use crate::records::BearMemoryStore;
-    use crate::relations::append_relation;
-    use crate::resolver::{resolve, Assertion, Resolution, Signal};
-    use crate::test_support::new_test_store;
-    use serde_json::json;
-
-    async fn confirmed_person(store: &BearMemoryStore, name: &str, email: &str) -> String {
-        match resolve(
-            store,
-            "person",
-            Some(name),
-            &[Signal::new("email", email)],
-            Assertion::Asserted,
-        )
-        .await
-        .unwrap()
-        {
-            Resolution::Resolved(e) => e.entity_id,
-            other => panic!("expected Resolved, got {other:?}"),
-        }
-    }
-
-    async fn confirmed_surface(store: &BearMemoryStore, remote: &str) -> String {
-        match resolve(
-            store,
-            "work_surface",
-            Some("surface"),
-            &[Signal::new("git_remote", remote)],
-            Assertion::Asserted,
-        )
-        .await
-        .unwrap()
-        {
-            Resolution::Resolved(e) => e.entity_id,
-            other => panic!("expected Resolved, got {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn record_without_access_rules_is_always_visible() {
-        let store = new_test_store().await;
-        assert!(record_visible(&store, "mem-open", &AccessContext::empty())
-            .await
-            .unwrap());
-    }
-
-    #[tokio::test]
-    async fn audience_gate_hides_unless_context_includes_addressee() {
-        let store = new_test_store().await;
-        let alice = confirmed_person(&store, "Alice", "alice@acme.com").await;
-        let bob = confirmed_person(&store, "Bob", "bob@acme.com").await;
-        append_relation(
-            &store,
-            "mem-a",
-            &alice,
-            "audience",
-            &json!({}),
-            "curate",
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-
-        // Empty context is fail-closed.
-        assert!(!record_visible(&store, "mem-a", &AccessContext::empty())
-            .await
-            .unwrap());
-        // Acting with Alice grants it.
-        assert!(record_visible(
-            &store,
-            "mem-a",
-            &AccessContext::empty().with_audience([alice.clone()])
-        )
-        .await
-        .unwrap());
-        // Acting with Bob does not.
-        assert!(!record_visible(
-            &store,
-            "mem-a",
-            &AccessContext::empty().with_audience([bob])
-        )
-        .await
-        .unwrap());
-    }
-
-    #[tokio::test]
-    async fn confined_to_prevents_cross_surface_leak() {
-        let store = new_test_store().await;
-        let client_a = confirmed_surface(&store, "github.com/acme/client-a").await;
-        let client_b = confirmed_surface(&store, "github.com/acme/client-b").await;
-        append_relation(
-            &store,
-            "mem-c",
-            &client_a,
-            "confined_to",
-            &json!({}),
-            "curate",
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-
-        assert!(!record_visible(&store, "mem-c", &AccessContext::empty())
-            .await
-            .unwrap());
-        assert!(record_visible(
-            &store,
-            "mem-c",
-            &AccessContext::empty().with_confinement([client_a.clone()])
-        )
-        .await
-        .unwrap());
-        // Inside client-B's surface, client-A memory stays hidden.
-        assert!(!record_visible(
-            &store,
-            "mem-c",
-            &AccessContext::empty().with_confinement([client_b])
-        )
-        .await
-        .unwrap());
-    }
-
-    #[tokio::test]
-    async fn both_classes_must_pass() {
-        let store = new_test_store().await;
-        let alice = confirmed_person(&store, "Alice", "alice@acme.com").await;
-        let surface = confirmed_surface(&store, "github.com/acme/app").await;
-        append_relation(
-            &store,
-            "mem-d",
-            &alice,
-            "audience",
-            &json!({}),
-            "curate",
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-        append_relation(
-            &store,
-            "mem-d",
-            &surface,
-            "confined_to",
-            &json!({}),
-            "curate",
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-
-        // Audience-only context: confinement check still fails.
-        assert!(!record_visible(
-            &store,
-            "mem-d",
-            &AccessContext::empty().with_audience([alice.clone()])
-        )
-        .await
-        .unwrap());
-        // Both satisfied.
-        assert!(record_visible(
-            &store,
-            "mem-d",
-            &AccessContext::empty()
-                .with_audience([alice])
-                .with_confinement([surface])
-        )
-        .await
-        .unwrap());
-    }
-
-    #[tokio::test]
-    async fn audience_follows_merge_forward_pointer() {
-        let store = new_test_store().await;
-        let survivor = confirmed_person(&store, "Alice", "alice@acme.com").await;
-        let loser = confirmed_person(&store, "Alice (dup)", "alice@personal.com").await;
-        // Address the record to the (soon-to-be-merged) duplicate.
-        append_relation(
-            &store,
-            "mem-e",
-            &loser,
-            "audience",
-            &json!({}),
-            "curate",
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-        merge_entities(&store, &survivor, &loser).await.unwrap();
-
-        // Context carrying the survivor id resolves the merged audience.
-        assert!(record_visible(
-            &store,
-            "mem-e",
-            &AccessContext::empty().with_audience([survivor])
-        )
-        .await
-        .unwrap());
-    }
-}
+mod tests;

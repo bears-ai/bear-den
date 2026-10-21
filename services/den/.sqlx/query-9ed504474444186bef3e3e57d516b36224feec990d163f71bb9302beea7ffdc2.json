@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE memory_access_rules SET relation = ? WHERE bear_id = ? AND link_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "9ed504474444186bef3e3e57d516b36224feec990d163f71bb9302beea7ffdc2"
+}

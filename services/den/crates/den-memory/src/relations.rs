@@ -347,6 +347,28 @@ pub async fn list_access_rules_for_source(
     Ok(rows.into_iter().map(AccessRuleSqlRow::into_row).collect())
 }
 
+/// Whether a record has ever carried an access rule, including withdrawn rules.
+/// Removing the final active rule must not silently make a protected record public.
+pub(crate) async fn has_access_rule_history_for_source(
+    store: &BearMemoryStore,
+    src_memory_id: &str,
+) -> Result<bool, DenError> {
+    let bear_id = store.bear_id().to_string();
+    sqlx::query_scalar!(
+        r#"
+        SELECT EXISTS (
+            SELECT 1 FROM memory_access_rules
+            WHERE bear_id = ? AND src_memory_id = ?
+        ) AS "has_rules!: bool"
+        "#,
+        bear_id,
+        src_memory_id,
+    )
+    .fetch_one(store.pool())
+    .await
+    .map_err(|e| DenError::System(format!("check access rule history failed: {e}")))
+}
+
 #[derive(sqlx::FromRow)]
 struct RelationSqlRow {
     link_id: String,

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO bear_sequence (id, next_sequence) VALUES (1, 1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "5f01e775e49ed9ae04f0643b02a4fe5dc374a69df58bf60663e27a3d3a5df68a"
+}

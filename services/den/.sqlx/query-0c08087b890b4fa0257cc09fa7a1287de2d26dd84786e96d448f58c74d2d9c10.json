@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DROP VIEW memory_links",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "0c08087b890b4fa0257cc09fa7a1287de2d26dd84786e96d448f58c74d2d9c10"
+}

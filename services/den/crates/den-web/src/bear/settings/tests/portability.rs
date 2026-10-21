@@ -85,6 +85,10 @@ async fn bundle_roundtrip_remints_hats_and_memory_without_restoring_authority() 
         .store_for_bear(bear_id)
         .await
         .unwrap();
+    let authenticated_user =
+        den_memory::resolve_authenticated_user_entity(&store, UserId::new(actor))
+            .await
+            .unwrap();
     let path = LogicalMemoryPath::hat(original.id, "entry");
     store
         .append_record(
@@ -246,6 +250,41 @@ async fn bundle_roundtrip_remints_hats_and_memory_without_restoring_authority() 
         .store_for_bear(imported_bear.id)
         .await
         .unwrap();
+    let imported_person = den_memory::get_entity(&imported_store, authenticated_user.entity_id())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        imported_person.resolution,
+        den_memory::ResolutionState::Provisional
+    );
+    assert!(imported_person.canonical_ref.is_none());
+    assert_eq!(imported_person.trust, den_memory::EntityTrust::Inferred);
+    assert!(
+        den_memory::set_canonical_ref(&imported_store, &imported_person.entity_id, None)
+            .await
+            .is_err()
+    );
+    assert!(
+        den_memory::list_handles(&imported_store, &imported_person.entity_id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let imported_user =
+        den_memory::resolve_authenticated_user_entity(&imported_store, UserId::new(actor))
+            .await
+            .unwrap();
+    assert_ne!(imported_user.entity_id(), authenticated_user.entity_id());
+    assert_eq!(imported_user.bear_id(), BearId::new(imported_bear.id));
+    assert_eq!(imported_user.user_id(), UserId::new(actor));
+    assert_eq!(
+        den_memory::resolve_authenticated_user_entity(&store, UserId::new(actor))
+            .await
+            .unwrap()
+            .entity_id(),
+        authenticated_user.entity_id()
+    );
     let source = MemorySource::Conversation(Uuid::new_v4());
     let read = scoped::read_path(
         &imported_store,
@@ -295,6 +334,58 @@ async fn bundle_roundtrip_remints_hats_and_memory_without_restoring_authority() 
         .unwrap();
     assert_eq!(legacy_config.model_handle.as_str(), model);
     assert_eq!(legacy_config.thinking_effort, None);
+}
+
+#[tokio::test]
+async fn hostile_bundle_schema_is_rejected_and_compensated_during_memory_installation() {
+    let _guard = TEST_DB_LOCK.lock().await;
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let bear_id = create_test_bear(&pool, &fresh_slug()).await;
+    let actor = create_bear_admin_user(&pool, bear_id).await;
+    let bear = bears_db::get_bear(&pool, bear_id).await.unwrap().unwrap();
+    let mut manifest = manifest_for_bear(&bear).unwrap();
+    manifest.bear.slug = format!("hostile-import-{}", Uuid::new_v4().simple());
+    let mut config = Config::test_stub();
+    let directory = std::env::temp_dir().join(format!("den-hostile-bundle-{}", Uuid::new_v4()));
+    config.bear_sqlite_data_dir = directory.to_string_lossy().into_owned();
+    let source_path = memory_sqlite_path(&config, bear_id);
+    let state = test_state_with_config(pool.clone(), config);
+    let store = state
+        .memory_stores()
+        .unwrap()
+        .store_for_bear(bear_id)
+        .await
+        .unwrap();
+    den_memory::test_support::install_untrusted_import_trigger(&store)
+        .await
+        .unwrap();
+    let memory = snapshot_memory_sqlite(&state, bear_id).await.unwrap();
+    let bundle = build_bear_bundle(&serde_yml::to_string(&manifest).unwrap(), &memory).unwrap();
+    let app = test_app_with_state(pool.clone(), state).await;
+    let cookie = login_cookie(&app, actor).await;
+    let review = preview(&app, &cookie, &bundle).await;
+    let response = confirm(&app, &cookie, &review, true).await;
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let page = String::from_utf8_lossy(&body);
+    assert!(page.contains("Memory installation"));
+    assert!(page.contains("The incomplete Bear record was removed"));
+    assert!(!bears_db::bear_slug_exists(&pool, &manifest.bear.slug)
+        .await
+        .unwrap());
+    let sqlite_files = std::fs::read_dir(&directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "sqlite")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(sqlite_files, vec![source_path]);
+    store.pool().close().await;
+    std::fs::remove_dir_all(directory).unwrap();
 }
 
 pub(super) async fn preview(app: &axum::Router, cookie: &str, bytes: &[u8]) -> String {
