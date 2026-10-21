@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO user_identity_receipts (\n                receipt_id, bear_id, recorded_bear_id, actor_user_id, entity_id,\n                destination_user_id, previous_user_id, displaced_entity_id,\n                prior_generation, resulting_generation, recorded_at\n            ) VALUES (\n                ?, ?, 'source-bear', 900,\n                COALESCE((SELECT entity_id FROM authenticated_user_entities\n                          WHERE bear_id = ? ORDER BY entity_id LIMIT 1), ?),\n                101, 11, NULL, 1, 2, '9999-01-01'\n            )\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "0ba78567dbdae2d0cbb5f5839ecc27bf787821fe8b60362b1618b9945aea56a3"
+}

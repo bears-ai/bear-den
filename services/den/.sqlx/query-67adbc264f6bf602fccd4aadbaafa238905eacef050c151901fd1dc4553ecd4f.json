@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT json_group_array(json_array(proposal_id, bear_id, sequence_no, source_memory_id,\n            target_hat_id, suggested_action, sensitivity, requires_human, status, payload_json,\n            created_at, reviewed_at)) AS \"rows!: String\"\n           FROM (SELECT * FROM memory_proposals ORDER BY proposal_id)",
+  "describe": {
+    "columns": [
+      {
+        "name": "rows!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "67adbc264f6bf602fccd4aadbaafa238905eacef050c151901fd1dc4553ecd4f"
+}

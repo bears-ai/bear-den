@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT entity_id FROM authenticated_user_entities WHERE bear_id = ? AND user_id = ? AND state = 'active'",
+  "describe": {
+    "columns": [
+      {
+        "name": "entity_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "b8a3d8e28123f0e6741c93c3bd13dc841b4e925eae36fa8a87a208a5011659f9"
+}

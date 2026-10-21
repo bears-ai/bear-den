@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT next_sequence AS \"sequence!: i64\" FROM bear_sequence WHERE id = 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "sequence!: i64",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "0d212e2a8ab14b5d2458d7c48b6eab8222b5c7bbcc835708ef4030a1e94aa32f"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE entities SET display_name = 'changed after review' WHERE bear_id = ? AND entity_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "b113446e9c8d8154c1daf8adb78cf7b4b7688fd20115f9e3c609180081d94375"
+}

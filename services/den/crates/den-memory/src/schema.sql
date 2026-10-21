@@ -76,6 +76,48 @@ CREATE TABLE IF NOT EXISTS authenticated_user_entities (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_authenticated_user_entities_active_user
     ON authenticated_user_entities (bear_id, user_id) WHERE state = 'active';
 
+-- Canonical revocation epoch, separate from portable entity lifecycle. Increment on every
+-- authority change so an old context cannot revive after revoke/reconnect to the same account.
+CREATE TABLE IF NOT EXISTS user_identity_generations (
+    bear_id TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    generation INTEGER NOT NULL CHECK (generation > 0),
+    PRIMARY KEY (bear_id, entity_id)
+);
+INSERT OR IGNORE INTO user_identity_generations (bear_id, entity_id, generation)
+    SELECT bear_id, entity_id, 1 FROM authenticated_user_entities;
+
+-- Informational source-qualified labels, never destination authentication authority.
+CREATE TABLE IF NOT EXISTS user_identity_origins (
+    origin_id TEXT PRIMARY KEY,
+    bear_id TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    source_host TEXT NOT NULL,
+    source_bear_id TEXT NOT NULL,
+    source_user_id INTEGER NOT NULL,
+    username TEXT NULL,
+    display_name TEXT NULL,
+    was_exporter INTEGER NOT NULL,
+    recorded_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_user_identity_origins_entity
+    ON user_identity_origins (bear_id, entity_id);
+
+-- Append-only authoritative receipts. Imported receipts are history, never current grants.
+CREATE TABLE IF NOT EXISTS user_identity_receipts (
+    receipt_id TEXT PRIMARY KEY,
+    bear_id TEXT NOT NULL,
+    recorded_bear_id TEXT NOT NULL,
+    actor_user_id INTEGER NOT NULL,
+    entity_id TEXT NOT NULL,
+    destination_user_id INTEGER NULL,
+    previous_user_id INTEGER NOT NULL,
+    displaced_entity_id TEXT NULL,
+    prior_generation INTEGER NOT NULL,
+    resulting_generation INTEGER NOT NULL,
+    recorded_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS entity_handles (
     handle_id TEXT PRIMARY KEY,
     bear_id TEXT NOT NULL,

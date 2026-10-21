@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT\n            (SELECT COUNT(*) FROM memory_records) AS \"records!: i64\",\n            (SELECT COUNT(*) FROM memory_access_rules WHERE state = 'active') AS \"active_rules!: i64\",\n            (SELECT COUNT(*) FROM user_identity_generations WHERE bear_id <> ?) AS \"foreign_generations!: i64\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "records!: i64",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "active_rules!: i64",
+        "ordinal": 1,
+        "type_info": "Integer"
+      },
+      {
+        "name": "foreign_generations!: i64",
+        "ordinal": 2,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "430447d844bf8512dda07bf8887df3a35a565a3f8bb0a38b2483843c4690a02c"
+}

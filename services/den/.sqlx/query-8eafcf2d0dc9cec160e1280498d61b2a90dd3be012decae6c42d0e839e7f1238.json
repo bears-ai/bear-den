@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT json_group_array(json_array(receipt_id, bear_id, recorded_bear_id, actor_user_id,\n            entity_id, destination_user_id, previous_user_id, displaced_entity_id, prior_generation,\n            resulting_generation, recorded_at)) AS \"rows!: String\"\n           FROM (SELECT * FROM user_identity_receipts ORDER BY receipt_id)",
+  "describe": {
+    "columns": [
+      {
+        "name": "rows!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "8eafcf2d0dc9cec160e1280498d61b2a90dd3be012decae6c42d0e839e7f1238"
+}

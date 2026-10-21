@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO user_identity_origins (origin_id, bear_id, entity_id, source_host, source_bear_id, source_user_id, username, display_name, was_exporter, recorded_at) VALUES (?, ?, ?, 'changed.example', 'historical-source-bear', 77, 'new-source-label', 'new source provenance', 0, '2026-01-01T00:00:00Z')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "31f7c1be7c19e558bdb4730c84214090071954aa43ed50fbb654c0bcc1f7ccb0"
+}

@@ -1,0 +1,14 @@
+<details>
+  <summary>Source labels and provenance — not destination authority</summary>
+  {% for origin in identity.origins %}
+  <dl>
+    <dt>Source host</dt><dd>{{ origin.source_host | e }}</dd>
+    <dt>Source Bear</dt><dd><code>{{ origin.source_bear_id | e }}</code></dd>
+    <dt>Source account ID</dt><dd>{{ origin.source_user_id }}</dd>
+    <dt>Source username</dt><dd>{{ origin.username | default('Not recorded', true) | e }}</dd>
+    <dt>Source display name</dt><dd>{{ origin.display_name | default('Not recorded', true) | e }}</dd>
+    <dt>Exported by this source account</dt><dd>{% if origin.was_exporter %}Yes{% else %}No{% endif %} — informational only</dd>
+    <dt>Recorded at</dt><dd>{{ origin.recorded_at | e }}</dd>
+  </dl>
+  {% else %}<p>No source labels were recorded. A matching name, handle, or account number must never establish destination authority.</p>{% endfor %}
+</details>

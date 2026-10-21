@@ -1,0 +1,56 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT e.entity_id AS \"entity_id!: String\", e.sequence_no AS \"sequence_no!: i64\",\n               g.generation AS \"generation!: i64\",\n               e.display_name AS \"display_name?: String\",\n               e.canonical_ref AS \"canonical_ref?: String\",\n               e.metadata_json AS \"metadata_json!: String\", e.created_at AS \"created_at!: String\"\n        FROM authenticated_user_entities AS a\n        INNER JOIN entities AS e ON e.bear_id = a.bear_id AND e.entity_id = a.entity_id\n        INNER JOIN user_identity_generations AS g\n            ON g.bear_id = a.bear_id AND g.entity_id = a.entity_id\n        WHERE a.bear_id = ? AND a.user_id = ? AND a.state = 'active'\n          AND e.type = 'person' AND e.resolution = 'confirmed' AND e.trust = 'asserted'\n          AND e.superseded_by_entity_id IS NULL AND e.canonical_ref = ?\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "entity_id!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "sequence_no!: i64",
+        "ordinal": 1,
+        "type_info": "Integer"
+      },
+      {
+        "name": "generation!: i64",
+        "ordinal": 2,
+        "type_info": "Integer"
+      },
+      {
+        "name": "display_name?: String",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "canonical_ref?: String",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "metadata_json!: String",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at!: String",
+        "ordinal": 6,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "71056f945822b6182984eeb38502126af7abaaf5b306cd1733595ab233bbb49e"
+}

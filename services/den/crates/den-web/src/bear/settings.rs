@@ -54,6 +54,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .merge(model_configurations::router())
         .merge(import_review::router())
+        .merge(identity_reconnection::router())
         .route_with_tsr("/bear/{slug}/overview", get(overview_view))
         .route_with_tsr("/bear/{slug}/people", get(access_view))
         .route_with_tsr("/bear/{slug}/persona", get(persona_view))
@@ -228,6 +229,7 @@ const BEAR_BUNDLE_FORMAT: &str = "bear";
 const BEAR_BUNDLE_VERSION: u32 = 3;
 mod advanced_models;
 mod bundle_io;
+mod identity_reconnection;
 mod import_creation;
 mod import_jobs;
 mod import_namespace;
@@ -1108,6 +1110,9 @@ async fn rewrite_imported_memory_bear_id(
         "memory_records",
         "entities",
         "authenticated_user_entities",
+        "user_identity_generations",
+        "user_identity_origins",
+        "user_identity_receipts",
         "entity_handles",
         "memory_relations",
         "memory_access_rules",
@@ -1166,6 +1171,12 @@ async fn export_bear_bundle(
     )?;
     let manifest_yaml = serde_yml::to_string(&manifest)
         .map_err(|err| CustomError::System(format!("serialize bear.yaml failed: {err}")))?;
+    identity_reconnection::record_origins(
+        &state,
+        bear.id,
+        den_core::ids::UserId::new(session_user(&auth_session).await?.id),
+    )
+    .await?;
     let memory_sqlite = snapshot_memory_sqlite(&state, bear.id).await?;
     let bundle = build_bear_bundle(&manifest_yaml, &memory_sqlite)?;
     let filename = format!("{}.bear", bear_slug_base(&bear.slug));

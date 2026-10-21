@@ -29,6 +29,7 @@ pub struct AuthenticatedUserEntity {
     bear_id: BearId,
     user_id: UserId,
     entity: EntityRow,
+    pub(crate) authority_generation: i64,
 }
 
 impl AuthenticatedUserEntity {
@@ -84,6 +85,13 @@ pub async fn resolve_authenticated_user_entity(
     .rows_affected();
 
     if inserted == 1 {
+        sqlx::query!(
+            "INSERT INTO user_identity_generations (bear_id, entity_id, generation) VALUES (?, ?, 1)",
+            bear_id,
+            proposed_entity_id,
+        )
+        .execute(&mut *tx)
+        .await?;
         let sequence_no = sqlx::query_scalar!(
             r#"
             UPDATE bear_sequence SET next_sequence = next_sequence + 1 WHERE id = 1
@@ -137,11 +145,14 @@ pub async fn resolve_authenticated_user_entity(
     let row = sqlx::query!(
         r#"
         SELECT e.entity_id AS "entity_id!: String", e.sequence_no AS "sequence_no!: i64",
+               g.generation AS "generation!: i64",
                e.display_name AS "display_name?: String",
                e.canonical_ref AS "canonical_ref?: String",
                e.metadata_json AS "metadata_json!: String", e.created_at AS "created_at!: String"
         FROM authenticated_user_entities AS a
         INNER JOIN entities AS e ON e.bear_id = a.bear_id AND e.entity_id = a.entity_id
+        INNER JOIN user_identity_generations AS g
+            ON g.bear_id = a.bear_id AND g.entity_id = a.entity_id
         WHERE a.bear_id = ? AND a.user_id = ? AND a.state = 'active'
           AND e.type = 'person' AND e.resolution = 'confirmed' AND e.trust = 'asserted'
           AND e.superseded_by_entity_id IS NULL AND e.canonical_ref = ?
@@ -178,6 +189,7 @@ pub async fn resolve_authenticated_user_entity(
         bear_id: store.bear_id().into(),
         user_id,
         entity,
+        authority_generation: row.generation,
     })
 }
 
@@ -273,7 +285,8 @@ pub(crate) async fn ensure_handle_mutable(
 /// ids cannot establish destination-host authority. This is not a normal lifecycle/reset
 /// operation. In one transaction, retain quarantined markers, demote nonterminal entities,
 /// clear canonical refs, lower trust, and detach their handles. Subsequent resolution creates
-/// a fresh person, never adopts an imported identity, and leaves old access rules fail-closed.
+/// a fresh person unless a human-authorized reconnection has established a new binding.
+/// Imported audiences stay fail-closed until that dedicated operation succeeds.
 ///
 /// Returns every marked entity id for this Bear, including already quarantined identities.
 /// The import loop must skip these permanently immutable rows during generic quarantine.
@@ -288,6 +301,16 @@ pub async fn quarantine_imported_authenticated_users(
         .map_err(|e| DenError::System(format!("begin imported user quarantine failed: {e}")))?;
     // Write before the snapshot read to serialize with resolution across independent pools.
     // Every marker remains present, so revoked identities can never become generic entities.
+    sqlx::query!(
+        r"
+        INSERT INTO user_identity_generations (bear_id, entity_id, generation)
+        SELECT bear_id, entity_id, 1 FROM authenticated_user_entities WHERE bear_id = ?
+        ON CONFLICT (bear_id, entity_id) DO UPDATE SET generation = generation + 1
+        ",
+        bear_id,
+    )
+    .execute(&mut *tx)
+    .await?;
     sqlx::query!(
         "UPDATE authenticated_user_entities SET state = 'quarantined' WHERE bear_id = ?",
         bear_id,
@@ -305,8 +328,8 @@ pub async fn quarantine_imported_authenticated_users(
     sqlx::query!(
         r"
         UPDATE entities
-        SET resolution = CASE WHEN resolution IN ('rejected', 'merged')
-                              THEN resolution ELSE 'provisional' END,
+        SET resolution = CASE WHEN resolution IN ('observed', 'provisional', 'resolved', 'confirmed')
+                              THEN 'provisional' ELSE resolution END,
             canonical_ref = NULL, trust = 'inferred'
         WHERE bear_id = ? AND entity_id IN (
             SELECT entity_id FROM authenticated_user_entities WHERE bear_id = ?

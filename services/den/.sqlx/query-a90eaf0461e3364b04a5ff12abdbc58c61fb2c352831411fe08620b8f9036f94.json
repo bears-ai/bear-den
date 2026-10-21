@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT json_group_array(json_array(origin_id, bear_id, entity_id, source_host,\n            source_bear_id, source_user_id, username, display_name, was_exporter, recorded_at)) AS \"rows!: String\"\n           FROM (SELECT * FROM user_identity_origins ORDER BY origin_id)",
+  "describe": {
+    "columns": [
+      {
+        "name": "rows!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "a90eaf0461e3364b04a5ff12abdbc58c61fb2c352831411fe08620b8f9036f94"
+}

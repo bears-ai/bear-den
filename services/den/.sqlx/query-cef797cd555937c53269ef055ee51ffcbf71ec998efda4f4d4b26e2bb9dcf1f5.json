@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE user_identity_receipts SET bear_id = ? WHERE bear_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "cef797cd555937c53269ef055ee51ffcbf71ec998efda4f4d4b26e2bb9dcf1f5"
+}

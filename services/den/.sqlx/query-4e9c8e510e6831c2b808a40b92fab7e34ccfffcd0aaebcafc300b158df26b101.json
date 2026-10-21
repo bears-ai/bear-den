@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT CAST(receipt_id AS BLOB) AS \"receipt_id?: Vec<u8>\",\n               CAST(recorded_bear_id AS BLOB) AS \"recorded_bear_id!: Vec<u8>\",\n               CAST(actor_user_id AS BLOB) AS \"actor_user_id!: Vec<u8>\",\n               CAST(previous_user_id AS BLOB) AS \"previous_user_id!: Vec<u8>\",\n               CAST(entity_id AS BLOB) AS \"entity_id!: Vec<u8>\",\n               CAST(destination_user_id AS BLOB) AS \"destination_user_id?: Vec<u8>\",\n               CAST(displaced_entity_id AS BLOB) AS \"displaced_entity_id?: Vec<u8>\",\n               CAST(prior_generation AS BLOB) AS \"prior_generation!: Vec<u8>\",\n               CAST(resulting_generation AS BLOB) AS \"resulting_generation!: Vec<u8>\",\n               CAST(recorded_at AS BLOB) AS \"recorded_at!: Vec<u8>\"\n        FROM user_identity_receipts WHERE bear_id = ?\n        ORDER BY (recorded_bear_id = ?) DESC, recorded_at DESC, receipt_id DESC LIMIT ?\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "receipt_id?: Vec<u8>",
+        "ordinal": 0,
+        "type_info": "Blob"
+      },
+      {
+        "name": "recorded_bear_id!: Vec<u8>",
+        "ordinal": 1,
+        "type_info": "Blob"
+      },
+      {
+        "name": "actor_user_id!: Vec<u8>",
+        "ordinal": 2,
+        "type_info": "Blob"
+      },
+      {
+        "name": "previous_user_id!: Vec<u8>",
+        "ordinal": 3,
+        "type_info": "Blob"
+      },
+      {
+        "name": "entity_id!: Vec<u8>",
+        "ordinal": 4,
+        "type_info": "Blob"
+      },
+      {
+        "name": "destination_user_id?: Vec<u8>",
+        "ordinal": 5,
+        "type_info": "Blob"
+      },
+      {
+        "name": "displaced_entity_id?: Vec<u8>",
+        "ordinal": 6,
+        "type_info": "Blob"
+      },
+      {
+        "name": "prior_generation!: Vec<u8>",
+        "ordinal": 7,
+        "type_info": "Blob"
+      },
+      {
+        "name": "resulting_generation!: Vec<u8>",
+        "ordinal": 8,
+        "type_info": "Blob"
+      },
+      {
+        "name": "recorded_at!: Vec<u8>",
+        "ordinal": 9,
+        "type_info": "Blob"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "4e9c8e510e6831c2b808a40b92fab7e34ccfffcd0aaebcafc300b158df26b101"
+}

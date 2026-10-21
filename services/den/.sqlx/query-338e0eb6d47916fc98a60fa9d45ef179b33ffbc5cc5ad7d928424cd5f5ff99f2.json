@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR IGNORE INTO user_identity_generations (bear_id, entity_id, generation)\n    SELECT bear_id, entity_id, 1 FROM authenticated_user_entities",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "338e0eb6d47916fc98a60fa9d45ef179b33ffbc5cc5ad7d928424cd5f5ff99f2"
+}

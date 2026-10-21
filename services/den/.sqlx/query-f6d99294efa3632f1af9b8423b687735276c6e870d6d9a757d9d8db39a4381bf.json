@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE authenticated_user_entities SET bear_id = ? WHERE bear_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "f6d99294efa3632f1af9b8423b687735276c6e870d6d9a757d9d8db39a4381bf"
+}

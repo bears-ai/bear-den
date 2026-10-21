@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE user_identity_origins SET bear_id = ? WHERE bear_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "72567bdd3961b8ffe23958cc9968d16083ba6e3f249cc89bec5c086e54ec1957"
+}

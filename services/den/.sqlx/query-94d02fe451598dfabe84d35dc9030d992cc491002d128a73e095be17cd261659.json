@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM authenticated_user_entities WHERE bear_id = ? AND entity_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "94d02fe451598dfabe84d35dc9030d992cc491002d128a73e095be17cd261659"
+}

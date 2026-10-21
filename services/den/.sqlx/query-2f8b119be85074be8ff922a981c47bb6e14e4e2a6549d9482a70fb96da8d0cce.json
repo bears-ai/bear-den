@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS (SELECT 1 FROM user_identity_receipts WHERE receipt_id = ?) AS \"consumed!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "consumed!: bool",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "2f8b119be85074be8ff922a981c47bb6e14e4e2a6549d9482a70fb96da8d0cce"
+}

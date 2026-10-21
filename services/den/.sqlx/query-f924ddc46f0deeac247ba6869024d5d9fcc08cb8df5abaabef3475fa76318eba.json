@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, (verified_at IS NOT NULL) AS \"verified!\"\n               FROM email_configs WHERE user_id = $1 AND active\n               ORDER BY id FOR SHARE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "verified!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "f924ddc46f0deeac247ba6869024d5d9fcc08cb8df5abaabef3475fa76318eba"
+}

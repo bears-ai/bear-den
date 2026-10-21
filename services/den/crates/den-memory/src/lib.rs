@@ -14,6 +14,7 @@ pub mod entity;
 pub mod harvest;
 pub mod hat_promotion;
 pub mod hat_review;
+pub mod identity_reconnection;
 pub mod import;
 mod import_schema;
 pub mod legacy_review;

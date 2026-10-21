@@ -1,0 +1,44 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT a.entity_id, a.user_id AS \"user_id!: i32\", a.state, e.display_name,\n               g.generation AS \"generation!: i64\"\n        FROM authenticated_user_entities a\n        JOIN entities e ON e.bear_id = a.bear_id AND e.entity_id = a.entity_id\n        JOIN user_identity_generations g ON g.bear_id = a.bear_id AND g.entity_id = a.entity_id\n        WHERE a.bear_id = ? ORDER BY e.sequence_no, a.entity_id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "entity_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "user_id!: i32",
+        "ordinal": 1,
+        "type_info": "Integer"
+      },
+      {
+        "name": "state",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "display_name",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "generation!: i64",
+        "ordinal": 4,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "bfc0c99fa2460f496775f676eced85f9277c97ff9f99145d51f4a91572073b9c"
+}

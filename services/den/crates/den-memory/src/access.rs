@@ -34,6 +34,7 @@ struct VerifiedAudience {
     bear_id: BearId,
     user_id: UserId,
     entity_id: String,
+    authority_generation: i64,
 }
 
 impl AccessContext {
@@ -53,6 +54,7 @@ impl AccessContext {
                 bear_id: binding.bear_id(),
                 user_id: binding.user_id(),
                 entity_id: binding.entity_id().to_string(),
+                authority_generation: binding.authority_generation,
             }),
         }
     }
@@ -113,9 +115,8 @@ pub async fn record_visible(
         if verified.bear_id != BearId::from(store.bear_id()) {
             return Ok(false);
         }
-        match user_entity_authority(store, &verified.entity_id).await? {
-            Some(UserEntityAuthority::Active(user_id)) if user_id == verified.user_id => {}
-            _ => return Ok(false),
+        if !current_verified_binding(store, verified).await? {
+            return Ok(false);
         }
     }
 
@@ -179,6 +180,36 @@ pub async fn record_visible(
     }
 
     Ok(!has_audience || audience_matches)
+}
+
+async fn current_verified_binding(
+    store: &BearMemoryStore,
+    verified: &VerifiedAudience,
+) -> Result<bool, DenError> {
+    let bear_id = store.bear_id().to_string();
+    let user_id = verified.user_id.get();
+    let canonical_ref = format!("den:user:{}", verified.user_id);
+    Ok(sqlx::query_scalar!(
+        r#"
+        SELECT EXISTS (
+            SELECT 1 FROM authenticated_user_entities a
+            JOIN user_identity_generations g
+                ON g.bear_id = a.bear_id AND g.entity_id = a.entity_id
+            JOIN entities e ON e.bear_id = a.bear_id AND e.entity_id = a.entity_id
+            WHERE a.bear_id = ? AND a.entity_id = ? AND a.user_id = ? AND a.state = 'active'
+              AND g.generation = ? AND e.type = 'person' AND e.resolution = 'confirmed'
+              AND e.trust = 'asserted' AND e.canonical_ref = ?
+              AND e.superseded_by_entity_id IS NULL
+        ) AS "matches!: bool"
+        "#,
+        bear_id,
+        verified.entity_id,
+        user_id,
+        verified.authority_generation,
+        canonical_ref,
+    )
+    .fetch_one(store.pool())
+    .await?)
 }
 
 #[cfg(test)]

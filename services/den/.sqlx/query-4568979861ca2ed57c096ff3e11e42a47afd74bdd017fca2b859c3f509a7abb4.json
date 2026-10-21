@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO user_identity_origins (\n                origin_id, bear_id, entity_id, source_host, source_bear_id,\n                source_user_id, username, display_name, was_exporter, recorded_at\n            )\n            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?\n            WHERE NOT EXISTS (\n                SELECT 1 FROM user_identity_origins\n                WHERE bear_id = ? AND entity_id = ? AND source_host = ? AND source_bear_id = ?\n                  AND source_user_id = ? AND username IS ? AND display_name IS ? AND was_exporter = ?\n            )\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 18
+    },
+    "nullable": []
+  },
+  "hash": "4568979861ca2ed57c096ff3e11e42a47afd74bdd017fca2b859c3f509a7abb4"
+}

@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT json_group_array(json_array(link_id, bear_id, sequence_no, src_memory_id,\n            entity_id, relation, qualifiers_json, author_profile, author_agent_id, confidence,\n            state, supersedes_link_id, created_at, class)) AS \"rows!: String\"\n           FROM (SELECT * FROM memory_links ORDER BY class, link_id)",
+  "describe": {
+    "columns": [
+      {
+        "name": "rows!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "9dca5620c344896d243d9f42206d4134e79f9689a7db779fcca49aa7c349f573"
+}

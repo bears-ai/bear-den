@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE authenticated_user_entities SET state = 'quarantined' WHERE bear_id = ? AND entity_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "3b94214355722942463905e7d2761b5ca9d67e3f05b051c95ed3f2ef36c3841a"
+}

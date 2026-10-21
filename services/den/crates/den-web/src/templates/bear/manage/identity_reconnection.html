@@ -1,0 +1,72 @@
+{% extends "bear/_manage.html" %}
+{% block title %}Imported identities · {{ bear.name | e }}{% endblock %}
+{% block manage %}
+<section class="box">
+  <h2>Imported identities and account mappings</h2>
+  <p>Only a verified Bear Admin can prepare or confirm reconnection and revocation. This page shows identity labels and provenance, never memory content.</p>
+  <p><strong>Source labels and numeric account IDs are information, not permission.</strong> Nothing is matched automatically. Choose the person and a verified existing member of this Bear deliberately. Other people remain separate.</p>
+  <p>Reconnection lets the selected account recall this person's eligible personal memory. It does not grant membership, enable Work, share facts into core, or bypass other memory restrictions.</p>
+  <p>If the account already has an identity, confirmation requires a separate acknowledgement: that identity is parked with <strong>all records and relations preserved</strong>. No facts are lost or combined. A parked identity can be reconnected later through another review.</p>
+  <p><a href="/bear/{{ bear.slug | urlencode }}/portability">Back to Backup &amp; move</a> · <a href="/bear/{{ bear.slug | urlencode }}/people">Manage Bear membership separately</a></p>
+</section>
+{% for identity in identities %}
+<section class="box">
+  <h3>{{ identity.display_name | default('Unnamed person', true) | e }}</h3>
+  <p>Portable person ID: <code>{{ identity.entity_id | e }}</code></p>
+  {% if identity.active_user_id is not none %}
+  <p>Active destination account ID: <strong>{{ identity.active_user_id }}</strong>{% for account in accounts %}{% if account.user_id == identity.active_user_id %} · {{ account.username | e }}{% if account.display_name %} ({{ account.display_name | e }}){% endif %}{% endif %}{% endfor %}.</p>
+  <form method="post" action="/bear/{{ bear.slug | urlencode }}/portability/identities/prepare">
+    <input type="hidden" name="prepare_token" value="{{ prepare_token }}">
+    <input type="hidden" name="entity_id" value="{{ identity.entity_id | e }}">
+    <input type="hidden" name="action" value="revoke">
+    <p>Revocation closes this mapping's personal audience without deleting its memory. It does not remove Bear membership.</p>
+    <button type="submit">Review revocation of this mapping</button>
+  </form>
+  {% else %}
+  <p>No active destination account. Its personal audience is closed until an authorized reconnection.</p>
+  {% if accounts %}
+  <form method="post" action="/bear/{{ bear.slug | urlencode }}/portability/identities/prepare">
+    <input type="hidden" name="prepare_token" value="{{ prepare_token }}">
+    <input type="hidden" name="entity_id" value="{{ identity.entity_id | e }}">
+    <input type="hidden" name="action" value="reconnect">
+    <label>Verified destination Bear member
+      <select name="destination_user_id" required>
+        <option value="" selected disabled>Choose an account explicitly</option>
+        {% for account in accounts %}<option value="{{ account.user_id }}">{{ account.username | e }}{% if account.display_name %} · {{ account.display_name | e }}{% endif %} · account {{ account.user_id }}</option>{% endfor %}
+      </select>
+    </label>
+    <button type="submit">Review reconnection of this person</button>
+  </form>
+  {% else %}<p>No verified Bear member is eligible. Repair membership and email verification first.</p>{% endif %}
+  {% endif %}
+  {% include "bear/manage/identity_reconnection_origins.html" %}
+</section>
+{% else %}<section class="box"><p>No user identities are recorded for this Bear. Opening this page does not allocate an identity for you.</p></section>{% endfor %}
+<section class="box" id="identity-receipts">
+  <h2>Recent identity decision receipts</h2>
+  <p>Showing up to {{ receipt_limit }} entries in a bounded history window: current Bear decisions first, then imported history; newest first within each group. If a confirmation response was lost, refresh this page to find its recorded result rather than submit a new decision.</p>
+  <p><strong>Imported receipts are informational historical claims, not authentication or permission grants.</strong> The origin Bear reference is preserved across imports even though the database's owning Bear reference is rebased. Recorded account IDs may belong to another Den; they are not matched to local usernames or accounts. Only current local bindings and generations authorize recall. Check the current identity mappings above.</p>
+  <p>History records are retained in backups, not deleted.</p>
+  {% if history is none %}
+  <p class="form-errors" role="status">Receipt history unavailable</p>
+  <p>Current identity management remains available. Refresh later to check recent receipts before preparing another decision.</p>
+  {% else %}
+  <p>Unreadable entries skipped in this bounded history window: <strong>{{ history.unreadable_entries }}</strong>.</p>
+  {% for receipt in history.receipts %}
+  <details>
+    <summary>{{ receipt.recorded_at | e }} · {% if receipt.destination_user_id is not none %}Reconnection{% else %}Revocation{% endif %} · {{ receipt.receipt_id }}</summary>
+    <dl>
+      <dt>Receipt ID</dt><dd><code>{{ receipt.receipt_id }}</code></dd>
+      <dt>Origin Bear</dt><dd><code>{{ receipt.recorded_bear_id | e }}</code></dd>
+      <dt>Recorded actor account ID</dt><dd>{{ receipt.actor_user_id }}</dd>
+      <dt>Previous recorded account ID</dt><dd>{{ receipt.previous_user_id }}</dd>
+      <dt>Destination account ID</dt><dd>{% if receipt.destination_user_id is not none %}{{ receipt.destination_user_id }}{% else %}None — account {{ receipt.previous_user_id }} was revoked.{% endif %}</dd>
+      <dt>Portable person ID</dt><dd><code>{{ receipt.entity_id | e }}</code></dd>
+      <dt>Parked displaced identity</dt><dd>{% if receipt.displaced_entity_id %}<code>{{ receipt.displaced_entity_id | e }}</code>{% else %}None{% endif %}</dd>
+      <dt>Recorded generation change</dt><dd>{{ receipt.prior_generation }} → {{ receipt.resulting_generation }}</dd>
+    </dl>
+  </details>
+  {% else %}<p>No readable identity decision receipts were found in this window.</p>{% endfor %}
+  {% endif %}
+</section>
+{% endblock %}

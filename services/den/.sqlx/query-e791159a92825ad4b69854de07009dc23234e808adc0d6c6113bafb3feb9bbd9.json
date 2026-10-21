@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT receipt_id AS \"receipt_id!: String\", recorded_bear_id, actor_user_id AS \"actor_user_id!: i32\",\n               previous_user_id AS \"previous_user_id!: i32\", entity_id,\n               destination_user_id AS \"destination_user_id?: i32\", displaced_entity_id,\n               prior_generation AS \"prior_generation!: i64\",\n               resulting_generation AS \"resulting_generation!: i64\", recorded_at\n        FROM user_identity_receipts WHERE bear_id = ?\n        ORDER BY recorded_at DESC, receipt_id DESC LIMIT ?\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "receipt_id!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "recorded_bear_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "actor_user_id!: i32",
+        "ordinal": 2,
+        "type_info": "Integer"
+      },
+      {
+        "name": "previous_user_id!: i32",
+        "ordinal": 3,
+        "type_info": "Integer"
+      },
+      {
+        "name": "entity_id",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "destination_user_id?: i32",
+        "ordinal": 5,
+        "type_info": "Integer"
+      },
+      {
+        "name": "displaced_entity_id",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "prior_generation!: i64",
+        "ordinal": 7,
+        "type_info": "Integer"
+      },
+      {
+        "name": "resulting_generation!: i64",
+        "ordinal": 8,
+        "type_info": "Integer"
+      },
+      {
+        "name": "recorded_at",
+        "ordinal": 9,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "e791159a92825ad4b69854de07009dc23234e808adc0d6c6113bafb3feb9bbd9"
+}

@@ -1,0 +1,56 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT source_host, source_bear_id, source_user_id AS \"source_user_id!: i32\",\n               username, display_name, was_exporter AS \"was_exporter!: bool\", recorded_at\n        FROM user_identity_origins WHERE bear_id = ? AND entity_id = ?\n        ORDER BY recorded_at, origin_id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "source_host",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "source_bear_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "source_user_id!: i32",
+        "ordinal": 2,
+        "type_info": "Integer"
+      },
+      {
+        "name": "username",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "display_name",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "was_exporter!: bool",
+        "ordinal": 5,
+        "type_info": "Integer"
+      },
+      {
+        "name": "recorded_at",
+        "ordinal": 6,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "81e83d0200d8b2cdb508433549f1aecefdc20672754a21406b93c08ffc5f2062"
+}

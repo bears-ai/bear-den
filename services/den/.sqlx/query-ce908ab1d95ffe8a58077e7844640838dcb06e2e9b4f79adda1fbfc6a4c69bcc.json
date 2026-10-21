@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT json_group_array(json_array(handle_id, bear_id, entity_id, handle_type,\n            handle_value, source, trust, state, created_at)) AS \"rows!: String\"\n           FROM (SELECT * FROM entity_handles ORDER BY handle_id)",
+  "describe": {
+    "columns": [
+      {
+        "name": "rows!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "ce908ab1d95ffe8a58077e7844640838dcb06e2e9b4f79adda1fbfc6a4c69bcc"
+}

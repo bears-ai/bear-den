@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE user_identity_generations SET generation = generation + 1 WHERE bear_id = ? AND entity_id = ? AND generation < 9223372036854775807",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "8dfb80ec7fd260787d4993615b50a0341d3ec92ffb0669aff907e20c25b3a54a"
+}

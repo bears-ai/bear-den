@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT json_group_array(json_array(memory_id, bear_id, sequence_no, scope_type,\n            scope_profile, scope_source_kind, scope_source_id, scope_hat_id, kind, author_profile,\n            author_agent_id, created_at, content_text, metadata_json, supersedes_memory_id,\n            visibility, logical_path, work_surface_ref, valid_from, invalid_at, salience)) AS \"rows!: String\"\n           FROM (SELECT * FROM memory_records ORDER BY memory_id)",
+  "describe": {
+    "columns": [
+      {
+        "name": "rows!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "cedad9ba8218d3fcbf241d1c7bbcc01fab2ad42223f871165b9aa1043b713a09"
+}

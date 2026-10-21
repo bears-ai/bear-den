@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO user_identity_generations (bear_id, entity_id, generation) VALUES (?, ?, 1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "f07106a5206737a2984951c66be4ab160f9c0f2b2b01e607634219e72886f799"
+}

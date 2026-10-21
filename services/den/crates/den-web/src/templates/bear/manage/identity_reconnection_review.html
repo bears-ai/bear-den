@@ -1,0 +1,44 @@
+{% extends "bear/_manage.html" %}
+{% block title %}Review identity {% if reconnecting %}reconnection{% else %}revocation{% endif %} · {{ bear.name | e }}{% endblock %}
+{% block manage %}
+<section class="box">
+  <h2>Review identity {% if reconnecting %}reconnection{% else %}revocation{% endif %}</h2>
+  <p><strong>Preparing or viewing this review makes no changes.</strong> This review expires after 15 minutes, belongs only to this signed-in session, and can commit once. A submitted or stale review cannot commit again. Preparing a different review replaces this session's pending review.</p>
+  {% if error %}<p class="form-errors" role="alert">{{ error | e }}</p>{% endif %}
+  <dl>
+    <dt>Selected person</dt><dd>{{ identity.display_name | default('Unnamed person', true) | e }}</dd>
+    <dt>Portable person ID</dt><dd><code>{{ identity.entity_id | e }}</code></dd>
+    <dt>Authorizing Bear Admin</dt><dd>{{ actor.username | e }} · account {{ actor.user_id }}</dd>
+    {% if reconnecting %}
+    <dt>Verified destination Bear member</dt><dd><strong>{{ destination.username | e }}</strong>{% if destination.display_name %} ({{ destination.display_name | e }}){% endif %} · account {{ destination.user_id }}</dd>
+    {% else %}
+    <dt>Current account mapping</dt><dd>{% if identity.active_user_id is not none %}Account {{ identity.active_user_id }}{% else %}No active mapping remains; return to the list for a fresh review.{% endif %}</dd>
+    <dt>Operation</dt><dt>dd>Revoke the selected person's active account mapping. Do not attach a different account. If the mapping changed after preparation, confirmation is rejected.</dd>
+    {% endif %}
+    <dt>Review reference</dt><dd><code>{{ review_id }}</code></dd>
+  </dl>
+  {% include "bear/manage/identity_reconnection_origins.html" %}
+</section>
+<section class="box">
+  <h3>Audience consequences</h3>
+  {% if reconnecting %}
+  <p>The selected account will authenticate as this same portable person and can recall that person's eligible personal memory. Other people's audiences remain separate and unmapped unless separately authorized. No memory content is disclosed by this review. Source credentials, names, and numeric IDs do not authorize the mapping.</p>
+  {% else %}
+  <p>The selected mapping will be revoked and this identity parked. Its personal audience will stay closed until a new authorized reconnection. All records and relations are preserved; no facts are deleted or made shared. Bear membership is unchanged.</p>
+  {% endif %}
+  {% if displaced_entity_id %}
+  <h3>Separate replacement decision</h3>
+  <p><strong>The destination account already has a different identity:</strong> <code>{{ displaced_entity_id | e }}</code>.</p>
+  <p>It will be <strong>parked with all records and relations preserved</strong>, even if no memory is currently known. No facts are lost or combined; this is not an entity merge. Its audience will be closed until it is deliberately reconnected later. Review another destination account if these identities represent different people.</p>
+  {% endif %}
+  <form method="post" action="/bear/{{ bear.slug | urlencode }}/portability/identities/confirm">
+    <input type="hidden" name="nonce" value="{{ nonce }}">
+    <input type="hidden" name="confirmation_token" value="{{ confirmation_token }}">
+    <label><input type="checkbox" name="confirm_audience" value="true" required>{% if reconnecting %}I authorize this exact person → destination account mapping and understand which personal audience the account will gain. Other people remain separate; no facts become shared core knowledge.{% else %}I authorize revocation of this person's active mapping. I understand its personal audience will be closed and its records and relations preserved, not deleted or shared.{% endif %}</label>
+    {% if displaced_entity_id %}<label><input type="checkbox" name="confirm_replacement" value="true" required>I separately authorize parking the account's previous identity with all records and relations preserved. No facts are lost or combined. I understand it can be reconnected later through another review.</label>{% endif %}
+    <button type="submit">Confirm {% if reconnecting %}this identity mapping{% else %}revocation{% endif %}</button>
+  </form>
+  <p>If identity versions or account eligibility change, confirmation is rejected; refresh the list and review again. Returning to the list alone makes no identity change.</p>
+  <p><a href="/bear/{{ bear.slug | urlencode }}/portability/identities">Return without confirming</a></p>
+</section>
+{% endblock %}

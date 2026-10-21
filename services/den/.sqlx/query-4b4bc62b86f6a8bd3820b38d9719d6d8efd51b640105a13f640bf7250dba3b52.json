@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE entity_handles SET state = 'detached' WHERE bear_id = ? AND entity_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "4b4bc62b86f6a8bd3820b38d9719d6d8efd51b640105a13f640bf7250dba3b52"
+}

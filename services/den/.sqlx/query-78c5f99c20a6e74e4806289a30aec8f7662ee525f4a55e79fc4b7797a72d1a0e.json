@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT resolution, trust, canonical_ref FROM entities WHERE bear_id = ? AND entity_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "resolution",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "trust",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "canonical_ref",
+        "ordinal": 2,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "78c5f99c20a6e74e4806289a30aec8f7662ee525f4a55e79fc4b7797a72d1a0e"
+}

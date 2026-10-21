@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE user_identity_origins SET display_name = 'changed after review' WHERE bear_id = ? AND entity_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "6ba91904aaec3907ee4a0f83c8c42054168d86667c33bb14c14604493569836b"
+}

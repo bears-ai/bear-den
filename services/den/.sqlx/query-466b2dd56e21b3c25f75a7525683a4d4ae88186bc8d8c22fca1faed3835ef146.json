@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DROP TRIGGER IF EXISTS fail_identity_receipt",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "466b2dd56e21b3c25f75a7525683a4d4ae88186bc8d8c22fca1faed3835ef146"
+}

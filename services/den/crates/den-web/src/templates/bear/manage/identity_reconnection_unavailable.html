@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Identity review unavailable{% endblock %}
+{% block content %}
+<main class="den-hub">
+  <section class="box">
+    <h2>Identity review unavailable</h2>
+    <p class="form-errors" role="alert">Identity metadata or account labels may have changed, or this review's versions, expiry, or replay state may no longer be current.</p>
+    <p>This request did not authorize a new change. Review current mappings and recent receipts before preparing another review.</p>
+    <p><a href="/bear/{{ bear_slug | urlencode }}/portability/identities">Review current mappings and recent receipts</a></p>
+  </section>
+</main>
+{% endblock %}

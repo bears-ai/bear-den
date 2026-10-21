@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        UPDATE entities\n        SET resolution = CASE WHEN resolution IN ('observed', 'provisional', 'resolved', 'confirmed')\n                              THEN 'provisional' ELSE resolution END,\n            canonical_ref = NULL, trust = 'inferred'\n        WHERE bear_id = ? AND entity_id IN (\n            SELECT entity_id FROM authenticated_user_entities WHERE bear_id = ?\n        )\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "78a2261cc802bb5325b61e406ced7b7b4c41466eb3081e18cdf1e09fe0b29616"
+}

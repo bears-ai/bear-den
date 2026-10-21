@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT handle_id AS \"handle_id!: String\" FROM entity_handles WHERE bear_id = ? AND entity_id = ? ORDER BY handle_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "handle_id!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "582e29223b53d7db70868f5bf8b4c56d2c24f85d2dd8202d3a3ce60f685d24a0"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM user_identity_generations WHERE bear_id = ? AND entity_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "af6f711c1ff231c6c9c9a2a0e791de4be49f25558f306b657619eb45b08bd9a8"
+}

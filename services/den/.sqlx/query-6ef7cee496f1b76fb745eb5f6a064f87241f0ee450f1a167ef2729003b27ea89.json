@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO user_identity_generations (bear_id, entity_id, generation)\n        SELECT bear_id, entity_id, 1 FROM authenticated_user_entities WHERE bear_id = ?\n        ON CONFLICT (bear_id, entity_id) DO UPDATE SET generation = generation + 1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "6ef7cee496f1b76fb745eb5f6a064f87241f0ee450f1a167ef2729003b27ea89"
+}

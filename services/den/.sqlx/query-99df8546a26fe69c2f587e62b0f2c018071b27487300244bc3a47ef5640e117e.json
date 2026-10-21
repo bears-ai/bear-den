@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT u.id AS \"user_id: UserId\", u.username, u.display_name\n        FROM users u\n        JOIN user_bear membership ON membership.user_id = u.id\n        WHERE membership.bear_id = $1\n          AND EXISTS (\n              SELECT 1 FROM email_configs e\n              WHERE e.user_id = u.id AND e.active AND e.verified_at IS NOT NULL\n          )\n        ORDER BY u.username, u.id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id: UserId",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "username",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "display_name",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "99df8546a26fe69c2f587e62b0f2c018071b27487300244bc3a47ef5640e117e"
+}

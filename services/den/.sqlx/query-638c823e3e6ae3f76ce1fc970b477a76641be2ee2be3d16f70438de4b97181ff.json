@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE bear_sequence SET next_sequence = next_sequence WHERE id = 1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "638c823e3e6ae3f76ce1fc970b477a76641be2ee2be3d16f70438de4b97181ff"
+}

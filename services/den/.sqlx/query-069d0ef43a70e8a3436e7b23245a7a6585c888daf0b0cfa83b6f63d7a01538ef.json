@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO memory_promotions (promotion_id, bear_id, sequence_no, source_memory_id, target_memory_id, review_agent_id, action, created_at, notes) VALUES (?, ?, ?, ?, ?, 'original-reviewer', 'review', '2026-01-01T00:00:00Z', 'original provenance')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "069d0ef43a70e8a3436e7b23245a7a6585c888daf0b0cfa83b6f63d7a01538ef"
+}

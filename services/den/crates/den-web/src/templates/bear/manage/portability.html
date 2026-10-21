@@ -3,6 +3,7 @@
 {% block manage %}
 <section class="box">
   <h2>Backup &amp; move</h2>
+  {% if can_manage_bear %}<p><a href="/bear/{{ bear.slug | urlencode }}/portability/identities">Review imported identities and account mappings</a> · Reconnect or revoke one person at a time with explicit audience confirmation. A replaced identity is parked with all records and relations preserved, not merged or erased.</p>{% endif %}
   <table><caption>Contents of the .bear v3 bundle</caption><thead><tr><th>Material</th><th>Included?</th></tr></thead><tbody>
     <tr><td>Name, description and Bear-wide steering</td><td>Yes</td></tr>
     <tr><td>Named model configurations, Bear default and hat overrides</td><td>Yes — remapped IDs, validated against the destination catalog</td></tr>

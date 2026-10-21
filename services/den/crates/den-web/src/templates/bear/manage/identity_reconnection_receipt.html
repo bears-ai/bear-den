@@ -1,0 +1,22 @@
+{% extends "bear/_manage.html" %}
+{% block title %}Identity decision recorded · {{ bear.name | e }}{% endblock %}
+{% block manage %}
+<section class="box">
+  <h2>Identity decision recorded</h2>
+  <p role="status">{{ outcome | e }}</p>
+  <dl>
+    <dt>Authoritative audit receipt</dt><dd><code>{{ receipt.receipt_id }}</code></dd>
+    <dt>Recorded at</dt><dd>{{ receipt.recorded_at | e }}</dd>
+    <dt>Origin Bear</dt><dd><code>{{ receipt.recorded_bear_id | e }}</code></dd>
+    <dt>Previous recorded account ID</dt><dd>{{ receipt.previous_user_id }}</dd>
+    <dt>Recorded generation change</dt><dd>{{ receipt.prior_generation }} → {{ receipt.resulting_generation }}</dd>
+    <dt>Portable person ID</dt><dd><code>{{ receipt.entity_id | e }}</code></dd>
+    <dt>Authorizing Bear Admin at confirmation</dt><dd>{{ actor.username | e }} · account {{ receipt.actor_user_id }}</dd>
+    <dt>Destination account at confirmation</dt><dd>{% if receipt.destination_user_id is not none %}{{ destination.username | e }}{% if destination.display_name %} ({{ destination.display_name | e }}){% endif %} · account {{ receipt.destination_user_id }}{% else %}Mapping revoked; no active destination was attached. Revoked account ID: {{ receipt.previous_user_id }}.{% endif %}</dd>
+    {% if receipt.displaced_entity_id %}<dt>Parked previous identity</dt><dd><code>{{ receipt.displaced_entity_id | e }}</code> — all records and relations preserved, no facts lost or combined.</dd>{% endif %}
+  </dl>
+  <p>This is the result of the completed decision, not a new grant or a live account-profile view.</p>
+  <p>Neither Bear membership nor Work or sharing permissions were changed. Further mapping changes require another explicit review.</p>
+  <p><a href="/bear/{{ bear.slug | urlencode }}/portability/identities">Review current identities, account mappings and recent receipts</a> · <a href="/bear/{{ bear.slug | urlencode }}/portability">Backup &amp; move</a></p>
+</section>
+{% endblock %}

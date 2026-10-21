@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO user_identity_receipts (receipt_id, bear_id, recorded_bear_id, actor_user_id, entity_id, destination_user_id, previous_user_id, displaced_entity_id, prior_generation, resulting_generation, recorded_at) VALUES (?, ?, 'source-bear', ?, ?, ?, ?, NULL, ?, ?, '9999-01-01')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "c80e1733bd468239106021e4b3827996d582cd4ae74a7f283474d550c8ac75c0"
+}

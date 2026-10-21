@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT json_group_array(json_array(promotion_id, bear_id, sequence_no, source_memory_id,\n            target_memory_id, review_agent_id, action, created_at, notes)) AS \"rows!: String\"\n           FROM (SELECT * FROM memory_promotions ORDER BY promotion_id)",
+  "describe": {
+    "columns": [
+      {
+        "name": "rows!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "f36961f975b3827bf1de0872792a7e3efa51496164cd6f371ef200b935b6ed86"
+}

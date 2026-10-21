@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE entities SET resolution = 'confirmed', trust = 'asserted', canonical_ref = ? WHERE bear_id = ? AND entity_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "f7aeb69b7979a3bf1032eed5ba16a3b09719b0359ba9e959e7615df2fa4d584f"
+}

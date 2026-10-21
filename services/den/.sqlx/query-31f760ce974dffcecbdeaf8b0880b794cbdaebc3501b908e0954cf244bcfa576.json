@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE entities SET trust = 'unknown-trust' WHERE bear_id = ? AND entity_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "31f760ce974dffcecbdeaf8b0880b794cbdaebc3501b908e0954cf244bcfa576"
+}

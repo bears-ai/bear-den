@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT json_group_array(json_array(bear_id, user_id, entity_id, state)) AS \"rows!: String\"\n           FROM (SELECT * FROM authenticated_user_entities ORDER BY bear_id, entity_id)",
+  "describe": {
+    "columns": [
+      {
+        "name": "rows!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "9f85fae5c563dcf6a7aa603d65cf7c55ca814919dbcb8a9dcde3d1f058b35610"
+}

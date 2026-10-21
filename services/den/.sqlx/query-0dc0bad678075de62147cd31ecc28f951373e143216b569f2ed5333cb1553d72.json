@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT bear_id, recorded_bear_id, actor_user_id AS \"actor!: i32\", entity_id,\n            destination_user_id AS \"destination?: i32\", previous_user_id AS \"previous!: i32\",\n            displaced_entity_id, prior_generation AS \"prior!: i64\",\n            resulting_generation AS \"resulting!: i64\", recorded_at\n           FROM user_identity_receipts WHERE receipt_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "bear_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "recorded_bear_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "actor!: i32",
+        "ordinal": 2,
+        "type_info": "Integer"
+      },
+      {
+        "name": "entity_id",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "destination?: i32",
+        "ordinal": 4,
+        "type_info": "Integer"
+      },
+      {
+        "name": "previous!: i32",
+        "ordinal": 5,
+        "type_info": "Integer"
+      },
+      {
+        "name": "displaced_entity_id",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "prior!: i64",
+        "ordinal": 7,
+        "type_info": "Integer"
+      },
+      {
+        "name": "resulting!: i64",
+        "ordinal": 8,
+        "type_info": "Integer"
+      },
+      {
+        "name": "recorded_at",
+        "ordinal": 9,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "0dc0bad678075de62147cd31ecc28f951373e143216b569f2ed5333cb1553d72"
+}

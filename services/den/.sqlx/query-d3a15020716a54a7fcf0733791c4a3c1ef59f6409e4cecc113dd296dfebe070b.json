@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT a.user_id AS \"user_id!: i32\", a.state,\n               g.generation AS \"generation!: i64\", e.type AS entity_type,\n               e.resolution, e.trust, e.canonical_ref, e.superseded_by_entity_id\n        FROM authenticated_user_entities a\n        JOIN user_identity_generations g ON g.bear_id = a.bear_id AND g.entity_id = a.entity_id\n        JOIN entities e ON e.bear_id = a.bear_id AND e.entity_id = a.entity_id\n        WHERE a.bear_id = ? AND a.entity_id = ?\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "user_id!: i32",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "state",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "generation!: i64",
+        "ordinal": 2,
+        "type_info": "Integer"
+      },
+      {
+        "name": "entity_type",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "resolution",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "trust",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "canonical_ref",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "superseded_by_entity_id",
+        "ordinal": 7,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "d3a15020716a54a7fcf0733791c4a3c1ef59f6409e4cecc113dd296dfebe070b"
+}

@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT CAST(receipt_id AS TEXT) AS \"receipt_id?: String\",\n               CAST(recorded_bear_id AS TEXT) AS \"recorded_bear_id!: String\",\n               CAST(actor_user_id AS TEXT) AS \"actor_user_id!: String\",\n               CAST(previous_user_id AS TEXT) AS \"previous_user_id!: String\",\n               CAST(entity_id AS TEXT) AS \"entity_id!: String\",\n               CAST(destination_user_id AS TEXT) AS \"destination_user_id?: String\",\n               CAST(displaced_entity_id AS TEXT) AS \"displaced_entity_id?: String\",\n               CAST(prior_generation AS TEXT) AS \"prior_generation!: String\",\n               CAST(resulting_generation AS TEXT) AS \"resulting_generation!: String\",\n               CAST(recorded_at AS TEXT) AS \"recorded_at!: String\"\n        FROM user_identity_receipts WHERE bear_id = ?\n        ORDER BY (recorded_bear_id = ?) DESC, recorded_at DESC, receipt_id DESC LIMIT ?\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "receipt_id?: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "recorded_bear_id!: String",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "actor_user_id!: String",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "previous_user_id!: String",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "entity_id!: String",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "destination_user_id?: String",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "displaced_entity_id?: String",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "prior_generation!: String",
+        "ordinal": 7,
+        "type_info": "Text"
+      },
+      {
+        "name": "resulting_generation!: String",
+        "ordinal": 8,
+        "type_info": "Text"
+      },
+      {
+        "name": "recorded_at!: String",
+        "ordinal": 9,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "7918cc51220735871fe2d8b13d295fa279c887c4533f568c9607b3b673ed2112"
+}

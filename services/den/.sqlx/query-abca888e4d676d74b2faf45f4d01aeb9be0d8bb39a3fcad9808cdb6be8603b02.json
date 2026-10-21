@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT entity_id, user_id AS \"user_id!: i32\" FROM authenticated_user_entities\n           WHERE bear_id = ? AND state = 'active'",
+  "describe": {
+    "columns": [
+      {
+        "name": "entity_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "user_id!: i32",
+        "ordinal": 1,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "abca888e4d676d74b2faf45f4d01aeb9be0d8bb39a3fcad9808cdb6be8603b02"
+}

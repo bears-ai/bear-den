@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO entity_handles (\n            handle_id, bear_id, entity_id, handle_type, handle_value, source, trust, state, created_at\n        ) VALUES (?, ?, ?, 'den_user', ?, 'authorized_restore', 'asserted', 'active', ?)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "e485d457d63d3222c7e4d8ad1869c58e27ed39ce751ce7a7549407cd71e24ad0"
+}
