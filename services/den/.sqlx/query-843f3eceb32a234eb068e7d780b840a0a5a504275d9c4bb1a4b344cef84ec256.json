@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE personal_memory_candidates SET value_text = '   ' WHERE candidate_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "843f3eceb32a234eb068e7d780b840a0a5a504275d9c4bb1a4b344cef84ec256"
+}

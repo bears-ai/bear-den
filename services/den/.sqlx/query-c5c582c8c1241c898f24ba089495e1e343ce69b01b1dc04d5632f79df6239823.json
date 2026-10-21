@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            UPDATE personal_memory_candidates SET state = 'withdrawn', withdrawn_at = ?,\n                withdrawn_on_bear_id = ?, withdrawn_by_user_id = ?\n            WHERE bear_id = ? AND person_entity_id = ? AND state IN ('pending', 'quarantined')\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "c5c582c8c1241c898f24ba089495e1e343ce69b01b1dc04d5632f79df6239823"
+}

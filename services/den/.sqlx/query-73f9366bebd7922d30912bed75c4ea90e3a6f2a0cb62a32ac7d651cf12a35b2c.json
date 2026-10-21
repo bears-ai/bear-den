@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE personal_memory_candidates SET fact_type = ?, evidence_kind = ?, retention = ? WHERE candidate_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "73f9366bebd7922d30912bed75c4ea90e3a6f2a0cb62a32ac7d651cf12a35b2c"
+}

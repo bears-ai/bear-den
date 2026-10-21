@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DROP TRIGGER IF EXISTS fail_personal_candidate_insert",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "eadcdaf8b98d5e52edcc25bdfd26e703d767d2a5eeb49333c0610f19910f591f"
+}

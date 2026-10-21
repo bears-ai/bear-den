@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        UPDATE personal_memory_settings SET capture_enabled = 0, updated_at = ?,\n            updated_on_bear_id = ?, updated_by_user_id = NULL WHERE bear_id = ?\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "8055d88f9acada9e2bdccf21bd8397e38ec88024fa432eb4df098813de079c06"
+}

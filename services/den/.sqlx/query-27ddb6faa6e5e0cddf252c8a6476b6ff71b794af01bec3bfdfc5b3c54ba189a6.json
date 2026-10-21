@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO memory_records (\n            memory_id, bear_id, sequence_no, scope_type, scope_profile,\n            scope_source_kind, scope_source_id, scope_hat_id, kind, author_profile,\n            created_at, content_text, metadata_json, visibility, logical_path\n        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'note', 'pair',\n                  '2026-01-01T00:00:00Z', 'Source text is not a personal candidate or identity grant.', ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 11
+    },
+    "nullable": []
+  },
+  "hash": "27ddb6faa6e5e0cddf252c8a6476b6ff71b794af01bec3bfdfc5b3c54ba189a6"
+}

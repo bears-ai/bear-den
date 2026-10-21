@@ -174,7 +174,8 @@ async fn park(
     )
     .execute(&mut *connection)
     .await?;
-    detach_handles(connection, bear_id, entity_id).await
+    detach_handles(connection, bear_id, entity_id).await?;
+    crate::personal_candidates::quarantine_person(connection, bear_id, entity_id).await
 }
 
 async fn activate(

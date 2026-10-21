@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO personal_memory_candidates (\n            candidate_id, bear_id, person_entity_id, sequence_no, fact_type, value_text,\n            evidence_kind, retention, source_conversation_id, source_memory_id,\n            source_bear_id, source_user_id, source_binding_generation, state, created_at\n        ) SELECT ?, bear_id, person_entity_id, sequence_no + 1, fact_type, value_text,\n            evidence_kind, retention, source_conversation_id, source_memory_id,\n            source_bear_id, source_user_id, source_binding_generation, state, created_at\n          FROM personal_memory_candidates WHERE candidate_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "ab7d3154f33ce5535c7bde1060bd026c818237f2326138ef4469e49a0fccaeca"
+}

@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT hex(content_text) AS \"bytes!: String\" FROM memory_records WHERE memory_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "bytes!: String",
+        "ordinal": 0,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "904c7dd4c1e4393d371b845f39f9ccedc89b0e99da473d179bbbc33656be8569"
+}

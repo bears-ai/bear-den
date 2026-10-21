@@ -118,6 +118,44 @@ CREATE TABLE IF NOT EXISTS user_identity_receipts (
     recorded_at TEXT NOT NULL
 );
 
+-- Personal candidate bodies never enter generic proposal, observation, or recall queues.
+-- Capture is opt-in and local to the current host attachment, not imported authority.
+CREATE TABLE IF NOT EXISTS personal_memory_settings (
+    bear_id TEXT NOT NULL,
+    person_entity_id TEXT NOT NULL,
+    capture_enabled INTEGER NOT NULL CHECK (capture_enabled IN (0, 1)),
+    authority_generation INTEGER NOT NULL CHECK (authority_generation > 0),
+    updated_at TEXT NOT NULL,
+    updated_on_bear_id TEXT NOT NULL,
+    updated_by_user_id INTEGER NULL,
+    PRIMARY KEY (bear_id, person_entity_id)
+);
+CREATE TABLE IF NOT EXISTS personal_memory_candidates (
+    candidate_id TEXT NOT NULL PRIMARY KEY,
+    bear_id TEXT NOT NULL,
+    person_entity_id TEXT NOT NULL,
+    sequence_no INTEGER NOT NULL,
+    fact_type TEXT NOT NULL CHECK (fact_type = 'preferred_name'),
+    value_text TEXT NOT NULL,
+    evidence_kind TEXT NOT NULL CHECK (evidence_kind = 'explicit_user_request'),
+    retention TEXT NOT NULL CHECK (retention = 'durable'),
+    source_conversation_id TEXT NOT NULL,
+    source_memory_id TEXT NOT NULL,
+    source_bear_id TEXT NOT NULL,
+    source_user_id INTEGER NOT NULL,
+    source_binding_generation INTEGER NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('pending', 'withdrawn', 'quarantined')),
+    created_at TEXT NOT NULL,
+    withdrawn_at TEXT NULL,
+    withdrawn_on_bear_id TEXT NULL,
+    withdrawn_by_user_id INTEGER NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_personal_memory_candidates_pending
+    ON personal_memory_candidates (bear_id, person_entity_id, source_conversation_id, source_memory_id, fact_type, value_text)
+    WHERE state = 'pending';
+CREATE INDEX IF NOT EXISTS idx_personal_memory_candidates_owner
+    ON personal_memory_candidates (bear_id, person_entity_id, sequence_no);
+
 CREATE TABLE IF NOT EXISTS entity_handles (
     handle_id TEXT PRIMARY KEY,
     bear_id TEXT NOT NULL,

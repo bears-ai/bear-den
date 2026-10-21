@@ -1113,6 +1113,8 @@ async fn rewrite_imported_memory_bear_id(
         "user_identity_generations",
         "user_identity_origins",
         "user_identity_receipts",
+        "personal_memory_settings",
+        "personal_memory_candidates",
         "entity_handles",
         "memory_relations",
         "memory_access_rules",

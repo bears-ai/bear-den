@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE memory_records SET content_text = CAST(? AS TEXT) WHERE memory_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "21c7e3fde319f63598f2dfa1e4dfca2aafba92d47ce0f88f142d7436e145aef9"
+}

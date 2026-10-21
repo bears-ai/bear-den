@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT content_text FROM memory_records WHERE memory_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "content_text",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "5095622202205db5f7665074c61a60174daf456c65597338bc9113724d718596"
+}

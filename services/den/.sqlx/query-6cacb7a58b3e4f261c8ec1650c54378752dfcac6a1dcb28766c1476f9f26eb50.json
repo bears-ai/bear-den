@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT json_group_array(json_array(bear_id, person_entity_id, capture_enabled,\n            authority_generation, updated_at, updated_on_bear_id, updated_by_user_id)) AS \"rows!: String\"\n           FROM (SELECT * FROM personal_memory_settings ORDER BY bear_id, person_entity_id)",
+  "describe": {
+    "columns": [
+      {
+        "name": "rows!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "6cacb7a58b3e4f261c8ec1650c54378752dfcac6a1dcb28766c1476f9f26eb50"
+}

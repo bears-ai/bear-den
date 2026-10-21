@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT EXISTS (\n            SELECT 1 FROM authenticated_user_entities a\n            JOIN user_identity_generations g ON g.bear_id = a.bear_id AND g.entity_id = a.entity_id\n            JOIN entities e ON e.bear_id = a.bear_id AND e.entity_id = a.entity_id\n            WHERE a.bear_id = ? AND a.entity_id = ? AND a.user_id = ? AND a.state = 'active'\n              AND g.generation = ? AND g.generation > 0 AND e.type = 'person'\n              AND e.resolution = 'confirmed' AND e.trust = 'asserted' AND e.canonical_ref = ?\n              AND e.superseded_by_entity_id IS NULL\n        ) AS \"current!: bool\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "current!: bool",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "45d737a0611c6ae24fd93436fa4f8e12b7d5a1cccc31013bffb1dbfe3bbc79d6"
+}

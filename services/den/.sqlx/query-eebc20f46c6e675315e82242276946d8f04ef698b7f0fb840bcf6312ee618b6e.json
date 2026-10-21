@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT EXISTS (\n            SELECT 1 FROM memory_records m WHERE m.bear_id = ? AND m.memory_id = ?\n              AND m.scope_type = 'source_local' AND m.scope_source_kind = 'conversation'\n              AND m.scope_source_id = ? AND m.visibility = 'normal' AND m.invalid_at IS NULL\n              AND json_valid(m.metadata_json)\n              AND COALESCE(json_extract(m.metadata_json, '$.lifecycle.status'), 'active') = 'active'\n              AND NOT EXISTS (\n                  SELECT 1 FROM memory_records newer\n                  WHERE newer.bear_id = m.bear_id AND newer.supersedes_memory_id = m.memory_id\n              )\n              AND NOT EXISTS (\n                  SELECT 1 FROM memory_access_rules r WHERE r.bear_id = m.bear_id AND r.src_memory_id = m.memory_id\n              )\n        ) AS \"eligible!: bool\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "eligible!: bool",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "eebc20f46c6e675315e82242276946d8f04ef698b7f0fb840bcf6312ee618b6e"
+}

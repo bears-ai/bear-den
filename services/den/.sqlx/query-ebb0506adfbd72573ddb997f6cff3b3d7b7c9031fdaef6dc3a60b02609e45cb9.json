@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE memory_records SET logical_path = ? WHERE memory_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "ebb0506adfbd72573ddb997f6cff3b3d7b7c9031fdaef6dc3a60b02609e45cb9"
+}

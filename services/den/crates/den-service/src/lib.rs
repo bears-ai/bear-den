@@ -16,6 +16,7 @@ pub mod conversation;
 pub mod memory_proposals;
 pub mod model_selection;
 pub mod pair_reflection;
+pub mod personal_memory;
 pub mod prompt_memory_block_store;
 pub mod prompt_memory_blocks;
 pub mod recall;

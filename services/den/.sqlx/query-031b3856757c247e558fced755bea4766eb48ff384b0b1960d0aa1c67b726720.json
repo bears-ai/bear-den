@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT json_group_array(json_array(mark_id, bear_id, sequence_no, source_kind, source_ref,\n            source_hash, harvested_at, run_id, proposal_ids_json)) AS \"rows!: String\"\n           FROM (SELECT * FROM memory_harvest_marks ORDER BY mark_id)",
+  "describe": {
+    "columns": [
+      {
+        "name": "rows!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "031b3856757c247e558fced755bea4766eb48ff384b0b1960d0aa1c67b726720"
+}

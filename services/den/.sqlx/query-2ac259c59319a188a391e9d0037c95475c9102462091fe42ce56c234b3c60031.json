@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE personal_memory_candidates SET state = 'quarantined' WHERE bear_id = ? AND state = 'pending'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "2ac259c59319a188a391e9d0037c95475c9102462091fe42ce56c234b3c60031"
+}

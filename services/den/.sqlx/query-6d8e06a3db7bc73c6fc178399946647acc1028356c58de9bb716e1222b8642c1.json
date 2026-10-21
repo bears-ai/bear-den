@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT c.id FROM conversations c\n              JOIN bear_hats h ON h.id = c.hat_id AND h.bear_id = c.bear_id\n              WHERE c.bear_id = $1 AND c.id = $2 AND c.created_by_user_id = $3\n                AND c.status = 'active'\n              FOR SHARE OF c, h",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "6d8e06a3db7bc73c6fc178399946647acc1028356c58de9bb716e1222b8642c1"
+}

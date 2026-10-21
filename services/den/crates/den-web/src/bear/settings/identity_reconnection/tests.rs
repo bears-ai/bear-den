@@ -18,6 +18,7 @@ mod authority_locks;
 mod consistency;
 mod export;
 mod history;
+mod personal_candidates;
 mod routes;
 mod session;
 mod templates;

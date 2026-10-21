@@ -23,6 +23,7 @@ mod logical_path;
 mod manager;
 mod migrate;
 mod observations;
+pub mod personal_candidates;
 mod proposals;
 mod records;
 pub mod reflection_outcomes;

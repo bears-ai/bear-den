@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT withdrawn_on_bear_id, withdrawn_by_user_id AS \"actor?: i32\"\n           FROM personal_memory_candidates WHERE candidate_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "withdrawn_on_bear_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "actor?: i32",
+        "ordinal": 1,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "0e9261fe9e7590b0b8915a42f1669de1ed93e773ea919c58dc46f321f33342be"
+}

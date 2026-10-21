@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "ALTER TABLE conversations DROP CONSTRAINT conversations_bear_hat_fkey",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "a015e1364bddc06b76f32b168f313af3c62c8d7559664f43c927e28c8bc86470"
+}

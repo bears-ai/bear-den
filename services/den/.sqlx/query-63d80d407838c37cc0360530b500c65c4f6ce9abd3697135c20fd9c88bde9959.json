@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT capture_enabled AS \"enabled!: i64\", authority_generation,\n            updated_on_bear_id, updated_by_user_id AS \"actor?: i32\"\n           FROM personal_memory_settings WHERE bear_id = ? AND person_entity_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "enabled!: i64",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "authority_generation",
+        "ordinal": 1,
+        "type_info": "Integer"
+      },
+      {
+        "name": "updated_on_bear_id",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "actor?: i32",
+        "ordinal": 3,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "63d80d407838c37cc0360530b500c65c4f6ce9abd3697135c20fd9c88bde9959"
+}

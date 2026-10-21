@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE memory_records SET visibility = 'normal' WHERE memory_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "ff36bd5b1c3aedf9c45d539b8154ff43c62e419df30dbe7438838b7b1fdcd5fa"
+}

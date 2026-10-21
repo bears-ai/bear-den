@@ -354,6 +354,7 @@ pub async fn quarantine_imported_authenticated_users(
     .execute(&mut *tx)
     .await
     .map_err(|e| DenError::System(format!("detach imported user handles failed: {e}")))?;
+    crate::personal_candidates::quarantine_imported(&mut tx, &bear_id).await?;
     tx.commit()
         .await
         .map_err(|e| DenError::System(format!("commit imported user quarantine failed: {e}")))?;
