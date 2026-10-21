@@ -28,9 +28,15 @@ A portable Bear is the cognition side of that line plus its configuration. Becau
 | Derived recall vectors (Qdrant) | **No** | Rebuilt from `memory.sqlite` on import |
 | Secrets (OAuth, API keys, webhook signing) | **Never** | Host secret store; re-attached by the operator |
 
-Keeping conversations and secrets out of the package is what makes packages shareable: moving a Bear's knowledge does not leak the source host's chat history or credentials.
+Keeping conversations and secrets out of the package avoids transporting the source host's chat history or credentials. It does not make a cognition snapshot public or safely shareable: full private backups and selectively shared exports have different content/authorization policies.
 
-Because transcripts stay behind, continuity across a move rides on curated memory, not chat logs. Export first **flushes pending curation** — the async harvest lane ([ADR-0041](docs/decisions/adr-0041-archival-recall-and-async-curation.md)) drains so recent salient context is promoted into `memory.sqlite` before the snapshot — so an imported Bear still knows you because it remembers, not because its transcript traveled. See [pre-export curation flush](docs/guides/bear-package.md#continuity-across-a-move-pre-export-curation-flush).
+Because transcripts stay behind, continuity across a move rides on curated memory, not chat logs. The target export workflow first **flushes pending curation** (not yet implemented by the browser bundle) — the async harvest lane ([ADR-0041](docs/decisions/adr-0041-archival-recall-and-async-curation.md)) drains so recent salient context is promoted into `memory.sqlite` before the snapshot — so an imported Bear still knows you because it remembers, not because its transcript traveled. See [pre-export curation flush](docs/guides/bear-package.md#continuity-across-a-move-pre-export-curation-flush).
+
+### User identity continuity across hosts
+
+**Required target, not implemented:** the Bear's person identity is portable; a Den account's authentication authority is host-local. Import must retain person IDs and memory relations while disabling source grants. An authorized restore workflow must then let Alice explicitly connect imported Alice to her verified destination account without merging Bob into Alice or requiring the source Den to remain online. Export permission determines what cognition may travel; it neither identifies every included person as the importer nor grants ordinary recall of all their context.
+
+The current foundation preserves and quarantines imported identities but has no reconnection operation. The [memory plan's required Phase 6A](docs/roadmap/USER_ASSOCIATED_BEAR_MEMORY_PLAN.md#phase-6a--portable-identity-reconnection) adds identity selection/provenance, destination conflict handling, atomic audited reconnection, and Alice/Bob round-trip tests before personal-memory enablement.
 
 ## The package format
 
