@@ -45,8 +45,10 @@ pub async fn publish_preferred_name(
     let candidate = get_inside(&mut tx, &bear_id, person_entity_id, candidate_id)
         .await?
         .ok_or_else(invalid)?;
-    if candidate.state() != CandidateState::Pending
-        || candidate.source_bear_id() != binding.bear_id()
+    if !matches!(
+        candidate.state(),
+        CandidateState::Pending | CandidateState::Deferred
+    ) || candidate.source_bear_id() != binding.bear_id()
         || candidate.source_user_id() != binding.user_id()
         || candidate.source_binding_generation() != binding.authority_generation
         || candidate.source_conversation_id() != source.conversation_id

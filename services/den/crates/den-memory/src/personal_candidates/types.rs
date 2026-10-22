@@ -46,6 +46,56 @@ impl fmt::Display for PersonalCandidateId {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CandidateReviewId(pub Uuid);
+
+impl fmt::Display for CandidateReviewId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CandidateReviewDecision {
+    Reject,
+    Defer,
+    /// Explicit unpublished-candidate closure, not durable-fact TTL or hard erasure.
+    Expire,
+    Resume,
+}
+
+impl CandidateReviewDecision {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Reject => "reject",
+            Self::Defer => "defer",
+            Self::Expire => "expire",
+            Self::Resume => "resume",
+        }
+    }
+
+    pub(super) fn parse(value: &str) -> Result<Self, DenError> {
+        match value {
+            "reject" => Ok(Self::Reject),
+            "defer" => Ok(Self::Defer),
+            "expire" => Ok(Self::Expire),
+            "resume" => Ok(Self::Resume),
+            _ => Err(DenError::ValidationError(
+                "Invalid protected personal-memory candidate review.".into(),
+            )),
+        }
+    }
+}
+
+/// Immutable reference-only decision receipt, not a claim about the candidate's active status.
+/// Replaying it never restores consent, source eligibility, or a previously closed candidate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CandidateReviewReceipt {
+    pub review_id: CandidateReviewId,
+    pub candidate_id: PersonalCandidateId,
+    pub decision: CandidateReviewDecision,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CandidateFactType {
     PreferredName,
 }
@@ -65,6 +115,9 @@ pub enum CandidateState {
     Pending,
     Withdrawn,
     Quarantined,
+    Rejected,
+    Deferred,
+    Expired,
     /// Derived from the immutable publication decision, not a separately writable status.
     Published,
 }
@@ -101,6 +154,7 @@ pub struct PersonalCandidate {
     pub(super) person_entity_id: String,
     pub(super) preferred_name: PreferredName,
     pub(super) state: CandidateState,
+    pub(super) latest_review: Option<CandidateReviewReceipt>,
     pub(super) source_conversation_id: Uuid,
     pub(super) source_memory_id: Uuid,
     pub(super) source_bear_id: BearId,
@@ -122,6 +176,9 @@ impl PersonalCandidate {
     }
     pub fn state(&self) -> CandidateState {
         self.state
+    }
+    pub fn latest_review_id(&self) -> Option<CandidateReviewId> {
+        self.latest_review.map(|review| review.review_id)
     }
     pub fn fact_type(&self) -> CandidateFactType {
         CandidateFactType::PreferredName

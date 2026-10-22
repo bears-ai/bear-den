@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO personal_memory_candidate_reviews (\n            id, bear_id, person_entity_id, candidate_id, sequence_no, decision,\n            recorded_on_bear_id, actor_user_id, authority_generation, created_at\n        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 10
+    },
+    "nullable": []
+  },
+  "hash": "1faf8e4605c3b6bee6a6cdf4755fd96b80f0f41ebf5f81584d72fc3893db8c65"
+}

@@ -8,16 +8,19 @@
 
 mod authority;
 mod read;
+mod review;
 mod settings;
 mod source;
 mod stage;
 mod types;
 
 pub use read::{get_candidate, list_candidates, withdraw_candidate};
+pub use review::review_candidate;
 pub use settings::{capture_enabled, set_capture_enabled};
 pub use stage::stage_preferred_name;
 pub use types::{
-    CandidateEvidence, CandidateFactType, CandidateRetention, CandidateState, PersonalCandidate,
+    CandidateEvidence, CandidateFactType, CandidateRetention, CandidateReviewDecision,
+    CandidateReviewId, CandidateReviewReceipt, CandidateState, PersonalCandidate,
     PersonalCandidateId, PreferredName, VerifiedPersonalSource,
 };
 

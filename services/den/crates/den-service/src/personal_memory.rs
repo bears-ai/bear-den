@@ -1,4 +1,4 @@
-//! Server-only personal-memory intake and explicit owner approval, never a model tool.
+//! Server-only personal-memory intake, review and explicit owner approval, never a model tool.
 //!
 //! Callers supply a trusted authenticated principal, never an identity selected by
 //! a model. Postgres rights/source locks outlive request cancellation and remain
@@ -6,6 +6,7 @@
 
 mod authority;
 mod publication;
+mod review;
 #[cfg(test)]
 mod tests;
 
@@ -21,10 +22,14 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 pub use den_memory::{
-    personal_candidates::{PersonalCandidate, PersonalCandidateId, PreferredName},
+    personal_candidates::{
+        CandidateReviewDecision, CandidateReviewId, CandidateReviewReceipt, PersonalCandidate,
+        PersonalCandidateId, PreferredName,
+    },
     personal_facts::{PersonalFactHead, PersonalFactId, PersonalFactState, PublicationReceipt},
 };
 pub use publication::{current_preferred_name, publish_preferred_name, retract_preferred_name};
+pub use review::review_candidate;
 
 /// Stage an explicit, durable preferred-name request without publishing memory.
 ///

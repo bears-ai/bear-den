@@ -16,6 +16,11 @@ pub(crate) async fn snapshot(store: &BearMemoryStore) -> Snapshot {
                     withdrawn_at, withdrawn_on_bear_id, withdrawn_by_user_id))
                 FROM (SELECT * FROM personal_memory_candidates ORDER BY candidate_id)
             ),
+            'candidate_reviews', (
+                SELECT json_group_array(json_array(id, bear_id, person_entity_id, candidate_id,
+                    sequence_no, decision, recorded_on_bear_id, actor_user_id, authority_generation, created_at))
+                FROM (SELECT * FROM personal_memory_candidate_reviews ORDER BY id)
+            ),
             'settings', (
                 SELECT json_group_array(json_array(bear_id, person_entity_id, capture_enabled,
                     authority_generation, updated_at, updated_on_bear_id, updated_by_user_id))

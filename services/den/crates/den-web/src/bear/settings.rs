@@ -1116,6 +1116,7 @@ async fn rewrite_imported_memory_bear_id(
         "user_identity_receipts",
         "personal_memory_settings",
         "personal_memory_candidates",
+        "personal_memory_candidate_reviews",
         "personal_memory_publications",
         "personal_memory_retractions",
         "entity_handles",

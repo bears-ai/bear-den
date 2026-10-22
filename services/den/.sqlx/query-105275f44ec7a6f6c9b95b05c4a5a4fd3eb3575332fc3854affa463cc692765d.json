@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "CREATE TRIGGER fail_candidate_review BEFORE INSERT ON personal_memory_candidate_reviews\n          BEGIN SELECT RAISE(ABORT, 'injected candidate review failure'); END",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "105275f44ec7a6f6c9b95b05c4a5a4fd3eb3575332fc3854affa463cc692765d"
+}

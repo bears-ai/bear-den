@@ -156,6 +156,23 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_personal_memory_candidates_pending
 CREATE INDEX IF NOT EXISTS idx_personal_memory_candidates_owner
     ON personal_memory_candidates (bear_id, person_entity_id, sequence_no);
 
+-- Private immutable owner reviews retain references/audit only, never another candidate body.
+CREATE TABLE IF NOT EXISTS personal_memory_candidate_reviews (
+    id TEXT NOT NULL PRIMARY KEY,
+    bear_id TEXT NOT NULL,
+    person_entity_id TEXT NOT NULL,
+    candidate_id TEXT NOT NULL,
+    sequence_no INTEGER NOT NULL,
+    decision TEXT NOT NULL CHECK (decision IN ('reject', 'defer', 'expire', 'resume')),
+    recorded_on_bear_id TEXT NOT NULL,
+    actor_user_id INTEGER NOT NULL,
+    authority_generation INTEGER NOT NULL CHECK (authority_generation > 0),
+    created_at TEXT NOT NULL,
+    UNIQUE (bear_id, candidate_id, sequence_no)
+);
+CREATE INDEX IF NOT EXISTS idx_personal_memory_candidate_reviews_owner
+    ON personal_memory_candidate_reviews (bear_id, person_entity_id, candidate_id, sequence_no);
+
 -- Immutable personal publication decisions also permanently classify their canonical records.
 CREATE TABLE IF NOT EXISTS personal_memory_publications (
     memory_id TEXT NOT NULL PRIMARY KEY,

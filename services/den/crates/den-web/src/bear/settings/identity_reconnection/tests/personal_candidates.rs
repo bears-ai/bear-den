@@ -1,9 +1,9 @@
 use super::*;
 use den_memory::{
     personal_candidates::{
-        capture_enabled, get_candidate, list_candidates, set_capture_enabled, stage_preferred_name,
-        withdraw_candidate, CandidateState, PersonalCandidate, PreferredName,
-        VerifiedPersonalSource,
+        capture_enabled, get_candidate, list_candidates, review_candidate, set_capture_enabled,
+        stage_preferred_name, withdraw_candidate, CandidateReviewDecision, CandidateState,
+        PersonalCandidate, PreferredName, VerifiedPersonalSource,
     },
     personal_facts::{
         current_preferred_name, publish_preferred_name, retract_preferred_name, PersonalFactState,
@@ -14,12 +14,25 @@ use den_memory::{
 
 const PUBLISHED_NAME: &str = "BundlePersonalNameSentinel-7C92";
 
+fn imported_candidate_state(state: CandidateState) -> CandidateState {
+    match state {
+        CandidateState::Pending | CandidateState::Deferred | CandidateState::Quarantined => {
+            CandidateState::Quarantined
+        }
+        CandidateState::Withdrawn
+        | CandidateState::Rejected
+        | CandidateState::Expired
+        | CandidateState::Published => state,
+    }
+}
+
 fn assert_preserved(
     actual: &PersonalCandidate,
     original: &PersonalCandidate,
     state: CandidateState,
 ) {
     assert_eq!(actual.id(), original.id());
+    assert_eq!(actual.latest_review_id(), original.latest_review_id());
     assert_eq!(actual.person_entity_id(), original.person_entity_id());
     assert_eq!(actual.preferred_name(), original.preferred_name());
     assert_eq!(actual.fact_type(), original.fact_type());
@@ -284,7 +297,36 @@ async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_p
         .unwrap();
     // Published is projected from the immutable decision, not a mutable candidate status.
     assert_preserved(&published, &candidate, CandidateState::Published);
-    let originals = [pending, withdrawn, quarantined, published];
+    let mut originals = vec![pending, withdrawn, quarantined, published];
+    for (decision, state, value) in [
+        (
+            CandidateReviewDecision::Defer,
+            CandidateState::Deferred,
+            "Deferred private name",
+        ),
+        (
+            CandidateReviewDecision::Reject,
+            CandidateState::Rejected,
+            "Rejected private name",
+        ),
+        (
+            CandidateReviewDecision::Expire,
+            CandidateState::Expired,
+            "Expired private name",
+        ),
+    ] {
+        let candidate = stage(&source, &proof, value).await;
+        let receipt = review_candidate(&source, &current, candidate.id(), decision, None)
+            .await
+            .unwrap();
+        let reviewed = get_candidate(&source, &current, candidate.id())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(reviewed.state(), state);
+        assert_eq!(reviewed.latest_review_id(), Some(receipt.review_id));
+        originals.push(reviewed);
+    }
     for row in &originals {
         assert_eq!(row.person_entity_id(), alice.entity_id());
         assert_eq!(row.source_bear_id(), fixture.bear_id);
@@ -436,11 +478,7 @@ async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_p
     let rows = list_candidates(&destination, &owner, 100).await.unwrap();
     assert_eq!(rows.len(), originals.len());
     for original in &originals {
-        let state = match original.state() {
-            CandidateState::Pending | CandidateState::Quarantined => CandidateState::Quarantined,
-            CandidateState::Withdrawn => CandidateState::Withdrawn,
-            CandidateState::Published => CandidateState::Published,
-        };
+        let state = imported_candidate_state(original.state());
         let listed = rows.iter().find(|row| row.id() == original.id()).unwrap();
         assert_preserved(listed, original, state);
         let fetched = get_candidate(&destination, &owner, original.id())
@@ -560,18 +598,14 @@ async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_p
         CandidateState::Pending,
     );
     for original in &originals {
-        let state = match original.state() {
-            CandidateState::Pending | CandidateState::Quarantined => CandidateState::Quarantined,
-            CandidateState::Withdrawn => CandidateState::Withdrawn,
-            CandidateState::Published => CandidateState::Published,
-        };
+        let state = imported_candidate_state(original.state());
         assert_preserved(
             rows.iter().find(|row| row.id() == original.id()).unwrap(),
             original,
             state,
         );
     }
-    let mut protected = originals.to_vec();
+    let mut protected = originals.clone();
     protected.push(fresh);
     for user in [fixture.actor, UserId::new(4343), fixture.member] {
         let unrelated = resolve_authenticated_user_entity(&destination, user)
