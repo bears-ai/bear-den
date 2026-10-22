@@ -1,6 +1,6 @@
 # User-Associated Bear Memory Plan
 
-**Status:** Active — Phase 4A preferred-name backend committed as `f64386448`; Phase 4B owner-review lifecycle v1 subphase complete/tested, ready to commit. Phase 5A request-local projection foundation follows that commit, not delivered. End-user enablement, ordinary personal recall and broader Phase 4 privacy/acceptance gates remain open.
+**Status:** Active — Phase 4A preferred-name backend committed as `f64386448`; Phase 4B owner-review lifecycle v1 committed as `3d079b9d`. Phase 5A scoped request-local projection foundation complete/tested, ready to commit; no provider/runtime consumer is enabled. End-user enablement, ordinary personal recall and broader Phase 4 retention, hard-erasure, replay and privacy/acceptance gates remain open.
 
 **Topic:** [Bear memory and hats](../topics/bear-memory-hats.md)
 
@@ -18,7 +18,7 @@ The first implementation slice adds an atomic authenticated-user resolver over t
 
 **Phase 3 foundation delivered:** `den-memory::personal_candidates` and `den-service::personal_memory` provide isolated, server-only staging of explicit durable preferred-name requests, with capture disabled by default. This is storage/provenance groundwork, not completion of Phase 3's end-user/model-request exit criterion. See [Phase 3](#phase-3--personal-fact-candidate-surface) for the authority, consent, source and validation boundaries.
 
-**Phase 4A committed:** [owner-approved preferred-name publication/correction/retraction](#phase-4--curation-and-lifecycle) and generic-read protection landed in `f64386448`. See the [Phase 4A validation checkpoint](#validation-checkpoint) for its code/test/SQLx evidence and unrelated hats-test failure. **Phase 4B** [owner-candidate lifecycle v1](#phase-4b--owner-candidate-lifecycle-v1) is complete/tested and ready to commit; this completes only the owner-review subphase, not all Phase 4 or privacy gates.
+**Phase 4A committed:** [owner-approved preferred-name publication/correction/retraction](#phase-4--curation-and-lifecycle) and generic-read protection landed in `f64386448`. See the [Phase 4A validation checkpoint](#validation-checkpoint) for its code/test/SQLx evidence and unrelated hats-test failure. **Phase 4B** [owner-candidate lifecycle v1](#phase-4b--owner-candidate-lifecycle-v1) is committed as `3d079b9d`; this completes only the owner-review subphase, not all Phase 4 or privacy gates. **Phase 5A** [request-local projection foundation](#phase-5a--request-local-projection-foundation) is complete/tested, ready to commit, without enabling a consumer.
 
 This is **not** an enabled personal-memory feature or broad policy approval. No personal-memory model tool, HTTP route, personal-body UI, runtime user-context projection or ordinary automatic personal recall is enabled. Ordinary recall callers still use their existing empty user-audience contexts. The separate admin identity-mapping UI exposes no memory content. Phase 0's remaining product policy and the following gates must pass before end-user capture, publication or recall is enabled:
 
@@ -236,7 +236,7 @@ Evidence:
 
 ### Phase 4B — Owner candidate lifecycle v1
 
-**2026-10-22, owner-review lifecycle v1 subphase complete/tested; ready to commit, server-only and not deployed.** This finishes only the narrow owner-review subphase, not all Phase 4 or privacy policy. No personal HTTP route, model tool, body UI, runtime/model projection or provider exposure is enabled.
+**2026-10-22, owner-review lifecycle v1 subphase complete/tested, committed as `3d079b9d`; server-only and not deployed.** This finishes only the narrow owner-review subphase, not all Phase 4 or privacy policy. No personal HTTP route, model tool, body UI, runtime/model projection consumer or provider exposure is enabled.
 
 - **Typed owner decisions:** `CandidateReviewDecision::{Reject, Defer, Expire, Resume}`, `CandidateReviewId` and reference-only `CandidateReviewReceipt`. Every call, including replay, requires current membership and an exact current Bear/person/user/authority-generation binding; Bear Admin is no ownership override.
 - **Immutable review head:** append-only `personal_memory_candidate_reviews` records the decision, candidate/person, sequence, recording host's Bear (`recorded_on_bear_id`), actor user, authority generation and timestamp without copying the body. Every **new** decision compares the exact latest review ID (`None` initially). A matching **latest action** may instead return that latest immutable receipt without mutation even with an older expected reference. This is not originating-request-ID idempotency, and the receipt is **not a current active grant**.
@@ -249,7 +249,7 @@ Evidence: [memory review](../../services/den/crates/den-memory/src/personal_cand
 
 **Parent-confirmed Phase 4B validation (2026-10-22):** full **230 memory tests**, **20 `personal_memory` service tests** and **22 `identity_reconnection` web tests** passed, including the real review-ID/state bundle round trip. The initial chained formatting check failed only on formatting after memory tests passed; formatting was fixed. Final strict workspace Clippy/topology, formatting, documentation and diff checks passed (final warm run reported **0.48s**). SQLite `prepare-memory` passed with genuinely generated cache metadata.
 
-**Environment limitation:** bundled Postgres crash-loops with a bogus empty `postmaster.pid`; the parent left its data untouched. Service/web tests instead used fresh disposable Postgres containers, removed in `finally` cleanup. There are no new Postgres SQL queries; **no full wrapper/mixed `prepare --check` pass is claimed** with that infrastructure broken. No Docker image build, application service restart or deployment was performed. Commit this tested owner-review subphase before continuing to **Phase 5A request-local projection foundation**.
+**Environment limitation:** bundled Postgres crash-loops with a bogus empty `postmaster.pid`; the parent left its data untouched. Service/web tests instead used fresh disposable Postgres containers, removed in `finally` cleanup. There are no new Postgres SQL queries; **no full wrapper/mixed `prepare --check` pass is claimed** with that infrastructure broken. No Docker image build, application service restart or deployment was performed. This tested owner-review subphase is now committed as `3d079b9d`; the Phase 5A checkpoint follows below.
 
 ### Remaining Phase 4 gates
 
@@ -259,33 +259,29 @@ Retraction and terminal candidate closure retain protected evidence; they are **
 
 ## Phase 5 — Recall and model context
 
-**Phase 5A next, not complete:** after committing the tested Phase 4B subphase, continue with a **request-local projection foundation**. That foundation is not provider exposure or permission to enable ordinary personal recall; retention/deletion, replay and protected secondary-output gates still block enablement.
+### Phase 5A — Request-local projection foundation
 
-Update both initial context construction and on-demand recall. For a verified authenticated conversation, retrieval should consider, in addition to existing scopes:
+**2026-10-22, scoped foundation complete/tested, ready to commit; server-only, not deployed or Phase 5 exit-complete.** [Service context](../../services/den/crates/den-service/src/personal_memory/context.rs), [private types](../../services/den/crates/den-service/src/personal_memory/context/types.rs) and [rendering](../../services/den/crates/den-service/src/personal_memory/context/render.rs) provide programmatic `PersonalContextMode`, defaulting to `DefaultDisabled`. There is **no config/env flag, provider/runtime integration, HTTP route, model tool or personal-body UI consumer**. Disabled prepare/render returns before all Postgres/SQLite lookup or identity allocation; enabled calls reject Work, Curate and Observation origins before lookup.
 
-1. current source-local records;
-2. selected-hat curated records;
-3. unrestricted Bear/core records; and
-4. active Bear-wide records audience-gated to the current user entity, independent of hat.
+- **Trusted source, value-free reference:** callers supply current authenticated Bear/user/conversation/origin, never a name-derived source/actor namespace. Only `ChannelConversation`, `BrowserTaskSession` and `ArmatureConversation` are eligible. Preparation checks current Postgres membership and an owned active canonical conversation with a real same-Bear hat, then resolves one binding and uses that same binding for the head lookup. The privately constructed reference retains source, binding and expected head ID/state, **not a preferred-name value**; it has redacted custom `Debug` and no serde.
+- **Fresh authority, no silent switch:** render requires exact source equality, an eligible human origin, fresh membership/current-conversation rights, and the retained binding's current SQLite authority generation. It compares both latest head ID **and state**; retracted/suppressed heads retain their ID. Generation ABA, correction, retraction or any other head/state transition rejects the old reference rather than silently selecting a new identity/head. Only a still-active eligible name renders; a newly prepared retracted/suppressed head yields no name. The original publication conversation need not remain online/active.
+- **Private turn-only data:** the repository-registered [Markdown fragment](../../services/den/prompts/fragments/runtime/personal_context.md) goes through the existing strict turn compiler, with the preferred name JSON-quoted as inline data, never template source or authority. Rendered text includes no IDs, provenance or name hash. `RenderedPersonalContext` has redacted `Debug`, no serde and an exact Unicode `char_count`. No name is persisted to generic diagnostics, sessions, caches, transcripts or Bear-wide compiled prompts; ordinary bundles/bound compilation exclude the fragment. It advertises no unavailable tool names or candidate workflow. Rendering releases its locks before returning and is **not a provider lease**.
 
-Projection must be compact and legible, for example:
+**Final parent-observed validation:** **31 `personal_memory` service tests passed** (20 prior + seven new authority/context + four pure rendering/compiler), as did **22 `identity_reconnection` web tests**. The actual **v4** export/import/reconnection round trip now prepares/renders the same eligible name in a fresh real Postgres destination conversation with a real hat after source-offline reconnection, with capture false; retraction makes the old reference stale and a fresh reference yields no name. The prior **230 memory-test** checkpoint is unchanged, not a new Phase 5A run: this phase edits no memory/schema code.
 
-```text
-## User context
-- The authenticated user prefers to be called Hans.
-```
+Full strict workspace lint/topology passed (final warm run **0.88s**), alongside formatting, docs and diff checks. Independent review found no blockers and ran no Cargo checks. **Zero new SQL, dependencies or cache metadata**; no Cargo, env or config changes. Tests used disposable Postgres containers stopped in `finally`; bundled Postgres's invalid `postmaster.pid` and data remain untouched. No production image build or deployment. The parent will commit this scoped foundation before continuing to Phase 5B; provider transport remains blocked on 5B typed failure containment, then 5C replay/secondary-output/in-flight gates.
 
-Do not include source transcript excerpts, account identifiers, raw provenance, or another user's personal facts. Provenance should be available only through authorized diagnostic/curation views.
+### Phase 5B — Provider-error containment (next, gated)
 
-Update managed model-facing instructions to say:
+Provider-error containment has been investigated; typed failures and failure sanitization are still needed before any request integration. **No actual preferred-name provider dispatch is allowed** until this and Phase 5C's gates pass. Do not let rendered context, request bodies or provider echoes reach errors, diagnostics or generic persisted outputs.
 
-- session identity is authoritative and must not be inferred from text;
-- durable, explicit user preferences and “remember this” requests use the personal-fact candidate surface;
-- sensitive facts require conservative handling;
-- ordinary source-local notes are not equivalent to cross-conversation personal context; and
-- the model must not retrieve, write, or guess another user's personal context.
+### Phase 5C — Typed replay, derivation and in-flight gates (pending)
 
-**Exit criteria:** a fresh conversation under a different hat for the same user receives the approved context; another user on the same Bear does not.
+Require typed replay/dependency handling, audience-preserving derivation and correction/retraction handling for in-flight requests before provider exposure. A request-local render is neither replay-safe persistence nor authorization for later dispatch. Broader Phase 4 retention, hard erasure, protected secondary outputs and removal gates remain open.
+
+**Remaining Phase 5 target:** integrate initial context and on-demand recall only after those gates, adding active current-user-audience records alongside existing source-local, selected-hat and unrestricted Bear/core scopes. Never project source excerpts, account IDs, raw provenance or another user's facts. Managed instructions must keep authenticated session identity authoritative and distinguish source-local notes from personal context; advertise a candidate/tool workflow only when that tool actually exists and is available.
+
+**Exit criteria (not met):** a fresh conversation under a different hat for the same user receives approved context through the authorized model path, another user does not, and provider failures, replay, derivation and in-flight removal preserve protection. Phase 5A service tests alone do not complete this exit.
 
 ## Phase 6 — User and operator controls
 
@@ -384,8 +380,8 @@ At that prior checkpoint, SQLite `prepare-memory` and mixed-workspace all-target
 2. Land entity resolution and typed `AccessContext`.
 3. Land audience-gated storage/read enforcement with exhaustive isolation tests.
 4. Complete authorized export/restore policy, portable identity selection/provenance, and Phase 6A reconnection with Alice/Bob round-trip and destination-conflict tests.
-5. Phase 4A backend is committed as `f64386448`. Phase 4B owner-review lifecycle v1 is complete/tested and ready to commit; broader Phase 4 privacy gates remain open. Keep policy, derivation and secondary-output gates before any end-user/model enablement, preserving the portable-person/host-binding distinction.
-6. After that commit, build the Phase 5A request-local projection foundation; cross-hat projection/on-demand retrieval and provider exposure remain gated, not delivered.
+5. Phase 4A backend is committed as `f64386448`; Phase 4B owner-review lifecycle v1 is committed as `3d079b9d`. Broader Phase 4 privacy gates remain open. Keep policy, derivation and secondary-output gates before any end-user/model enablement, preserving the portable-person/host-binding distinction.
+6. Phase 5A scoped request-local projection foundation is complete/tested, ready to commit, including the extended v4 bundle regression and final lint/topology checks. Commit it, then continue Phase 5B typed provider-failure containment and Phase 5C typed replay/secondary-output/derivation/in-flight gates before any actual preferred-name provider dispatch; runtime integration and ordinary recall remain disabled.
 7. Add user controls, audits, metrics, and staged rollout; do not enable end-user capture, publication or recall until the required portability and other release gates pass.
 
 No existing conversation-local note should be silently reclassified during this work. Existing data needs an explicit, auditable migration or a new user request before it becomes audience-gated Bear-wide personal context.

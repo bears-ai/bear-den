@@ -5,6 +5,7 @@
 //! held through the owner-bound SQLite operation. Capture stays disabled by default.
 
 mod authority;
+mod context;
 mod publication;
 mod review;
 #[cfg(test)]
@@ -21,6 +22,10 @@ use den_memory::{
 use sqlx::PgPool;
 use uuid::Uuid;
 
+pub use context::{
+    prepare_personal_context, render_personal_context, PersonalContextMode,
+    PersonalContextReference, PersonalContextSource, RenderedPersonalContext,
+};
 pub use den_memory::{
     personal_candidates::{
         CandidateReviewDecision, CandidateReviewId, CandidateReviewReceipt, PersonalCandidate,

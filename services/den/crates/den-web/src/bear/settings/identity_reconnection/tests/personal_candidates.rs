@@ -457,6 +457,71 @@ async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_p
     )
     .await;
     assert_generic_hidden(&destination, publication, &fixture.private_record).await;
+    // A fresh destination conversation can prepare private context without the source host.
+    use den_service::personal_memory::{
+        prepare_personal_context, render_personal_context, PersonalContextMode,
+        PersonalContextSource,
+    };
+    let imported_bear = BearId::new(imported.id);
+    let context_hat = den_service::bears::hats::create_hat(
+        &fixture.pool,
+        imported_bear,
+        fixture.actor,
+        "Context",
+        "Organize the destination conversation",
+    )
+    .await
+    .unwrap();
+    let conversation = den_service::conversation::persistence::ensure_conversation_for_external_id(
+        &fixture.pool,
+        imported.id,
+        Some(fixture.destination.get()),
+        &format!("personal-context-{}", Uuid::new_v4()),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    den_service::bears::hats::bindings::bind_conversation_hat(
+        &fixture.pool,
+        imported_bear,
+        conversation.id,
+        context_hat.id,
+    )
+    .await
+    .unwrap();
+    let context_source = PersonalContextSource {
+        bear_id: imported_bear,
+        user_id: fixture.destination,
+        conversation_id: conversation.id,
+        origin: den_core::TurnExecutionOrigin::ChannelConversation,
+    };
+    let context_mode = PersonalContextMode::OwnerApprovedPreferredName;
+    let context_reference = prepare_personal_context(
+        &fixture.pool,
+        fixture.state.memory_stores().unwrap(),
+        context_mode,
+        context_source,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(context_reference.fact_id(), Some(publication.fact_id));
+    let rendered = render_personal_context(
+        &fixture.pool,
+        fixture.state.memory_stores().unwrap(),
+        context_mode,
+        context_source,
+        &context_reference,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(rendered
+        .as_str()
+        .contains(&serde_json::to_string(PUBLISHED_NAME).unwrap()));
+    assert!(!capture_enabled(&destination, &owner).await.unwrap());
+
     let destination_bob = resolve_authenticated_user_entity(&destination, UserId::new(4343))
         .await
         .unwrap();
@@ -516,6 +581,37 @@ async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_p
     )
     .await;
     // Replay needs the current destination binding, not an online original source account.
+    assert!(
+        render_personal_context(
+            &fixture.pool,
+            fixture.state.memory_stores().unwrap(),
+            context_mode,
+            context_source,
+            &context_reference,
+        )
+        .await
+        .is_err(),
+        "the active pre-removal context must be stale"
+    );
+    let removed_context = prepare_personal_context(
+        &fixture.pool,
+        fixture.state.memory_stores().unwrap(),
+        context_mode,
+        context_source,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(render_personal_context(
+        &fixture.pool,
+        fixture.state.memory_stores().unwrap(),
+        context_mode,
+        context_source,
+        &removed_context,
+    )
+    .await
+    .unwrap()
+    .is_none());
     let replay_proof = VerifiedPersonalSource::for_authorized_conversation(
         &owner,
         imported_candidate.source_conversation_id(),
