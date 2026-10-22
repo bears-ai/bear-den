@@ -16,6 +16,9 @@ use sqlx::{
 use std::time::Duration;
 use uuid::Uuid;
 
+#[path = "context_freshness.rs"]
+mod freshness;
+
 const ALICE_NAME: &str = "AliceContextSentinel-7C92";
 const BOB_NAME: &str = "BobContextSentinel-4A18";
 
@@ -95,6 +98,21 @@ async fn render(
     .await
 }
 
+async fn revalidate(
+    fixture: &Fixture,
+    source: PersonalContextSource,
+    reference: &PersonalContextReference,
+) -> Result<(), DenError> {
+    service::revalidate_personal_context(
+        &fixture.pool,
+        &fixture.stores,
+        PersonalContextMode::OwnerApprovedPreferredName,
+        source,
+        reference,
+    )
+    .await
+}
+
 #[tokio::test]
 async fn disabled_and_nonhuman_context_preparation_do_not_touch_either_store() {
     let pool = closed_pool().await;
@@ -159,6 +177,7 @@ async fn context_is_owner_bound_and_reference_mismatches_or_disabled_render_need
         format!("{reference:?}"),
         "PersonalContextReference([redacted])"
     );
+    revalidate(&fixture, alice, &reference).await.unwrap();
     let rendered = render(&fixture, alice, &reference).await.unwrap().unwrap();
     assert!(rendered.as_str().contains(ALICE_NAME));
     assert_eq!(rendered.char_count(), rendered.as_str().chars().count());
@@ -202,6 +221,9 @@ async fn context_is_owner_bound_and_reference_mismatches_or_disabled_render_need
     )
     .await;
     let bob_reference = prepare(&fixture, bob).await.unwrap();
+    revalidate(&fixture, bob, &bob_reference).await.unwrap();
+    assert_denied(revalidate(&fixture, alice, &bob_reference).await);
+    assert_denied(revalidate(&fixture, bob, &reference).await);
     let bob_rendered = render(&fixture, bob, &bob_reference)
         .await
         .unwrap()
@@ -248,6 +270,16 @@ async fn context_is_owner_bound_and_reference_mismatches_or_disabled_render_need
         },
     ];
     for source in std::iter::once(alice).chain(mismatches) {
+        assert_denied(
+            service::revalidate_personal_context(
+                &pool,
+                &stores,
+                PersonalContextMode::DefaultDisabled,
+                source,
+                &reference,
+            )
+            .await,
+        );
         assert!(service::render_personal_context(
             &pool,
             &stores,
@@ -259,6 +291,16 @@ async fn context_is_owner_bound_and_reference_mismatches_or_disabled_render_need
         .unwrap()
         .is_none());
         if source != alice {
+            assert_denied(
+                service::revalidate_personal_context(
+                    &pool,
+                    &stores,
+                    PersonalContextMode::OwnerApprovedPreferredName,
+                    source,
+                    &reference,
+                )
+                .await,
+            );
             let result = service::render_personal_context(
                 &pool,
                 &stores,
@@ -316,6 +358,7 @@ async fn fresh_owned_conversations_across_hats_and_human_origins_share_only_the_
         };
         assert_ne!(fresh.conversation_id, original.conversation_id);
         let reference = prepare(&fixture, fresh).await.unwrap();
+        revalidate(&fixture, fresh, &reference).await.unwrap();
         assert_eq!(reference.fact_id(), Some(publication.fact_id));
         let rendered = render(&fixture, fresh, &reference).await.unwrap().unwrap();
         assert!(rendered.as_str().contains(ALICE_NAME));
@@ -340,9 +383,12 @@ async fn head_creation_correction_retraction_and_optout_require_new_context_refe
     let empty = prepare(&fixture, source).await.unwrap();
     assert_eq!(empty.fact_id(), None);
     assert!(render(&fixture, source, &empty).await.unwrap().is_none());
+    assert_denied(revalidate(&fixture, source, &empty).await);
     let original = publish_name(&fixture, source, fixture.source, ALICE_NAME, None).await;
     assert_denied(render(&fixture, source, &empty).await);
+    assert_denied(revalidate(&fixture, source, &empty).await);
     let first = prepare(&fixture, source).await.unwrap();
+    revalidate(&fixture, source, &first).await.unwrap();
     let corrected = publish_name(
         &fixture,
         source,
@@ -352,7 +398,9 @@ async fn head_creation_correction_retraction_and_optout_require_new_context_refe
     )
     .await;
     assert_denied(render(&fixture, source, &first).await);
+    assert_denied(revalidate(&fixture, source, &first).await);
     let second = prepare(&fixture, source).await.unwrap();
+    revalidate(&fixture, source, &second).await.unwrap();
     let current = render(&fixture, source, &second).await.unwrap().unwrap();
     assert!(current.as_str().contains("AliciaContextSentinel-2B65"));
     assert!(!current.as_str().contains(ALICE_NAME));
@@ -366,8 +414,10 @@ async fn head_creation_correction_retraction_and_optout_require_new_context_refe
     .await
     .unwrap());
     assert_denied(render(&fixture, source, &second).await);
+    assert_denied(revalidate(&fixture, source, &second).await);
     let retracted = prepare(&fixture, source).await.unwrap();
     assert_eq!(retracted.fact_id(), Some(corrected.fact_id));
+    assert_denied(revalidate(&fixture, source, &retracted).await);
     assert!(render(&fixture, source, &retracted)
         .await
         .unwrap()
@@ -381,7 +431,9 @@ async fn head_creation_correction_retraction_and_optout_require_new_context_refe
     )
     .await;
     assert_denied(render(&fixture, source, &retracted).await);
+    assert_denied(revalidate(&fixture, source, &retracted).await);
     let third = prepare(&fixture, source).await.unwrap();
+    revalidate(&fixture, source, &third).await.unwrap();
     service::set_capture_enabled(
         &fixture.pool,
         &fixture.stores,
@@ -392,8 +444,10 @@ async fn head_creation_correction_retraction_and_optout_require_new_context_refe
     .await
     .unwrap();
     assert_denied(render(&fixture, source, &third).await);
+    assert_denied(revalidate(&fixture, source, &third).await);
     let opted_out = prepare(&fixture, source).await.unwrap();
     assert_eq!(opted_out.fact_id(), Some(replacement.fact_id));
+    assert_denied(revalidate(&fixture, source, &opted_out).await);
     assert!(render(&fixture, source, &opted_out)
         .await
         .unwrap()
@@ -407,6 +461,7 @@ async fn head_creation_correction_retraction_and_optout_require_new_context_refe
     )
     .await
     .unwrap();
+    assert_denied(revalidate(&fixture, source, &opted_out).await);
     assert!(render(&fixture, source, &opted_out)
         .await
         .unwrap()
@@ -420,6 +475,7 @@ async fn context_rechecks_current_conversation_and_membership_rights_on_every_re
     let source = source(&fixture);
     publish_name(&fixture, source, fixture.source, ALICE_NAME, None).await;
     let reference = prepare(&fixture, source).await.unwrap();
+    revalidate(&fixture, source, &reference).await.unwrap();
     for (status, owner, hat) in [
         ("archived", Some(fixture.owner), Some(fixture.hat)),
         ("active", Some(fixture.other), Some(fixture.hat)),
@@ -428,6 +484,7 @@ async fn context_rechecks_current_conversation_and_membership_rights_on_every_re
         fixture.set_conversation_state(status, owner, hat).await;
         assert_denied(prepare(&fixture, source).await);
         assert_denied(render(&fixture, source, &reference).await);
+        assert_denied(revalidate(&fixture, source, &reference).await);
     }
     fixture
         .set_conversation_state("active", Some(fixture.owner), Some(fixture.hat))
@@ -436,11 +493,13 @@ async fn context_rechecks_current_conversation_and_membership_rights_on_every_re
         .await
         .unwrap()
         .is_some());
+    revalidate(&fixture, source, &reference).await.unwrap();
     db::revoke_membership(&fixture.pool, fixture.owner.get(), fixture.bear.as_uuid())
         .await
         .unwrap();
     assert_denied(prepare(&fixture, source).await);
     assert_denied(render(&fixture, source, &reference).await);
+    assert_denied(revalidate(&fixture, source, &reference).await);
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -471,7 +530,9 @@ async fn context_does_not_require_the_original_publication_conversation_to_remai
         .unwrap()
         .as_str()
         .contains(ALICE_NAME));
+    revalidate(&fixture, fresh, &reference).await.unwrap();
     let fresh_reference = prepare(&fixture, fresh).await.unwrap();
+    revalidate(&fixture, fresh, &fresh_reference).await.unwrap();
     assert!(render(&fixture, fresh, &fresh_reference)
         .await
         .unwrap()
@@ -494,6 +555,7 @@ async fn reconnected_same_person_with_capture_disabled_never_revives_an_old_cont
     let source = source(&fixture);
     let publication = publish_name(&fixture, source, fixture.source, ALICE_NAME, None).await;
     let old = prepare(&fixture, source).await.unwrap();
+    revalidate(&fixture, source, &old).await.unwrap();
     let store = fixture.store().await;
     let binding = fixture.binding(fixture.owner).await;
     // This fixture supplies trusted Admin/member authorization to the memory boundary;
@@ -505,6 +567,7 @@ async fn reconnected_same_person_with_capture_disabled_never_revives_an_old_cont
         .await
         .unwrap();
     assert_denied(render(&fixture, source, &old).await);
+    assert_denied(revalidate(&fixture, source, &old).await);
     let reconnect = review_reconnection(&store, fixture.other, binding.entity_id(), fixture.owner)
         .await
         .unwrap();
@@ -515,7 +578,9 @@ async fn reconnected_same_person_with_capture_disabled_never_revives_an_old_cont
     assert_eq!(current_binding.entity_id(), binding.entity_id());
     assert!(!capture_enabled(&store, &current_binding).await.unwrap());
     assert_denied(render(&fixture, source, &old).await);
+    assert_denied(revalidate(&fixture, source, &old).await);
     let fresh = prepare(&fixture, source).await.unwrap();
+    revalidate(&fixture, source, &fresh).await.unwrap();
     assert_eq!(fresh.fact_id(), Some(publication.fact_id));
     assert!(render(&fixture, source, &fresh)
         .await

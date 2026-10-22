@@ -21,6 +21,13 @@ pub enum PersonalFactState {
     Suppressed,
 }
 
+/// Body-free current-head revision metadata. The fact ID is a locator, not an access grant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PersonalFactVersion {
+    pub fact_id: PersonalFactId,
+    pub state: PersonalFactState,
+}
+
 /// The head version remains addressable after retraction, preventing stale/ABA corrections.
 /// Only an eligible active head carries a value. No generic serialization or model projection.
 #[derive(Clone, Debug)]

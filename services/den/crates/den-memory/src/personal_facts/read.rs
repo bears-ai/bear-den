@@ -2,7 +2,9 @@ use den_core::DenError;
 use sqlx::SqliteConnection;
 use uuid::Uuid;
 
-use super::{PersonalFactHead, PersonalFactId, PersonalFactState, PublicationReceipt};
+use super::{
+    PersonalFactHead, PersonalFactId, PersonalFactState, PersonalFactVersion, PublicationReceipt,
+};
 use crate::{
     descriptors,
     personal_candidates::{ensure_current, PersonalCandidateId, PreferredName},
@@ -30,9 +32,28 @@ pub(super) struct PublicationRow {
 }
 
 impl PublicationRow {
+    fn fact_id(&self) -> Result<PersonalFactId, DenError> {
+        Ok(PersonalFactId(
+            Uuid::parse_str(&self.memory_id).map_err(|_| invalid())?,
+        ))
+    }
+
+    fn version(&self) -> Result<PersonalFactVersion, DenError> {
+        Ok(PersonalFactVersion {
+            fact_id: self.fact_id()?,
+            state: if self.retracted {
+                PersonalFactState::Retracted
+            } else if self.eligible {
+                PersonalFactState::Active
+            } else {
+                PersonalFactState::Suppressed
+            },
+        })
+    }
+
     pub fn receipt(&self) -> Result<PublicationReceipt, DenError> {
         Ok(PublicationReceipt {
-            fact_id: PersonalFactId(Uuid::parse_str(&self.memory_id).map_err(|_| invalid())?),
+            fact_id: self.fact_id()?,
             candidate_id: PersonalCandidateId(
                 Uuid::parse_str(&self.candidate_id).map_err(|_| invalid())?,
             ),
@@ -104,6 +125,23 @@ pub(super) async fn publication(
     .await?)
 }
 
+/// Read current-head revision metadata without loading or parsing the canonical body.
+/// Authority and publication state are checked in one snapshot; the locator grants no access.
+pub async fn current_preferred_name_version(
+    store: &BearMemoryStore,
+    binding: &AuthenticatedUserEntity,
+) -> Result<Option<PersonalFactVersion>, DenError> {
+    let mut tx = store.pool().begin().await?;
+    ensure_current(&mut tx, store, binding).await?;
+    let bear_id = store.bear_id().to_string();
+    let version = publication(&mut tx, &bear_id, Some(binding.entity_id()), None, None)
+        .await?
+        .map(|row| row.version())
+        .transpose()?;
+    tx.commit().await?;
+    Ok(version)
+}
+
 pub async fn current_preferred_name(
     store: &BearMemoryStore,
     binding: &AuthenticatedUserEntity,
@@ -116,14 +154,8 @@ pub async fn current_preferred_name(
         return Ok(None);
     };
     let receipt = row.receipt()?;
-    let state = if row.retracted {
-        PersonalFactState::Retracted
-    } else if row.eligible {
-        PersonalFactState::Active
-    } else {
-        PersonalFactState::Suppressed
-    };
-    let preferred_name = if state == PersonalFactState::Active {
+    let version = row.version()?;
+    let preferred_name = if version.state == PersonalFactState::Active {
         let value = sqlx::query_scalar!(
             "SELECT content_text FROM memory_records WHERE bear_id = ? AND memory_id = ?",
             bear_id,
@@ -141,9 +173,9 @@ pub async fn current_preferred_name(
     };
     tx.commit().await?;
     Ok(Some(PersonalFactHead {
-        fact_id: receipt.fact_id,
+        fact_id: version.fact_id,
         candidate_id: receipt.candidate_id,
-        state,
+        state: version.state,
         preferred_name,
     }))
 }

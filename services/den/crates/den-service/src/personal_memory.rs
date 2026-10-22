@@ -23,8 +23,8 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 pub use context::{
-    prepare_personal_context, render_personal_context, PersonalContextMode,
-    PersonalContextReference, PersonalContextSource, RenderedPersonalContext,
+    prepare_personal_context, render_personal_context, revalidate_personal_context,
+    PersonalContextMode, PersonalContextReference, PersonalContextSource, RenderedPersonalContext,
 };
 pub use den_memory::{
     personal_candidates::{

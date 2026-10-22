@@ -11,7 +11,7 @@ pub use types::{
 
 use den_core::{DenError, TurnExecutionOrigin};
 use den_memory::{
-    personal_facts::{self, PersonalFactState},
+    personal_facts::{self, PersonalFactId, PersonalFactState},
     resolve_authenticated_user_entity, MemoryStoreManager,
 };
 use sqlx::PgPool;
@@ -31,6 +31,37 @@ fn require_human_conversation(source: PersonalContextSource) -> Result<(), DenEr
         | TurnExecutionOrigin::InternalCuration
         | TurnExecutionOrigin::InboundObservation => Err(unauthorized()),
     }
+}
+
+fn require_reference_source(
+    source: PersonalContextSource,
+    reference: &PersonalContextReference,
+) -> Result<(), DenError> {
+    require_human_conversation(source)?;
+    if source != reference.source {
+        return Err(unauthorized());
+    }
+    Ok(())
+}
+
+pub(super) fn require_active_context_head(
+    expected: Option<(PersonalFactId, PersonalFactState)>,
+) -> Result<(), DenError> {
+    match expected {
+        Some((_, PersonalFactState::Active)) => Ok(()),
+        _ => Err(unauthorized()),
+    }
+}
+
+async fn lock_context_rights(
+    pool: &PgPool,
+    source: PersonalContextSource,
+) -> Result<authority::LockedMember, DenError> {
+    let mut locked = authority::lock_member(pool, source.bear_id, source.user_id).await?;
+    locked
+        .lock_owned_conversation(source.conversation_id)
+        .await?;
+    Ok(locked)
 }
 
 /// Snapshot only a trusted human's owned active conversation, exact binding and current head.
@@ -53,10 +84,7 @@ pub async fn prepare_personal_context(
     let pool = pool.clone();
     let stores = stores.clone();
     tokio::spawn(async move {
-        let mut locked = authority::lock_member(&pool, source.bear_id, source.user_id).await?;
-        locked
-            .lock_owned_conversation(source.conversation_id)
-            .await?;
+        let locked = lock_context_rights(&pool, source).await?;
         let store = stores.store_for_bear(source.bear_id.as_uuid()).await?;
         let binding = resolve_authenticated_user_entity(&store, source.user_id).await?;
         let head = personal_facts::current_preferred_name(&store, &binding).await?;
@@ -72,6 +100,49 @@ pub async fn prepare_personal_context(
     .map_err(|_| {
         DenError::System(
             "Personal-memory context preparation is unavailable; retry preparation.".into(),
+        )
+    })?
+}
+
+/// Check freshness of an active retained reference without reading a name or rendering text.
+///
+/// Disabled mode, a source mismatch, a nonhuman origin or an inactive snapshot denies before
+/// I/O. Current rights and the OLD binding's generation and exact head ID/state are rechecked;
+/// this never prepares a replacement identity or selects a newer fact. All locks are released
+/// before returning. Success is an observation, not a provider lease or an in-flight safeguard.
+/// No inference or private-context consumer is enabled by this API.
+pub async fn revalidate_personal_context(
+    pool: &PgPool,
+    stores: &MemoryStoreManager,
+    mode: PersonalContextMode,
+    source: PersonalContextSource,
+    reference: &PersonalContextReference,
+) -> Result<(), DenError> {
+    if mode == PersonalContextMode::DefaultDisabled {
+        return Err(unauthorized());
+    }
+    require_reference_source(source, reference)?;
+    require_active_context_head(reference.expected)?;
+    let pool = pool.clone();
+    let stores = stores.clone();
+    let reference = reference.clone();
+    tokio::spawn(async move {
+        let locked = lock_context_rights(&pool, source).await?;
+        let store = stores.store_for_bear(source.bear_id.as_uuid()).await?;
+        let version =
+            personal_facts::current_preferred_name_version(&store, &reference.binding).await?;
+        let checked = if version.map(|head| (head.fact_id, head.state)) == reference.expected {
+            Ok(())
+        } else {
+            Err(unauthorized())
+        };
+        drop(locked);
+        checked
+    })
+    .await
+    .map_err(|_| {
+        DenError::System(
+            "Personal-memory context revalidation is unavailable; retry the check.".into(),
         )
     })?
 }
@@ -94,18 +165,12 @@ pub async fn render_personal_context(
     if mode == PersonalContextMode::DefaultDisabled {
         return Ok(None);
     }
-    require_human_conversation(source)?;
-    if source != reference.source {
-        return Err(unauthorized());
-    }
+    require_reference_source(source, reference)?;
     let pool = pool.clone();
     let stores = stores.clone();
     let reference = reference.clone();
     tokio::spawn(async move {
-        let mut locked = authority::lock_member(&pool, source.bear_id, source.user_id).await?;
-        locked
-            .lock_owned_conversation(source.conversation_id)
-            .await?;
+        let locked = lock_context_rights(&pool, source).await?;
         let store = stores.store_for_bear(source.bear_id.as_uuid()).await?;
         let head = personal_facts::current_preferred_name(&store, &reference.binding).await?;
         if head.as_ref().map(|head| (head.fact_id, head.state)) != reference.expected {

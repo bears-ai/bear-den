@@ -188,7 +188,7 @@ async fn assert_source_unchanged(
 async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_provenance(
     pool: PgPool,
 ) {
-    let fixture = fixture(pool).await;
+    let fixture = Box::pin(fixture(pool)).await;
     assert_ne!(fixture.actor, fixture.destination);
     let source = fixture.store().await;
     let alice = resolve_authenticated_user_entity(&source, fixture.actor)
@@ -459,8 +459,8 @@ async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_p
     assert_generic_hidden(&destination, publication, &fixture.private_record).await;
     // A fresh destination conversation can prepare private context without the source host.
     use den_service::personal_memory::{
-        prepare_personal_context, render_personal_context, PersonalContextMode,
-        PersonalContextSource,
+        prepare_personal_context, render_personal_context, revalidate_personal_context,
+        PersonalContextMode, PersonalContextSource,
     };
     let imported_bear = BearId::new(imported.id);
     let context_hat = den_service::bears::hats::create_hat(
@@ -507,6 +507,15 @@ async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_p
     .unwrap()
     .unwrap();
     assert_eq!(context_reference.fact_id(), Some(publication.fact_id));
+    revalidate_personal_context(
+        &fixture.pool,
+        fixture.state.memory_stores().unwrap(),
+        context_mode,
+        context_source,
+        &context_reference,
+    )
+    .await
+    .unwrap();
     let rendered = render_personal_context(
         &fixture.pool,
         fixture.state.memory_stores().unwrap(),
@@ -581,6 +590,15 @@ async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_p
     )
     .await;
     // Replay needs the current destination binding, not an online original source account.
+    assert!(revalidate_personal_context(
+        &fixture.pool,
+        fixture.state.memory_stores().unwrap(),
+        context_mode,
+        context_source,
+        &context_reference,
+    )
+    .await
+    .is_err());
     assert!(
         render_personal_context(
             &fixture.pool,
@@ -612,6 +630,15 @@ async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_p
     .await
     .unwrap()
     .is_none());
+    assert!(revalidate_personal_context(
+        &fixture.pool,
+        fixture.state.memory_stores().unwrap(),
+        context_mode,
+        context_source,
+        &removed_context,
+    )
+    .await
+    .is_err());
     let replay_proof = VerifiedPersonalSource::for_authorized_conversation(
         &owner,
         imported_candidate.source_conversation_id(),

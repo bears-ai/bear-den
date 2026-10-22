@@ -26,6 +26,7 @@ mod fixtures;
 mod isolation;
 mod lifecycle;
 mod publication;
+mod revision;
 mod support;
 
 use support::*;

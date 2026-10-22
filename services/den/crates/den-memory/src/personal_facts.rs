@@ -9,9 +9,11 @@ mod retract;
 mod types;
 mod write;
 
-pub use read::current_preferred_name;
+pub use read::{current_preferred_name, current_preferred_name_version};
 pub use retract::retract_preferred_name;
-pub use types::{PersonalFactHead, PersonalFactId, PersonalFactState, PublicationReceipt};
+pub use types::{
+    PersonalFactHead, PersonalFactId, PersonalFactState, PersonalFactVersion, PublicationReceipt,
+};
 pub use write::publish_preferred_name;
 
 pub(crate) use read::{ensure_generic_mutation_allowed, publication_access};
