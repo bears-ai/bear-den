@@ -416,6 +416,19 @@ pub trait RetrievalService {
 
 /// Classify a runtime-facing error into a stable Den-owned category for runner policy.
 pub fn classify_runtime_error(err: &DenError) -> RuntimeErrorCategory {
+    if let DenError::Provider(failure) = err {
+        return if failure.is_timeout() {
+            RuntimeErrorCategory::Timeout
+        } else if matches!(failure.kind(), den_core::ProviderFailureKind::Unavailable)
+            || failure
+                .http_status()
+                .is_some_and(|status| status.as_u16() == 503)
+        {
+            RuntimeErrorCategory::Unavailable
+        } else {
+            RuntimeErrorCategory::Internal
+        };
+    }
     let message = err.to_string().to_ascii_lowercase();
     if message.contains("waiting on an unresolved tool approval")
         || message.contains("waiting for approval")
@@ -445,10 +458,17 @@ pub fn runtime_error_is_conflict_pending_approval(err: &DenError) -> bool {
 }
 
 pub fn runtime_error_is_no_active_runs_cancel(err: &DenError) -> bool {
+    if matches!(err, DenError::Provider(_)) {
+        return false;
+    }
     err.to_string()
         .to_ascii_lowercase()
         .contains("no active runs to cancel")
 }
+
+#[cfg(test)]
+#[path = "provider_failure_tests.rs"]
+mod provider_failure_tests;
 
 #[cfg(test)]
 mod tests {

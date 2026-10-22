@@ -1,9 +1,62 @@
+use den_core::{DenError, ProviderFailure};
 use den_service::bears::prompt_fragments::{
     render_turn_fragment, repository_prompt_fragment_registry,
 };
 use serde_json::{json, Value};
 
 const LOG_SAMPLE_CHARS: usize = 2_000;
+
+/// Keep provider diagnostics typed until the persistence-input projection is built.
+#[derive(Debug)]
+pub enum RuntimeFailureInput {
+    Message(String),
+    Provider(ProviderFailure),
+}
+
+impl From<String> for RuntimeFailureInput {
+    fn from(message: String) -> Self {
+        Self::Message(message)
+    }
+}
+
+impl From<DenError> for RuntimeFailureInput {
+    fn from(error: DenError) -> Self {
+        match error {
+            DenError::Provider(failure) => Self::Provider(failure),
+            other => Self::Message(other.to_string()),
+        }
+    }
+}
+
+impl RuntimeFailureInput {
+    pub fn message(&self) -> String {
+        match self {
+            Self::Message(message) => message.clone(),
+            Self::Provider(failure) => failure.to_string(),
+        }
+    }
+
+    pub fn projection(
+        &self,
+        reason: &str,
+        run_id: &str,
+        bear_name: &str,
+        context: Option<Value>,
+    ) -> RuntimeOperationalOutcomeProjection {
+        let provider = match self {
+            Self::Provider(failure) => Some(failure),
+            Self::Message(_) => None,
+        };
+        project_run_failure(
+            reason,
+            &self.message(),
+            run_id,
+            bear_name,
+            context,
+            provider,
+        )
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeOperationalOutcomeProjection {
@@ -125,24 +178,37 @@ pub fn run_failure_projection(
     bear_name: &str,
     context: Option<Value>,
 ) -> RuntimeOperationalOutcomeProjection {
-    let diagnostic_context = failure_context_with_diagnostics(reason, message, context);
+    project_run_failure(reason, message, run_id, bear_name, context, None)
+}
+
+fn project_run_failure(
+    reason: &str,
+    message: &str,
+    run_id: &str,
+    bear_name: &str,
+    context: Option<Value>,
+    provider: Option<&ProviderFailure>,
+) -> RuntimeOperationalOutcomeProjection {
+    let diagnostic_context = project_failure_context(reason, message, context, provider);
     let (model_summary, content) =
         normalized_operational_outcome(reason, message, run_id, diagnostic_context.as_ref());
     RuntimeOperationalOutcomeProjection {
         model_summary,
         content,
-        user_message: run_failed_user_message(
+        user_message: project_failed_user_message(
             reason,
             message,
             bear_name,
             diagnostic_context.as_ref(),
+            provider,
         )
         .map(format_den_status),
-        history_marker: run_failed_history_marker(
+        history_marker: project_failed_user_message(
             reason,
             message,
             bear_name,
             diagnostic_context.as_ref(),
+            provider,
         )
         .map(format_den_status),
         diagnostic_context,
@@ -220,6 +286,16 @@ pub fn run_failed_user_message(
     message: &str,
     bear_name: &str,
     context: Option<&Value>,
+) -> Option<String> {
+    project_failed_user_message(reason, message, bear_name, context, None)
+}
+
+fn project_failed_user_message(
+    reason: &str,
+    message: &str,
+    bear_name: &str,
+    context: Option<&Value>,
+    provider: Option<&ProviderFailure>,
 ) -> Option<String> {
     if reason == "command_outcome_unknown" {
         return Some(format!(
@@ -307,19 +383,25 @@ pub fn run_failed_user_message(
             display_bear_name(bear_name)
         ));
     }
-    if is_budget_or_loop_failure(reason, message) {
+    if provider.is_none() && is_budget_or_loop_failure(reason, message) {
         return Some(format!(
             "{} stopped this turn after it ran too long. Recent tool results were preserved, but no final answer was delivered. Start a fresh turn to continue safely.",
             display_bear_name(bear_name)
         ));
     }
-    if is_llm_provider_retry_exhausted(message) {
+    if provider.map_or_else(
+        || is_llm_provider_retry_exhausted(message),
+        ProviderFailure::retry_exhausted,
+    ) {
         return Some(format!(
             "{} could not reach the LLM provider after retrying this turn. Den already waited 2 seconds, then 4 seconds, then 54 seconds before giving up. You can send another message to retry, or close this session if you do not want to wait for another timeout.",
             display_bear_name(bear_name)
         ));
     }
-    if is_llm_stream_idle_timeout(reason, message) {
+    if provider.map_or_else(
+        || is_llm_stream_idle_timeout(reason, message),
+        ProviderFailure::is_idle_timeout,
+    ) {
         return Some(format!(
             "{} lost the LLM provider stream after it produced no data for 30 seconds. Recent tool results were preserved, but no final answer was delivered. You can send another message to retry, or close this session if you do not want to wait for another timeout.",
             display_bear_name(bear_name)
@@ -372,7 +454,19 @@ pub fn failure_context_with_diagnostics(
     message: &str,
     context: Option<Value>,
 ) -> Option<Value> {
+    project_failure_context(reason, message, context, None)
+}
+
+fn project_failure_context(
+    reason: &str,
+    message: &str,
+    context: Option<Value>,
+    provider: Option<&ProviderFailure>,
+) -> Option<Value> {
     let mut context = context.unwrap_or_else(|| json!({}));
+    if provider.is_some() && !context.is_object() {
+        context = json!({ "previous_context": context });
+    }
     let Some(object) = context.as_object_mut() else {
         return Some(json!({
             "diagnostic": {
@@ -386,7 +480,23 @@ pub fn failure_context_with_diagnostics(
         "reason": reason,
         "raw_message": message,
     });
-    if is_budget_or_loop_failure(reason, message) {
+    if let Some(failure) = provider {
+        diagnostic = json!({
+            "reason": reason,
+            "class": failure.kind().code(),
+            "provider_failure": failure,
+        });
+        if failure.retry_exhausted() {
+            diagnostic["class"] = json!("llm_provider_retry_exhausted");
+            diagnostic["model_action"] = json!("report_retry_pause_and_wait_for_user_retry");
+            diagnostic["retry_pauses_seconds"] = json!([2, 4, 54]);
+        } else if failure.is_idle_timeout() {
+            diagnostic["class"] = json!("llm_stream_idle_timeout");
+            diagnostic["model_action"] =
+                json!("wait_for_user_retry_after_reporting_stream_timeout");
+            diagnostic["idle_timeout_seconds"] = json!(30);
+        }
+    } else if is_budget_or_loop_failure(reason, message) {
         diagnostic["class"] = json!("turn_budget_exhausted");
         diagnostic["model_action"] = json!("none");
         if let Some(elapsed_ms) = numeric_message_field(message, "elapsed=") {
@@ -526,6 +636,10 @@ fn display_bear_name(bear_name: &str) -> &str {
         trimmed
     }
 }
+
+#[cfg(test)]
+#[path = "runtime_error_ux_provider_failure_tests.rs"]
+mod provider_failure_tests;
 
 #[cfg(test)]
 mod tests {

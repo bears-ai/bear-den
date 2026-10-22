@@ -12,7 +12,20 @@ use reqwest::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use den_core::{config::Config, DenError, ThinkingEffort};
+use den_core::{
+    config::Config, DenError, ProviderFailure, ProviderFailureKind, ProviderHttpStatus,
+    ProviderTransportKind, ThinkingEffort,
+};
+
+#[path = "provider_failure.rs"]
+pub mod provider_failure;
+use provider_failure::{
+    classify_stream_read_failure, classify_transport_failure, read_http_failure,
+};
+
+#[cfg(test)]
+#[path = "client_failure_tests.rs"]
+mod failure_tests;
 
 #[cfg(test)]
 use crate::model_registry;
@@ -186,14 +199,6 @@ pub struct ChatCompletionRequest {
     pub telemetry: Option<LlmRequestTelemetry>,
 }
 
-fn log_sample(value: &str, max_chars: usize) -> String {
-    let mut sample = value.chars().take(max_chars).collect::<String>();
-    if value.chars().count() > max_chars {
-        sample.push('…');
-    }
-    sample
-}
-
 fn chat_message_chain_diagnostic(messages: &[ChatMessage]) -> Value {
     let mut assistant_tool_call_blocks = 0_u64;
     let mut tool_messages = 0_u64;
@@ -296,15 +301,6 @@ impl LlmRequestTelemetry {
             _ => None,
         }
     }
-}
-
-fn telemetry_field_or_unknown<'a>(
-    telemetry: Option<&'a LlmRequestTelemetry>,
-    name: &str,
-) -> &'a str {
-    telemetry
-        .and_then(|telemetry| telemetry.field(name))
-        .unwrap_or("unknown")
 }
 
 impl ChatCompletionRequest {
@@ -458,10 +454,11 @@ fn apply_optional_header(
     let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
         return req;
     };
-    let Ok(value) = HeaderValue::from_str(value) else {
+    let Ok(mut value) = HeaderValue::from_str(value) else {
         tracing::warn!(header = name, "skipping invalid LLM telemetry header value");
         return req;
     };
+    value.set_sensitive(true);
     req.header(HeaderName::from_static(name), value)
 }
 
@@ -537,158 +534,95 @@ fn apply_bifrost_session_cache_headers(
     apply_optional_header(req, "x-bf-cache-type", Some("direct"))
 }
 
-pub fn bifrost_key_selection_error(text: &str) -> bool {
-    let text = text.to_ascii_lowercase();
-    text.contains("no keys found that support model")
-        || (text.contains("key-selection error") && text.contains("no keys"))
-}
-
-fn bifrost_virtual_key_not_found_error(text: &str) -> bool {
-    let text = text.to_ascii_lowercase();
-    text.contains("virtual_key_not_found") || text.contains("virtual key not found")
+/// Compatibility entry point for raw HTTP error bodies, not rendered application errors.
+/// New callers should use the typed provider-failure classifiers.
+pub fn bifrost_key_selection_error(body: &str) -> bool {
+    provider_failure::classify_http_failure(
+        ProviderHttpStatus::new(400).expect("constant HTTP status"),
+        body.as_bytes(),
+    )
+    .kind()
+        == ProviderFailureKind::KeySelection
 }
 
 fn llm_provider_error_retryable_status(status: StatusCode) -> bool {
-    status == StatusCode::REQUEST_TIMEOUT
-        || status == StatusCode::TOO_MANY_REQUESTS
-        || status.is_server_error()
+    ProviderHttpStatus::new(status.as_u16()).is_some_and(ProviderHttpStatus::request_retryable)
 }
 
-fn llm_provider_retry_exhausted_error(
-    api_style: LlmApiStyle,
-    model: &str,
-    attempts: usize,
-    last_error: &str,
-) -> DenError {
-    DenError::System(format!(
-        "LLM provider hiccup persisted after {attempts} attempts for {} model {model}; retry pauses were 2s, 4s, and 54s; ending the turn after retry backoff. Last error: {last_error}",
-        api_style.as_str()
-    ))
+fn log_provider_failure(api_style: LlmApiStyle, failure: &ProviderFailure, started: Instant) {
+    tracing::warn!(
+        api_style = api_style.as_str(),
+        failure_kind = failure.kind().code(),
+        transport_kind = failure.transport_kind().map(ProviderTransportKind::code),
+        http_status = failure.http_status().map(ProviderHttpStatus::as_u16),
+        attempt = failure.retry_attempts(),
+        retry_exhausted = failure.retry_exhausted(),
+        key_selection_fallback_status = failure
+            .key_selection_fallback_status()
+            .map(ProviderHttpStatus::as_u16),
+        duration_ms = started.elapsed().as_millis(),
+        "LLM provider request failed"
+    );
 }
 
 async fn send_llm_provider_request_with_retries(
+    build_request: impl FnMut() -> RequestBuilder,
+    api_style: LlmApiStyle,
+    started: Instant,
+) -> Result<(Response, u32), DenError> {
+    send_llm_provider_request_with_retry_delay(
+        build_request,
+        api_style,
+        started,
+        sleep_llm_provider_retry_delay,
+    )
+    .await
+}
+
+// The delay seam lets tests exercise the production retry loop without real backoff.
+async fn send_llm_provider_request_with_retry_delay<F: std::future::Future<Output = ()>>(
     mut build_request: impl FnMut() -> RequestBuilder,
     api_style: LlmApiStyle,
-    model: &str,
     started: Instant,
-    telemetry: Option<&LlmRequestTelemetry>,
-) -> Result<Response, DenError> {
+    mut sleep: impl FnMut(Duration) -> F,
+) -> Result<(Response, u32), DenError> {
     for attempt_index in 0..=LLM_PROVIDER_RETRY_DELAYS.len() {
-        let attempt_number = attempt_index + 1;
-        let resp = match build_request().send().await {
-            Ok(resp) => resp,
-            Err(e) => {
-                let last_error = e.to_string();
-                tracing::warn!(
-                    model,
-                    api_style = %api_style.as_str(),
-                    duration_ms = started.elapsed().as_millis(),
-                    attempt = attempt_number,
-                    max_attempts = LLM_PROVIDER_RETRY_DELAYS.len() + 1,
-                    error = %last_error,
-                    request_id = telemetry.and_then(|t| t.request_id.as_deref()),
-                    run_id = telemetry.and_then(|t| t.run_id.as_deref()),
-                    session_id = telemetry.and_then(|t| t.session_id.as_deref()),
-                    conversation_id = telemetry.and_then(|t| t.conversation_id.as_deref()),
-                    "LLM provider request failed"
-                );
-                let Some(delay) = LLM_PROVIDER_RETRY_DELAYS.get(attempt_index).copied() else {
-                    return Err(llm_provider_retry_exhausted_error(
-                        api_style,
-                        model,
-                        attempt_number,
-                        &last_error,
-                    ));
-                };
-                tracing::warn!(
-                    model,
-                    api_style = %api_style.as_str(),
-                    attempt = attempt_number,
-                    retry_delay_ms = delay.as_millis(),
-                    "retrying LLM provider request after transport error"
-                );
-                sleep_llm_provider_retry_delay(delay).await;
-                continue;
+        let attempt_number = attempt_index as u32 + 1;
+        let failure = match build_request().send().await {
+            Ok(resp) => {
+                if resp.status().is_success() || !llm_provider_error_retryable_status(resp.status())
+                {
+                    return Ok((resp, attempt_number));
+                }
+                read_http_failure(resp).await
             }
+            // Every send error retains the existing request retry budget, regardless
+            // of whether the outer continuation policy considers its kind transient.
+            Err(error) => classify_transport_failure(&error),
         };
-        if resp.status().is_success() || !llm_provider_error_retryable_status(resp.status()) {
-            return Ok(resp);
-        }
-        let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
         let Some(delay) = LLM_PROVIDER_RETRY_DELAYS.get(attempt_index).copied() else {
-            return Err(llm_provider_retry_exhausted_error(
-                api_style,
-                model,
-                attempt_number,
-                &format!("HTTP {status}: {text}"),
-            ));
+            let failure = failure.with_retry_exhausted(attempt_number);
+            log_provider_failure(api_style, &failure, started);
+            return Err(DenError::Provider(failure));
         };
+        log_provider_failure(
+            api_style,
+            &failure.with_retry_attempts(attempt_number),
+            started,
+        );
         tracing::warn!(
-            model,
-            api_style = %api_style.as_str(),
-            http_status = status.as_u16(),
+            api_style = api_style.as_str(),
             attempt = attempt_number,
             retry_delay_ms = delay.as_millis(),
-            response_body_sample = %log_sample(&text, 1000),
-            request_id = telemetry.and_then(|t| t.request_id.as_deref()),
-            run_id = telemetry.and_then(|t| t.run_id.as_deref()),
-            session_id = telemetry.and_then(|t| t.session_id.as_deref()),
-            conversation_id = telemetry.and_then(|t| t.conversation_id.as_deref()),
-            "retrying LLM provider request after retryable HTTP error"
+            "retrying LLM provider request"
         );
-        sleep_llm_provider_retry_delay(delay).await;
+        sleep(delay).await;
     }
     unreachable!("bounded retry loop always returns")
 }
 
 async fn sleep_llm_provider_retry_delay(delay: Duration) {
     tokio::time::sleep(delay).await;
-}
-
-fn bifrost_virtual_key_not_found_diagnostic(
-    api_style: LlmApiStyle,
-    model: &str,
-    telemetry: Option<&LlmRequestTelemetry>,
-    status: &str,
-    text: &str,
-) -> String {
-    let request_id = telemetry_field_or_unknown(telemetry, "request_id");
-    let session_id = telemetry_field_or_unknown(telemetry, "session_id");
-    let conversation_id = telemetry_field_or_unknown(telemetry, "conversation_id");
-    let bear_id = telemetry_field_or_unknown(telemetry, "bear_id");
-    let virtual_key_present = telemetry
-        .and_then(|t| t.field("bifrost_virtual_key"))
-        .map(|value| !value.trim().is_empty())
-        .unwrap_or(false);
-    let api_style = api_style.as_str();
-    format!(
-        "Bifrost virtual-key lookup failed for {api_style} model {model}. Bifrost reported HTTP {status}: {text}. Meaning: Den sent a Bifrost virtual key as x-bf-vk (present={virtual_key_present}), but Bifrost could not find that virtual key in its runtime governance config store. Check that the Bear's stored encrypted virtual-key secret still exists, that the corresponding key exists in Bifrost /api/governance/virtual-keys, that Bifrost config_store is persistent, and that /app/data/config.db was not reset after Den stored the Bear mapping. Context: request_id={request_id}, session_id={session_id}, conversation_id={conversation_id}, bear_id={bear_id}."
-    )
-}
-
-fn bifrost_key_selection_diagnostic(
-    api_style: LlmApiStyle,
-    model: &str,
-    telemetry: Option<&LlmRequestTelemetry>,
-    status: &str,
-    text: &str,
-    retry_status: Option<&str>,
-    retry_text: Option<&str>,
-) -> String {
-    let request_id = telemetry_field_or_unknown(telemetry, "request_id");
-    let session_id = telemetry_field_or_unknown(telemetry, "session_id");
-    let conversation_id = telemetry_field_or_unknown(telemetry, "conversation_id");
-    let retry_summary = match (retry_status, retry_text) {
-        (Some(retry_status), Some(retry_text)) => format!(
-            " Den retried once without x-bf-session-id/x-bf-cache-* headers and Bifrost still returned HTTP {retry_status}: {retry_text}."
-        ),
-        _ => String::new(),
-    };
-    let api_style = api_style.as_str();
-    format!(
-        "Bifrost key-selection failed for {api_style} model {model}. Bifrost reported HTTP {status}: {text}.{retry_summary} Meaning: after Bifrost applied provider/model routing, session/key stickiness, request-type filters, and key model allowlists, no eligible provider key remained. If this is stochastic, inspect Bifrost for mixed OpenAI keys, stale config-store key rows, per-key `models` allowlists, key health/rate-limit state, and Responses-vs-chat support for this model. If it only affects old sessions, clear Bifrost session/cache state or start a new Den/ACP session. Context: request_id={request_id}, session_id={session_id}, conversation_id={conversation_id}."
-    )
 }
 
 struct TimedLlmByteStream {
@@ -727,19 +661,12 @@ impl TimedLlmByteStream {
         }
     }
 
-    fn log_summary(&self, status: &str, error: Option<&str>) {
-        let telemetry = self.telemetry.as_ref();
+    fn log_summary(&self, status: &'static str, failure: Option<&ProviderFailure>) {
         tracing::trace!(
             status,
-            error,
-            model = %self.model,
+            failure_kind = failure.map(|failure| failure.kind().code()),
+            transport_kind = failure.and_then(ProviderFailure::transport_kind).map(ProviderTransportKind::code),
             api_style = %self.api_style.as_str(),
-            request_id = telemetry.and_then(|t| t.request_id.as_deref()),
-            run_id = telemetry.and_then(|t| t.run_id.as_deref()),
-            session_id = telemetry.and_then(|t| t.session_id.as_deref()),
-            conversation_id = telemetry.and_then(|t| t.conversation_id.as_deref()),
-            bear_id = telemetry.and_then(|t| t.bear_id.as_deref()),
-            stance = telemetry.and_then(|t| t.stance.as_deref()),
             request_to_headers_ms = self.headers_received_at.duration_since(self.request_started_at).as_millis(),
             headers_to_first_byte_ms = self.first_byte_received_at.map(|at| at.duration_since(self.headers_received_at).as_millis()),
             request_to_first_byte_ms = self.first_byte_received_at.map(|at| at.duration_since(self.request_started_at).as_millis()),
@@ -781,11 +708,9 @@ impl Stream for TimedLlmByteStream {
             }
             Poll::Ready(Some(Err(err))) => {
                 self.completed = true;
-                let message = err.to_string();
-                self.log_summary("error", Some(&message));
-                Poll::Ready(Some(Err(DenError::System(format!(
-                    "LLM stream read failed: {err}"
-                )))))
+                let failure = classify_stream_read_failure(&err);
+                self.log_summary("error", Some(&failure));
+                Poll::Ready(Some(Err(DenError::Provider(failure))))
             }
             Poll::Ready(None) => {
                 self.completed = true;
@@ -877,7 +802,6 @@ impl LlmClient {
             message_count = request.messages.len(),
             tool_count = request.tools.len(),
             stream = request.stream,
-            llm_url = %url,
             request_id = request.telemetry.as_ref().and_then(|t| t.request_id.as_deref()),
             run_id = request.telemetry.as_ref().and_then(|t| t.run_id.as_deref()),
             session_id = request.telemetry.as_ref().and_then(|t| t.session_id.as_deref()),
@@ -889,7 +813,7 @@ impl LlmClient {
         );
         let started = Instant::now();
         let body = request.to_body();
-        let resp = send_llm_provider_request_with_retries(
+        let (resp, attempts) = send_llm_provider_request_with_retries(
             || {
                 let mut req = self.http.post(&url).json(&body);
                 req = apply_bears_telemetry_headers(req, request.telemetry.as_ref());
@@ -897,94 +821,22 @@ impl LlmClient {
                 apply_bifrost_session_cache_headers(req, request.telemetry.as_ref())
             },
             LlmApiStyle::ChatCompletionsStream,
-            &request.model,
             started,
-            request.telemetry.as_ref(),
         )
         .await?;
         let http_status = resp.status().as_u16();
         if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            let response_body_sample = log_sample(&text, 1000);
-            tracing::warn!(
-                model = %request.model,
-                http_status,
-                duration_ms = started.elapsed().as_millis(),
-                response_body_len = text.len(),
-                response_body_sample = %response_body_sample,
-                request_id = request.telemetry.as_ref().and_then(|t| t.request_id.as_deref()),
-                run_id = request.telemetry.as_ref().and_then(|t| t.run_id.as_deref()),
-                session_id = request.telemetry.as_ref().and_then(|t| t.session_id.as_deref()),
-                conversation_id = request.telemetry.as_ref().and_then(|t| t.conversation_id.as_deref()),
-                "LLM chat/completions returned error status"
-            );
-            if bifrost_virtual_key_not_found_error(&text) {
-                return Err(DenError::System(bifrost_virtual_key_not_found_diagnostic(
-                    LlmApiStyle::ChatCompletionsStream,
-                    &request.model,
+            return self
+                .handle_provider_http_failure(
+                    resp,
+                    attempts,
+                    &url,
+                    &body,
                     request.telemetry.as_ref(),
-                    &status.to_string(),
-                    &text,
-                )));
-            }
-            if bifrost_key_selection_error(&text) {
-                tracing::warn!(
-                    model = %request.model,
-                    request_id = request.telemetry.as_ref().and_then(|t| t.request_id.as_deref()),
-                    conversation_id = request.telemetry.as_ref().and_then(|t| t.conversation_id.as_deref()),
-                    "retrying LLM chat/completions once without Bifrost session/cache headers after key-selection error"
-                );
-                let mut retry_req = self.http.post(&url).json(&body);
-                retry_req = apply_bears_telemetry_headers(retry_req, request.telemetry.as_ref());
-                retry_req = apply_bifrost_virtual_key_header(retry_req, request.telemetry.as_ref());
-                let retry_resp = retry_req.send().await.map_err(|e| {
-                    let diagnostic = bifrost_key_selection_diagnostic(
-                        LlmApiStyle::ChatCompletionsStream,
-                        &request.model,
-                        request.telemetry.as_ref(),
-                        &status.to_string(),
-                        &text,
-                        None,
-                        None,
-                    );
-                    DenError::System(format!(
-                        "LLM chat/completions retry without Bifrost session/cache headers failed: {e}. {diagnostic}"
-                    ))
-                })?;
-                if retry_resp.status().is_success() {
-                    tracing::debug!(
-                        model = %request.model,
-                        http_status = retry_resp.status().as_u16(),
-                        request_id = request.telemetry.as_ref().and_then(|t| t.request_id.as_deref()),
-                        conversation_id = request.telemetry.as_ref().and_then(|t| t.conversation_id.as_deref()),
-                        "LLM chat/completions retry without Bifrost session/cache headers succeeded"
-                    );
-                    return Ok(retry_resp);
-                }
-                let retry_status = retry_resp.status();
-                let retry_text = retry_resp.text().await.unwrap_or_default();
-                let diagnostic = bifrost_key_selection_diagnostic(
                     LlmApiStyle::ChatCompletionsStream,
-                    &request.model,
-                    request.telemetry.as_ref(),
-                    &status.to_string(),
-                    &text,
-                    Some(&retry_status.to_string()),
-                    Some(&retry_text),
-                );
-                tracing::warn!(
-                    model = %request.model,
-                    request_id = request.telemetry.as_ref().and_then(|t| t.request_id.as_deref()),
-                    conversation_id = request.telemetry.as_ref().and_then(|t| t.conversation_id.as_deref()),
-                    diagnostic = %diagnostic,
-                    "LLM chat/completions key-selection retry diagnostic"
-                );
-                return Err(DenError::System(diagnostic));
-            }
-            return Err(DenError::System(format!(
-                "LLM chat/completions HTTP {status}: {text}"
-            )));
+                    started,
+                )
+                .await;
         }
         tracing::trace!(
             model = %request.model,
@@ -1017,7 +869,6 @@ impl LlmClient {
             message_count = request.messages.len(),
             tool_count = request.tools.len(),
             stream = request.stream,
-            llm_url = %url,
             request_id = request.telemetry.as_ref().and_then(|t| t.request_id.as_deref()),
             run_id = request.telemetry.as_ref().and_then(|t| t.run_id.as_deref()),
             session_id = request.telemetry.as_ref().and_then(|t| t.session_id.as_deref()),
@@ -1026,7 +877,7 @@ impl LlmClient {
         );
         let started = Instant::now();
         let body = request.to_responses_body();
-        let resp = send_llm_provider_request_with_retries(
+        let (resp, attempts) = send_llm_provider_request_with_retries(
             || {
                 let mut req = self.http.post(&url).json(&body);
                 req = apply_bears_telemetry_headers(req, request.telemetry.as_ref());
@@ -1034,98 +885,22 @@ impl LlmClient {
                 apply_bifrost_session_cache_headers(req, request.telemetry.as_ref())
             },
             LlmApiStyle::ResponsesStream,
-            model_handle.as_str(),
             started,
-            request.telemetry.as_ref(),
         )
         .await?;
         let http_status = resp.status().as_u16();
         if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            let response_body_sample = log_sample(&text, 1000);
-            tracing::warn!(
-                model_handle = %model_handle,
-                api_style = %LlmApiStyle::ResponsesStream.as_str(),
-                http_status,
-                duration_ms = started.elapsed().as_millis(),
-                response_body_len = text.len(),
-                response_body_sample = %response_body_sample,
-                request_id = request.telemetry.as_ref().and_then(|t| t.request_id.as_deref()),
-                run_id = request.telemetry.as_ref().and_then(|t| t.run_id.as_deref()),
-                session_id = request.telemetry.as_ref().and_then(|t| t.session_id.as_deref()),
-                conversation_id = request.telemetry.as_ref().and_then(|t| t.conversation_id.as_deref()),
-                "LLM responses returned error status"
-            );
-            if bifrost_virtual_key_not_found_error(&text) {
-                return Err(DenError::System(bifrost_virtual_key_not_found_diagnostic(
-                    LlmApiStyle::ResponsesStream,
-                    model_handle.as_str(),
+            return self
+                .handle_provider_http_failure(
+                    resp,
+                    attempts,
+                    &url,
+                    &body,
                     request.telemetry.as_ref(),
-                    &status.to_string(),
-                    &text,
-                )));
-            }
-            if bifrost_key_selection_error(&text) {
-                tracing::warn!(
-                    model_handle = %model_handle,
-                    api_style = %LlmApiStyle::ResponsesStream.as_str(),
-                    request_id = request.telemetry.as_ref().and_then(|t| t.request_id.as_deref()),
-                    conversation_id = request.telemetry.as_ref().and_then(|t| t.conversation_id.as_deref()),
-                    "retrying LLM responses once without Bifrost session/cache headers after key-selection error"
-                );
-                let mut retry_req = self.http.post(&url).json(&body);
-                retry_req = apply_bears_telemetry_headers(retry_req, request.telemetry.as_ref());
-                retry_req = apply_bifrost_virtual_key_header(retry_req, request.telemetry.as_ref());
-                let retry_resp = retry_req.send().await.map_err(|e| {
-                    let diagnostic = bifrost_key_selection_diagnostic(
-                        LlmApiStyle::ResponsesStream,
-                        model_handle.as_str(),
-                        request.telemetry.as_ref(),
-                        &status.to_string(),
-                        &text,
-                        None,
-                        None,
-                    );
-                    DenError::System(format!(
-                        "LLM responses retry without Bifrost session/cache headers failed: {e}. {diagnostic}"
-                    ))
-                })?;
-                if retry_resp.status().is_success() {
-                    tracing::debug!(
-                        model_handle = %model_handle,
-                        api_style = %LlmApiStyle::ResponsesStream.as_str(),
-                        http_status = retry_resp.status().as_u16(),
-                        request_id = request.telemetry.as_ref().and_then(|t| t.request_id.as_deref()),
-                        conversation_id = request.telemetry.as_ref().and_then(|t| t.conversation_id.as_deref()),
-                        "LLM responses retry without Bifrost session/cache headers succeeded"
-                    );
-                    return Ok(retry_resp);
-                }
-                let retry_status = retry_resp.status();
-                let retry_text = retry_resp.text().await.unwrap_or_default();
-                let diagnostic = bifrost_key_selection_diagnostic(
                     LlmApiStyle::ResponsesStream,
-                    model_handle.as_str(),
-                    request.telemetry.as_ref(),
-                    &status.to_string(),
-                    &text,
-                    Some(&retry_status.to_string()),
-                    Some(&retry_text),
-                );
-                tracing::warn!(
-                    model_handle = %model_handle,
-                    api_style = %LlmApiStyle::ResponsesStream.as_str(),
-                    request_id = request.telemetry.as_ref().and_then(|t| t.request_id.as_deref()),
-                    conversation_id = request.telemetry.as_ref().and_then(|t| t.conversation_id.as_deref()),
-                    diagnostic = %diagnostic,
-                    "LLM responses key-selection retry diagnostic"
-                );
-                return Err(DenError::System(diagnostic));
-            }
-            return Err(DenError::System(format!(
-                "LLM responses HTTP {status}: {text}"
-            )));
+                    started,
+                )
+                .await;
         }
         tracing::trace!(
             model_handle = %model_handle,
@@ -1139,6 +914,52 @@ impl LlmClient {
             "LLM responses headers received"
         );
         Ok(resp)
+    }
+
+    async fn handle_provider_http_failure(
+        &self,
+        response: Response,
+        attempts: u32,
+        url: &str,
+        body: &Value,
+        telemetry: Option<&LlmRequestTelemetry>,
+        api_style: LlmApiStyle,
+        started: Instant,
+    ) -> Result<Response, DenError> {
+        let failure = read_http_failure(response)
+            .await
+            .with_retry_attempts(attempts);
+        log_provider_failure(api_style, &failure, started);
+        if failure.kind() != ProviderFailureKind::KeySelection {
+            return Err(DenError::Provider(failure));
+        }
+        let original_status = failure.http_status().expect("HTTP failure has a status");
+        tracing::warn!(
+            api_style = api_style.as_str(),
+            http_status = original_status.as_u16(),
+            attempt = attempts + 1,
+            "retrying LLM provider request without Bifrost session/cache headers"
+        );
+        let mut retry = self.http.post(url).json(body);
+        retry = apply_bears_telemetry_headers(retry, telemetry);
+        retry = apply_bifrost_virtual_key_header(retry, telemetry);
+        let final_failure = match retry.send().await {
+            Ok(response) if response.status().is_success() => {
+                tracing::debug!(
+                    api_style = api_style.as_str(),
+                    http_status = response.status().as_u16(),
+                    attempt = attempts + 1,
+                    "LLM provider request without Bifrost session/cache headers succeeded"
+                );
+                return Ok(response);
+            }
+            Ok(response) => read_http_failure(response).await,
+            Err(error) => classify_transport_failure(&error),
+        }
+        .with_retry_attempts(attempts + 1)
+        .with_key_selection_fallback(original_status);
+        log_provider_failure(api_style, &final_failure, started);
+        Err(DenError::Provider(final_failure))
     }
 
     async fn byte_stream_for_api_style(
@@ -1267,17 +1088,6 @@ mod tests {
     }
 
     #[test]
-    fn detects_bifrost_key_selection_errors() {
-        let raw = r#"LLM responses HTTP 400 Bad Request: {"is_bifrost_error":false,"error":{"error":"no keys found that support model: gpt-5.5","message":"no keys found that support model: gpt-5.5"},"extra_fields":{"provider":"openai","model_requested":"gpt-5.5","request_type":"responses_stream"}}"#;
-        assert!(bifrost_key_selection_error(raw));
-
-        let wrapped = format!(
-            "{raw} (retry without Bifrost session/cache headers after key-selection error also failed; original HTTP 400 Bad Request: {raw})"
-        );
-        assert!(bifrost_key_selection_error(&wrapped));
-    }
-
-    #[test]
     fn responses_body_sends_provider_qualified_handle() {
         let request = ChatCompletionRequest {
             model: "openai/gpt-5.5".to_string(),
@@ -1343,22 +1153,6 @@ mod tests {
         assert!(!llm_provider_error_retryable_status(
             StatusCode::BAD_REQUEST
         ));
-    }
-
-    #[test]
-    fn retry_exhausted_error_reports_turn_ending_strategy() {
-        let error = llm_provider_retry_exhausted_error(
-            LlmApiStyle::ResponsesStream,
-            "openai/gpt-5.5",
-            4,
-            "HTTP 503 Service Unavailable: overloaded",
-        )
-        .to_string();
-
-        assert!(error.contains("persisted after 4 attempts"));
-        assert!(error.contains("retry pauses were 2s, 4s, and 54s"));
-        assert!(error.contains("ending the turn after retry backoff"));
-        assert!(error.contains("HTTP 503 Service Unavailable"));
     }
 
     #[test]

@@ -10,7 +10,7 @@ use std::fmt;
 mod tests;
 
 pub use den_core::DenError;
-use den_core::{ModelAvailabilityFailure, ModelAvailabilityFailureKind};
+use den_core::{ModelAvailabilityFailure, ModelAvailabilityFailureKind, ProviderFailure};
 
 /// Web-boundary error adapter for the `den` binary.
 ///
@@ -23,6 +23,7 @@ use den_core::{ModelAvailabilityFailure, ModelAvailabilityFailureKind};
 pub enum CustomError {
     Anyhow(anyhow::Error),
     System(String),
+    Provider(ProviderFailure),
     Database(String),
     /// Pool exhaustion or closed — semantically distinct from a query-level Database error.
     DatabaseUnavailable(String),
@@ -49,6 +50,7 @@ impl CustomError {
         match self {
             CustomError::Anyhow(cause) => DenError::Anyhow(cause),
             CustomError::System(cause) => DenError::System(cause),
+            CustomError::Provider(failure) => DenError::Provider(failure),
             CustomError::Database(cause) => DenError::Database(cause),
             CustomError::DatabaseUnavailable(cause) => DenError::DatabaseUnavailable(cause),
             CustomError::Session(cause) => DenError::Session(cause),
@@ -105,6 +107,7 @@ impl fmt::Display for CustomError {
                 write!(f, "Validation Error: {cause}")
             }
             CustomError::ModelAvailability(ref failure) => write!(f, "{failure}"),
+            CustomError::Provider(ref failure) => write!(f, "{failure}"),
         }
     }
 }
@@ -123,7 +126,7 @@ impl IntoResponse for CustomError {
                 "This request could not be completed.",
                 "Try opening the page again shortly.",
             ),
-            CustomError::System(_) => (
+            CustomError::System(_) | CustomError::Provider(_) => (
                 "Web server",
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "Request could not be completed",
@@ -275,6 +278,7 @@ impl From<DenError> for CustomError {
         match err {
             DenError::Anyhow(cause) => CustomError::Anyhow(cause),
             DenError::System(cause) => CustomError::System(cause),
+            DenError::Provider(failure) => CustomError::Provider(failure),
             DenError::RunStateConflict {
                 operation,
                 run_id,

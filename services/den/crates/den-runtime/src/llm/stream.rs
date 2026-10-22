@@ -3,7 +3,8 @@ use std::{
     time::Instant,
 };
 
-use den_llm::LlmRequestTelemetry;
+use den_core::{ProviderFailure, ProviderFailureKind};
+use den_llm::{provider_failure::classify_provider_error, LlmRequestTelemetry};
 use serde_json::Value;
 
 use den_protocol::{RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent};
@@ -14,6 +15,16 @@ fn decode_utf8_or_system_error<'a>(
 ) -> Result<&'a str, den_core::DenError> {
     std::str::from_utf8(bytes)
         .map_err(|err| den_core::DenError::System(format!("invalid UTF-8 in {context}: {err}")))
+}
+
+fn provider_error_event(failure: ProviderFailure) -> RuntimeStreamEvent {
+    RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error {
+        message: failure.to_string(),
+        detail: None,
+        error_type: Some(failure.kind().code().to_string()),
+        request_id: None,
+        context: Some(serde_json::json!({ "provider_failure": failure })),
+    })
 }
 
 fn delta_assistant_text(delta: &Value) -> Option<String> {
@@ -49,6 +60,7 @@ pub struct OpenAiStreamAccumulator {
     tool_ids: std::collections::HashMap<String, String>,
     tool_args: std::collections::HashMap<String, String>,
     finish_reason: Option<String>,
+    provider_failed: bool,
     saw_tool_calls: bool,
     observed_prompt_tokens: Option<u64>,
 }
@@ -129,6 +141,26 @@ impl OpenAiStreamDiagnostics {
             finish_reason,
             elapsed_ms = self.started_at.elapsed().as_millis(),
             "LLM stream JSON frame parsed"
+        );
+    }
+
+    fn observe_provider_error(&mut self, failure: ProviderFailure, emitted_events: usize) {
+        self.json_frame_count = self.json_frame_count.saturating_add(1);
+        self.emitted_runtime_event_count = self
+            .emitted_runtime_event_count
+            .saturating_add(emitted_events as u64);
+        let telemetry = self.telemetry();
+        tracing::debug!(
+            target: "den.llm.stream",
+            request_id = telemetry.and_then(|t| t.request_id.as_deref()),
+            run_id = telemetry.and_then(|t| t.run_id.as_deref()),
+            session_id = telemetry.and_then(|t| t.session_id.as_deref()),
+            conversation_id = telemetry.and_then(|t| t.conversation_id.as_deref()),
+            json_frame_count = self.json_frame_count,
+            emitted_runtime_event_count = self.emitted_runtime_event_count,
+            error_kind = failure.kind().code(),
+            elapsed_ms = self.started_at.elapsed().as_millis(),
+            "LLM stream provider error observed"
         );
     }
 
@@ -260,31 +292,25 @@ impl OpenAiStreamAccumulator {
         json: &Value,
         mut diagnostics: Option<&mut OpenAiStreamDiagnostics>,
     ) -> OpenAiStreamParseResult {
-        if let Some(diagnostics) = diagnostics.as_deref_mut() {
-            diagnostics.observe_json_frame(json);
-        }
         let mut out = OpenAiStreamParseResult::default();
-        if let Some(error) = json.get("error") {
-            let message = error
-                .get("message")
-                .and_then(|v| v.as_str())
-                .unwrap_or("LLM provider error")
-                .to_string();
-            out.events
-                .push(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error {
-                    message,
-                    detail: Some(error.to_string()),
-                    error_type: error
-                        .get("type")
-                        .and_then(|v| v.as_str())
-                        .map(str::to_string),
-                    request_id: None,
-                    context: None,
-                }));
+        if self.provider_failed {
+            return out;
+        }
+        if let Some(error) = json
+            .get("error")
+            .filter(|value| !value.is_null())
+            .or_else(|| (json.get("type").and_then(Value::as_str) == Some("error")).then_some(json))
+        {
+            let failure = classify_provider_error(error);
+            self.provider_failed = true;
+            out.events.push(provider_error_event(failure));
             if let Some(diagnostics) = diagnostics.as_deref_mut() {
-                diagnostics.observe_emitted_events(&out.events);
+                diagnostics.observe_provider_error(failure, out.events.len());
             }
             return out;
+        }
+        if let Some(diagnostics) = diagnostics.as_deref_mut() {
+            diagnostics.observe_json_frame(json);
         }
 
         // Providers/gateways that report usage on the stream attach it to the
@@ -425,10 +451,13 @@ impl OpenAiStreamAccumulator {
         }
     }
 
-    /// True once the provider emitted a terminal `finish_reason` so the byte stream
-    /// adapter can detach without waiting for upstream TCP close.
+    /// True after a terminal finish or provider failure, without waiting for TCP close.
     pub fn should_detach_upstream(&self) -> bool {
-        self.finish_reason.is_some()
+        self.finish_reason.is_some() || self.provider_failed
+    }
+
+    pub(crate) fn has_provider_failure(&self) -> bool {
+        self.provider_failed
     }
 
     /// Take the observed prompt-token usage, if the provider reported any on
@@ -438,6 +467,9 @@ impl OpenAiStreamAccumulator {
     }
 
     pub fn flush_end_of_stream(&mut self) -> Vec<RuntimeStreamEvent> {
+        if self.provider_failed {
+            return Vec::new();
+        }
         if self.saw_tool_calls && self.finish_reason.is_none() {
             return self.terminal_events_for_finish("tool_calls");
         }
@@ -458,6 +490,7 @@ pub struct ResponsesStreamAccumulator {
     emitted_tool_call_keys: HashSet<String>,
     reasoning_output_item_keys: HashSet<String>,
     completed: bool,
+    provider_failed: bool,
     saw_tool_call: bool,
     observed_prompt_tokens: Option<u64>,
 }
@@ -581,6 +614,33 @@ impl ResponsesStreamDiagnostics {
         );
     }
 
+    fn observe_provider_error(&mut self, failure: ProviderFailure, emitted_events: usize) {
+        self.json_frame_count = self.json_frame_count.saturating_add(1);
+        *self
+            .event_type_counts
+            .entry("error".to_string())
+            .or_default() += 1;
+        self.last_event_type = Some("error".to_string());
+        self.consecutive_zero_runtime_event_frame_count = 0;
+        self.emitted_runtime_event_count = self
+            .emitted_runtime_event_count
+            .saturating_add(emitted_events as u64);
+        let telemetry = self.telemetry();
+        tracing::debug!(
+            target: "den.llm.stream",
+            api_style = "responses_stream",
+            request_id = telemetry.and_then(|t| t.request_id.as_deref()),
+            run_id = telemetry.and_then(|t| t.run_id.as_deref()),
+            session_id = telemetry.and_then(|t| t.session_id.as_deref()),
+            conversation_id = telemetry.and_then(|t| t.conversation_id.as_deref()),
+            json_frame_count = self.json_frame_count,
+            emitted_runtime_event_count = self.emitted_runtime_event_count,
+            error_kind = failure.kind().code(),
+            elapsed_ms = self.started_at.elapsed().as_millis(),
+            "LLM Responses stream provider error observed"
+        );
+    }
+
     fn observe_response_parse(&mut self, event_type: &str, emitted_events: &[RuntimeStreamEvent]) {
         if emitted_events.is_empty() {
             self.zero_runtime_event_frame_count =
@@ -675,41 +735,49 @@ impl ResponsesStreamAccumulator {
         json: &Value,
         mut diagnostics: Option<&mut ResponsesStreamDiagnostics>,
     ) -> OpenAiStreamParseResult {
-        if let Some(diagnostics) = diagnostics.as_deref_mut() {
-            diagnostics.observe_json_frame(json);
-        }
         let mut out = OpenAiStreamParseResult::default();
-        if let Some(error) = json
+        if self.provider_failed {
+            return out;
+        }
+        let event_type = json.get("type").and_then(Value::as_str).unwrap_or_default();
+        let selected_error = json
             .get("error")
             .filter(|value| !value.is_null())
             .or_else(|| {
                 json.pointer("/response/error")
                     .filter(|value| !value.is_null())
             })
-        {
-            let message = error
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("LLM responses provider error")
-                .to_string();
-            out.events
-                .push(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error {
-                    message,
-                    detail: Some(error.to_string()),
-                    error_type: error
-                        .get("type")
-                        .and_then(Value::as_str)
-                        .map(str::to_string),
-                    request_id: None,
-                    context: None,
-                }));
+            .or_else(|| (event_type == "error").then_some(json));
+        if let Some(error) = selected_error {
+            let failure = classify_provider_error(error);
+            out.events.push(provider_error_event(failure));
+            self.provider_failed = true;
             self.completed = true;
             if let Some(diagnostics) = diagnostics.as_deref_mut() {
-                diagnostics.observe_response_parse("error", &out.events);
+                diagnostics.observe_provider_error(failure, out.events.len());
             }
             return out;
         }
-        let event_type = json.get("type").and_then(Value::as_str).unwrap_or_default();
+        if matches!(event_type, "response.failed" | "response.incomplete") {
+            // A missing/null error has no authoritative provider classification.
+            let failure = ProviderFailure::new(ProviderFailureKind::Unknown);
+            self.provider_failed = true;
+            out.events.push(RuntimeStreamEvent::Semantic(
+                RuntimeSemanticEvent::TurnFailed {
+                    turn: None,
+                    category: RuntimeErrorCategory::BackendProtocol,
+                    message: failure.to_string(),
+                },
+            ));
+            self.completed = true;
+            if let Some(diagnostics) = diagnostics.as_deref_mut() {
+                diagnostics.observe_provider_error(failure, out.events.len());
+            }
+            return out;
+        }
+        if let Some(diagnostics) = diagnostics.as_deref_mut() {
+            diagnostics.observe_json_frame(json);
+        }
         match event_type {
             "response.output_text.delta" => {
                 if let Some(delta) = json
@@ -831,21 +899,6 @@ impl ResponsesStreamAccumulator {
                     out.events.push(event);
                 }
             }
-            "response.failed" | "response.incomplete" => {
-                self.completed = true;
-                let message = json
-                    .pointer("/response/error/message")
-                    .and_then(Value::as_str)
-                    .unwrap_or("Responses API turn failed")
-                    .to_string();
-                out.events.push(RuntimeStreamEvent::Semantic(
-                    RuntimeSemanticEvent::TurnFailed {
-                        turn: None,
-                        category: RuntimeErrorCategory::BackendProtocol,
-                        message,
-                    },
-                ));
-            }
             _ => {}
         }
         if let Some(diagnostics) = diagnostics {
@@ -915,6 +968,10 @@ impl ResponsesStreamAccumulator {
         self.completed
     }
 
+    pub(crate) fn has_provider_failure(&self) -> bool {
+        self.provider_failed
+    }
+
     /// Take the observed prompt-token usage, if the provider reported any on
     /// this stream. Consuming ensures a sample is only delivered once.
     pub fn take_observed_prompt_tokens(&mut self) -> Option<u64> {
@@ -980,6 +1037,9 @@ pub fn responses_sse_frame_to_runtime_events_with_diagnostics(
     body: &[u8],
     mut diagnostics: Option<&mut ResponsesStreamDiagnostics>,
 ) -> Result<Vec<RuntimeStreamEvent>, den_core::DenError> {
+    if accumulator.has_provider_failure() {
+        return Ok(Vec::new());
+    }
     if let Some(diagnostics) = diagnostics.as_deref_mut() {
         diagnostics.observe_sse_frame(body.len());
     }
@@ -1011,6 +1071,9 @@ pub fn responses_sse_frame_to_runtime_events_with_diagnostics(
         let parsed =
             accumulator.ingest_sse_data_line_with_diagnostics(&json, diagnostics.as_deref_mut());
         events.extend(parsed.events);
+        if accumulator.has_provider_failure() {
+            break;
+        }
     }
     Ok(events)
 }
@@ -1037,6 +1100,9 @@ pub fn openai_sse_chunk_to_runtime_events(
             .map_err(|e| den_core::DenError::System(format!("invalid LLM SSE JSON: {e}")))?;
         let parsed = accumulator.ingest_sse_data_line(&json);
         events.extend(parsed.events);
+        if accumulator.has_provider_failure() {
+            break;
+        }
     }
     Ok(events)
 }
@@ -1062,6 +1128,9 @@ pub fn openai_sse_frame_to_runtime_events_with_diagnostics(
     body: &[u8],
     mut diagnostics: Option<&mut OpenAiStreamDiagnostics>,
 ) -> Result<Vec<RuntimeStreamEvent>, den_core::DenError> {
+    if accumulator.has_provider_failure() {
+        return Ok(Vec::new());
+    }
     if let Some(diagnostics) = diagnostics.as_deref_mut() {
         diagnostics.observe_sse_frame(body.len());
     }
@@ -1092,6 +1161,9 @@ pub fn openai_sse_frame_to_runtime_events_with_diagnostics(
         let parsed =
             accumulator.ingest_sse_data_line_with_diagnostics(&json, diagnostics.as_deref_mut());
         events.extend(parsed.events);
+        if accumulator.has_provider_failure() {
+            break;
+        }
     }
     Ok(events)
 }
@@ -1114,6 +1186,10 @@ fn parse_tool_arguments(raw: &str) -> Value {
         }
     })
 }
+
+#[cfg(test)]
+#[path = "stream_provider_failure_tests.rs"]
+mod provider_failure_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1230,7 +1306,8 @@ mod tests {
                 message,
                 error_type: Some(error_type),
                 ..
-            })] if message == "bad request" && error_type == "invalid_request_error"
+            })] if message == &ProviderFailure::new(ProviderFailureKind::Unknown).to_string()
+                && error_type == "provider_error"
         ));
     }
 }

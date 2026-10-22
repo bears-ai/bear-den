@@ -390,9 +390,15 @@ fn is_retryable_continuation_stream_error(message: &str) -> bool {
     .any(|needle| message.contains(needle))
 }
 
-fn should_retry_continuation_error(message: &str, attempt_index: usize) -> bool {
-    is_retryable_continuation_stream_error(message)
-        && attempt_index < continuation_retry_pauses().len()
+fn continuation_error_retryable(error: &DenError) -> bool {
+    match error {
+        DenError::Provider(failure) => failure.continuation_retryable(),
+        other => is_retryable_continuation_stream_error(&other.to_string()),
+    }
+}
+
+fn should_retry_continuation_error(error: &DenError, attempt_index: usize) -> bool {
+    continuation_error_retryable(error) && attempt_index < continuation_retry_pauses().len()
 }
 
 fn is_sibling_continuation_claim(err: &DenError) -> bool {
@@ -936,11 +942,9 @@ pub(crate) fn spawn_continuation_task(
                                     }
                                     _ => RunFailureReason::ContinuationStreamError,
                                 };
-                                let err_message = err.to_string();
-                                let is_retryable =
-                                    is_retryable_continuation_stream_error(&err_message);
-                                if should_retry_continuation_error(&err_message, attempt_index) {
-                                    retryable_stream_error = Some(err_message);
+                                let is_retryable = continuation_error_retryable(&err);
+                                if should_retry_continuation_error(&err, attempt_index) {
+                                    retryable_stream_error = Some(err.to_string());
                                     break;
                                 }
                                 fail_run_lifecycle(
@@ -950,7 +954,7 @@ pub(crate) fn spawn_continuation_task(
                                     run.bear_id,
                                     run.user_id,
                                     failure_reason,
-                                    err_message,
+                                    err,
                                     Some(json!({
                                         "attempt": attempt_number,
                                         "retryable": is_retryable,
@@ -1079,9 +1083,9 @@ pub(crate) fn spawn_continuation_task(
                     break 'continuation_attempts;
                 }
                 Err(err) => {
-                    let err_message = err.to_string();
-                    let is_retryable = is_retryable_continuation_stream_error(&err_message);
-                    if should_retry_continuation_error(&err_message, attempt_index) {
+                    let is_retryable = continuation_error_retryable(&err);
+                    if should_retry_continuation_error(&err, attempt_index) {
+                        let err_message = err.to_string();
                         persist_run_progress(
                         &pool,
                         &run.session_id,
@@ -1108,7 +1112,7 @@ pub(crate) fn spawn_continuation_task(
                         run.bear_id,
                         run.user_id,
                         RunFailureReason::ContinuationStartFailed,
-                        err_message,
+                        err,
                         Some(json!({
                             "attempt": attempt_number,
                             "retryable": is_retryable,
@@ -1892,6 +1896,10 @@ fn compacted_artifact_ref(artifact: &ToolOutputArtifactRecord) -> &str {
         .unwrap_or(&artifact.artifact_ref)
 }
 #[cfg(test)]
+#[path = "client/provider_failure_tests.rs"]
+mod provider_failure_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use den_core::tools::constants::DEN_WEB_FETCH;
@@ -2055,16 +2063,16 @@ mod tests {
                 "expected non-retryable: {message}"
             );
             assert!(
-                !should_retry_continuation_error(message, 0),
+                !should_retry_continuation_error(&DenError::System(message.to_string()), 0),
                 "expected no retry: {message}"
             );
         }
         assert!(should_retry_continuation_error(
-            "Server Error: LLM byte stream produced no data for 30s",
+            &DenError::System("LLM byte stream produced no data for 30s".to_string()),
             0
         ));
         assert!(!should_retry_continuation_error(
-            "Server Error: LLM byte stream produced no data for 30s",
+            &DenError::System("LLM byte stream produced no data for 30s".to_string()),
             continuation_retry_pauses().len()
         ));
     }

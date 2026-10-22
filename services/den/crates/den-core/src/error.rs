@@ -19,6 +19,7 @@ use std::fmt;
 pub enum DenError {
     Anyhow(anyhow::Error),
     System(String),
+    Provider(crate::provider_failure::ProviderFailure),
     RunStateConflict {
         operation: &'static str,
         run_id: String,
@@ -54,6 +55,7 @@ impl fmt::Display for DenError {
         match *self {
             DenError::Anyhow(ref cause) => write!(f, "{cause:?}"),
             DenError::System(ref cause) => write!(f, "Server Error: {cause}"),
+            DenError::Provider(ref failure) => write!(f, "{failure}"),
             DenError::RunStateConflict {
                 operation,
                 ref run_id,

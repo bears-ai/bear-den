@@ -280,6 +280,7 @@ impl LazyAgentStepStream {
                                 api_style,
                                 started,
                                 primary,
+                                err,
                             )
                             .await;
                         }
@@ -336,13 +337,15 @@ impl LazyAgentStepStream {
         api_style: LlmApiStyle,
         started: Instant,
         primary: den_service::bears::model_configurations::ResolvedPrimaryModel,
+        original_error: DenError,
     ) -> Result<RuntimeEventStream, DenError> {
         let session = ctx.session_store.get(&session_key).ok_or_else(|| {
             DenError::System("agent loop session not found for overflow recovery".into())
         })?;
         if session.overflow_retry_attempted {
-            return Err(DenError::System(
-                "LLM context overflow persists after emergency compaction retry".into(),
+            return Err(overflow_recovery_failure(
+                original_error,
+                "LLM context overflow persists after emergency compaction retry",
             ));
         }
         if CompactionMode::parse(&ctx.config.compaction_mode) != CompactionMode::Active {
@@ -351,8 +354,9 @@ impl LazyAgentStepStream {
                 compaction_mode = %ctx.config.compaction_mode,
                 "context overflow detected but COMPACTION_MODE is not active; skipping retry"
             );
-            return Err(DenError::System(
-                "LLM context overflow; enable COMPACTION_MODE=active for emergency recovery".into(),
+            return Err(overflow_recovery_failure(
+                original_error,
+                "LLM context overflow; enable COMPACTION_MODE=active for emergency recovery",
             ));
         }
 
@@ -374,8 +378,9 @@ impl LazyAgentStepStream {
         });
 
         if !recovered {
-            return Err(DenError::System(
-                "LLM context overflow; emergency compaction did not shrink prompt".into(),
+            return Err(overflow_recovery_failure(
+                original_error,
+                "LLM context overflow; emergency compaction did not shrink prompt",
             ));
         }
 
@@ -453,6 +458,13 @@ impl LazyAgentStepStream {
             }
             Ok(Ok(stream)) => Ok(stream),
         }
+    }
+}
+
+fn overflow_recovery_failure(original_error: DenError, legacy_message: &str) -> DenError {
+    match original_error {
+        provider @ DenError::Provider(_) => provider,
+        _ => DenError::System(legacy_message.to_string()),
     }
 }
 
@@ -1114,6 +1126,10 @@ pub async fn run_agent_step_stream(
         Ok(Box::pin(stream::iter(prefix_events).chain(base_stream)) as RuntimeEventStream)
     }
 }
+
+#[cfg(test)]
+#[path = "step_provider_failure_tests.rs"]
+mod provider_failure_tests;
 
 #[cfg(test)]
 #[path = "step_model_configuration_tests.rs"]

@@ -1,6 +1,32 @@
 use super::*;
 
 #[test]
+fn provider_failure_roundtrip_preserves_typed_metadata_and_existing_http_status() {
+    use den_core::{ProviderFailureKind, ProviderHttpStatus, ProviderTransportKind};
+
+    let failure = ProviderFailure::new(ProviderFailureKind::StreamRead(
+        ProviderTransportKind::Timeout,
+    ))
+    .with_http_status(ProviderHttpStatus::new(503).unwrap())
+    .with_key_selection_fallback(ProviderHttpStatus::new(400).unwrap())
+    .with_retry_exhausted(4);
+    let boundary = CustomError::from(DenError::Provider(failure));
+    assert_eq!(boundary.to_string(), failure.to_string());
+    let DenError::Provider(roundtrip) = boundary.into_den() else {
+        panic!("provider failure must not be flattened into a string")
+    };
+    assert_eq!(roundtrip, failure);
+    let DenError::Provider(roundtrip) = DenError::from(CustomError::Provider(failure)) else {
+        panic!("From conversion must preserve provider metadata")
+    };
+    assert_eq!(roundtrip, failure);
+    let (status, html) = page(CustomError::Provider(failure));
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(!html.contains("provider_stream_read"));
+    assert!(!html.contains("HTTP 503"));
+}
+
+#[test]
 fn model_availability_roundtrip_retains_typed_reason_and_checked_model() {
     for kind in [
         ModelAvailabilityFailureKind::ModelMissing,

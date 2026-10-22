@@ -21,6 +21,7 @@ pub mod tools;
 
 pub mod model_availability;
 pub mod model_request_policy;
+pub mod provider_failure;
 pub use agent_loop_control::{AgentLoopControlLevel, ThinkingEffort};
 pub use effective_policy::{
     ArmatureAvailability, BearCapability, CapabilitySet, EffectivePolicy, TurnExecutionOrigin,
@@ -35,4 +36,7 @@ pub use model_availability::{
 };
 pub use model_request_policy::{
     resolve_agent_primary_request_profile, AgentPrimaryStep, ModelRequestProfile,
+};
+pub use provider_failure::{
+    ProviderFailure, ProviderFailureKind, ProviderHttpStatus, ProviderTransportKind,
 };

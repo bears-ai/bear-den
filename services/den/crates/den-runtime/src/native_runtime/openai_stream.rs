@@ -83,6 +83,11 @@ pub fn responses_byte_stream_to_event_stream_with_telemetry(
                         }
                         Err(err) => queued_events.push_back(Err(err)),
                     }
+                    if accumulator.has_provider_failure() {
+                        buffer.clear();
+                        finished = true;
+                        break;
+                    }
                 }
                 if let (Some(prompt_tokens), Some(sink)) = (
                     accumulator.take_observed_prompt_tokens(),
@@ -167,6 +172,11 @@ pub fn openai_byte_stream_to_event_stream_with_telemetry(
                                 }
                             }
                             Err(err) => queued_events.push_back(Err(err)),
+                        }
+                        if accumulator.has_provider_failure() {
+                            buffer.clear();
+                            finished = true;
+                            break;
                         }
                     }
                     if let (Some(prompt_tokens), Some(sink)) = (

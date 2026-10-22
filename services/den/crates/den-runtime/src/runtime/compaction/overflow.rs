@@ -28,6 +28,7 @@ pub fn is_context_length_overflow_message(message: &str) -> bool {
 /// Returns true when a [`DenError`] likely indicates context-length overflow from the LLM path.
 pub fn den_error_indicates_context_overflow(err: &DenError) -> bool {
     match err {
+        DenError::Provider(failure) => failure.is_context_overflow(),
         DenError::System(msg) | DenError::ValidationError(msg) => {
             is_context_length_overflow_message(msg)
         }
@@ -35,6 +36,10 @@ pub fn den_error_indicates_context_overflow(err: &DenError) -> bool {
         other => is_context_length_overflow_message(&other.to_string()),
     }
 }
+
+#[cfg(test)]
+#[path = "overflow_provider_failure_tests.rs"]
+mod provider_failure_tests;
 
 #[cfg(test)]
 mod tests {

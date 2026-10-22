@@ -28,7 +28,10 @@ use den_runtime::{
     current_task::preview_session_current_task_selection,
     native_runtime::start_native_turn_event_stream,
     runtime::bearwire_projection::wire::runtime_stream_event_to_bearwire_events,
-    runtime_error_ux::{log_sample, run_failure_projection, runtime_event_history_marker},
+    runtime_error_ux::{
+        log_sample, runtime_event_history_marker, RuntimeFailureInput,
+        RuntimeOperationalOutcomeProjection,
+    },
     runtime_exception_events::{
         self, NewRuntimeExceptionEvent, RuntimeExceptionContext, RuntimeExceptionSeverity,
     },
@@ -1160,6 +1163,56 @@ pub(crate) async fn persist_runtime_event_as_bearwire(
     }
 }
 
+#[derive(Debug)]
+struct RunFailurePersistenceInputs {
+    projection: RuntimeOperationalOutcomeProjection,
+    exception: NewRuntimeExceptionEvent,
+    terminal: Value,
+    work_outcome: Value,
+}
+
+fn run_failure_persistence_inputs(
+    session_id: &str,
+    run_id: &str,
+    bear_id: Uuid,
+    reason: RunFailureReason,
+    bear_name: &str,
+    failure: &RuntimeFailureInput,
+    context: Option<Value>,
+) -> RunFailurePersistenceInputs {
+    let projection = failure.projection(reason.as_str(), run_id, bear_name, context);
+    let message = failure.message();
+    let context = projection.diagnostic_context.clone();
+    RunFailurePersistenceInputs {
+        terminal: json!({
+            "run_id": run_id,
+            "message": message,
+            "user_message": projection.user_message,
+            "reason": reason.as_str(),
+            "context": context,
+        }),
+        work_outcome: json!({
+            "category": reason.as_str(),
+            "message": message,
+            "forensics": context,
+        }),
+        exception: NewRuntimeExceptionEvent {
+            severity: RuntimeExceptionSeverity::Error,
+            component: "den_bearwire.run".to_string(),
+            event_code: format!("bearwire_run_failed_{}", reason.as_str()),
+            message,
+            details: context.unwrap_or_else(|| json!({})),
+            context: RuntimeExceptionContext {
+                session_id: Some(session_id.to_string()),
+                runtime_run_id: Some(run_id.to_string()),
+                bear_id: Some(bear_id),
+                ..RuntimeExceptionContext::default()
+            },
+        },
+        projection,
+    }
+}
+
 pub(crate) async fn fail_run_lifecycle(
     pool: &sqlx::PgPool,
     session_id: &str,
@@ -1167,11 +1220,20 @@ pub(crate) async fn fail_run_lifecycle(
     bear_id: uuid::Uuid,
     user_id: i32,
     reason: RunFailureReason,
-    message: String,
+    failure: impl Into<RuntimeFailureInput>,
     context: Option<serde_json::Value>,
 ) {
     let bear_name = bear_display_name(pool, bear_id).await;
-    let projection = run_failure_projection(reason.as_str(), &message, run_id, &bear_name, context);
+    let inputs = run_failure_persistence_inputs(
+        session_id,
+        run_id,
+        bear_id,
+        reason,
+        &bear_name,
+        &failure.into(),
+        context,
+    );
+    let projection = inputs.projection;
     let user_message = projection.user_message.as_deref();
     let context = projection.diagnostic_context.clone();
     let diagnostic_context = context
@@ -1184,29 +1246,11 @@ pub(crate) async fn fail_run_lifecycle(
         user_id,
         reason = %reason,
         user_message = user_message,
-        error_message = %log_sample(&message),
+        error_message = %log_sample(&inputs.exception.message),
         diagnostic_context = diagnostic_context.as_deref(),
         "BearWire run failed"
     );
-    let diagnostic_details = context.clone().unwrap_or_else(|| json!({}));
-    if let Err(error) = runtime_exception_events::record(
-        pool,
-        NewRuntimeExceptionEvent {
-            severity: RuntimeExceptionSeverity::Error,
-            component: "den_bearwire.run".to_string(),
-            event_code: format!("bearwire_run_failed_{}", reason.as_str()),
-            message: message.clone(),
-            details: diagnostic_details,
-            context: RuntimeExceptionContext {
-                session_id: Some(session_id.to_string()),
-                runtime_run_id: Some(run_id.to_string()),
-                bear_id: Some(bear_id),
-                ..RuntimeExceptionContext::default()
-            },
-        },
-    )
-    .await
-    {
+    if let Err(error) = runtime_exception_events::record(pool, inputs.exception).await {
         tracing::warn!(session_id, run_id, error = %error, "failed to persist runtime exception event");
     }
     let finished = turn_runs::fail_run(
@@ -1216,13 +1260,7 @@ pub(crate) async fn fail_run_lifecycle(
         bear_id,
         user_id,
         reason.as_str(),
-        json!({
-            "run_id": run_id,
-            "message": message,
-            "user_message": user_message,
-            "reason": reason.as_str(),
-            "context": context,
-        }),
+        inputs.terminal,
     )
     .await
     .unwrap_or_else(|err| {
@@ -1247,11 +1285,7 @@ pub(crate) async fn fail_run_lifecycle(
         session_id,
         run_id,
         "failed",
-        Some(json!({
-            "category": reason.as_str(),
-            "message": message.clone(),
-            "forensics": context,
-        })),
+        Some(inputs.work_outcome),
     )
     .await;
     if let Ok(Some(session)) =
@@ -1313,11 +1347,11 @@ pub(crate) async fn persist_run_failed(
     bear_id: uuid::Uuid,
     user_id: i32,
     reason: RunFailureReason,
-    message: String,
+    failure: impl Into<RuntimeFailureInput>,
     context: Option<serde_json::Value>,
 ) {
     fail_run_lifecycle(
-        pool, session_id, run_id, bear_id, user_id, reason, message, context,
+        pool, session_id, run_id, bear_id, user_id, reason, failure, context,
     )
     .await;
 }
@@ -3034,7 +3068,7 @@ async fn run_start_with_recovery_source(
                                         bear_id,
                                         user_id,
                                         RunFailureReason::StreamError,
-                                        err.to_string(),
+                                        err,
                                         None,
                                     )
                                     .await;
@@ -3182,7 +3216,7 @@ async fn run_start_with_recovery_source(
                     bear_id,
                     user_id,
                     RunFailureReason::StartFailed,
-                    err.to_string(),
+                    err.into_den(),
                     None,
                 )
                 .await;
@@ -3519,6 +3553,10 @@ pub(crate) async fn run_cancel_result(
         "reason": if cancelled { "client_requested" } else { "no_active_run" },
     }))
 }
+
+#[cfg(test)]
+#[path = "run_provider_failure_tests.rs"]
+mod provider_failure_tests;
 
 #[cfg(test)]
 mod tests {

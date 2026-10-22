@@ -7,7 +7,7 @@ use bytes::Bytes;
 use futures::Stream;
 use tokio::time::Sleep;
 
-use den_core::DenError;
+use den_core::{DenError, ProviderFailure, ProviderFailureKind};
 
 /// Fails the stream when no upstream bytes arrive within `idle_limit`.
 pub fn byte_stream_with_idle_timeout<S>(
@@ -38,10 +38,7 @@ impl IdleTimeoutByteStream {
     }
 
     fn idle_elapsed_error(&self) -> DenError {
-        DenError::System(format!(
-            "LLM byte stream produced no data for {}s",
-            self.idle_limit.as_secs()
-        ))
+        DenError::Provider(ProviderFailure::new(ProviderFailureKind::IdleTimeout))
     }
 }
 
@@ -100,10 +97,11 @@ mod tests {
             .expect("should not hang forever")
             .expect("should emit timeout error")
             .expect_err("should be an error");
-        assert!(
-            item.to_string().contains("no data for"),
-            "unexpected error: {item}"
-        );
+        assert!(matches!(
+            item,
+            DenError::Provider(failure) if failure.kind() == ProviderFailureKind::IdleTimeout
+        ));
+        assert!(stream.next().await.is_none());
     }
 
     #[tokio::test]
