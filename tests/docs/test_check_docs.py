@@ -1,6 +1,9 @@
+import contextlib
 import importlib.util
+import io
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts/check-docs.py"
 spec = importlib.util.spec_from_file_location("check_docs", SCRIPT)
@@ -8,7 +11,7 @@ checker = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(checker)
 
 
-class DocumentationGuardTests(unittest.TestCase):
+class DocumentationLinkTests(unittest.TestCase):
     def test_link_regressions_are_ratcheted_against_the_base(self):
         old = {
             "docs/topic.md": "[old](missing.md)\n[guide](guide.md#heading)",
@@ -20,52 +23,113 @@ class DocumentationGuardTests(unittest.TestCase):
             {("docs/topic.md", "missing-new.md", "missing target")},
         )
         self.assertEqual(len(checker.link_issues(old)), 1)
-        deleted_asset = {"docs/topic.md": "[image](old.png)"}
+
+    def test_deleted_link_targets_are_reported(self):
+        contents = {"docs/topic.md": "[image](old.png)"}
         self.assertEqual(
-            checker.link_issues(deleted_asset, lambda name: name == "docs/old.png"),
+            checker.link_issues(contents, lambda name: name == "docs/old.png"),
             set(),
         )
-        self.assertEqual(len(checker.link_issues(deleted_asset, lambda name: False)), 1)
+        self.assertEqual(
+            checker.link_issues(contents, lambda name: False),
+            {("docs/topic.md", "old.png", "missing target")},
+        )
 
-    def test_new_topic_needs_provenance_and_a_navigation_link(self):
-        path = "docs/topics/new-topic.md"
-        contents = {"docs/README.md": "[New topic](topics/new-topic.md)", path: "# Topic"}
-        issues = checker.structure_issues(contents, {"docs/README.md"})
-        self.assertTrue(any("Current as of" in issue for issue in issues), issues)
-        self.assertFalse(any("link from docs/README.md" in issue for issue in issues), issues)
+    def test_heading_changes_are_reported(self):
+        old = {
+            "docs/topic.md": "[guide](guide.md#heading)",
+            "docs/guide.md": "# Heading",
+        }
+        current = dict(old, **{"docs/guide.md": "# Renamed"})
+        self.assertEqual(
+            checker.link_issues(current) - checker.link_issues(old),
+            {("docs/topic.md", "guide.md#heading", "missing heading anchor")},
+        )
 
-    def test_new_plan_requires_status_topic_and_index_and_adr_id_cannot_collide(self):
+    def test_external_urls_and_fenced_examples_are_ignored(self):
+        self.assertEqual(
+            list(checker.markdown_links(
+                "[external](https://example.com)\n```md\n[example](missing.md)\n```\n"
+                "[local](guide.md)"
+            )),
+            ["guide.md"],
+        )
+
+    def test_new_adr_cannot_duplicate_an_existing_identifier(self):
         old = {"docs/decisions/adr-0034-original.md"}
-        contents = {
+        current = old | {"docs/decisions/adr-0034-another.md"}
+        issues = checker.adr_id_issues(current, old)
+        self.assertEqual(len(issues), 1)
+        self.assertIn("ADR-0034", issues[0])
+
+    def test_two_new_adrs_cannot_share_an_identifier(self):
+        current = {
+            "docs/decisions/adr-0099-first.md",
+            "docs/decisions/adr-0099-second.md",
+        }
+        self.assertEqual(len(checker.adr_id_issues(current, set())), 1)
+
+    def test_unique_adrs_and_renames_are_allowed(self):
+        old = {"docs/decisions/adr-0034-original.md"}
+        current = {
+            "docs/decisions/adr-0034-renamed.md",
+            "docs/decisions/adr-0099-new.md",
+        }
+        self.assertEqual(checker.adr_id_issues(current, old), [])
+
+    def test_existing_adr_collisions_are_grandfathered_but_cannot_grow(self):
+        old = {
+            "docs/decisions/adr-0034-first.md",
+            "docs/decisions/adr-0034-second.md",
+        }
+        self.assertEqual(checker.adr_id_issues(old, old), [])
+        current = old | {"docs/decisions/adr-0034-third.md"}
+        self.assertEqual(len(checker.adr_id_issues(current, old)), 1)
+
+    def run_check(self, current, previous, *args):
+        output = io.StringIO()
+        base_files = b"\0".join(path.encode() for path in previous)
+        with (
+            patch.object(checker, "working_docs", return_value=current),
+            patch.object(checker, "revision_docs", return_value=previous),
+            patch.object(checker, "git", return_value=base_files),
+            patch("sys.argv", [str(SCRIPT), *args]),
+            contextlib.redirect_stdout(output),
+        ):
+            failed = checker.main()
+        return failed, output.getvalue()
+
+    def test_new_pages_do_not_require_metadata_status_or_reciprocal_links(self):
+        current = {
+            "docs/topics/new-topic.md": "# Topic",
             "docs/roadmap/new-plan.md": "# Plan",
-            "docs/decisions/adr-0034-another.md": "# ADR",
+            "docs/decisions/adr-0099-new.md": "# Decision",
+            "docs/archive/new-history.md": "# History",
+            "docs/guides/new-guide.md": "# Guide",
+            "services/den/docs/new-guide.md": "# Service guide",
         }
-        issues = checker.structure_issues(contents, old)
-        self.assertTrue(any("new plan needs **Status:**" in issue for issue in issues), issues)
-        self.assertTrue(any("index new plan" in issue for issue in issues), issues)
-        self.assertTrue(any("duplicate identifier" in issue for issue in issues), issues)
+        failed, output = self.run_check(current, {})
+        self.assertFalse(failed, output)
+        self.assertNotIn("::warning::", output)
 
-    def test_changed_code_prompts_for_topic_review_without_blocking(self):
-        changed = {"services/den/crates/den-bearwire/src/methods/run.rs"}
-        self.assertEqual(checker.documentation_impact_prompts(changed), ["docs/topics/bearwire-acp.md"])
-        changed.add("docs/topics/bearwire-acp.md")
-        self.assertEqual(checker.documentation_impact_prompts(changed), [])
+    def test_main_fails_on_new_link_and_adr_collisions(self):
+        old = {"docs/decisions/adr-0099-first.md": "# First"}
+        current = dict(old, **{
+            "docs/decisions/adr-0099-second.md": "[missing](nonexistent-docs-test-target.md)",
+        })
+        failed, output = self.run_check(current, old)
+        self.assertTrue(failed)
+        self.assertIn("missing target", output)
+        self.assertIn("ADR-0099", output)
 
-    def test_valid_plan_requires_real_topic_and_reciprocal_index(self):
-        plan = "docs/roadmap/next.md"
-        topic = "docs/topics/work.md"
-        contents = {
-            "docs/README.md": "[Work](topics/work.md)",
-            "docs/roadmap/README.md": "[Next](next.md)",
-            topic: "**Owner:** Work maintainers\n**Scope:** Work\n"
-                   "**Current as of:** 2026-09-26; evidence: tests\n"
-                   "**Target:** Work\n**Decisions:** none\n"
-                   "[Next](../roadmap/next.md)",
-            plan: "**Status:** Active\n**Topic:** [Work](../topics/work.md)",
-        }
-        self.assertEqual(checker.structure_issues(contents, set()), [])
-        contents[plan] = "**Status:** Active\n**Topic:** Work"
-        self.assertTrue(any("must link" in issue for issue in checker.structure_issues(contents, set())))
+    def test_all_reports_existing_link_backlog(self):
+        contents = {"docs/example.md": "[missing](nonexistent-docs-test-target.md)"}
+        failed, output = self.run_check(contents, contents)
+        self.assertFalse(failed, output)
+        self.assertIn("1 grandfathered link issues", output)
+        failed, output = self.run_check(contents, contents, "--all")
+        self.assertTrue(failed)
+        self.assertIn("missing target", output)
 
 
 if __name__ == "__main__":

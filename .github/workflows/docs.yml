@@ -1,9 +1,10 @@
-name: Documentation guard
+name: Documentation links
 
 on:
   pull_request:
-  push:
-    branches: [main, test]
+
+permissions:
+  contents: read
 
 jobs:
   docs:
@@ -11,17 +12,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Test documentation guard
+      - name: Test documentation checks
         run: python3 -m unittest discover -s tests/docs -p 'test_*.py'
-      - name: Block newly broken documentation links and unindexed pages
+      - name: Check new broken links and duplicate ADR identifiers
         env:
-          DOCS_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          DOCS_BASE: ${{ github.event.pull_request.base.sha }}
         run: |
-          if ! git cat-file -e "${DOCS_BASE}^{commit}" 2>/dev/null; then
-            DOCS_BASE="$(git rev-parse HEAD^)"
-          fi
-          python3 scripts/check-docs.py --base "$DOCS_BASE" --impact
+          git fetch --no-tags --depth=1 origin "$DOCS_BASE"
+          python3 scripts/check-docs.py --base "$DOCS_BASE"

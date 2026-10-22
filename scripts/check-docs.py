@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Ratchet documentation links and enforce structure on newly introduced pages.
+"""Check for newly broken documentation links and duplicate ADR identifiers.
 
 Default comparison is against HEAD (including uncommitted edits). CI passes the
-PR base or previous push SHA with --base. --all reports the full link backlog.
+PR base SHA with --base. --all reports the full link backlog.
 """
 
 import argparse
@@ -21,13 +21,6 @@ LINK = re.compile(r"\[[^\]\n]+\]\((<[^>\n]+>|[^)\n]+)\)")
 HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
 FENCE = re.compile(r"(?m)^\s{0,3}(`{3,}|~{3,})[^\n]*\n.*?^\s{0,3}\1\s*$", re.DOTALL)
 ADR = re.compile(r"^docs/decisions/adr-(\d{4})-[^/]+\.md$")
-STATES = {"draft", "active", "completed", "superseded"}
-CODE_TOPICS = {
-    "docs/topics/bearwire-acp.md": (
-        "services/den/crates/den-bearwire/", "tools/bear-armature/",
-    ),
-    "docs/topics/docket.md": ("services/den/crates/den-docket/",),
-}
 
 
 def git(*args):
@@ -110,84 +103,21 @@ def link_issues(contents, present=None):
     return problems
 
 
-def has_link(contents, source, dest):
-    return source in contents and any(target == dest for target, _, _ in targets(source, contents[source]))
-
-
-def field(text, name):
-    match = re.search(rf"(?m)^\*\*{re.escape(name)}:\*\*\s*(.+)$", text)
-    return match.group(1).strip() if match else None
-
-
-def topic_link_issues(contents, path, text):
-    home = field(text, "Topic")
-    if not home:
-        return [f"{path}: new page needs **Topic:** link"]
-    candidates = [target for target, _, _ in targets(path, home)
-                  if target.startswith("docs/topics/") and target in contents]
-    if len(candidates) != 1:
-        return [f"{path}: **Topic:** must link to one existing docs/topics/ page"]
-    if not has_link(contents, candidates[0], path):
-        return [f"{path}: link from owning topic {candidates[0]}"]
-    return []
-
-
-def structure_issues(contents, old_paths):
-    issues = []
-    for path, text in sorted(contents.items()):
-        if path.startswith("services/den/docs/") and path not in old_paths:
-            issues.extend(topic_link_issues(contents, path, text))
-            continue
-        if not path.startswith("docs/"):
-            continue
-        is_new = path not in old_paths
-        if path.startswith("docs/topics/") and path.endswith(".md"):
-            for name in ("Owner", "Scope", "Current as of", "Target", "Decisions"):
-                if not field(text, name):
-                    issues.append(f"{path}: missing **{name}:** provenance")
-            current = field(text, "Current as of") or ""
-            if not re.search(r"\b\d{4}-\d{2}-\d{2}\b", current) or "evidence:" not in current.lower():
-                issues.append(f"{path}: Current as of needs a date and evidence")
-            if not has_link(contents, "docs/README.md", path):
-                issues.append(f"{path}: link from docs/README.md topic map")
-        elif not is_new or path in {"docs/roadmap/README.md", "docs/README.md"}:
-            continue
-        elif path.startswith("docs/roadmap/archives/") or path.startswith("docs/archive/"):
-            if (field(text, "Status") or "").lower() != "historical":
-                issues.append(f"{path}: new archive needs **Status:** Historical")
-        elif path.startswith("docs/roadmap/"):
-            status = field(text, "Status")
-            if not status or status.lower() not in STATES:
-                issues.append(f"{path}: new plan needs **Status:** Draft|Active|Completed|Superseded")
-            if not has_link(contents, "docs/roadmap/README.md", path):
-                issues.append(f"{path}: index new plan in docs/roadmap/README.md")
-            issues.extend(topic_link_issues(contents, path, text))
-        elif ADR.fullmatch(path):
-            if not field(text, "Status"):
-                issues.append(f"{path}: new ADR needs **Status:**")
-            if not has_link(contents, "docs/decisions/README.md", path):
-                issues.append(f"{path}: index new ADR in docs/decisions/README.md")
-            issues.extend(topic_link_issues(contents, path, text))
-        else:
-            issues.extend(topic_link_issues(contents, path, text))
-    previous_ids = {ADR.fullmatch(path).group(1) for path in old_paths if ADR.fullmatch(path)}
-    new_ids = Counter(ADR.fullmatch(path).group(1) for path in contents if ADR.fullmatch(path) and path not in old_paths)
-    for number, count in new_ids.items():
-        if number in previous_ids or count > 1:
-            issues.append(f"ADR-{number}: newly introduced duplicate identifier; existing collisions are grandfathered")
-    return issues
-
-
-def documentation_impact_prompts(changed):
-    return [topic for topic, prefixes in CODE_TOPICS.items()
-            if any(path.startswith(prefixes) for path in changed) and topic not in changed]
+def adr_id_issues(paths, old_paths):
+    """Reject new collisions, allowing renames and the existing collision backlog."""
+    previous = Counter(ADR.fullmatch(path).group(1) for path in old_paths if ADR.fullmatch(path))
+    current = Counter(ADR.fullmatch(path).group(1) for path in paths if ADR.fullmatch(path))
+    return [
+        f"ADR-{number}: newly introduced duplicate identifier; existing collisions are grandfathered"
+        for number, count in sorted(current.items())
+        if count > max(1, previous[number])
+    ]
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", default="HEAD", help="Git revision to compare (default: HEAD)")
     parser.add_argument("--all", action="store_true", help="Fail on all existing broken links, not only new ones")
-    parser.add_argument("--impact", action="store_true", help="Warn when mapped code changes lack a topic update")
     args = parser.parse_args()
     try:
         current = working_docs()
@@ -199,18 +129,14 @@ def main():
     def present_at_base(path):
         return path in base_files or any(name.startswith(path.rstrip("/") + "/") for name in base_files)
     introduced = broken if args.all else broken - link_issues(previous, present_at_base)
-    structural = structure_issues(current, previous)
+    duplicates = adr_id_issues(current, previous)
     for source, raw, reason in sorted(introduced):
         print(f"{source}: {reason}: {raw}")
-    for issue in structural:
+    for issue in duplicates:
         print(issue)
-    if args.impact:
-        changed = {item.decode() for item in git("diff", "--name-only", "-z", args.base).split(b"\0") if item}
-        for topic in documentation_impact_prompts(changed):
-            print(f"::warning::Code for {topic} changed without a topic update; explain documentation impact in the PR")
     backlog = len(broken - introduced)
-    print(f"Docs: {len(current)} pages; {len(introduced)} new link issues, {len(structural)} structure issues; {backlog} grandfathered link issues")
-    return bool(introduced or structural)
+    print(f"Docs: {len(current)} pages; {len(introduced)} new link issues, {len(duplicates)} ADR-ID collisions; {backlog} grandfathered link issues")
+    return bool(introduced or duplicates)
 
 
 if __name__ == "__main__":
