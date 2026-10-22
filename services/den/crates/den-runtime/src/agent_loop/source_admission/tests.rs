@@ -40,6 +40,7 @@ pub(crate) fn test_session(
         run_id: Some(run.into()),
         technical_budget_recovery_start_payload: None,
         messages: vec![],
+        context_dependencies: Default::default(),
         tools: vec![],
         budget_components: Default::default(),
         model: "openai/gpt-4.1".into(),

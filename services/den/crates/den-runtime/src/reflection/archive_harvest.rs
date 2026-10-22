@@ -6,7 +6,9 @@ use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use den_service::bears::RuntimeContextLabel;
+use den_service::{
+    bears::RuntimeContextLabel, conversation::dependencies::require_unrestricted_metadata,
+};
 
 use crate::{
     agent_loop::load_transcript_grouping_rows,
@@ -122,8 +124,13 @@ fn db_err(context: &'static str) -> impl FnOnce(sqlx::Error) -> DenError {
     }
 }
 
-fn json_parse_err(context: &'static str) -> impl FnOnce(serde_json::Error) -> DenError {
-    move |err| DenError::Parsing(format!("{context}: {err}"))
+fn require_unrestricted_artifacts(
+    artifacts: &[CompactionArtifactHarvestRow],
+) -> Result<(), DenError> {
+    for artifact in artifacts {
+        require_unrestricted_metadata(&artifact.artifact_json)?;
+    }
+    Ok(())
 }
 
 pub async fn harvest_compaction_artifacts_once(
@@ -134,8 +141,11 @@ pub async fn harvest_compaction_artifacts_once(
     limit: i64,
     run_id: Option<&str>,
 ) -> Result<ArchiveHarvestOutput, DenError> {
-    let store = stores.store_for_bear(bear_id).await?;
     let artifacts = list_unmined_compaction_artifacts(pool, bear_id, limit).await?;
+    // Admit the whole batch before hashes, dedup marks or proposals can erase or
+    // outlive the metadata of a later protected artifact.
+    require_unrestricted_artifacts(&artifacts)?;
+    let store = stores.store_for_bear(bear_id).await?;
     let mut output = ArchiveHarvestOutput {
         scanned_artifacts: artifacts.len(),
         candidate_count: 0,
@@ -282,7 +292,7 @@ async fn list_unmined_compaction_artifacts(
 }
 
 fn decode_summary(value: serde_json::Value) -> Result<RuntimeIterativeSummary, DenError> {
-    serde_json::from_value(value).map_err(json_parse_err("decode compaction summary for harvest"))
+    crate::runtime_compaction::artifact_store::decode_unrestricted_iterative_summary(value)
 }
 
 fn source_hash(value: &serde_json::Value) -> String {
@@ -509,6 +519,10 @@ fn looks_durable_goal(text: &str) -> bool {
 fn contains_any(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| haystack.contains(needle))
 }
+
+#[cfg(test)]
+#[path = "archive_harvest_dependency_tests.rs"]
+mod dependency_tests;
 
 #[cfg(test)]
 mod tests {

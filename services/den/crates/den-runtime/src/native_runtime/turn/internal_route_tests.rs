@@ -69,6 +69,7 @@ impl StoredInternalSession {
             request_id: Some(Uuid::new_v4().to_string()),
             run_id: Some(run_id),
             technical_budget_recovery_start_payload: None,
+            context_dependencies: Default::default(),
             messages: vec![
                 ChatMessage {
                     role: "user".into(),

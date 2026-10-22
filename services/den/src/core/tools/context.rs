@@ -461,6 +461,7 @@ impl SourceAuthorizer for DenToolContext<'_> {
                 conversation_id: &context.conversation_id,
                 client_session_id: &context.session_id,
                 work_run_id: context.work_run_id,
+                context_dependencies: &Default::default(),
             },
         )
         .await?;

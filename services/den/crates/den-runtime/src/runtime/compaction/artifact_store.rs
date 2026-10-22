@@ -1,4 +1,5 @@
 use den_core::DenError;
+use den_service::conversation::dependencies::require_unrestricted_metadata;
 use serde_json::to_value;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -26,8 +27,14 @@ fn db_err(context: &'static str) -> impl FnOnce(sqlx::Error) -> DenError {
     }
 }
 
-fn json_parse_err(context: &'static str) -> impl FnOnce(serde_json::Error) -> DenError {
-    move |err| DenError::Parsing(format!("{context}: {err}"))
+/// Metadata must be admitted before serde discards fields outside the summary schema.
+/// Shared by prompt/reflection loads and archive harvest, not a declassification path.
+pub(crate) fn decode_unrestricted_iterative_summary(
+    value: serde_json::Value,
+) -> Result<RuntimeIterativeSummary, DenError> {
+    require_unrestricted_metadata(&value)?;
+    serde_json::from_value(value)
+        .map_err(|err| DenError::Parsing(format!("decode compaction artifact_json: {err}")))
 }
 
 pub async fn load_latest_iterative_summary(
@@ -64,8 +71,7 @@ pub async fn load_latest_iterative_summary(
         return Ok(None);
     };
 
-    let summary: RuntimeIterativeSummary = serde_json::from_value(row.artifact_json)
-        .map_err(json_parse_err("decode compaction artifact_json"))?;
+    let summary = decode_unrestricted_iterative_summary(row.artifact_json)?;
 
     Ok(Some(CompactionArtifactRecord {
         artifact_id: row.id,
@@ -190,3 +196,7 @@ async fn resolve_conversation_uuid(
     .map_err(db_err("resolve conversation uuid"))?;
     Ok(row)
 }
+
+#[cfg(test)]
+#[path = "artifact_dependency_tests.rs"]
+mod dependency_tests;

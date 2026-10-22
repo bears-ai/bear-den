@@ -28,6 +28,7 @@ use den_service::{
         RuntimeContextLabel,
     },
     conversation::{
+        dependencies::ContextDependencies,
         events::{
             canonical_persistence_context, canonical_persistence_enabled_for_conversation,
             persist_canonical_conversation_record, CanonicalConversationRecord,
@@ -920,6 +921,7 @@ async fn build_session(
         .ok_or_else(|| DenError::NotFound("bear not found".to_string()))?;
     // Admit the canonical source before any gateway, recall, prompt-provider or
     // transcript effects. runtime_target is never a model-selection source.
+    let context_dependencies = ContextDependencies::default();
     let source = require_ordinary_session_source(
         deps.pool,
         ContinuationSource {
@@ -930,6 +932,7 @@ async fn build_session(
             conversation_id,
             client_session_id,
             work_run_id,
+            context_dependencies: &context_dependencies,
         },
     )
     .await?;
@@ -1160,6 +1163,7 @@ async fn build_session(
         run_id,
         technical_budget_recovery_start_payload,
         messages,
+        context_dependencies,
         tools,
         budget_components,
         model: model.clone(),
@@ -1469,6 +1473,7 @@ pub async fn start_native_turn_event_stream(
             conversation_id: &conversation_id,
             client_session_id,
             work_run_id,
+            context_dependencies: &ContextDependencies::default(),
         },
         request.binding,
     )
@@ -2051,6 +2056,9 @@ mod approval_tests;
 #[cfg(test)]
 #[path = "turn/continuation_tests.rs"]
 mod continuation_tests;
+#[cfg(test)]
+#[path = "turn/dependency_tests.rs"]
+mod dependency_tests;
 #[cfg(test)]
 #[path = "turn/internal_route_tests.rs"]
 mod internal_route_tests;
@@ -2802,6 +2810,7 @@ mod tests {
             request_id: None,
             run_id: None,
             technical_budget_recovery_start_payload: None,
+            context_dependencies: Default::default(),
             messages: vec![],
             tools: vec![],
             budget_components: Default::default(),
@@ -2921,6 +2930,7 @@ mod tests {
             request_id: None,
             run_id: None,
             technical_budget_recovery_start_payload: None,
+            context_dependencies: Default::default(),
             messages: vec![],
             tools: vec![],
             budget_components: Default::default(),
@@ -3018,6 +3028,7 @@ mod tests {
             request_id: None,
             run_id: None,
             technical_budget_recovery_start_payload: None,
+            context_dependencies: Default::default(),
             messages: vec![],
             tools: vec![],
             budget_components: Default::default(),
@@ -3086,6 +3097,7 @@ mod tests {
             request_id: None,
             run_id: None,
             technical_budget_recovery_start_payload: None,
+            context_dependencies: Default::default(),
             messages: vec![],
             tools: vec![],
             budget_components: Default::default(),
@@ -3288,6 +3300,7 @@ mod tests {
             request_id: None,
             run_id: Some("run-max-step".to_string()),
             technical_budget_recovery_start_payload: None,
+            context_dependencies: Default::default(),
             messages: Vec::new(),
             tools: Vec::new(),
             budget_components: Default::default(),
@@ -3401,6 +3414,7 @@ mod tests {
             request_id: Some("request-before-tool".to_string()),
             run_id: Some("run-visible-tool".to_string()),
             technical_budget_recovery_start_payload: None,
+            context_dependencies: Default::default(),
             messages: vec![
                 ChatMessage {
                     role: "user".to_string(),
@@ -3611,6 +3625,7 @@ mod tests {
             request_id: Some(request_id.clone()),
             run_id: Some("run-persisted-visible".to_string()),
             technical_budget_recovery_start_payload: None,
+            context_dependencies: Default::default(),
             messages: vec![ChatMessage {
                 role: "assistant".to_string(),
                 content: None,
@@ -3789,6 +3804,7 @@ mod tests {
             request_id: Some(request_id.clone()),
             run_id: Some("run-load-history".to_string()),
             technical_budget_recovery_start_payload: None,
+            context_dependencies: Default::default(),
             messages: vec![ChatMessage {
                 role: "assistant".to_string(),
                 content: None,

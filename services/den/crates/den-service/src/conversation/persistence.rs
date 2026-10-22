@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{postgres::PgRow, types::Json, PgPool, Row};
 use uuid::Uuid;
 
+use super::dependencies::require_unrestricted_metadata;
 use crate::archived_conversations;
 use crate::conversation_message_types::{
     ConversationMessageRole, ConversationMessageType, ConversationMessageVisibility,
@@ -297,11 +298,21 @@ impl PersistedConversationMessage {
         }
     }
 
+    /// Check before discarding structured metadata, even for non-model-visible rows.
+    pub fn require_unrestricted_model_reuse(&self) -> Result<(), DenError> {
+        require_unrestricted_metadata(self.content_json_value())
+    }
+
     pub fn to_model_transcript_message(&self) -> Option<PersistedTranscriptMessage> {
+        self.require_unrestricted_model_reuse().ok()?;
         let visibility = self.storage_visibility().ok()?;
         if !visibility.is_model_transcript_visible() {
             return None;
         }
+        self.transcript_message()
+    }
+
+    fn transcript_message(&self) -> Option<PersistedTranscriptMessage> {
         let role = self.transcript_role()?;
         Some(PersistedTranscriptMessage {
             sequence_no: self.sequence_no,
@@ -313,6 +324,7 @@ impl PersistedConversationMessage {
     }
 
     pub fn to_model_transcript_record(&self) -> Option<PersistedTranscriptRecord> {
+        self.require_unrestricted_model_reuse().ok()?;
         if !self
             .storage_visibility()
             .ok()?
@@ -363,10 +375,11 @@ impl PersistedConversationMessage {
         if !visibility.is_user_history_visible() {
             return None;
         }
-        self.to_model_transcript_message()
+        self.transcript_message()
     }
 
     pub fn to_model_history_record(&self) -> Option<PersistedUserHistoryMessage> {
+        self.require_unrestricted_model_reuse().ok()?;
         if let Some(message) = self.to_model_transcript_message() {
             return Some(PersistedUserHistoryMessage {
                 sequence_no: message.sequence_no,
@@ -943,6 +956,28 @@ pub async fn list_messages_page(
     decode_message_rows(rows)
 }
 
+fn project_message_page(
+    rows: Vec<PersistedConversationMessage>,
+    projection: ConversationHistoryProjection,
+    limit: usize,
+) -> Result<Vec<PersistedConversationMessage>, DenError> {
+    // Validate the entire fetched raw page before visibility filtering or truncation.
+    // Otherwise a later protected/invalid row could be silently omitted from model reuse.
+    if projection == ConversationHistoryProjection::ModelTranscript {
+        for row in &rows {
+            row.require_unrestricted_model_reuse()?;
+        }
+    }
+    Ok(rows
+        .into_iter()
+        .filter(|row| match projection {
+            ConversationHistoryProjection::UserHistory => row.is_user_history_visible(),
+            ConversationHistoryProjection::ModelTranscript => row.is_model_transcript_visible(),
+        })
+        .take(limit)
+        .collect())
+}
+
 pub async fn list_projected_messages_page(
     pool: &PgPool,
     conversation_id: Uuid,
@@ -959,19 +994,15 @@ pub async fn list_projected_messages_page(
         let rows = list_messages_page(pool, conversation_id, cursor, RAW_PAGE_SIZE).await?;
         let raw_count = rows.len();
         cursor = rows.last().map(|row| row.sequence_no);
-        for row in rows {
-            let included = match projection {
-                ConversationHistoryProjection::UserHistory => row.is_user_history_visible(),
-                ConversationHistoryProjection::ModelTranscript => row.is_model_transcript_visible(),
-            };
-            if included {
-                projected.push(row);
-                if projected.len() == projected_limit {
-                    return Ok(projected);
-                }
-            }
-        }
-        if raw_count < RAW_PAGE_SIZE as usize || cursor.is_none() {
+        projected.extend(project_message_page(
+            rows,
+            projection,
+            projected_limit - projected.len(),
+        )?);
+        if projected.len() == projected_limit
+            || raw_count < RAW_PAGE_SIZE as usize
+            || cursor.is_none()
+        {
             return Ok(projected);
         }
     }
@@ -1181,6 +1212,8 @@ pub async fn count_visible_messages(pool: &PgPool, conversation_id: Uuid) -> Res
     .map_err(|err| DenError::Database(format!("count visible conversation messages: {err}")))
 }
 
+#[cfg(test)]
+mod dependency_tests;
 #[cfg(test)]
 mod tests;
 

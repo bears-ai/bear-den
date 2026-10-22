@@ -1,6 +1,8 @@
 use den_core::DenError;
-use den_service::conversation::persistence::{
-    PersistedToolRequestPayload, PersistedToolResultPayload,
+use den_service::conversation::{
+    dependencies::require_unrestricted_metadata,
+    message_types::{ConversationMessageType, ConversationMessageVisibility},
+    persistence::{PersistedToolRequestPayload, PersistedToolResultPayload},
 };
 use serde_json::Value;
 use sqlx::PgPool;
@@ -26,7 +28,16 @@ struct TranscriptRow {
     content_json: Value,
 }
 
-type TranscriptHistoryRow = (String, i64, String, String, Value, Option<String>);
+#[derive(Debug, Clone)]
+struct TranscriptHistoryRow {
+    message_id: String,
+    sequence_no: i64,
+    message_type: ConversationMessageType,
+    visibility: ConversationMessageVisibility,
+    content_text: String,
+    content_json: Value,
+    tool_call_id: Option<String>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TranscriptPruneDiagnostics {
@@ -42,22 +53,33 @@ pub struct PrunedTranscriptMessages {
 
 fn transcript_grouping_rows_from_history(
     history_rows: Vec<TranscriptHistoryRow>,
-) -> Vec<TranscriptGroupingRow> {
-    history_rows
+) -> Result<Vec<TranscriptGroupingRow>, DenError> {
+    // Validate the entire raw history before projection can discard metadata or
+    // a sequence cutoff can hide a protected row (including orphan tool calls).
+    for row in &history_rows {
+        require_unrestricted_metadata(&row.content_json)?;
+    }
+    Ok(history_rows
         .into_iter()
-        .map(
-            |(message_id, sequence_no, message_type, content_text, content_json, tool_call_id)| {
-                TranscriptGroupingRow {
-                    message_id: Some(message_id),
-                    sequence_no: Some(sequence_no),
-                    message_type,
-                    content_text,
-                    content_json,
-                    tool_call_id,
-                }
-            },
-        )
-        .collect()
+        // Preserve the prior grouping query's projection, including diagnostic
+        // tools and admin-only rows, only after all raw metadata is admitted.
+        .filter(|row| match (row.visibility, row.message_type) {
+            (
+                ConversationMessageVisibility::DiagnosticOnly,
+                ConversationMessageType::ToolCall | ConversationMessageType::ToolResult,
+            ) => true,
+            (ConversationMessageVisibility::DiagnosticOnly, _) => false,
+            _ => true,
+        })
+        .map(|row| TranscriptGroupingRow {
+            message_id: Some(row.message_id),
+            sequence_no: Some(row.sequence_no),
+            message_type: row.message_type.as_str().to_string(),
+            content_text: row.content_text,
+            content_json: row.content_json,
+            tool_call_id: row.tool_call_id,
+        })
+        .collect())
 }
 
 fn transcript_rows_from_grouping_rows(rows: &[TranscriptGroupingRow]) -> Vec<TranscriptRow> {
@@ -390,16 +412,12 @@ pub async fn load_transcript_grouping_rows(
 ) -> Result<Vec<TranscriptGroupingRow>, DenError> {
     let history_rows = sqlx::query!(
         r#"
-        SELECT id::text AS "message_id!", sequence_no, message_type, content_text, content_json, tool_call_id
+        SELECT id::text AS "message_id!", sequence_no, message_type, content_text, content_json, tool_call_id, visibility
         FROM conversation_messages
         WHERE conversation_id = (
             SELECT id FROM conversations
             WHERE external_conversation_id = $1 AND bear_id = $2
             LIMIT 1
-        )
-        AND (
-            visibility != 'diagnostic_only'
-            OR message_type IN ('tool_call', 'tool_result')
         )
         ORDER BY sequence_no ASC
         "#,
@@ -410,17 +428,18 @@ pub async fn load_transcript_grouping_rows(
     .await?
     .into_iter()
     .map(|row| {
-        (
-            row.message_id,
-            row.sequence_no,
-            row.message_type,
-            row.content_text,
-            row.content_json,
-            row.tool_call_id,
-        )
+        Ok(TranscriptHistoryRow {
+            message_id: row.message_id,
+            sequence_no: row.sequence_no,
+            message_type: ConversationMessageType::try_from_storage(&row.message_type)?,
+            visibility: ConversationMessageVisibility::try_from_storage(&row.visibility)?,
+            content_text: row.content_text,
+            content_json: row.content_json,
+            tool_call_id: row.tool_call_id,
+        })
     })
-    .collect();
-    Ok(transcript_grouping_rows_from_history(history_rows))
+    .collect::<Result<Vec<_>, DenError>>()?;
+    transcript_grouping_rows_from_history(history_rows)
 }
 
 pub async fn load_transcript_messages(
@@ -557,6 +576,10 @@ pub async fn assemble_agent_messages(
     messages.extend(tool_messages.iter().cloned());
     Ok(repair_tool_call_message_chain(messages))
 }
+
+#[cfg(test)]
+#[path = "context_dependency_tests.rs"]
+mod dependency_tests;
 
 #[cfg(test)]
 mod tests {

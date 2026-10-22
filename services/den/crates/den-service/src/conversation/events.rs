@@ -11,7 +11,10 @@ use crate::conversation_message_types::{
     ConversationMessageWrite,
 };
 
-use super::persistence::{append_message, ensure_conversation_for_external_id, list_messages_page};
+use super::{
+    dependencies::ContextDependencies,
+    persistence::{append_message, ensure_conversation_for_external_id, list_messages_page},
+};
 use den_core::conversation_ids::is_acp_history_target;
 
 pub fn canonical_persistence_enabled_for_conversation(external_conversation_id: &str) -> bool {
@@ -253,6 +256,19 @@ fn content_json_dedup_key(content_json: &serde_json::Value) -> Option<CanonicalE
 }
 
 impl CanonicalConversationRecord {
+    /// Attach server-owned dependency locators without changing event identity or visibility.
+    pub fn with_context_dependencies(
+        mut self,
+        dependencies: &ContextDependencies,
+    ) -> Result<Self, DenError> {
+        let content_json = match &mut self {
+            Self::VisibleMessage { content_json, .. }
+            | Self::StructuredEvent { content_json, .. } => content_json,
+        };
+        dependencies.attach_to_metadata(content_json)?;
+        Ok(self)
+    }
+
     pub fn visible_user_message(
         text: impl Into<String>,
         content_json: serde_json::Value,

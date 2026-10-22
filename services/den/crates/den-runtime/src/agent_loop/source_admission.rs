@@ -8,7 +8,7 @@ use den_core::{
 use den_docket::{work_runs, DocketService, PgDocketService};
 use den_service::{
     bears::hats::{memory_binding, turn_binding::NativeTurnSource},
-    conversation::{persistence, viewer::ConversationViewer},
+    conversation::{dependencies::ContextDependencies, persistence, viewer::ConversationViewer},
 };
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -24,6 +24,7 @@ pub struct OrdinarySessionSource<'a> {
     pub conversation_id: &'a str,
     pub client_session_id: &'a str,
     pub work_run_id: Option<Uuid>,
+    pub context_dependencies: &'a ContextDependencies,
 }
 
 impl<'a> From<&'a AgentLoopSession> for OrdinarySessionSource<'a> {
@@ -36,6 +37,7 @@ impl<'a> From<&'a AgentLoopSession> for OrdinarySessionSource<'a> {
             conversation_id: &session.conversation_id,
             client_session_id: &session.client_session_id,
             work_run_id: session.work_run_id,
+            context_dependencies: &session.context_dependencies,
         }
     }
 }
@@ -55,6 +57,7 @@ pub async fn require_ordinary_session_source(
     pool: &PgPool,
     session: OrdinarySessionSource<'_>,
 ) -> Result<NativeTurnSource, DenError> {
+    session.context_dependencies.require_unrestricted_reuse()?;
     session.origin.require_ordinary_session()?;
     if den_core::EffectivePolicy::compile_for_origin(
         session.origin,
@@ -179,6 +182,9 @@ pub async fn require_ordinary_session_source(
         }
     }
 }
+
+#[cfg(test)]
+mod dependency_tests;
 
 #[cfg(test)]
 pub(crate) mod tests;

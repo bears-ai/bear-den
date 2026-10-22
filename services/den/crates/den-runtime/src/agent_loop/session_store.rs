@@ -11,6 +11,7 @@ use den_core::{
 };
 use den_docket::TaskListProjection;
 use den_protocol::ContextBudgetReport;
+use den_service::conversation::dependencies::ContextDependencies;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -110,6 +111,10 @@ pub struct AgentLoopSession {
     /// a technical-budget continuation boundary.
     pub technical_budget_recovery_start_payload: Option<Value>,
     pub messages: Vec<ChatMessage>,
+    /// Conservative dependencies of all context used by this session, not just
+    /// its current message tail. Retain across clones and message replacement;
+    /// never expose these private locators through session_info.
+    pub context_dependencies: ContextDependencies,
     pub tools: Vec<LlmToolDefinition>,
     pub budget_components: AssembledTurnBudgetComponents,
     pub model: String,
@@ -508,6 +513,7 @@ mod tests {
             run_id: Some("run-test".to_string()),
             technical_budget_recovery_start_payload: None,
             messages: Vec::new(),
+            context_dependencies: Default::default(),
             tools: Vec::new(),
             budget_components: Default::default(),
             model: "openai/test".to_string(),

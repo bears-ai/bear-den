@@ -3068,6 +3068,7 @@ mod tests {
             request_id: Some("request-test".to_string()),
             run_id: Some("run-test".to_string()),
             technical_budget_recovery_start_payload: None,
+            context_dependencies: Default::default(),
             messages: Vec::new(),
             tools: Vec::new(),
             budget_components: Default::default(),

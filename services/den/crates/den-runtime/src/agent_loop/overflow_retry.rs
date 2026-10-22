@@ -31,6 +31,9 @@ pub async fn compact_session_messages_for_overflow(
     config: &Config,
     session: &AgentLoopSession,
 ) -> Result<(Vec<ChatMessage>, bool), DenError> {
+    // This entry point is also called directly: compaction must not replace a
+    // protected session's messages or erase its dependency history.
+    session.context_dependencies.require_unrestricted_reuse()?;
     let mode = CompactionMode::parse(&config.compaction_mode);
     let state = run_compaction_job(
         pool,
@@ -160,6 +163,10 @@ fn collect_ephemeral_tail(existing: &[ChatMessage]) -> Vec<ChatMessage> {
     tail.reverse();
     tail
 }
+
+#[cfg(test)]
+#[path = "overflow_dependency_tests.rs"]
+mod dependency_tests;
 
 #[cfg(test)]
 mod tests {

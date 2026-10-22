@@ -2,6 +2,7 @@
 //! event projection, and archived-conversation reads.
 
 pub mod archived;
+pub mod dependencies;
 pub mod events;
 pub mod message_types;
 pub mod persistence;

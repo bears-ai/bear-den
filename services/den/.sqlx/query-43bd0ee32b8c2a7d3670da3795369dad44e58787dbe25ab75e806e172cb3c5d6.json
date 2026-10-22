@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT id::text AS \"message_id!\", sequence_no, message_type, content_text, content_json, tool_call_id\n        FROM conversation_messages\n        WHERE conversation_id = (\n            SELECT id FROM conversations\n            WHERE external_conversation_id = $1 AND bear_id = $2\n            LIMIT 1\n        )\n        AND (\n            visibility != 'diagnostic_only'\n            OR message_type IN ('tool_call', 'tool_result')\n        )\n        ORDER BY sequence_no ASC\n        ",
+  "query": "\n        SELECT id::text AS \"message_id!\", sequence_no, message_type, content_text, content_json, tool_call_id, visibility\n        FROM conversation_messages\n        WHERE conversation_id = (\n            SELECT id FROM conversations\n            WHERE external_conversation_id = $1 AND bear_id = $2\n            LIMIT 1\n        )\n        ORDER BY sequence_no ASC\n        ",
   "describe": {
     "columns": [
       {
@@ -32,6 +32,11 @@
         "ordinal": 5,
         "name": "tool_call_id",
         "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "visibility",
+        "type_info": "Text"
       }
     ],
     "parameters": {
@@ -46,8 +51,9 @@
       false,
       false,
       false,
-      true
+      true,
+      false
     ]
   },
-  "hash": "394dfc444ee09f87148698002f21b411f9ce729ae0435e0cb77be1319ce7c08e"
+  "hash": "43bd0ee32b8c2a7d3670da3795369dad44e58787dbe25ab75e806e172cb3c5d6"
 }

@@ -68,6 +68,7 @@ pub(super) async fn require_work_source(
             conversation_id,
             client_session_id: session_id,
             work_run_id: Some(work_run_id),
+            context_dependencies: &Default::default(),
         },
     )
     .await?;

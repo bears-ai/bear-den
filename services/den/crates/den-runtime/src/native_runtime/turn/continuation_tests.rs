@@ -88,6 +88,7 @@ async fn approved_tool_continuation_requires_the_same_owned_live_conversation(po
     );
     let origin =
         den_core::TurnExecutionOrigin::ArmatureConversation(ArmatureAvailability::Connected);
+    let context_dependencies = Default::default();
     let source = || ContinuationSource {
         bear_id: bear,
         user_id: Some(user),
@@ -96,6 +97,7 @@ async fn approved_tool_continuation_requires_the_same_owned_live_conversation(po
         conversation_id: &external,
         client_session_id: &client_id,
         work_run_id: None,
+        context_dependencies: &context_dependencies,
     };
     let expected =
         binding(NativeTurnSource::Conversation(conversation.id).binding_id(BearId::new(bear)));
@@ -184,6 +186,7 @@ async fn work_continuation_needs_exact_live_run_and_internal_continuations_are_d
     .await
     .unwrap();
     let work_id = Uuid::new_v4();
+    let context_dependencies = Default::default();
     let work = ContinuationSource {
         bear_id: bear,
         user_id: None,
@@ -192,6 +195,7 @@ async fn work_continuation_needs_exact_live_run_and_internal_continuations_are_d
         conversation_id: "unused",
         client_session_id: "unbound-work-session",
         work_run_id: Some(work_id),
+        context_dependencies: &context_dependencies,
     };
     assert!(require_continuation_binding(
         &pool,
@@ -218,6 +222,7 @@ async fn work_continuation_needs_exact_live_run_and_internal_continuations_are_d
         conversation_id: "unused",
         client_session_id: "unused",
         work_run_id: None,
+        context_dependencies: &context_dependencies,
     };
     let guessed = binding(format!("den-native:{bear}:pair"));
     assert!(require_continuation_binding(&pool, internal, &guessed)
