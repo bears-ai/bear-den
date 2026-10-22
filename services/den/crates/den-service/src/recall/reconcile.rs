@@ -14,7 +14,7 @@ use den_core::{
 };
 
 use den_memory::MemoryStoreManager;
-use den_memory::{relations, BearMemoryStore, MemoryScopeType};
+use den_memory::{list_generic_indexable_heads, relations, BearMemoryStore, MemoryScopeType};
 
 use super::indexer::{PassageEmbedder, RecallIndexer};
 use super::policy::{is_indexable, IndexRequest};
@@ -35,67 +35,9 @@ pub struct ReconcileOutcome {
     pub removed_points: usize,
 }
 
-/// The current indexable head record per logical path for a Bear (latest, normal-visibility,
-/// not superseded). Non-indexable kinds/scopes are filtered out per [`is_indexable`].
-#[derive(Debug, Clone, sqlx::FromRow)]
-struct HeadRow {
-    memory_id: String,
-    sequence_no: i64,
-    scope_type: String,
-    scope_profile: Option<String>,
-    scope_hat_id: Option<String>,
-    kind: String,
-    visibility: String,
-    salience: String,
-    metadata_json: String,
-    supersedes_memory_id: Option<String>,
-    invalid_at: Option<String>,
-    logical_path: Option<String>,
-    work_surface_ref: Option<String>,
-    content_text: String,
-}
-
 pub async fn list_indexable_heads(store: &BearMemoryStore) -> Result<Vec<IndexRequest>, DenError> {
     let bear_id = store.bear_id();
-    // sqlx-dynamic: canonical per-Bear SQLite has no compile-time query metadata;
-    // this fixed query binds the Bear ID and never derives scope from a path.
-    let rows = sqlx::query_as::<_, HeadRow>(
-        r"
-        SELECT m.memory_id, m.sequence_no, m.scope_type, m.scope_profile, m.scope_hat_id, m.kind, m.visibility,
-               m.salience, m.metadata_json, m.supersedes_memory_id, m.invalid_at,
-               m.logical_path, m.work_surface_ref, m.content_text
-        FROM memory_records m
-        WHERE m.bear_id = ?
-          AND m.scope_type IN ('shared', 'hat')
-          AND m.scope_profile IS NULL
-          AND m.scope_source_kind IS NULL
-          AND m.scope_source_id IS NULL
-          AND m.visibility = 'normal'
-          AND m.invalid_at IS NULL
-          AND m.logical_path IS NOT NULL
-          AND NOT EXISTS (
-              SELECT 1 FROM memory_access_rules rules
-              WHERE rules.bear_id = m.bear_id AND rules.src_memory_id = m.memory_id
-          )
-          AND NOT EXISTS (
-              SELECT 1 FROM memory_records n
-              WHERE n.bear_id = m.bear_id AND n.supersedes_memory_id = m.memory_id
-          )
-          AND m.sequence_no = (
-              SELECT MAX(h.sequence_no) FROM memory_records h
-              WHERE h.bear_id = m.bear_id
-                AND h.logical_path = m.logical_path
-                AND h.scope_type = m.scope_type
-                AND h.scope_hat_id IS m.scope_hat_id
-                AND h.visibility = 'normal'
-          )
-        ORDER BY m.logical_path
-        ",
-    )
-    .bind(bear_id.to_string())
-    .fetch_all(store.pool())
-    .await
-    .map_err(|e| DenError::System(format!("list indexable heads: {e}")))?;
+    let rows = list_generic_indexable_heads(store).await?;
 
     // One bulk pass for resolved descriptive entities, denormalized into each passage payload.
     let entity_ids_by_source = relations::descriptive_entity_ids_by_source(store).await?;

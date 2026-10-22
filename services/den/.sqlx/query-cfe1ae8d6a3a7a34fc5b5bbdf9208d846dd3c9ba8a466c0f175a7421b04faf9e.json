@@ -1,0 +1,98 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT m.memory_id AS \"memory_id!\", m.sequence_no AS \"sequence_no!\",\n               m.scope_type AS \"scope_type!\", m.scope_profile, m.scope_hat_id,\n               m.kind AS \"kind!\", m.visibility AS \"visibility!\", m.salience AS \"salience!\",\n               m.metadata_json AS \"metadata_json!\", m.supersedes_memory_id, m.invalid_at,\n               m.logical_path, m.work_surface_ref, m.content_text AS \"content_text!\"\n        FROM generic_memory_records m\n        WHERE m.bear_id = ?\n          AND m.scope_type IN ('shared', 'hat')\n          AND m.scope_profile IS NULL\n          AND m.scope_source_kind IS NULL\n          AND m.scope_source_id IS NULL\n          AND m.visibility = 'normal'\n          AND m.invalid_at IS NULL\n          AND m.logical_path IS NOT NULL\n          AND NOT EXISTS (\n              SELECT 1 FROM memory_records n\n              WHERE n.bear_id = m.bear_id AND n.supersedes_memory_id = m.memory_id\n          )\n          AND m.sequence_no = (\n              SELECT MAX(h.sequence_no) FROM memory_records h\n              WHERE h.bear_id = m.bear_id\n                AND h.logical_path = m.logical_path\n                AND h.scope_type = m.scope_type\n                AND h.scope_hat_id IS m.scope_hat_id\n                AND h.visibility = 'normal'\n          )\n        ORDER BY m.logical_path\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "memory_id!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "sequence_no!",
+        "ordinal": 1,
+        "type_info": "Integer"
+      },
+      {
+        "name": "scope_type!",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "scope_profile",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "scope_hat_id",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "kind!",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "visibility!",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "salience!",
+        "ordinal": 7,
+        "type_info": "Text"
+      },
+      {
+        "name": "metadata_json!",
+        "ordinal": 8,
+        "type_info": "Text"
+      },
+      {
+        "name": "supersedes_memory_id",
+        "ordinal": 9,
+        "type_info": "Text"
+      },
+      {
+        "name": "invalid_at",
+        "ordinal": 10,
+        "type_info": "Text"
+      },
+      {
+        "name": "logical_path",
+        "ordinal": 11,
+        "type_info": "Text"
+      },
+      {
+        "name": "work_surface_ref",
+        "ordinal": 12,
+        "type_info": "Text"
+      },
+      {
+        "name": "content_text!",
+        "ordinal": 13,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "cfe1ae8d6a3a7a34fc5b5bbdf9208d846dd3c9ba8a466c0f175a7421b04faf9e"
+}

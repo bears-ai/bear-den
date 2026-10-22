@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT memory_id AS \"memory_id!\", logical_path AS \"logical_path!\",\n               content_text AS \"content_text!\", sequence_no AS \"sequence_no!\"\n        FROM generic_memory_records\n        WHERE bear_id = ? AND scope_profile = ? AND logical_path LIKE ?\n        ORDER BY sequence_no DESC\n        LIMIT ?\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "memory_id!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "logical_path!",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "content_text!",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "sequence_no!",
+        "ordinal": 3,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "4af7b79a338d9e81d7b5cf7acac2054ca78af9db0fcc92fc5759164e4d1af928"
+}

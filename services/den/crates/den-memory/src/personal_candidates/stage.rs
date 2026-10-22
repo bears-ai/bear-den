@@ -34,30 +34,12 @@ pub async fn stage_preferred_name(
     }
     let conversation_id = source.conversation_id.to_string();
     let source_memory_id = source.memory_id.to_string();
-    // Initial admission accepts only the exact current, unprotected source-local note.
-    // We read no source body, do not reinterpret its JSON as identity, and never reclassify it.
-    let eligible = sqlx::query_scalar!(
-        r#"
-        SELECT EXISTS (
-            SELECT 1 FROM memory_records m WHERE m.bear_id = ? AND m.memory_id = ?
-              AND m.scope_type = 'source_local' AND m.scope_source_kind = 'conversation'
-              AND m.scope_source_id = ? AND m.visibility = 'normal' AND m.invalid_at IS NULL
-              AND json_valid(m.metadata_json)
-              AND COALESCE(json_extract(m.metadata_json, '$.lifecycle.status'), 'active') = 'active'
-              AND NOT EXISTS (
-                  SELECT 1 FROM memory_records newer
-                  WHERE newer.bear_id = m.bear_id AND newer.supersedes_memory_id = m.memory_id
-              )
-              AND NOT EXISTS (
-                  SELECT 1 FROM memory_access_rules r WHERE r.bear_id = m.bear_id AND r.src_memory_id = m.memory_id
-              )
-        ) AS "eligible!: bool"
-        "#,
-        bear_id,
-        source_memory_id,
-        conversation_id,
+    let eligible = super::source::source_is_eligible(
+        &mut tx,
+        &bear_id,
+        source.conversation_id,
+        source.memory_id,
     )
-    .fetch_one(&mut *tx)
     .await?;
     if !eligible {
         return Err(denied());

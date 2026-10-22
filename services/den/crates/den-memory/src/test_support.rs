@@ -60,6 +60,31 @@ pub async fn identity_test_counts(store: &BearMemoryStore) -> Result<(i64, i64, 
     ))
 }
 
+/// Compare private fixture contents without exposing an unscoped body-read API.
+/// One bulk assertion preserves import-integrity checks independently of reader authorization.
+pub async fn canonical_record_contents_match(
+    store: &BearMemoryStore,
+    expected: &[(&str, &str)],
+) -> Result<bool, DenError> {
+    let expected = serde_json::to_string(expected)
+        .map_err(|_| DenError::System("encode canonical fixture expectations".into()))?;
+    let bear_id = store.bear_id().to_string();
+    Ok(sqlx::query_scalar!(
+        r#"
+        SELECT NOT EXISTS (
+            SELECT 1 FROM json_each(?) expected
+            LEFT JOIN memory_records m ON m.bear_id = ?
+                AND m.memory_id = json_extract(expected.value, '$[0]')
+            WHERE m.memory_id IS NULL OR m.content_text IS NOT json_extract(expected.value, '$[1]')
+        ) AS "matches!: bool"
+        "#,
+        expected,
+        bear_id,
+    )
+    .fetch_one(store.pool())
+    .await?)
+}
+
 /// Hold SQLite's writer lock until the returned fixture transaction is completed.
 pub async fn lock_identity_test_store(
     store: &BearMemoryStore,

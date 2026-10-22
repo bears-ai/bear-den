@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT predecessor.memory_id AS \"memory_id!: String\",\n               COALESCE(newer.valid_from, newer.created_at) AS \"effective_at!: String\"\n        FROM generic_memory_records predecessor\n        JOIN memory_records newer ON newer.bear_id = predecessor.bear_id\n          AND newer.supersedes_memory_id = predecessor.memory_id\n        WHERE predecessor.bear_id = ?\n          AND predecessor.memory_id IN (SELECT value FROM json_each(?))\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "memory_id!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "effective_at!: String",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "3b2e16a16a210e3737e451cdb8465f8f110fbf6e63f910d3f3e7f03dafe44a61"
+}

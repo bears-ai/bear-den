@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE memory_records SET metadata_json = ?, invalid_at = ? WHERE bear_id = ? AND memory_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "8b16b498a4eeebcc1aab1f79f4ccd3be46e725e34fb7a7383b2a19491e48e53e"
+}

@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT e.entity_id AS \"entity_id!\", e.type AS \"entity_type!\", e.display_name,\n                   e.resolution AS \"resolution!\", e.canonical_ref,\n                   SUM(CASE WHEN m.salience IN ('high', 'critical') THEN 1 ELSE 0 END) AS \"high_count!: i64\",\n                   SUM(CASE WHEN m.salience = 'normal' THEN 1 ELSE 0 END) AS \"normal_count!: i64\",\n                   NULL AS \"evidence_json?: String\"\n            FROM entities e\n            JOIN memory_relations r ON r.bear_id = e.bear_id AND r.entity_id = e.entity_id\n              AND r.state = 'active' AND r.relation = 'den.memory.relation.subject'\n            JOIN generic_memory_records m ON m.bear_id = e.bear_id\n              AND m.memory_id = r.src_memory_id AND m.visibility = 'normal'\n            WHERE e.bear_id = ? AND e.resolution IN ('resolved', 'confirmed')\n              AND e.superseded_by_entity_id IS NULL\n            GROUP BY e.entity_id, e.type, e.display_name, e.resolution, e.canonical_ref\n            ORDER BY MAX(m.sequence_no) DESC LIMIT ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "entity_id!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "entity_type!",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "display_name",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "resolution!",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "canonical_ref",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "high_count!: i64",
+        "ordinal": 5,
+        "type_info": "Integer"
+      },
+      {
+        "name": "normal_count!: i64",
+        "ordinal": 6,
+        "type_info": "Integer"
+      },
+      {
+        "name": "evidence_json?: String",
+        "ordinal": 7,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "d06b41b382262a5ab274473258a0916ad3683865de2e2f279ee26815d4e02e87"
+}

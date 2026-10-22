@@ -327,19 +327,27 @@ async fn active_record_with_claim_fingerprint(
     fingerprint: &str,
     target_ref: &str,
 ) -> Result<Option<ConsolidationCandidate>, DenError> {
-    let rows = sqlx::query_as::<_, ConsolidationCandidateSqlRow>(
-        r"
-        SELECT memory_id, sequence_no, logical_path, content_text
-        FROM memory_records
+    let bear_id = store.bear_id().to_string();
+    let rows = sqlx::query_as!(
+        ConsolidationCandidateSqlRow,
+        r#"
+        SELECT memory_id AS "memory_id!", sequence_no AS "sequence_no!",
+               logical_path, content_text AS "content_text!"
+        FROM generic_memory_records AS memory_records
         WHERE bear_id = ?
           AND visibility = 'normal'
           AND invalid_at IS NULL
           AND COALESCE(json_extract(metadata_json, '$.lifecycle.status'), 'active') NOT IN ('archived', 'archive-candidate')
+          AND NOT EXISTS (
+              SELECT 1 FROM memory_records newer
+              WHERE newer.bear_id = memory_records.bear_id
+                AND newer.supersedes_memory_id = memory_records.memory_id
+          )
         ORDER BY sequence_no DESC
         LIMIT 100
-        ",
+        "#,
+        bear_id,
     )
-    .bind(store.bear_id().to_string())
     .fetch_all(store.pool())
     .await
     .map_err(|e| DenError::System(format!("sqlite consolidation lookup failed: {e}")))?;

@@ -5,8 +5,14 @@ use den_memory::{
         withdraw_candidate, CandidateState, PersonalCandidate, PreferredName,
         VerifiedPersonalSource,
     },
+    personal_facts::{
+        current_preferred_name, publish_preferred_name, retract_preferred_name, PersonalFactState,
+        PublicationReceipt,
+    },
     resolve_authenticated_user_entity, AuthenticatedUserEntity, MemorySource,
 };
+
+const PUBLISHED_NAME: &str = "BundlePersonalNameSentinel-7C92";
 
 fn assert_preserved(
     actual: &PersonalCandidate,
@@ -45,11 +51,91 @@ async fn stage(
         .unwrap()
 }
 
+async fn assert_head(
+    store: &BearMemoryStore,
+    binding: &AuthenticatedUserEntity,
+    publication: PublicationReceipt,
+    state: PersonalFactState,
+    name: Option<&str>,
+) {
+    let head = current_preferred_name(store, binding)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(head.fact_id, publication.fact_id);
+    assert_eq!(head.candidate_id, publication.candidate_id);
+    assert_eq!(head.state, state);
+    assert_eq!(
+        head.preferred_name.as_ref().map(PreferredName::as_str),
+        name
+    );
+}
+
+async fn assert_generic_hidden(
+    store: &BearMemoryStore,
+    publication: PublicationReceipt,
+    private_record: &str,
+) {
+    let fact_id = publication.fact_id.to_string();
+    for id in [fact_id.as_str(), private_record] {
+        assert!(den_memory::fetch_record_by_id(store, id)
+            .await
+            .unwrap()
+            .is_none());
+    }
+    assert!(den_memory::list_memory_proposals(store, None, 100)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(den_memory::list_reviewable_memory_proposals(store)
+        .await
+        .unwrap()
+        .is_empty());
+    let indexable = den_memory::list_generic_indexable_heads(store)
+        .await
+        .unwrap();
+    for row in indexable {
+        assert_ne!(row.memory_id, fact_id);
+        assert_ne!(row.memory_id, private_record);
+        assert!(!row.content_text.contains(PUBLISHED_NAME));
+        assert!(!row.metadata_json.contains(PUBLISHED_NAME));
+    }
+    let private_path = LogicalMemoryPath::shared_core("personal").to_logical_path();
+    let read = den_memory::tools::sqlite_memory_read(store, &private_path)
+        .await
+        .unwrap();
+    assert!(!read.to_string().contains(PUBLISHED_NAME));
+    for role in ["pair", "work", "curate"] {
+        assert!(
+            den_memory::fetch_records_min(store, std::slice::from_ref(&fact_id), role)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let browse = den_memory::tools::sqlite_memory_browse(store, role)
+            .await
+            .unwrap();
+        let search = den_memory::tools::sqlite_memory_search(store, role, PUBLISHED_NAME, 100)
+            .await
+            .unwrap();
+        // The query is caller-supplied; only search hits are retrieved from storage.
+        for output in [browse, search["hits"].clone()] {
+            let serialized = output.to_string();
+            assert!(!serialized.contains(PUBLISHED_NAME));
+            assert!(!serialized.contains(&fact_id));
+        }
+    }
+}
+
 async fn assert_hidden(
     store: &BearMemoryStore,
     binding: &AuthenticatedUserEntity,
     originals: &[PersonalCandidate],
 ) {
+    assert!(current_preferred_name(store, binding)
+        .await
+        .unwrap()
+        .is_none());
     assert!(list_candidates(store, binding, 100)
         .await
         .unwrap()
@@ -66,8 +152,17 @@ async fn assert_source_unchanged(
     store: &BearMemoryStore,
     binding: &AuthenticatedUserEntity,
     originals: &[PersonalCandidate],
+    publication: PublicationReceipt,
 ) {
     assert!(capture_enabled(store, binding).await.unwrap());
+    assert_head(
+        store,
+        binding,
+        publication,
+        PersonalFactState::Active,
+        Some(PUBLISHED_NAME),
+    )
+    .await;
     let rows = list_candidates(store, binding, 100).await.unwrap();
     assert_eq!(rows.len(), originals.len());
     for original in originals {
@@ -99,14 +194,19 @@ async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_p
         )
         .await
         .unwrap();
-    let mut bodies = Vec::new();
-    for id in [&note.memory_id, &fixture.private_record] {
-        let record = den_memory::fetch_record_by_id(&source, id)
+    let source_body = serde_json::to_value(
+        den_memory::fetch_record_by_id(&source, &note.memory_id)
             .await
             .unwrap()
-            .unwrap();
-        bodies.push((id.clone(), serde_json::to_value(record).unwrap()));
-    }
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        den_memory::fetch_record_by_id(&source, &fixture.private_record)
+            .await
+            .unwrap()
+            .is_none()
+    );
     // This memory fixture supplies trusted proof; Postgres source authority is tested elsewhere.
     let proof = VerifiedPersonalSource::for_authorized_conversation(
         &alice,
@@ -167,7 +267,24 @@ async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_p
         pending.source_binding_generation(),
         reconnected.resulting_generation
     );
-    let originals = [pending, withdrawn, quarantined];
+    let candidate = stage(&source, &proof, PUBLISHED_NAME).await;
+    assert_eq!(candidate.state(), CandidateState::Pending);
+    assert!(current_preferred_name(&source, &current)
+        .await
+        .unwrap()
+        .is_none());
+    let publication = publish_preferred_name(&source, &proof, candidate.id(), None)
+        .await
+        .unwrap();
+    assert_eq!(publication.candidate_id, candidate.id());
+    assert_eq!(publication.previous_fact_id, None);
+    let published = get_candidate(&source, &current, publication.candidate_id)
+        .await
+        .unwrap()
+        .unwrap();
+    // Published is projected from the immutable decision, not a mutable candidate status.
+    assert_preserved(&published, &candidate, CandidateState::Published);
+    let originals = [pending, withdrawn, quarantined, published];
     for row in &originals {
         assert_eq!(row.person_entity_id(), alice.entity_id());
         assert_eq!(row.source_bear_id(), fixture.bear_id);
@@ -175,6 +292,13 @@ async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_p
         assert_eq!(row.source_conversation_id(), conversation);
         assert_eq!(row.source_memory_id().to_string(), note.memory_id);
     }
+
+    assert_source_unchanged(&source, &current, &originals, publication).await;
+    assert_generic_hidden(&source, publication, &fixture.private_record).await;
+    let bob = resolve_authenticated_user_entity(&source, UserId::new(4343))
+        .await
+        .unwrap();
+    assert_hidden(&source, &bob, &originals).await;
 
     let response = fixture
         .app
@@ -225,6 +349,7 @@ async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_p
         .store_for_bear(imported.id)
         .await
         .unwrap();
+    assert_generic_hidden(&destination, publication, &fixture.private_record).await;
     let imported_identities = core::list_identities(&destination).await.unwrap();
     let imported_identity = imported_identities
         .iter()
@@ -281,6 +406,19 @@ async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_p
         .unwrap();
     assert_eq!(owner.entity_id(), alice.entity_id());
     assert!(!capture_enabled(&destination, &owner).await.unwrap());
+    assert_head(
+        &destination,
+        &owner,
+        publication,
+        PersonalFactState::Active,
+        Some(PUBLISHED_NAME),
+    )
+    .await;
+    assert_generic_hidden(&destination, publication, &fixture.private_record).await;
+    let destination_bob = resolve_authenticated_user_entity(&destination, UserId::new(4343))
+        .await
+        .unwrap();
+    assert_hidden(&destination, &destination_bob, &originals).await;
     let identities = core::list_identities(&destination).await.unwrap();
     let parked = identities
         .iter()
@@ -301,6 +439,7 @@ async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_p
         let state = match original.state() {
             CandidateState::Pending | CandidateState::Quarantined => CandidateState::Quarantined,
             CandidateState::Withdrawn => CandidateState::Withdrawn,
+            CandidateState::Published => CandidateState::Published,
         };
         let listed = rows.iter().find(|row| row.id() == original.id()).unwrap();
         assert_preserved(listed, original, state);
@@ -310,16 +449,66 @@ async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_p
             .unwrap();
         assert_preserved(&fetched, original, state);
     }
-    assert_source_unchanged(&source, &current, &originals).await;
+    assert_source_unchanged(&source, &current, &originals, publication).await;
     for store in [&source, &destination] {
-        for (id, body) in &bodies {
-            let record = den_memory::fetch_record_by_id(store, id)
-                .await
-                .unwrap()
-                .unwrap();
-            assert_eq!(serde_json::to_value(record).unwrap(), *body);
-        }
+        let record = den_memory::fetch_record_by_id(store, &note.memory_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(serde_json::to_value(record).unwrap(), source_body);
+        assert_generic_hidden(store, publication, &fixture.private_record).await;
     }
+
+    let imported_candidate = get_candidate(&destination, &owner, publication.candidate_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!capture_enabled(&destination, &owner).await.unwrap());
+    assert!(
+        retract_preferred_name(&destination, &owner, publication.fact_id)
+            .await
+            .unwrap()
+    );
+    assert_head(
+        &destination,
+        &owner,
+        publication,
+        PersonalFactState::Retracted,
+        None,
+    )
+    .await;
+    // Replay needs the current destination binding, not an online original source account.
+    let replay_proof = VerifiedPersonalSource::for_authorized_conversation(
+        &owner,
+        imported_candidate.source_conversation_id(),
+        imported_candidate.source_memory_id(),
+    );
+    assert_eq!(
+        publish_preferred_name(&destination, &replay_proof, publication.candidate_id, None)
+            .await
+            .unwrap(),
+        publication
+    );
+    assert!(!capture_enabled(&destination, &owner).await.unwrap());
+    assert_head(
+        &destination,
+        &owner,
+        publication,
+        PersonalFactState::Retracted,
+        None,
+    )
+    .await;
+    let replayed_candidate = get_candidate(&destination, &owner, publication.candidate_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_preserved(
+        &replayed_candidate,
+        &imported_candidate,
+        CandidateState::Published,
+    );
+    assert_source_unchanged(&source, &current, &originals, publication).await;
+    assert_generic_hidden(&destination, publication, &fixture.private_record).await;
 
     let conversation = Uuid::new_v4();
     let note = destination
@@ -374,6 +563,7 @@ async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_p
         let state = match original.state() {
             CandidateState::Pending | CandidateState::Quarantined => CandidateState::Quarantined,
             CandidateState::Withdrawn => CandidateState::Withdrawn,
+            CandidateState::Published => CandidateState::Published,
         };
         assert_preserved(
             rows.iter().find(|row| row.id() == original.id()).unwrap(),
@@ -392,5 +582,16 @@ async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_p
         }
         assert_hidden(&destination, &unrelated, &protected).await;
     }
-    assert_source_unchanged(&source, &current, &originals).await;
+    assert_head(
+        &destination,
+        &owner,
+        publication,
+        PersonalFactState::Retracted,
+        None,
+    )
+    .await;
+    assert_source_unchanged(&source, &current, &originals, publication).await;
+    assert_generic_hidden(&source, publication, &fixture.private_record).await;
+    assert_generic_hidden(&destination, publication, &fixture.private_record).await;
+    assert_hidden(&source, &bob, &originals).await;
 }

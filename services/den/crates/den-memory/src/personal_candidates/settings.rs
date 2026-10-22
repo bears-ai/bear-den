@@ -4,7 +4,7 @@ use sqlx::SqliteConnection;
 use super::authority::{ensure_current, write_transaction};
 use crate::{clock::now_rfc3339, AuthenticatedUserEntity, BearMemoryStore};
 
-pub(super) async fn enabled(
+pub(crate) async fn enabled(
     connection: &mut SqliteConnection,
     bear_id: &str,
     person_entity_id: &str,
@@ -83,6 +83,9 @@ pub async fn set_capture_enabled(
             UPDATE personal_memory_candidates SET state = 'withdrawn', withdrawn_at = ?,
                 withdrawn_on_bear_id = ?, withdrawn_by_user_id = ?
             WHERE bear_id = ? AND person_entity_id = ? AND state IN ('pending', 'quarantined')
+              AND NOT EXISTS (SELECT 1 FROM personal_memory_publications p
+                  WHERE p.bear_id = personal_memory_candidates.bear_id
+                    AND p.candidate_id = personal_memory_candidates.candidate_id)
             ",
             updated_at,
             bear_id,
@@ -91,6 +94,15 @@ pub async fn set_capture_enabled(
             person_entity_id,
         )
         .execute(&mut *tx)
+        .await?;
+        crate::personal_facts::retract_for_capture_disable(
+            &mut tx,
+            &bear_id,
+            person_entity_id,
+            actor,
+            binding.authority_generation,
+            &updated_at,
+        )
         .await?;
     }
     tx.commit().await?;
@@ -104,7 +116,11 @@ pub(crate) async fn quarantine_person(
     person_entity_id: &str,
 ) -> Result<(), DenError> {
     sqlx::query!(
-        "UPDATE personal_memory_candidates SET state = 'quarantined' WHERE bear_id = ? AND person_entity_id = ? AND state = 'pending'",
+        r"UPDATE personal_memory_candidates SET state = 'quarantined'
+          WHERE bear_id = ? AND person_entity_id = ? AND state = 'pending'
+            AND NOT EXISTS (SELECT 1 FROM personal_memory_publications p
+                WHERE p.bear_id = personal_memory_candidates.bear_id
+                  AND p.candidate_id = personal_memory_candidates.candidate_id)",
         bear_id,
         person_entity_id,
     )
@@ -121,7 +137,11 @@ pub(crate) async fn quarantine_imported(
 ) -> Result<(), DenError> {
     let updated_at = now_rfc3339()?;
     sqlx::query!(
-        "UPDATE personal_memory_candidates SET state = 'quarantined' WHERE bear_id = ? AND state = 'pending'",
+        r"UPDATE personal_memory_candidates SET state = 'quarantined'
+          WHERE bear_id = ? AND state = 'pending'
+            AND NOT EXISTS (SELECT 1 FROM personal_memory_publications p
+                WHERE p.bear_id = personal_memory_candidates.bear_id
+                  AND p.candidate_id = personal_memory_candidates.candidate_id)",
         bear_id,
     )
     .execute(&mut *connection)

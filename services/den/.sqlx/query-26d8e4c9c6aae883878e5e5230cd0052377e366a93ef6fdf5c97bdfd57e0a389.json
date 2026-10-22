@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(DISTINCT logical_path) AS \"count!: i64\" FROM generic_memory_records WHERE bear_id = ? AND logical_path IS NOT NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "count!: i64",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "26d8e4c9c6aae883878e5e5230cd0052377e366a93ef6fdf5c97bdfd57e0a389"
+}

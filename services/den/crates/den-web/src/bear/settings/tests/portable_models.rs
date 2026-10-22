@@ -277,7 +277,7 @@ fn legacy_manifest(version: u32) -> String {
 
 #[test]
 fn old_bundles_still_read_and_new_bundles_preserve_named_configurations() {
-    for version in [1, 2] {
+    for version in [1, 2, 3] {
         let bytes =
             build_bear_bundle(&legacy_manifest(version), b"nonempty sqlite fixture").unwrap();
         let (manifest, _) = read_bear_bundle(&bytes).unwrap();

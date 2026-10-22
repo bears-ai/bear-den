@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT memory_id AS \"memory_id!\", COALESCE(valid_from, created_at) AS \"effective_at!: String\"\n        FROM generic_memory_records AS memory_records\n        WHERE bear_id = ? AND memory_id IN (SELECT value FROM json_each(?))\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "memory_id!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "effective_at!: String",
+        "ordinal": 1,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      null
+    ]
+  },
+  "hash": "22bf60f329bb0b9b5492e924a002f6f07946105cee43c9e16d4c6a90ebb84c92"
+}

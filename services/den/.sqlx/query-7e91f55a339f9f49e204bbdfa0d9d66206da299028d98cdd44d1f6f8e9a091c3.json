@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT memory_id AS \"memory_id!\" FROM memory_records\n           WHERE bear_id = ? AND scope_type = 'shared' AND logical_path = ?\n           ORDER BY sequence_no DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "memory_id!",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "7e91f55a339f9f49e204bbdfa0d9d66206da299028d98cdd44d1f6f8e9a091c3"
+}

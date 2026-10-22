@@ -195,7 +195,8 @@ async fn legacy_review_excludes_hidden_archived_and_access_bearing_records() {
             .is_err());
     }
     let page = inventory_page(&store, None, 1).await.unwrap();
-    assert_eq!(page.inventory[0].total, 4);
+    // Protected history is excluded from this inspection inventory, not merely its bodies.
+    assert_eq!(page.inventory[0].total, 3);
     assert_eq!(page.inventory[0].reviewable, 1);
     assert_eq!(page.candidates.len(), 1);
     assert_eq!(page.candidates[0].memory_id, active.memory_id);

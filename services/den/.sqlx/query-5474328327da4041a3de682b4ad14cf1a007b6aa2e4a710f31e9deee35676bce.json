@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT p.memory_id, p.person_entity_id, p.candidate_id, p.previous_memory_id,\n            EXISTS (SELECT 1 FROM personal_memory_retractions t\n                    WHERE t.bear_id = p.bear_id AND t.memory_id = p.memory_id) AS \"retracted!: bool\",\n            (p.fact_type = 'preferred_name' AND r.memory_id IS NOT NULL\n             AND r.visibility = 'normal' AND r.invalid_at IS NULL\n             AND CASE WHEN json_valid(r.metadata_json)\n                      THEN COALESCE(json_extract(r.metadata_json, '$.lifecycle.status'), 'active') = 'active'\n                      ELSE 0 END\n             AND NOT EXISTS (SELECT 1 FROM personal_memory_publications later\n                 WHERE later.bear_id = p.bear_id AND later.person_entity_id = p.person_entity_id\n                   AND later.sequence_no > p.sequence_no)\n             AND NOT EXISTS (SELECT 1 FROM memory_records newer\n                 WHERE newer.bear_id = p.bear_id AND newer.supersedes_memory_id = p.memory_id)\n             AND EXISTS (SELECT 1 FROM memory_relations s\n                 WHERE s.bear_id = p.bear_id AND s.src_memory_id = p.memory_id\n                   AND s.entity_id = p.person_entity_id AND s.relation = ? AND s.state = 'active')\n             AND EXISTS (SELECT 1 FROM memory_access_rules a\n                 WHERE a.bear_id = p.bear_id AND a.src_memory_id = p.memory_id\n                   AND a.entity_id = p.person_entity_id AND a.relation = ? AND a.state = 'active')\n             AND NOT EXISTS (SELECT 1 FROM memory_access_rules a\n                 WHERE a.bear_id = p.bear_id AND a.src_memory_id = p.memory_id AND a.state = 'active'\n                   AND (a.entity_id <> p.person_entity_id OR a.relation <> ?))) AS \"eligible!: bool\"\n        FROM personal_memory_publications p\n        LEFT JOIN memory_records r ON r.bear_id = p.bear_id AND r.memory_id = p.memory_id\n        WHERE p.bear_id = ? AND (? IS NULL OR p.person_entity_id = ?)\n          AND (? IS NULL OR p.memory_id = ?) AND (? IS NULL OR p.candidate_id = ?)\n        ORDER BY p.sequence_no DESC LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "memory_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "person_entity_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "candidate_id",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "previous_memory_id",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "retracted!: bool",
+        "ordinal": 4,
+        "type_info": "Null"
+      },
+      {
+        "name": "eligible!: bool",
+        "ordinal": 5,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 10
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      null,
+      null
+    ]
+  },
+  "hash": "5474328327da4041a3de682b4ad14cf1a007b6aa2e4a710f31e9deee35676bce"
+}

@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT metadata_json AS \"metadata_json!\", invalid_at\n           FROM generic_memory_records AS memory_records WHERE bear_id = ? AND memory_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "metadata_json!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "invalid_at",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "a08d964f1afdaaad97e914a73a345b3e5b4000f6015c5563c17317b2ca4ef557"
+}

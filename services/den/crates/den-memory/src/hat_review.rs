@@ -70,20 +70,38 @@ pub async fn snapshot_for_hat(
     result
 }
 
-// sqlx-dynamic: per-Bear SQLite files are created at runtime; all Bear/hat IDs,
-// cursor values, and limits are static SQL with bound parameters.
 pub async fn snapshot_for_hat_on(
     conn: &mut SqliteConnection,
     bear_id: Uuid,
     hat_id: HatId,
     page: u32,
 ) -> Result<HatReviewSnapshot, DenError> {
-    let total_records: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM memory_records WHERE bear_id = ? AND scope_type = 'hat' AND scope_hat_id = ?",
+    let bear_id = bear_id.to_string();
+    let hat_id = hat_id.to_string();
+    let counts = sqlx::query!(
+        r#"
+        SELECT COUNT(*) AS "total_records!: i64",
+               COALESCE(SUM(CASE WHEN NOT EXISTS (
+                   SELECT 1 FROM generic_memory_records generic
+                   WHERE generic.bear_id = memory_records.bear_id
+                     AND generic.memory_id = memory_records.memory_id
+               ) THEN 1 ELSE 0 END), 0) AS "protected_records!: i64"
+        FROM memory_records
+        WHERE bear_id = ? AND scope_type = 'hat' AND scope_hat_id = ?
+        "#,
+        bear_id,
+        hat_id,
     )
-    .bind(bear_id.to_string()).bind(hat_id.to_string())
-    .fetch_one(&mut *conn).await
+    .fetch_one(&mut *conn)
+    .await
     .map_err(|err| DenError::System(format!("count historical hat records: {err}")))?;
+    if counts.protected_records != 0 {
+        return Err(DenError::Authorization(
+            "Hat contains audience-protected records; resolve their scope before enabling Work."
+                .into(),
+        ));
+    }
+    let total_records = counts.total_records;
     let total = usize::try_from(total_records)
         .map_err(|_| DenError::System("invalid historical hat record count".into()))?;
     let page_count = total.div_ceil(REVIEW_PAGE_SIZE).max(1);
@@ -104,20 +122,27 @@ pub async fn snapshot_for_hat_on(
     let mut scanned = 0_usize;
     let mut cursor: Option<(i64, String)> = None;
     loop {
-        let rows = sqlx::query_as::<_, HatReviewRecord>(
-            "SELECT memory_id, sequence_no, kind, content_text, metadata_json, visibility,
-                    invalid_at, created_at FROM memory_records
-             WHERE bear_id = ? AND scope_type = 'hat' AND scope_hat_id = ?
-               AND (? IS NULL OR sequence_no < ? OR (sequence_no = ? AND memory_id < ?))
-             ORDER BY sequence_no DESC, memory_id DESC LIMIT ?",
+        let cursor_sequence = cursor.as_ref().map(|(sequence, _)| *sequence);
+        let cursor_id = cursor.as_ref().map(|(_, id)| id.as_str());
+        let rows = sqlx::query_as!(
+            HatReviewRecord,
+            r#"
+            SELECT memory_id AS "memory_id!", sequence_no AS "sequence_no!", kind AS "kind!",
+                   content_text AS "content_text!", metadata_json AS "metadata_json!",
+                   visibility AS "visibility!", invalid_at, created_at AS "created_at!"
+            FROM generic_memory_records AS memory_records
+            WHERE bear_id = ? AND scope_type = 'hat' AND scope_hat_id = ?
+              AND (? IS NULL OR sequence_no < ? OR (sequence_no = ? AND memory_id < ?))
+            ORDER BY sequence_no DESC, memory_id DESC LIMIT ?
+            "#,
+            bear_id,
+            hat_id,
+            cursor_sequence,
+            cursor_sequence,
+            cursor_sequence,
+            cursor_id,
+            SCAN_BATCH_SIZE,
         )
-        .bind(bear_id.to_string())
-        .bind(hat_id.to_string())
-        .bind(cursor.as_ref().map(|(sequence, _)| *sequence))
-        .bind(cursor.as_ref().map(|(sequence, _)| *sequence))
-        .bind(cursor.as_ref().map(|(sequence, _)| *sequence))
-        .bind(cursor.as_ref().map(|(_, id)| id.as_str()))
-        .bind(SCAN_BATCH_SIZE)
         .fetch_all(&mut *conn)
         .await
         .map_err(|err| DenError::System(format!("scan historical hat records: {err}")))?;

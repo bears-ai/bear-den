@@ -21,7 +21,7 @@ mod deduplication;
 mod isolation;
 
 mod reconnection;
-mod snapshots;
+pub(crate) mod snapshots;
 mod sources;
 mod support;
 mod values;

@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT DISTINCT logical_path AS \"logical_path!\"\n        FROM generic_memory_records\n        WHERE bear_id = ? AND scope_profile = ? AND logical_path IS NOT NULL\n          AND invalid_at IS NULL\n          AND COALESCE(json_extract(metadata_json, '$.lifecycle.status'), 'active') NOT IN ('archived', 'archive-candidate')\n        ORDER BY logical_path ASC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "logical_path!",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "4eb355ead2000b01a5239e860935e8ab320bcf2bbacdf1b27bc1891c2d367809"
+}

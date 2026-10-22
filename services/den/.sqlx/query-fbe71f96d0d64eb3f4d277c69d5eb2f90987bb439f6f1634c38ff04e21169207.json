@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT CASE scope_type\n                   WHEN 'shared' THEN 'core'\n                   WHEN 'hat' THEN 'hat'\n                   WHEN 'source_local' THEN 'session'\n                   ELSE COALESCE(scope_profile, 'legacy profile')\n               END AS \"label!: String\", COUNT(*) AS \"count!: i64\"\n        FROM generic_memory_records\n        WHERE bear_id = ?\n        GROUP BY 1\n        ORDER BY COUNT(*) DESC, 1 ASC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "label!: String",
+        "ordinal": 0,
+        "type_info": "Null"
+      },
+      {
+        "name": "count!: i64",
+        "ordinal": 1,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "fbe71f96d0d64eb3f4d277c69d5eb2f90987bb439f6f1634c38ff04e21169207"
+}

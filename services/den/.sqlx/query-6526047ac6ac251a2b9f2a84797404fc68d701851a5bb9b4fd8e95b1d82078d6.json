@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT scope_profile, count(*) AS \"total!: i64\",\n               sum(CASE WHEN visibility = 'normal' AND invalid_at IS NULL\n                 AND COALESCE(json_extract(metadata_json, '$.lifecycle.status'), 'active')\n                     NOT IN ('archived', 'archive-candidate')\n                 AND NOT EXISTS (\n                   SELECT 1 FROM memory_records newer\n                   WHERE newer.bear_id = memory_records.bear_id\n                     AND newer.supersedes_memory_id = memory_records.memory_id\n                 ) THEN 1 ELSE 0 END) AS \"reviewable!: i64\"\n        FROM generic_memory_records AS memory_records\n        WHERE bear_id = ? AND scope_type = 'profile_local'\n        GROUP BY scope_profile ORDER BY scope_profile\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "scope_profile",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "total!: i64",
+        "ordinal": 1,
+        "type_info": "Null"
+      },
+      {
+        "name": "reviewable!: i64",
+        "ordinal": 2,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      null,
+      null
+    ]
+  },
+  "hash": "6526047ac6ac251a2b9f2a84797404fc68d701851a5bb9b4fd8e95b1d82078d6"
+}

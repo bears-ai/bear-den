@@ -211,6 +211,91 @@ fn assert_ids(body: &str, present: &[&MemoryRecordRow], absent: &[&MemoryRecordR
     }
 }
 
+fn stale_semantic_passage(memory_id: &str) -> den_service::recall::query::RecalledPassage {
+    den_service::recall::query::RecalledPassage {
+        memory_id: memory_id.into(),
+        logical_path: Some("core/STALE_VECTOR_PATH.md".into()),
+        kind: Some("STALE_VECTOR_KIND".into()),
+        score: 0.75,
+        salience: "normal".into(),
+        lifecycle_status: "active".into(),
+        freshness_trend: "stable".into(),
+        text: "STALE_VECTOR_PAYLOAD_CANARY".into(),
+        conflicts_with: vec![],
+    }
+}
+
+fn render_admin_semantic_results(results: Vec<RecordListItem>) -> String {
+    crate::admin::usability_tests::render(
+        "bear/memory/search.html",
+        context! {
+            can_manage_bear => true, semantic_available => true, mode_used => "semantic",
+            q => "canonical", result_count => results.len(), results,
+        },
+    )
+}
+
+#[test]
+fn admin_semantic_results_require_current_canonical_content_not_vector_payloads() {
+    let passage = stale_semantic_passage("canonical-id");
+    let head = MemoryRecordRow {
+        memory_id: passage.memory_id.clone(),
+        sequence_no: 42,
+        scope_type: store::MemoryScopeType::Shared,
+        scope_profile: None,
+        kind: "canonical-note".into(),
+        content_text: "Public canonical text replaces the stale vector body".into(),
+        logical_path: Some("core/canonical.md".into()),
+        work_surface_ref: None,
+        metadata_json: json!({}),
+        created_at: "2026-01-01T00:00:00Z".into(),
+        salience: "normal".into(),
+        supersedes_memory_id: None,
+        invalid_at: None,
+        lifecycle_status: "active".into(),
+        freshness_trend: "stable".into(),
+    };
+    let item = admin_semantic_result(&passage, Some(head.clone())).unwrap();
+    assert_eq!(item.memory_id, head.memory_id);
+    assert_eq!(item.kind, head.kind);
+    assert_eq!(item.scope_label, "core");
+    assert_eq!(item.logical_path, head.logical_path);
+    assert_eq!(item.created_at, head.created_at);
+    assert_eq!(item.sequence_no, head.sequence_no);
+    assert_eq!(item.score, Some(passage.score));
+    let html = render_admin_semantic_results(vec![item]);
+    assert!(html.contains(&head.content_text));
+    for stale in [
+        passage.text.as_str(),
+        "STALE_VECTOR_PATH",
+        "STALE_VECTOR_KIND",
+    ] {
+        assert!(!html.contains(stale), "rendered derived payload: {stale}");
+    }
+
+    // Denied/removed canonical reads and missing heads cannot fall back to vector text.
+    let mut rejected = vec![None];
+    let mut different_head = head.clone();
+    different_head.memory_id = "replacement-id".into();
+    rejected.push(Some(different_head));
+    let mut invalid = head.clone();
+    invalid.invalid_at = Some("2026-01-02T00:00:00Z".into());
+    rejected.push(Some(invalid));
+    for status in ["archived", "archive-candidate", "superseded"] {
+        let mut historical = head.clone();
+        historical.lifecycle_status = status.into();
+        rejected.push(Some(historical));
+    }
+    for canonical in rejected {
+        let result = admin_semantic_result(&passage, canonical);
+        assert!(result.is_none());
+        let html = render_admin_semantic_results(result.into_iter().collect());
+        assert!(!html.contains(&passage.text));
+        assert!(!html.contains(&head.content_text));
+        assert!(!html.contains(&passage.memory_id));
+    }
+}
+
 #[tokio::test]
 async fn memory_routes_enforce_curated_member_and_admin_inspection_boundaries() {
     let _guard = TEST_DB_LOCK.lock().await;
@@ -445,6 +530,63 @@ async fn memory_routes_enforce_curated_member_and_admin_inspection_boundaries() 
             "admin cannot inspect history in {route}"
         );
     }
+
+    // Admin membership is not authority to publish access-bearing canonical memory,
+    // even if a stale semantic candidate claims it is readable.
+    let denied_path = LogicalMemoryPath::shared_core("semantic-denied");
+    let denied = add_record(&memory, &denied_path, "DENIED_CANONICAL_BODY_CANARY").await;
+    let audience = store::create_entity(
+        &memory,
+        "person",
+        Some("Restricted audience"),
+        store::ResolutionState::Resolved,
+        store::EntityTrust::Asserted,
+        None,
+        &json!({}),
+    )
+    .await
+    .unwrap();
+    store::append_relation(
+        &memory,
+        &denied.memory_id,
+        &audience.entity_id,
+        "audience",
+        &json!({}),
+        "curate",
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let missing_id = Uuid::new_v4().to_string();
+    for memory_id in [&denied.memory_id, &missing_id] {
+        let canonical = store::get_memory_record_by_id(&manager, bear_id, memory_id)
+            .await
+            .unwrap();
+        assert!(canonical.is_none());
+        let (status, _) = get_page(&app, &admin, &format!("{base}/records/{memory_id}")).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let passage = stale_semantic_passage(memory_id);
+        let result = admin_semantic_result(&passage, canonical);
+        let html = render_admin_semantic_results(result.into_iter().collect());
+        assert!(!html.contains(&passage.text));
+        assert!(!html.contains(&denied.content_text));
+    }
+    assert!(
+        store::head_record_for_logical_path(&memory, &denied_path.to_logical_path())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let (status, body) = get_page(
+        &app,
+        &admin,
+        &format!("{base}/search?q=DENIED_CANONICAL&mode=keyword"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(!body.contains(&denied.memory_id));
+    assert!(!body.contains(&denied.content_text));
 }
 
 #[tokio::test]

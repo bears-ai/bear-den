@@ -1,10 +1,11 @@
-//! Server-only personal-memory candidate intake, not a model or publication surface.
+//! Server-only personal-memory intake and explicit owner approval, never a model tool.
 //!
 //! Callers supply a trusted authenticated principal, never an identity selected by
 //! a model. Postgres rights/source locks outlive request cancellation and remain
 //! held through the owner-bound SQLite operation. Capture stays disabled by default.
 
 mod authority;
+mod publication;
 #[cfg(test)]
 mod tests;
 
@@ -19,7 +20,11 @@ use den_memory::{
 use sqlx::PgPool;
 use uuid::Uuid;
 
-pub use den_memory::personal_candidates::{PersonalCandidate, PreferredName};
+pub use den_memory::{
+    personal_candidates::{PersonalCandidate, PersonalCandidateId, PreferredName},
+    personal_facts::{PersonalFactHead, PersonalFactId, PersonalFactState, PublicationReceipt},
+};
+pub use publication::{current_preferred_name, publish_preferred_name, retract_preferred_name};
 
 /// Stage an explicit, durable preferred-name request without publishing memory.
 ///
@@ -67,7 +72,9 @@ pub async fn stage_preferred_name(
 /// Change capture for the authenticated member's resolved person only.
 ///
 /// This is a server-only policy boundary, not a model tool. Enabling capture does
-/// not publish facts or enable recall. The operation continues on caller cancellation.
+/// not publish facts or enable recall. Disabling atomically withdraws pending candidates
+/// and retracts the current fact; reenabling resurrects neither. The operation continues
+/// on caller cancellation.
 pub async fn set_capture_enabled(
     pool: &PgPool,
     stores: &MemoryStoreManager,

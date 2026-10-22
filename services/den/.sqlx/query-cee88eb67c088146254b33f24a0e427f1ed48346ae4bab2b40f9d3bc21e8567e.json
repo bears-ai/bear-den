@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT m.logical_path AS \"logical_path!\", m.scope_type AS \"scope_type!\",\n               m.scope_profile, m.scope_hat_id, m.kind AS \"kind!\",\n               m.memory_id AS \"head_memory_id!\", m.created_at AS \"head_created_at!\",\n               agg.version_count AS \"version_count!: i64\"\n        FROM generic_memory_records m\n        JOIN (\n            SELECT logical_path, MAX(sequence_no) AS max_seq, COUNT(*) AS version_count\n            FROM generic_memory_records\n            WHERE bear_id = ? AND logical_path IS NOT NULL\n            GROUP BY logical_path\n        ) agg ON agg.logical_path = m.logical_path AND agg.max_seq = m.sequence_no\n        WHERE m.bear_id = ? AND m.logical_path IS NOT NULL\n        ORDER BY m.logical_path ASC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "logical_path!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "scope_type!",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "scope_profile",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "scope_hat_id",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "kind!",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "head_memory_id!",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "head_created_at!",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "version_count!: i64",
+        "ordinal": 7,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      false,
+      true,
+      true,
+      false,
+      true,
+      false,
+      null
+    ]
+  },
+  "hash": "cee88eb67c088146254b33f24a0e427f1ed48346ae4bab2b40f9d3bc21e8567e"
+}

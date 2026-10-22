@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO personal_memory_retractions (\n            memory_id, bear_id, decision_id, recorded_on_bear_id, actor_user_id,\n            authority_generation, reason, created_at\n        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "5ee2b720a1809c5e27619a187afcc9d299d2bf67ef9a4344c1bd4ed3f4ade6e1"
+}

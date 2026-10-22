@@ -184,14 +184,29 @@ async fn owned_note_preview_filters_scope_lifecycle_and_access_before_limit() {
     )
     .await
     .unwrap();
-    // A rule must exclude the row even without an access context.
-    sqlx::query("INSERT INTO memory_access_rules (link_id, bear_id, sequence_no, src_memory_id, relation, entity_id, author_profile, created_at) VALUES (?, ?, ?, ?, 'confined_to', ?, 'curate', '2026-01-01T00:00:00Z')")
-        .bind(Uuid::new_v4().to_string())
-        .bind(store.bear_id().to_string())
-        .bind(store.next_sequence().await.unwrap())
-        .bind(&restricted.memory_id)
-        .bind(Uuid::new_v4().to_string())
-        .execute(store.pool()).await.unwrap();
+    let surface = crate::create_entity(
+        &store,
+        "work_surface",
+        Some("private"),
+        crate::ResolutionState::Resolved,
+        crate::EntityTrust::Asserted,
+        None,
+        &json!({}),
+    )
+    .await
+    .unwrap();
+    let rule = append_relation(
+        &store,
+        &restricted.memory_id,
+        &surface.entity_id,
+        "confined_to",
+        &json!({}),
+        "curate",
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     let (path, _) = add(own, "superseded");
     let superseded = append_memory_record(&store, &path, "note", "pair", None, "old", &json!({}))
         .await
@@ -244,6 +259,26 @@ async fn owned_note_preview_filters_scope_lifecycle_and_access_before_limit() {
     );
     assert_eq!(notes[0].conversation_id, own);
     assert_eq!(notes[1].conversation_id, another);
+    let bear_id = store.bear_id().to_string();
+    sqlx::query!(
+        "UPDATE memory_access_rules SET state = 'retracted' WHERE bear_id = ? AND link_id = ?",
+        bear_id,
+        rule.link_id,
+    )
+    .execute(store.pool())
+    .await
+    .unwrap();
+    let withdrawn_preview = recent_own_conversation_notes(&store, &[own, another], 2)
+        .await
+        .unwrap();
+    assert_eq!(
+        withdrawn_preview
+            .iter()
+            .map(|note| note.memory_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![replacement.memory_id.as_str(), second.memory_id.as_str()],
+        "withdrawing the final rule must not expose the note or consume LIMIT"
+    );
     assert!(recent_own_conversation_notes(&store, &[], 8)
         .await
         .unwrap()

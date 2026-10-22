@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT DISTINCT src_memory_id AS \"src_memory_id!\", entity_id AS \"entity_id!\"\n        FROM memory_relations\n        WHERE bear_id = ? AND state = 'active'\n          AND EXISTS (\n              SELECT 1 FROM generic_memory_records source\n              WHERE source.bear_id = memory_relations.bear_id\n                AND source.memory_id = memory_relations.src_memory_id\n          )\n        ORDER BY src_memory_id, entity_id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "src_memory_id!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "entity_id!",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "665688c793d637a6763204165f64d7f5c459a12541c9088f5eba3fbc28b5b00d"
+}

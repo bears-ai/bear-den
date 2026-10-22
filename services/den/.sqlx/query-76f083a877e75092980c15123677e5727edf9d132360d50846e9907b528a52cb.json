@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT content_text FROM memory_records WHERE bear_id = ? AND memory_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "content_text",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "76f083a877e75092980c15123677e5727edf9d132360d50846e9907b528a52cb"
+}

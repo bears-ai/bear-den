@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT m.memory_id AS \"memory_id!\", m.scope_profile, m.logical_path,\n               m.kind AS \"kind!\", m.content_text AS \"content_text!\", m.sequence_no AS \"sequence_no!\"\n        FROM generic_memory_records m\n        WHERE m.bear_id = ? AND m.scope_type = 'profile_local' AND m.memory_id = ?\n          AND m.visibility = 'normal' AND m.invalid_at IS NULL\n          AND COALESCE(json_extract(m.metadata_json, '$.lifecycle.status'), 'active')\n              NOT IN ('archived', 'archive-candidate')\n          AND NOT EXISTS (\n              SELECT 1 FROM memory_records newer WHERE newer.bear_id = m.bear_id\n                AND newer.supersedes_memory_id = m.memory_id\n          )\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "memory_id!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "scope_profile",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "logical_path",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "kind!",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "content_text!",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "sequence_no!",
+        "ordinal": 5,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      true,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "9b1efa7a7cd4675a227d95bb9530ddb7f149b77f083d0d9443ad691e8baf1e58"
+}

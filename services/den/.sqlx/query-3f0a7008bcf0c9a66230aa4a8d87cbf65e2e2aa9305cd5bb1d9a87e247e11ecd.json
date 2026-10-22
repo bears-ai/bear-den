@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT DISTINCT logical_path AS \"logical_path!\"\n        FROM generic_memory_records\n        WHERE bear_id = ? AND logical_path IS NOT NULL\n        ORDER BY logical_path ASC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "logical_path!",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "3f0a7008bcf0c9a66230aa4a8d87cbf65e2e2aa9305cd5bb1d9a87e247e11ecd"
+}

@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT memory_id AS \"memory_id!\" FROM memory_records\n           WHERE bear_id = ? AND scope_type = 'hat' AND scope_hat_id = ? AND logical_path = ?\n           ORDER BY sequence_no DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "memory_id!",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "ea9276a85c002799251b92a97b11721917240e9650956f7728cad0a4bc385371"
+}

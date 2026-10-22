@@ -6,7 +6,7 @@ use den_core::{
     ids::{HatId, UserId},
     DenError,
 };
-use sqlx::Row;
+
 use uuid::Uuid;
 
 use crate::{
@@ -16,6 +16,8 @@ use crate::{
 };
 
 mod curate;
+mod read;
+use read::{load_candidate, load_hat_head};
 #[cfg(test)]
 mod tests;
 pub use curate::promote_curated_proposal_to_hat;
@@ -52,54 +54,57 @@ fn source_kind(kind: &str, id: Uuid) -> Result<MemorySource, DenError> {
     }
 }
 
-fn decode_candidate(row: sqlx::sqlite::SqliteRow) -> Result<ReviewCandidate, DenError> {
-    let decode =
-        |err: sqlx::Error| DenError::System(format!("decode source-local review candidate: {err}"));
-    let source_id: String = row.try_get("scope_source_id").map_err(decode)?;
-    let raw_source_kind: String = row.try_get("scope_source_kind").map_err(decode)?;
-    let source_id = Uuid::parse_str(&source_id)
-        .map_err(|err| DenError::System(format!("invalid canonical source ID: {err}")))?;
-    let memory_id: String = row.try_get("memory_id").map_err(decode)?;
-    Ok(ReviewCandidate {
-        memory_id: Uuid::parse_str(&memory_id)
-            .map_err(|err| DenError::System(format!("invalid canonical memory ID: {err}")))?,
-        source: source_kind(&raw_source_kind, source_id)?,
-        kind: row.try_get("kind").map_err(decode)?,
-        content_text: row.try_get("content_text").map_err(decode)?,
-        sequence_no: row.try_get("sequence_no").map_err(decode)?,
-    })
+struct ReviewCandidateSqlRow {
+    memory_id: String,
+    scope_source_id: String,
+    scope_source_kind: String,
+    kind: String,
+    content_text: String,
+    sequence_no: i64,
 }
 
-// sqlx-dynamic: the canonical Bear store is a per-Bear SQLite database created
-// at runtime, not a compile-time SQLx database. All values below are bound.
-const REVIEWABLE: &str = "m.bear_id = ? AND m.scope_type = 'source_local'
-    AND m.visibility = 'normal' AND m.invalid_at IS NULL
-    AND COALESCE(json_extract(m.metadata_json, '$.lifecycle.status'), 'active')
-        NOT IN ('archived', 'archive-candidate')
-    AND NOT EXISTS (
-        SELECT 1 FROM memory_records newer WHERE newer.bear_id = m.bear_id
-          AND newer.supersedes_memory_id = m.memory_id
-    )
-    AND NOT EXISTS (
-        SELECT 1 FROM memory_access_rules rules WHERE rules.bear_id = m.bear_id
-          AND rules.src_memory_id = m.memory_id
-    )";
+fn decode_candidate(row: ReviewCandidateSqlRow) -> Result<ReviewCandidate, DenError> {
+    let source_id = Uuid::parse_str(&row.scope_source_id)
+        .map_err(|err| DenError::System(format!("invalid canonical source ID: {err}")))?;
+    Ok(ReviewCandidate {
+        memory_id: Uuid::parse_str(&row.memory_id)
+            .map_err(|err| DenError::System(format!("invalid canonical memory ID: {err}")))?,
+        source: source_kind(&row.scope_source_kind, source_id)?,
+        kind: row.kind,
+        content_text: row.content_text,
+        sequence_no: row.sequence_no,
+    })
+}
 
 pub async fn review_candidates(
     store: &BearMemoryStore,
     limit: i64,
 ) -> Result<Vec<ReviewCandidate>, DenError> {
-    let sql = format!(
-        "SELECT m.memory_id, m.scope_source_kind, m.scope_source_id,
-        m.kind, m.content_text, m.sequence_no FROM memory_records m WHERE {REVIEWABLE}
-        ORDER BY m.sequence_no DESC LIMIT ?"
-    );
-    let rows = sqlx::query(&sql)
-        .bind(store.bear_id().to_string())
-        .bind(limit.clamp(1, 100))
-        .fetch_all(store.pool())
-        .await
-        .map_err(|err| DenError::System(format!("list source-local review candidates: {err}")))?;
+    let bear_id = store.bear_id().to_string();
+    let limit = limit.clamp(1, 100);
+    let rows = sqlx::query_as!(
+        ReviewCandidateSqlRow,
+        r#"
+        SELECT m.memory_id AS "memory_id!", m.scope_source_kind AS "scope_source_kind!",
+               m.scope_source_id AS "scope_source_id!", m.kind AS "kind!",
+               m.content_text AS "content_text!", m.sequence_no AS "sequence_no!"
+        FROM generic_memory_records m
+        WHERE m.bear_id = ? AND m.scope_type = 'source_local'
+          AND m.visibility = 'normal' AND m.invalid_at IS NULL
+          AND COALESCE(json_extract(m.metadata_json, '$.lifecycle.status'), 'active')
+              NOT IN ('archived', 'archive-candidate')
+          AND NOT EXISTS (
+              SELECT 1 FROM memory_records newer WHERE newer.bear_id = m.bear_id
+                AND newer.supersedes_memory_id = m.memory_id
+          )
+        ORDER BY m.sequence_no DESC LIMIT ?
+        "#,
+        bear_id,
+        limit,
+    )
+    .fetch_all(store.pool())
+    .await
+    .map_err(|err| DenError::System(format!("list source-local review candidates: {err}")))?;
     rows.into_iter().map(decode_candidate).collect()
 }
 
@@ -107,19 +112,7 @@ pub async fn review_candidate(
     store: &BearMemoryStore,
     memory_id: Uuid,
 ) -> Result<ReviewCandidate, DenError> {
-    let sql = format!(
-        "SELECT m.memory_id, m.scope_source_kind, m.scope_source_id,
-        m.kind, m.content_text, m.sequence_no FROM memory_records m WHERE {REVIEWABLE}
-        AND m.memory_id = ?"
-    );
-    let row = sqlx::query(&sql)
-        .bind(store.bear_id().to_string())
-        .bind(memory_id.to_string())
-        .fetch_optional(store.pool())
-        .await
-        .map_err(|err| DenError::System(format!("load source-local review candidate: {err}")))?
-        .ok_or_else(|| DenError::NotFound("reviewable source note not found".into()))?;
-    decode_candidate(row)
+    load_candidate(store.pool(), store.bear_id(), memory_id).await
 }
 
 pub async fn current_hat_head(
@@ -128,35 +121,8 @@ pub async fn current_hat_head(
     kind: &str,
 ) -> Result<Option<HatHead>, DenError> {
     let path = LogicalMemoryPath::hat(hat_id, kind).to_logical_path();
-    let row = sqlx::query(
-        "SELECT m.memory_id, m.content_text FROM memory_records m WHERE m.bear_id = ?
-           AND m.scope_type = 'hat' AND m.scope_hat_id = ? AND m.logical_path = ?
-           AND m.invalid_at IS NULL AND m.visibility = 'normal'
-           AND COALESCE(json_extract(m.metadata_json, '$.lifecycle.status'), 'active')
-               NOT IN ('archived', 'archive-candidate')
-           AND NOT EXISTS (SELECT 1 FROM memory_records newer WHERE newer.bear_id = m.bear_id
-                           AND newer.supersedes_memory_id = m.memory_id)
-           ORDER BY m.sequence_no DESC LIMIT 1",
-    )
-    .bind(store.bear_id().to_string())
-    .bind(hat_id.to_string())
-    .bind(path)
-    .fetch_optional(store.pool())
-    .await
-    .map_err(|err| DenError::System(format!("read current hat entry for review: {err}")))?;
-    row.map(|row| {
-        let id: String = row
-            .try_get("memory_id")
-            .map_err(|err| DenError::System(format!("decode hat head ID: {err}")))?;
-        Ok(HatHead {
-            memory_id: Uuid::parse_str(&id)
-                .map_err(|err| DenError::System(format!("invalid hat head ID: {err}")))?,
-            content_text: row
-                .try_get("content_text")
-                .map_err(|err| DenError::System(format!("decode hat head content: {err}")))?,
-        })
-    })
-    .transpose()
+    let mut connection = store.pool().acquire().await?;
+    load_hat_head(&mut connection, store.bear_id(), hat_id, &path).await
 }
 
 /// Promote only the reviewed text, never the raw source record itself. The
@@ -196,19 +162,7 @@ pub async fn promote_reviewed_to_hat(
         .begin()
         .await
         .map_err(|err| DenError::System(format!("begin reviewed hat promotion: {err}")))?;
-    let source_sql = format!(
-        "SELECT m.memory_id, m.scope_source_kind, m.scope_source_id,
-        m.kind, m.content_text, m.sequence_no FROM memory_records m WHERE {REVIEWABLE}
-        AND m.memory_id = ?"
-    );
-    let source = sqlx::query(&source_sql)
-        .bind(store.bear_id().to_string())
-        .bind(source_memory_id.to_string())
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|err| DenError::System(format!("check reviewable source record: {err}")))?
-        .ok_or_else(|| DenError::NotFound("reviewable source note not found".into()))?;
-    let source = decode_candidate(source)?;
+    let source = load_candidate(&mut *tx, store.bear_id(), source_memory_id).await?;
     let already_promoted: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM memory_promotions p JOIN memory_records target ON target.memory_id = p.target_memory_id
          WHERE p.bear_id = ? AND p.source_memory_id = ? AND target.bear_id = ?
@@ -222,23 +176,9 @@ pub async fn promote_reviewed_to_hat(
             "this source note has already been promoted to this hat".into(),
         ));
     }
-    let current_head: Option<String> = sqlx::query_scalar(
-        "SELECT m.memory_id FROM memory_records m WHERE m.bear_id = ? AND m.scope_type = 'hat'
-           AND m.scope_hat_id = ? AND m.logical_path = ? AND m.invalid_at IS NULL
-           AND m.visibility = 'normal'
-           AND COALESCE(json_extract(m.metadata_json, '$.lifecycle.status'), 'active')
-               NOT IN ('archived', 'archive-candidate')
-           AND NOT EXISTS (
-               SELECT 1 FROM memory_records newer WHERE newer.bear_id = m.bear_id
-                 AND newer.supersedes_memory_id = m.memory_id
-           ) ORDER BY m.sequence_no DESC LIMIT 1",
-    )
-    .bind(store.bear_id().to_string())
-    .bind(hat_id.to_string())
-    .bind(&logical_path)
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(|err| DenError::System(format!("read hat head for review: {err}")))?;
+    let current_head = load_hat_head(&mut tx, store.bear_id(), hat_id, &logical_path)
+        .await?
+        .map(|head| head.memory_id.to_string());
     if current_head.as_deref() != expected_head.map(|id| id.to_string()).as_deref() {
         return Err(DenError::ValidationError(
             "hat entry changed since review; refresh before replacing it".into(),

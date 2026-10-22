@@ -12,7 +12,7 @@ use crate::{
     BearMemoryStore, VerifiedHatProposalSource,
 };
 
-use super::{decode_candidate, ReviewedPromotion, REVIEWABLE};
+use super::{load_candidate, ReviewedPromotion};
 
 pub async fn promote_curated_proposal_to_hat(
     store: &BearMemoryStore,
@@ -68,19 +68,7 @@ pub async fn promote_curated_proposal_to_hat(
                 .into(),
         ));
     }
-    let source_sql = format!(
-        "SELECT m.memory_id, m.scope_source_kind, m.scope_source_id,
-                m.kind, m.content_text, m.sequence_no FROM memory_records m
-         WHERE {REVIEWABLE} AND m.memory_id = ?"
-    );
-    let source = sqlx::query(&source_sql)
-        .bind(store.bear_id().to_string())
-        .bind(verified.memory_id.to_string())
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|err| DenError::System(format!("recheck Curate source note: {err}")))?
-        .ok_or_else(|| DenError::NotFound("current source note not found".into()))?;
-    let source = decode_candidate(source)?;
+    let source = load_candidate(&mut *tx, store.bear_id(), verified.memory_id).await?;
     if !matches!(source.source, MemorySource::Conversation(_)) {
         return Err(DenError::Authorization(
             "only verified conversation notes can enter the current Curate hat lane".into(),

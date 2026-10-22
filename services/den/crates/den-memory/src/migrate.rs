@@ -45,8 +45,13 @@ pub async fn migrate_bear_sqlite_schema(pool: &SqlitePool) -> Result<(), DenErro
         .unwrap_or(false);
 
     if needs_scope_vocab_rebuild {
-        // The rebuild path already produces a table without `entity_ref`.
+        // A dependent SELECT-* view must not strand ALTER TABLE while the legacy table
+        // is replaced. Recreate its canonical definition after the rebuild.
+        sqlx::query!("DROP VIEW IF EXISTS generic_memory_records")
+            .execute(pool)
+            .await?;
         rebuild_memory_records_scope_vocab(pool).await?;
+        crate::personal_facts::recreate_generic_view(pool).await?;
         normalize_legacy_import_hashed_kinds(pool).await?;
         return Ok(());
     }

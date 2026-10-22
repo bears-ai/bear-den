@@ -10,9 +10,9 @@ use den_core::tools::work_surface::{
 };
 use den_llm::model_registry;
 use den_memory::{
-    has_work_surface_canonical_anchor, head_record_for_logical_path,
-    list_entity_anchor_head_records, memory_sequence_high_water, record_visible, scoped,
-    AccessContext, BearMemoryStore, MemoryRecordRow, MemoryScopeType, MemoryStoreManager,
+    has_work_surface_canonical_anchor_with_access, head_record_for_logical_path_with_access,
+    list_entity_anchor_head_records_with_access, memory_sequence_high_water, record_visible,
+    scoped, AccessContext, BearMemoryStore, MemoryRecordRow, MemoryScopeType, MemoryStoreManager,
 };
 use den_service::bears::{
     managed_blocks::{compile_and_store_managed_config_for_bear, get_compiled_bear_config},
@@ -312,9 +312,10 @@ pub async fn project_key_memory_with_scope(
                 tallies.omitted_budget.push((*path).to_string());
                 continue;
             }
-            let Some(record) = head_record_for_logical_path(&store, path)
-                .await?
-                .filter(|record| record.scope_type == MemoryScopeType::Shared)
+            let Some(record) =
+                head_record_for_logical_path_with_access(&store, path, &input.access)
+                    .await?
+                    .filter(|record| record.scope_type == MemoryScopeType::Shared)
             else {
                 continue;
             };
@@ -347,7 +348,7 @@ pub async fn project_key_memory_with_scope(
         WorkSurfaceProjectionStatus::Unresolved | WorkSurfaceProjectionStatus::Ambiguous => false,
         WorkSurfaceProjectionStatus::Candidate => {
             if let Some(ref slug) = primary_slug {
-                has_work_surface_canonical_anchor(&store, slug).await?
+                has_work_surface_canonical_anchor_with_access(&store, slug, &input.access).await?
             } else {
                 false
             }
@@ -379,9 +380,10 @@ pub async fn project_key_memory_with_scope(
                     tallies.omitted_budget.push(path);
                     continue;
                 }
-                let Some(record) = head_record_for_logical_path(&store, &path)
-                    .await?
-                    .filter(|record| record.scope_type == MemoryScopeType::Shared)
+                let Some(record) =
+                    head_record_for_logical_path_with_access(&store, &path, &input.access)
+                        .await?
+                        .filter(|record| record.scope_type == MemoryScopeType::Shared)
                 else {
                     continue;
                 };
@@ -418,7 +420,7 @@ pub async fn project_key_memory_with_scope(
     {
         let mut tracker = BudgetTracker::new(&budget, BudgetTier::WorkSurface);
         let mut blocks = Vec::new();
-        let records = list_entity_anchor_head_records(&store, 6).await?;
+        let records = list_entity_anchor_head_records_with_access(&store, 6, &input.access).await?;
         for record in records {
             if record.scope_type != MemoryScopeType::Shared {
                 continue;
@@ -504,9 +506,10 @@ pub async fn project_key_memory_with_scope(
     // Tier 4 — situation briefing
     {
         let mut tracker = BudgetTracker::new(&budget, BudgetTier::Situation);
-        if let Some(record) = head_record_for_logical_path(&store, TIER4_SITUATION_PATH)
-            .await?
-            .filter(|record| record.scope_type == MemoryScopeType::Shared)
+        if let Some(record) =
+            head_record_for_logical_path_with_access(&store, TIER4_SITUATION_PATH, &input.access)
+                .await?
+                .filter(|record| record.scope_type == MemoryScopeType::Shared)
         {
             let entry = json!({
                 "tier": 4,

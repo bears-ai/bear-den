@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE memory_records SET invalid_at = COALESCE(invalid_at, ?) WHERE bear_id = ? AND memory_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "8bfa2a540b0130685d031fc8cd9d3785e87b727bdc56665a2d259527e20ca58b"
+}

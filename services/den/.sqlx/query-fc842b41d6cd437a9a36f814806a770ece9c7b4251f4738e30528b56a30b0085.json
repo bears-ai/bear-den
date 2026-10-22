@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT link_id AS \"link_id!\", sequence_no AS \"sequence_no!\",\n               src_memory_id AS \"src_memory_id!\", entity_id AS \"entity_id!\",\n               relation AS \"relation!\", class AS \"class!: String\", qualifiers_json AS \"qualifiers_json!\",\n               author_profile AS \"author_profile!\", state AS \"state!\", created_at AS \"created_at!\"\n        FROM memory_links\n        WHERE bear_id = ? AND entity_id = ? AND state = 'active'\n          AND EXISTS (\n              SELECT 1 FROM generic_memory_records source\n              WHERE source.bear_id = memory_links.bear_id\n                AND source.memory_id = memory_links.src_memory_id\n          )\n        ORDER BY sequence_no DESC\n        LIMIT ?\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "link_id!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "sequence_no!",
+        "ordinal": 1,
+        "type_info": "Integer"
+      },
+      {
+        "name": "src_memory_id!",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "entity_id!",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "relation!",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "class!: String",
+        "ordinal": 5,
+        "type_info": "Null"
+      },
+      {
+        "name": "qualifiers_json!",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "author_profile!",
+        "ordinal": 7,
+        "type_info": "Text"
+      },
+      {
+        "name": "state!",
+        "ordinal": 8,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at!",
+        "ordinal": 9,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      false,
+      null,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "fc842b41d6cd437a9a36f814806a770ece9c7b4251f4738e30528b56a30b0085"
+}

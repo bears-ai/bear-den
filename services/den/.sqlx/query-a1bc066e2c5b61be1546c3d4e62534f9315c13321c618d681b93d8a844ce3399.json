@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO memory_records (\n            memory_id, bear_id, sequence_no, scope_type, scope_profile, kind,\n            author_profile, author_agent_id, created_at, content_text, metadata_json,\n            visibility, logical_path, work_surface_ref, valid_from, supersedes_memory_id, salience\n        ) VALUES (?, ?, ?, 'shared', NULL, 'note', 'curate', NULL, ?, 'policy text', '{}',\n                  'normal', 'core/policy.md', NULL, ?, ?, 'normal')\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "a1bc066e2c5b61be1546c3d4e62534f9315c13321c618d681b93d8a844ce3399"
+}

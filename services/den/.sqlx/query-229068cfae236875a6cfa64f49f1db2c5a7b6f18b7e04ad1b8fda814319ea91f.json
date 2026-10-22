@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT kind AS \"label!\", COUNT(*) AS \"count!: i64\"\n        FROM generic_memory_records\n        WHERE bear_id = ?\n        GROUP BY kind\n        ORDER BY COUNT(*) DESC, kind ASC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "label!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "count!: i64",
+        "ordinal": 1,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "229068cfae236875a6cfa64f49f1db2c5a7b6f18b7e04ad1b8fda814319ea91f"
+}

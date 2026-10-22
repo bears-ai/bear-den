@@ -162,21 +162,7 @@ async fn write_semantic_entry(
 }
 
 pub async fn sqlite_memory_browse(store: &BearMemoryStore, role: &str) -> Result<Value, DenError> {
-    let rows = sqlx::query_scalar::<_, String>(
-        r"
-        SELECT DISTINCT logical_path
-        FROM memory_records
-        WHERE bear_id = ? AND scope_profile = ? AND logical_path IS NOT NULL
-          AND invalid_at IS NULL
-          AND COALESCE(json_extract(metadata_json, '$.lifecycle.status'), 'active') NOT IN ('archived', 'archive-candidate')
-        ORDER BY logical_path ASC
-        ",
-    )
-    .bind(store.bear_id().to_string())
-    .bind(role)
-    .fetch_all(store.pool())
-    .await
-    .map_err(|e| DenError::System(format!("sqlite memory browse failed: {e}")))?;
+    let rows = sqlite_collect_role_logical_paths(store, role).await?;
     let children: Vec<Value> = rows
         .into_iter()
         .map(|path| {
@@ -197,7 +183,7 @@ pub async fn sqlite_memory_browse(store: &BearMemoryStore, role: &str) -> Result
     }))
 }
 
-/// Privileged/admin read; ordinary model tools must use a scope-enforcing API.
+/// Generic/admin read excludes classified records; ordinary model tools also enforce scope.
 pub async fn sqlite_memory_read(
     store: &BearMemoryStore,
     logical_path: &str,
@@ -264,24 +250,13 @@ pub async fn sqlite_memory_search(
     limit: i64,
 ) -> Result<Value, DenError> {
     let pattern = format!("%{}%", crate::admin_inspect::escape_like(query));
-    let rows = sqlx::query_as::<
-        _,
-        (
-            String,
-            Option<String>,
-            String,
-            i64,
-            String,
-            String,
-            String,
-            Option<String>,
-            Option<String>,
-        ),
-    >(
-        r"
-        SELECT memory_id, logical_path, content_text, sequence_no, kind, salience,
-               metadata_json, supersedes_memory_id, invalid_at
-        FROM memory_records
+    let bear_id = store.bear_id().to_string();
+    let rows = sqlx::query!(
+        r#"
+        SELECT memory_id AS "memory_id!", logical_path, content_text AS "content_text!",
+               sequence_no AS "sequence_no!", kind AS "kind!", salience AS "salience!",
+               metadata_json AS "metadata_json!", supersedes_memory_id, invalid_at
+        FROM generic_memory_records AS memory_records
         WHERE bear_id = ?
           AND visibility = 'normal'
           AND invalid_at IS NULL
@@ -295,53 +270,41 @@ pub async fn sqlite_memory_search(
           )
         ORDER BY sequence_no DESC
         LIMIT ?
-        ",
+        "#,
+        bear_id,
+        role,
+        pattern,
+        limit,
     )
-    .bind(store.bear_id().to_string())
-    .bind(role)
-    .bind(pattern)
-    .bind(limit)
     .fetch_all(store.pool())
     .await
     .map_err(|e| DenError::System(format!("sqlite memory search failed: {e}")))?;
     let hits: Vec<Value> = rows
         .into_iter()
-        .map(
-            |(
-                memory_id,
-                path,
-                content,
-                sequence_no,
-                kind,
-                salience,
-                metadata_json,
-                supersedes_memory_id,
-                invalid_at,
-            )| {
-                let metadata_json: Value =
-                    serde_json::from_str(&metadata_json).unwrap_or_else(|_| json!({}));
-                let lifecycle_status = crate::records::lifecycle_status(
-                    &metadata_json,
-                    supersedes_memory_id.as_deref(),
-                    invalid_at.as_deref(),
-                );
-                let freshness_trend =
-                    crate::records::freshness_trend(&lifecycle_status, invalid_at.as_deref());
-                json!({
-                    "memory_id": memory_id,
-                    "path": path,
-                    "kind": kind,
-                    "salience": salience,
-                    "lifecycle_status": lifecycle_status,
-                    "freshness_trend": freshness_trend,
-                    "supersedes_memory_id": supersedes_memory_id,
-                    "invalid_at": invalid_at,
-                    "score": Value::Null,
-                    "snippet": content.chars().take(240).collect::<String>(),
-                    "sequence_no": sequence_no,
-                })
-            },
-        )
+        .map(|row| {
+            let metadata_json: Value =
+                serde_json::from_str(&row.metadata_json).unwrap_or_else(|_| json!({}));
+            let lifecycle_status = crate::records::lifecycle_status(
+                &metadata_json,
+                row.supersedes_memory_id.as_deref(),
+                row.invalid_at.as_deref(),
+            );
+            let freshness_trend =
+                crate::records::freshness_trend(&lifecycle_status, row.invalid_at.as_deref());
+            json!({
+                "memory_id": row.memory_id,
+                "path": row.logical_path,
+                "kind": row.kind,
+                "salience": row.salience,
+                "lifecycle_status": lifecycle_status,
+                "freshness_trend": freshness_trend,
+                "supersedes_memory_id": row.supersedes_memory_id,
+                "invalid_at": row.invalid_at,
+                "score": Value::Null,
+                "snippet": row.content_text.chars().take(240).collect::<String>(),
+                "sequence_no": row.sequence_no,
+            })
+        })
         .collect();
     Ok(json!({
         "ok": true,
@@ -357,18 +320,19 @@ pub async fn sqlite_collect_role_logical_paths(
     store: &BearMemoryStore,
     role: &str,
 ) -> Result<Vec<String>, DenError> {
-    sqlx::query_scalar::<_, String>(
-        r"
-        SELECT DISTINCT logical_path
-        FROM memory_records
+    let bear_id = store.bear_id().to_string();
+    sqlx::query_scalar!(
+        r#"
+        SELECT DISTINCT logical_path AS "logical_path!"
+        FROM generic_memory_records
         WHERE bear_id = ? AND scope_profile = ? AND logical_path IS NOT NULL
           AND invalid_at IS NULL
           AND COALESCE(json_extract(metadata_json, '$.lifecycle.status'), 'active') NOT IN ('archived', 'archive-candidate')
         ORDER BY logical_path ASC
-        ",
+        "#,
+        bear_id,
+        role,
     )
-    .bind(store.bear_id().to_string())
-    .bind(role)
     .fetch_all(store.pool())
     .await
     .map_err(|e| DenError::System(format!("sqlite collect paths failed: {e}")))
@@ -379,30 +343,33 @@ pub async fn sqlite_list_plan_artifacts(
     role: &str,
     limit: i64,
 ) -> Result<Value, DenError> {
-    let rows = sqlx::query_as::<_, (String, String, String, i64)>(
-        r"
-        SELECT memory_id, logical_path, content_text, sequence_no
-        FROM memory_records
+    let bear_id = store.bear_id().to_string();
+    let pattern = format!("{role}/plans/%");
+    let rows = sqlx::query!(
+        r#"
+        SELECT memory_id AS "memory_id!", logical_path AS "logical_path!",
+               content_text AS "content_text!", sequence_no AS "sequence_no!"
+        FROM generic_memory_records
         WHERE bear_id = ? AND scope_profile = ? AND logical_path LIKE ?
         ORDER BY sequence_no DESC
         LIMIT ?
-        ",
+        "#,
+        bear_id,
+        role,
+        pattern,
+        limit,
     )
-    .bind(store.bear_id().to_string())
-    .bind(role)
-    .bind(format!("{role}/plans/%"))
-    .bind(limit)
     .fetch_all(store.pool())
     .await
     .map_err(|e| DenError::System(format!("sqlite list plan artifacts failed: {e}")))?;
     let results: Vec<Value> = rows
         .into_iter()
-        .map(|(memory_id, path, content, sequence_no)| {
+        .map(|row| {
             json!({
-                "memory_id": memory_id,
-                "path": path,
-                "snippet": content.chars().take(240).collect::<String>(),
-                "sequence_no": sequence_no,
+                "memory_id": row.memory_id,
+                "path": row.logical_path,
+                "snippet": row.content_text.chars().take(240).collect::<String>(),
+                "sequence_no": row.sequence_no,
                 "storage": "sqlite",
             })
         })
@@ -411,15 +378,16 @@ pub async fn sqlite_list_plan_artifacts(
 }
 
 pub async fn sqlite_memory_status(store: &BearMemoryStore, role: &str) -> Result<Value, DenError> {
-    let file_count: i64 = sqlx::query_scalar(
-        r"
-        SELECT COUNT(DISTINCT logical_path)
-        FROM memory_records
+    let bear_id = store.bear_id().to_string();
+    let file_count = sqlx::query_scalar!(
+        r#"
+        SELECT COUNT(DISTINCT logical_path) AS "count!: i64"
+        FROM generic_memory_records
         WHERE bear_id = ? AND scope_profile = ?
-        ",
+        "#,
+        bear_id,
+        role,
     )
-    .bind(store.bear_id().to_string())
-    .bind(role)
     .fetch_one(store.pool())
     .await
     .map_err(|e| DenError::System(format!("sqlite memory status failed: {e}")))?;

@@ -1,0 +1,44 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT memory_id AS \"memory_id!\", content_text AS \"content_text!\",\n               visibility AS \"visibility!\", invalid_at,\n               COALESCE(json_extract(metadata_json, '$.lifecycle.status'), 'active') AS \"lifecycle_status!: String\"\n        FROM generic_memory_records WHERE bear_id = ? AND memory_id = ?\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "memory_id!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "content_text!",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "visibility!",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "invalid_at",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "lifecycle_status!: String",
+        "ordinal": 4,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      true,
+      null
+    ]
+  },
+  "hash": "eed5dc4c7c76be021957b58587c9b1b9ed9a2f67d619325c2893f489dfdcf9c7"
+}

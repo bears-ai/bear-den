@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE personal_memory_candidates SET state = 'quarantined'\n          WHERE bear_id = ? AND person_entity_id = ? AND state = 'pending'\n            AND NOT EXISTS (SELECT 1 FROM personal_memory_publications p\n                WHERE p.bear_id = personal_memory_candidates.bear_id\n                  AND p.candidate_id = personal_memory_candidates.candidate_id)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "3a2baad994ee35c14e9be0d75a96c46bf114a181d5ee4f98f84011c9df2363a1"
+}

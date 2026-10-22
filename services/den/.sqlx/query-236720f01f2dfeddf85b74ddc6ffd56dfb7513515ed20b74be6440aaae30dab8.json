@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "CREATE TABLE IF NOT EXISTS GeNeRiC_MeMoRy_ReCoRdS (memory_id TEXT)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "236720f01f2dfeddf85b74ddc6ffd56dfb7513515ed20b74be6440aaae30dab8"
+}

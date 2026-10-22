@@ -1,0 +1,44 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT m.scope_source_id AS \"scope_source_id!\", m.memory_id AS \"memory_id!\",\n                  m.kind AS \"kind!\", m.content_text AS \"content_text!\", m.created_at AS \"created_at!\"\n         FROM generic_memory_records m\n         WHERE m.bear_id = ? AND m.scope_type = 'source_local'\n           AND m.scope_source_kind = 'conversation'\n           AND m.scope_source_id IN (SELECT value FROM json_each(?))\n           AND m.visibility = 'normal' AND m.invalid_at IS NULL\n           AND COALESCE(json_extract(m.metadata_json, '$.lifecycle.status'), 'active')\n               NOT IN ('archived', 'archive-candidate')\n           AND NOT EXISTS (\n               SELECT 1 FROM memory_records newer WHERE newer.bear_id = m.bear_id\n                 AND newer.supersedes_memory_id = m.memory_id\n           )\n         ORDER BY m.sequence_no DESC, m.memory_id DESC LIMIT ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "scope_source_id!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "memory_id!",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "kind!",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "content_text!",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at!",
+        "ordinal": 4,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      true,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "86a2e0294b9146820081ea73dc39819c00c525cb77cddb2f5d3860e6fe5ba48f"
+}

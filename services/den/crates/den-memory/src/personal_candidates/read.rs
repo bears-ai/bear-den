@@ -47,6 +47,7 @@ impl CandidateRow {
             "pending" => CandidateState::Pending,
             "withdrawn" => CandidateState::Withdrawn,
             "quarantined" => CandidateState::Quarantined,
+            "published" => CandidateState::Published,
             _ => return Err(invalid_candidate()),
         };
         let preferred_name = PreferredName::new(&self.value_text)?;
@@ -75,7 +76,7 @@ impl CandidateRow {
     }
 }
 
-pub(super) async fn get_inside(
+pub(crate) async fn get_inside(
     connection: &mut SqliteConnection,
     bear_id: &str,
     person_entity_id: &str,
@@ -85,7 +86,11 @@ pub(super) async fn get_inside(
     sqlx::query_as!(
         CandidateRow,
         r#"
-        SELECT candidate_id, person_entity_id, fact_type, value_text, evidence_kind, retention, state,
+        SELECT candidate_id, person_entity_id, fact_type, value_text, evidence_kind, retention,
+               CASE WHEN EXISTS (SELECT 1 FROM personal_memory_publications p
+                    WHERE p.bear_id = personal_memory_candidates.bear_id
+                      AND p.candidate_id = personal_memory_candidates.candidate_id)
+                    THEN 'published' ELSE state END AS "state!: String",
                source_conversation_id, source_memory_id, source_bear_id,
                source_user_id AS "source_user_id!: i32", source_binding_generation, created_at, withdrawn_at
         FROM personal_memory_candidates WHERE bear_id = ? AND person_entity_id = ? AND candidate_id = ?
@@ -131,7 +136,11 @@ pub async fn list_candidates(
     let rows = sqlx::query_as!(
         CandidateRow,
         r#"
-        SELECT candidate_id, person_entity_id, fact_type, value_text, evidence_kind, retention, state,
+        SELECT candidate_id, person_entity_id, fact_type, value_text, evidence_kind, retention,
+               CASE WHEN EXISTS (SELECT 1 FROM personal_memory_publications p
+                    WHERE p.bear_id = personal_memory_candidates.bear_id
+                      AND p.candidate_id = personal_memory_candidates.candidate_id)
+                    THEN 'published' ELSE state END AS "state!: String",
                source_conversation_id, source_memory_id, source_bear_id,
                source_user_id AS "source_user_id!: i32", source_binding_generation, created_at, withdrawn_at
         FROM personal_memory_candidates WHERE bear_id = ? AND person_entity_id = ?
@@ -169,6 +178,9 @@ pub async fn withdraw_candidate(
         UPDATE personal_memory_candidates SET state = 'withdrawn', withdrawn_at = ?,
             withdrawn_on_bear_id = ?, withdrawn_by_user_id = ?
         WHERE bear_id = ? AND person_entity_id = ? AND candidate_id = ? AND state IN ('pending', 'quarantined')
+                  AND NOT EXISTS (SELECT 1 FROM personal_memory_publications p
+                      WHERE p.bear_id = personal_memory_candidates.bear_id
+                        AND p.candidate_id = personal_memory_candidates.candidate_id)
         ",
         withdrawn_at,
         bear_id,

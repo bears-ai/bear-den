@@ -111,6 +111,21 @@ pub async fn record_visible(
     if rules.is_empty() {
         return Ok(!has_access_rule_history_for_source(store, src_memory_id).await?);
     }
+    if ctx.is_empty() {
+        return Ok(false);
+    }
+    if let Some(publication) =
+        crate::personal_facts::publication_access(store, src_memory_id).await?
+    {
+        if !publication.eligible
+            || ctx
+                .authenticated_user
+                .as_ref()
+                .is_none_or(|verified| verified.entity_id != publication.person_entity_id)
+        {
+            return Ok(false);
+        }
+    }
     if let Some(verified) = &ctx.authenticated_user {
         if verified.bear_id != BearId::from(store.bear_id()) {
             return Ok(false);

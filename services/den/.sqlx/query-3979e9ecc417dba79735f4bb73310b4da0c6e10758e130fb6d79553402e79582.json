@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT CAST(name AS TEXT) AS \"name!: String\" FROM pragma_table_list\n        WHERE \"schema\" = 'main' AND (\n            type NOT IN ('table', 'view')\n            OR (name = 'generic_memory_records' COLLATE NOCASE AND type <> 'view')\n        )\n        LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "name!: String",
+        "ordinal": 0,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "3979e9ecc417dba79735f4bb73310b4da0c6e10758e130fb6d79553402e79582"
+}

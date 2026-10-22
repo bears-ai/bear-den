@@ -1,0 +1,98 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT candidate_id, person_entity_id, fact_type, value_text, evidence_kind, retention,\n               CASE WHEN EXISTS (SELECT 1 FROM personal_memory_publications p\n                    WHERE p.bear_id = personal_memory_candidates.bear_id\n                      AND p.candidate_id = personal_memory_candidates.candidate_id)\n                    THEN 'published' ELSE state END AS \"state!: String\",\n               source_conversation_id, source_memory_id, source_bear_id,\n               source_user_id AS \"source_user_id!: i32\", source_binding_generation, created_at, withdrawn_at\n        FROM personal_memory_candidates WHERE bear_id = ? AND person_entity_id = ? AND candidate_id = ?\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "candidate_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "person_entity_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "fact_type",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "value_text",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "evidence_kind",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "retention",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "state!: String",
+        "ordinal": 6,
+        "type_info": "Null"
+      },
+      {
+        "name": "source_conversation_id",
+        "ordinal": 7,
+        "type_info": "Text"
+      },
+      {
+        "name": "source_memory_id",
+        "ordinal": 8,
+        "type_info": "Text"
+      },
+      {
+        "name": "source_bear_id",
+        "ordinal": 9,
+        "type_info": "Text"
+      },
+      {
+        "name": "source_user_id!: i32",
+        "ordinal": 10,
+        "type_info": "Integer"
+      },
+      {
+        "name": "source_binding_generation",
+        "ordinal": 11,
+        "type_info": "Integer"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 12,
+        "type_info": "Text"
+      },
+      {
+        "name": "withdrawn_at",
+        "ordinal": 13,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      null,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "6d7546c9fbe90e75c43d66235f1e8fe74846ad8d7f9975987bf751317cb745ea"
+}

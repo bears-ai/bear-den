@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT memory_id AS \"memory_id!\", sequence_no AS \"sequence_no!\",\n               logical_path, content_text AS \"content_text!\"\n        FROM generic_memory_records AS memory_records\n        WHERE bear_id = ?\n          AND visibility = 'normal'\n          AND invalid_at IS NULL\n          AND COALESCE(json_extract(metadata_json, '$.lifecycle.status'), 'active') NOT IN ('archived', 'archive-candidate')\n          AND NOT EXISTS (\n              SELECT 1 FROM memory_records newer\n              WHERE newer.bear_id = memory_records.bear_id\n                AND newer.supersedes_memory_id = memory_records.memory_id\n          )\n        ORDER BY sequence_no DESC\n        LIMIT 100\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "memory_id!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "sequence_no!",
+        "ordinal": 1,
+        "type_info": "Integer"
+      },
+      {
+        "name": "logical_path",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "content_text!",
+        "ordinal": 3,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "43b9e4081eb4da0d702a52b2dedf686e584ec728ff6fe382c0066d52e95db9ee"
+}

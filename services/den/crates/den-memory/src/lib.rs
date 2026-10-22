@@ -17,6 +17,7 @@ pub mod hat_review;
 pub mod identity_reconnection;
 pub mod import;
 mod import_schema;
+mod indexable;
 pub mod legacy_review;
 pub mod library;
 mod logical_path;
@@ -24,6 +25,7 @@ mod manager;
 mod migrate;
 mod observations;
 pub mod personal_candidates;
+pub mod personal_facts;
 mod proposals;
 mod records;
 pub mod reflection_outcomes;
@@ -68,6 +70,7 @@ pub use import::{
     LegacyMemoryImportOptions, LegacyMemoryImportReport, LegacyMemoryImportSource,
 };
 pub use import_schema::validate_imported_memory_schema;
+pub use indexable::{list_generic_indexable_heads, IndexableHeadRow};
 pub use logical_path::{entity_anchor_path, LogicalMemoryPath, MemoryScopeType, MemorySource};
 pub use manager::MemoryStoreManager;
 pub use observations::{
@@ -82,11 +85,13 @@ pub use proposals::{
 };
 pub use records::{
     append_memory_record, effective_time_by_ids, fetch_record_by_id, fetch_records_min,
-    freshness_trend, has_work_surface_canonical_anchor, head_record_as_of,
-    head_record_for_logical_path, lifecycle_status, list_entity_anchor_head_records,
-    list_profile_local_head_records, list_record_history_for_logical_path,
-    list_records_for_logical_path, mark_memory_record_lifecycle, memory_sequence_high_water,
-    superseder_times_by_superseded, BearMemoryStore, MemoryRecordRow, RecallRecordMin,
+    freshness_trend, has_work_surface_canonical_anchor,
+    has_work_surface_canonical_anchor_with_access, head_record_as_of, head_record_for_logical_path,
+    head_record_for_logical_path_with_access, lifecycle_status, list_entity_anchor_head_records,
+    list_entity_anchor_head_records_with_access, list_profile_local_head_records,
+    list_record_history_for_logical_path, list_records_for_logical_path,
+    mark_memory_record_lifecycle, memory_sequence_high_water, superseder_times_by_superseded,
+    BearMemoryStore, MemoryRecordRow, RecallRecordMin,
 };
 pub use reflection_outcomes::{
     complete_reflection_run_outcome, create_reflection_run_outcome, reflection_outcome_exists,

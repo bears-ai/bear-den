@@ -3,9 +3,9 @@ use super::*;
 /// Exact whole-table comparisons catch collateral writes and audit-field changes.
 /// Group each snapshot into one SQLx-checked statement instead of a query per table.
 #[derive(Debug, PartialEq, Eq)]
-pub(super) struct Snapshot(String);
+pub(crate) struct Snapshot(pub(crate) String);
 
-pub(super) async fn snapshot(store: &BearMemoryStore) -> Snapshot {
+pub(crate) async fn snapshot(store: &BearMemoryStore) -> Snapshot {
     let rows = sqlx::query_scalar!(
         r#"
         SELECT json_object(
@@ -45,6 +45,17 @@ pub(super) async fn snapshot(store: &BearMemoryStore) -> Snapshot {
                     resulting_generation, recorded_at))
                 FROM (SELECT * FROM user_identity_receipts ORDER BY receipt_id)
             ),
+            'publications', (
+                SELECT json_group_array(json_array(memory_id, bear_id, sequence_no, person_entity_id,
+                    candidate_id, fact_type, previous_memory_id, published_on_bear_id,
+                    published_by_user_id, authority_generation, created_at))
+                FROM (SELECT * FROM personal_memory_publications ORDER BY memory_id)
+            ),
+            'retractions', (
+                SELECT json_group_array(json_array(memory_id, bear_id, decision_id, recorded_on_bear_id,
+                    actor_user_id, authority_generation, reason, created_at))
+                FROM (SELECT * FROM personal_memory_retractions ORDER BY bear_id, memory_id)
+            ),
             'sequence', (SELECT next_sequence FROM bear_sequence WHERE id = 1)
         ) AS "snapshot!: String"
         "#,
@@ -56,9 +67,9 @@ pub(super) async fn snapshot(store: &BearMemoryStore) -> Snapshot {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(super) struct GenericSnapshot(String);
+pub(crate) struct GenericSnapshot(pub(crate) String);
 
-pub(super) async fn generic_snapshot(store: &BearMemoryStore) -> GenericSnapshot {
+pub(crate) async fn generic_snapshot(store: &BearMemoryStore) -> GenericSnapshot {
     let rows = sqlx::query_scalar!(
         r#"
         SELECT json_object(

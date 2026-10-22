@@ -2277,6 +2277,23 @@ async fn recent_view(
 // Search (keyword always; semantic when recall is configured)
 // ---------------------------------------------------------------------------
 
+fn admin_semantic_result(
+    passage: &den_service::recall::query::RecalledPassage,
+    head: Option<MemoryRecordRow>,
+) -> Option<RecordListItem> {
+    let head = head?;
+    if head.memory_id != passage.memory_id
+        || head.invalid_at.is_some()
+        || matches!(
+            head.lifecycle_status.as_str(),
+            "archived" | "archive-candidate" | "superseded"
+        )
+    {
+        return None;
+    }
+    Some(record_list_item(head, Some(passage.score)))
+}
+
 async fn search_view(
     Path(slug): Path<String>,
     Query(query): Query<SearchQuery>,
@@ -2291,8 +2308,8 @@ async fn search_view(
     let manager = state.memory_stores()?.clone();
     let viewer = MemoryLibraryViewer::resolve(&state, bear.id, can_manage_bear).await?;
     let q = query.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    // Qdrant only proposes IDs. Member scopes and displayed snippets must be
-    // rechecked and rebuilt from canonical SQLite before a result is rendered.
+    // Qdrant only proposes IDs. Access and displayed snippets must be rechecked
+    // and rebuilt from current canonical SQLite before a result is rendered.
     let semantic_available = config.qdrant_url.is_some() && !config.llm_api_url.trim().is_empty();
     let want_semantic = query.mode.as_deref() == Some("semantic") && semantic_available;
 
@@ -2322,16 +2339,28 @@ async fn search_view(
                     }
                     for passage in projection.passages {
                         match &viewer {
-                            MemoryLibraryViewer::AdminInspection => results.push(RecordListItem {
-                                memory_id: passage.memory_id,
-                                kind: passage.kind.unwrap_or_else(|| "memory".to_string()),
-                                scope_label: String::new(),
-                                logical_path: passage.logical_path,
-                                created_at: String::new(),
-                                sequence_no: 0,
-                                snippet: snippet(&passage.text, 240),
-                                score: Some(passage.score),
-                            }),
+                            MemoryLibraryViewer::AdminInspection => {
+                                // Generic admin reads exclude access-rule history and personal
+                                // classification; vector payloads confer no read authority.
+                                let Some(record) = store::get_memory_record_by_id(
+                                    &manager,
+                                    bear.id,
+                                    &passage.memory_id,
+                                )
+                                .await?
+                                else {
+                                    continue;
+                                };
+                                let Some(path) = record.logical_path.as_deref() else {
+                                    continue;
+                                };
+                                let store = manager.store_for_bear(bear.id).await?;
+                                let head =
+                                    store::head_record_for_logical_path(&store, path).await?;
+                                if let Some(item) = admin_semantic_result(&passage, head) {
+                                    results.push(item);
+                                }
+                            }
                             MemoryLibraryViewer::Curated(grant) => {
                                 let store = manager.store_for_bear(bear.id).await?;
                                 let Some(record) =

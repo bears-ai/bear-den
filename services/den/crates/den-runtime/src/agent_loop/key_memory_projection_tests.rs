@@ -423,13 +423,12 @@ async fn access_bearing_relation_gates_record_out_of_projection() {
     .await
     .expect("project");
     assert!(!hidden.rendered_text.contains("Confidential charter"));
-    assert_eq!(
-        hidden.diagnostic["omitted_by_access"]
-            .as_array()
-            .map(|items| items.len())
-            .unwrap_or(0),
-        1
-    );
+    // Denied heads are now rejected by the record API, before projection can
+    // record their paths in diagnostics.
+    assert!(hidden.diagnostic["omitted_by_access"]
+        .as_array()
+        .unwrap()
+        .is_empty());
 
     // Granting the confinement scope surfaces it.
     let shown = project_key_memory(KeyMemoryProjectionInput {

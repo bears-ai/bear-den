@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT m.memory_id AS \"memory_id!\", m.content_text AS \"content_text!\"\n        FROM generic_memory_records m\n        WHERE m.bear_id = ? AND m.memory_id = ?\n          AND m.visibility = 'normal' AND m.invalid_at IS NULL\n          AND COALESCE(json_extract(m.metadata_json, '$.lifecycle.status'), 'active')\n              NOT IN ('archived', 'archive-candidate')\n          AND NOT EXISTS (\n              SELECT 1 FROM memory_records newer WHERE newer.bear_id = m.bear_id\n                AND newer.supersedes_memory_id = m.memory_id\n          )\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "memory_id!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "content_text!",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "7b37b54684e0e429c5aed45c13d092660a6e5e50e418d99f00730ab6be720bff"
+}

@@ -156,6 +156,35 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_personal_memory_candidates_pending
 CREATE INDEX IF NOT EXISTS idx_personal_memory_candidates_owner
     ON personal_memory_candidates (bear_id, person_entity_id, sequence_no);
 
+-- Immutable personal publication decisions also permanently classify their canonical records.
+CREATE TABLE IF NOT EXISTS personal_memory_publications (
+    memory_id TEXT NOT NULL PRIMARY KEY,
+    bear_id TEXT NOT NULL,
+    sequence_no INTEGER NOT NULL,
+    person_entity_id TEXT NOT NULL,
+    candidate_id TEXT NOT NULL,
+    fact_type TEXT NOT NULL CHECK (fact_type = 'preferred_name'),
+    previous_memory_id TEXT NULL,
+    published_on_bear_id TEXT NOT NULL,
+    published_by_user_id INTEGER NOT NULL,
+    authority_generation INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE (bear_id, candidate_id)
+);
+CREATE INDEX IF NOT EXISTS idx_personal_memory_publications_owner
+    ON personal_memory_publications (bear_id, person_entity_id, fact_type);
+CREATE TABLE IF NOT EXISTS personal_memory_retractions (
+    memory_id TEXT NOT NULL,
+    bear_id TEXT NOT NULL,
+    decision_id TEXT NOT NULL UNIQUE,
+    recorded_on_bear_id TEXT NOT NULL,
+    actor_user_id INTEGER NOT NULL,
+    authority_generation INTEGER NOT NULL,
+    reason TEXT NOT NULL CHECK (reason IN ('owner_request', 'capture_disabled')),
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (bear_id, memory_id)
+);
+
 CREATE TABLE IF NOT EXISTS entity_handles (
     handle_id TEXT PRIMARY KEY,
     bear_id TEXT NOT NULL,
@@ -221,6 +250,18 @@ CREATE VIEW IF NOT EXISTS memory_links AS
            qualifiers_json, author_profile, author_agent_id, confidence, state,
            supersedes_link_id, created_at, 'access_bearing' AS class
     FROM memory_access_rules;
+
+-- Unscoped inspection is not a personal-audience override. Lifecycle/scope filtering is
+-- still the reader's responsibility. Protection history never becomes a generic grant.
+CREATE VIEW IF NOT EXISTS generic_memory_records AS
+    SELECT r.* FROM memory_records r
+    WHERE NOT EXISTS (
+        SELECT 1 FROM memory_access_rules a
+        WHERE a.bear_id = r.bear_id AND a.src_memory_id = r.memory_id
+    ) AND NOT EXISTS (
+        SELECT 1 FROM personal_memory_publications p
+        WHERE p.bear_id = r.bear_id AND p.memory_id = r.memory_id
+    );
 
 CREATE TABLE IF NOT EXISTS memory_promotions (
     promotion_id TEXT PRIMARY KEY,

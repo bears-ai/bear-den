@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT NOT EXISTS (\n            SELECT 1 FROM json_each(?) expected\n            LEFT JOIN memory_records m ON m.bear_id = ?\n                AND m.memory_id = json_extract(expected.value, '$[0]')\n            WHERE m.memory_id IS NULL OR m.content_text IS NOT json_extract(expected.value, '$[1]')\n        ) AS \"matches!: bool\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "matches!: bool",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "31ca4a5ac6fe508d2d83824e3213912bcc1437c61df3137f5525718b2e295226"
+}

@@ -1,0 +1,92 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT memory_id AS \"memory_id!\", sequence_no, scope_type, scope_profile, kind, content_text,\n               logical_path, work_surface_ref, metadata_json, created_at, salience,\n               supersedes_memory_id, invalid_at\n        FROM memory_records\n        WHERE bear_id = ? AND logical_path = ? AND visibility = 'normal'\n          AND NOT EXISTS (\n              SELECT 1 FROM memory_records newer\n              WHERE newer.bear_id = memory_records.bear_id\n                AND newer.supersedes_memory_id = memory_records.memory_id\n          )\n        ORDER BY sequence_no DESC LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "memory_id!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "sequence_no",
+        "ordinal": 1,
+        "type_info": "Integer"
+      },
+      {
+        "name": "scope_type",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "scope_profile",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "kind",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "content_text",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "logical_path",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "work_surface_ref",
+        "ordinal": 7,
+        "type_info": "Text"
+      },
+      {
+        "name": "metadata_json",
+        "ordinal": 8,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 9,
+        "type_info": "Text"
+      },
+      {
+        "name": "salience",
+        "ordinal": 10,
+        "type_info": "Text"
+      },
+      {
+        "name": "supersedes_memory_id",
+        "ordinal": 11,
+        "type_info": "Text"
+      },
+      {
+        "name": "invalid_at",
+        "ordinal": 12,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "3f57b7e94649ee7e5ed6c474d96c195123228f2202b6629354c3e2976b1f792b"
+}

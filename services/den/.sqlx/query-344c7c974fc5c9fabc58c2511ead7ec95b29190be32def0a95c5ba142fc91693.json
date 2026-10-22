@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO memory_access_rules (\n            link_id, bear_id, sequence_no, src_memory_id, entity_id, relation,\n            qualifiers_json, author_profile, state, created_at\n        ) VALUES (?, ?, ?, ?, ?, ?, '{}', 'curate', 'active', ?)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "344c7c974fc5c9fabc58c2511ead7ec95b29190be32def0a95c5ba142fc91693"
+}

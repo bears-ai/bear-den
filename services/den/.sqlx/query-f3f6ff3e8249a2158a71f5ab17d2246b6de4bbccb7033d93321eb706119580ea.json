@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT COUNT(*) AS \"total_records!: i64\",\n               COALESCE(SUM(CASE WHEN NOT EXISTS (\n                   SELECT 1 FROM generic_memory_records generic\n                   WHERE generic.bear_id = memory_records.bear_id\n                     AND generic.memory_id = memory_records.memory_id\n               ) THEN 1 ELSE 0 END), 0) AS \"protected_records!: i64\"\n        FROM memory_records\n        WHERE bear_id = ? AND scope_type = 'hat' AND scope_hat_id = ?\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "total_records!: i64",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "protected_records!: i64",
+        "ordinal": 1,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "f3f6ff3e8249a2158a71f5ab17d2246b6de4bbccb7033d93321eb706119580ea"
+}

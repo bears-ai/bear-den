@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT memory_id AS \"memory_id!\", sequence_no AS \"sequence_no!\", kind AS \"kind!\",\n                   content_text AS \"content_text!\", metadata_json AS \"metadata_json!\",\n                   visibility AS \"visibility!\", invalid_at, created_at AS \"created_at!\"\n            FROM generic_memory_records AS memory_records\n            WHERE bear_id = ? AND scope_type = 'hat' AND scope_hat_id = ?\n              AND (? IS NULL OR sequence_no < ? OR (sequence_no = ? AND memory_id < ?))\n            ORDER BY sequence_no DESC, memory_id DESC LIMIT ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "memory_id!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "sequence_no!",
+        "ordinal": 1,
+        "type_info": "Integer"
+      },
+      {
+        "name": "kind!",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "content_text!",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "metadata_json!",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "visibility!",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "invalid_at",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at!",
+        "ordinal": 7,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "2e974c0e6bbd252bc3879ee67c4b96ed12e38e2cb173177d49b12eca1ae6e67a"
+}

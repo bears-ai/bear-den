@@ -9,6 +9,7 @@
 mod authority;
 mod read;
 mod settings;
+mod source;
 mod stage;
 mod types;
 
@@ -20,7 +21,10 @@ pub use types::{
     PersonalCandidateId, PreferredName, VerifiedPersonalSource,
 };
 
-pub(crate) use settings::{quarantine_imported, quarantine_person};
+pub(crate) use authority::{ensure_current, write_transaction};
+pub(crate) use read::get_inside;
+pub(crate) use settings::{enabled, quarantine_imported, quarantine_person};
+pub(crate) use source::source_is_eligible;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

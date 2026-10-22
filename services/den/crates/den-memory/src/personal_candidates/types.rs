@@ -65,6 +65,8 @@ pub enum CandidateState {
     Pending,
     Withdrawn,
     Quarantined,
+    /// Derived from the immutable publication decision, not a separately writable status.
+    Published,
 }
 
 /// Only construct at the trusted service boundary after verifying the canonical conversation
@@ -72,9 +74,9 @@ pub enum CandidateState {
 /// The SQLite boundary rechecks both the identity snapshot and exact source-note membership.
 #[derive(Clone)]
 pub struct VerifiedPersonalSource {
-    pub(super) binding: AuthenticatedUserEntity,
-    pub(super) conversation_id: Uuid,
-    pub(super) memory_id: Uuid,
+    pub(crate) binding: AuthenticatedUserEntity,
+    pub(crate) conversation_id: Uuid,
+    pub(crate) memory_id: Uuid,
 }
 
 impl VerifiedPersonalSource {

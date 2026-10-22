@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT m.memory_id AS \"memory_id!\", m.scope_source_kind AS \"scope_source_kind!\",\n               m.scope_source_id AS \"scope_source_id!\", m.kind AS \"kind!\",\n               m.content_text AS \"content_text!\", m.sequence_no AS \"sequence_no!\"\n        FROM generic_memory_records m\n        WHERE m.bear_id = ? AND m.scope_type = 'source_local' AND m.memory_id = ?\n          AND m.visibility = 'normal' AND m.invalid_at IS NULL\n          AND COALESCE(json_extract(m.metadata_json, '$.lifecycle.status'), 'active')\n              NOT IN ('archived', 'archive-candidate')\n          AND NOT EXISTS (\n              SELECT 1 FROM memory_records newer WHERE newer.bear_id = m.bear_id\n                AND newer.supersedes_memory_id = m.memory_id\n          )\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "memory_id!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "scope_source_kind!",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "scope_source_id!",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "kind!",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "content_text!",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "sequence_no!",
+        "ordinal": 5,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      true,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "6b4c1e1577f98de6c3d5b0ec2a73858ec8db0f3b3231d112d8197fe00219431f"
+}

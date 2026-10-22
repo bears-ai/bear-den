@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DROP VIEW IF EXISTS generic_memory_records",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "ea290106d80fdc9c31514e8b8c4fca5fa3e80333ff579668eec5e17c1ca21afe"
+}

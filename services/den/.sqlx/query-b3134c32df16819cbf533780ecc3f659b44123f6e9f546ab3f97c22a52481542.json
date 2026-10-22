@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS (SELECT 1 FROM personal_memory_publications\n           WHERE bear_id = ? AND memory_id = ?) AS \"protected!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "protected!: bool",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "b3134c32df16819cbf533780ecc3f659b44123f6e9f546ab3f97c22a52481542"
+}

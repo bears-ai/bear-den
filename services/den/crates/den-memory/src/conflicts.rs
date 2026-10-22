@@ -202,10 +202,11 @@ pub async fn conflict_candidates(
     let bear_id = store.bear_id().to_string();
     let placeholders = vec!["?"; memory_ids.len()].join(",");
 
+    // sqlx-dynamic: a bounded caller-supplied ID list determines only the bound placeholders.
     let sql = format!(
         "SELECT memory_id, logical_path, COALESCE(valid_from, created_at), invalid_at, \
                 metadata_json, supersedes_memory_id \
-         FROM memory_records WHERE bear_id = ? AND memory_id IN ({placeholders})"
+         FROM generic_memory_records WHERE bear_id = ? AND memory_id IN ({placeholders})"
     );
     let mut query = sqlx::query_as::<
         _,
@@ -275,16 +276,17 @@ async fn supersession_ancestors(
 ) -> Result<HashMap<String, Vec<String>>, DenError> {
     let bear_id = store.bear_id().to_string();
     let placeholders = vec!["?"; memory_ids.len()].join(",");
+    // sqlx-dynamic: seed IDs are parameterized through a bounded variable-length IN list.
     let sql = format!(
         "WITH RECURSIVE chain(start_id, ancestor_id, depth) AS ( \
              SELECT memory_id, supersedes_memory_id, 1 \
-               FROM memory_records \
+               FROM generic_memory_records \
               WHERE bear_id = ? AND supersedes_memory_id IS NOT NULL \
                 AND memory_id IN ({placeholders}) \
              UNION ALL \
              SELECT chain.start_id, r.supersedes_memory_id, chain.depth + 1 \
                FROM chain \
-               JOIN memory_records r ON r.bear_id = ? AND r.memory_id = chain.ancestor_id \
+               JOIN generic_memory_records r ON r.bear_id = ? AND r.memory_id = chain.ancestor_id \
               WHERE r.supersedes_memory_id IS NOT NULL AND chain.depth < ? \
          ) \
          SELECT DISTINCT start_id, ancestor_id FROM chain"

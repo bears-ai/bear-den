@@ -159,6 +159,33 @@ async fn foreign_key_cascade_cannot_erase_rules_during_legacy_links_migration() 
 }
 
 #[tokio::test]
+async fn legacy_schema_without_generic_view_is_accepted() {
+    let fixture = Fixture::new().await;
+    sqlx::query!("DROP VIEW IF EXISTS generic_memory_records")
+        .execute(fixture.store.pool())
+        .await
+        .unwrap();
+    fixture.validate().await.unwrap();
+}
+
+#[tokio::test]
+async fn case_variant_table_cannot_shadow_the_reserved_generic_read_view() {
+    let fixture = Fixture::new().await;
+    sqlx::query!("DROP VIEW IF EXISTS generic_memory_records")
+        .execute(fixture.store.pool())
+        .await
+        .unwrap();
+    sqlx::query!("CREATE TABLE IF NOT EXISTS GeNeRiC_MeMoRy_ReCoRdS (memory_id TEXT)")
+        .execute(fixture.store.pool())
+        .await
+        .unwrap();
+    assert!(matches!(
+        fixture.validate().await,
+        Err(DenError::ValidationError(_))
+    ));
+}
+
+#[tokio::test]
 async fn validation_does_not_create_a_missing_database() {
     let path = std::env::temp_dir().join(format!("den-missing-import-{}.sqlite", Uuid::new_v4()));
     assert!(matches!(

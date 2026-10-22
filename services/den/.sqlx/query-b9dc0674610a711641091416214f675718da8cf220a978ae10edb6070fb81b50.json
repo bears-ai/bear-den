@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT memory_id AS \"memory_id!\", logical_path, kind AS \"kind!\",\n               content_text AS \"content_text!\", salience AS \"salience!\",\n               metadata_json AS \"metadata_json!\", supersedes_memory_id, invalid_at\n        FROM generic_memory_records AS memory_records\n        WHERE bear_id = ? AND visibility = 'normal' AND invalid_at IS NULL\n          AND (scope_type = 'shared' OR scope_profile = ?)\n          AND memory_id IN (SELECT value FROM json_each(?))\n          AND NOT EXISTS (\n              SELECT 1 FROM memory_records newer\n              WHERE newer.bear_id = memory_records.bear_id\n                AND newer.supersedes_memory_id = memory_records.memory_id\n          )\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "memory_id!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "logical_path",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "kind!",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "content_text!",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "salience!",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "metadata_json!",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "supersedes_memory_id",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "invalid_at",
+        "ordinal": 7,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "b9dc0674610a711641091416214f675718da8cf220a978ae10edb6070fb81b50"
+}

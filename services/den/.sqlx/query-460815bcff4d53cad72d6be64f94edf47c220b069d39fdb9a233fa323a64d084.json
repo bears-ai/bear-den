@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "CREATE TRIGGER fail_personal_fact_decision BEFORE INSERT ON personal_memory_retractions\n                  BEGIN SELECT RAISE(ABORT, 'injected late retraction failure'); END",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "460815bcff4d53cad72d6be64f94edf47c220b069d39fdb9a233fa323a64d084"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE memory_records SET logical_path = ?, scope_type = ?, scope_profile = ?, scope_source_kind = ?, scope_source_id = ?, scope_hat_id = ?, visibility = ?, metadata_json = ?, invalid_at = ? WHERE bear_id = ? AND memory_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 11
+    },
+    "nullable": []
+  },
+  "hash": "2a5a4c3086bf318c489e8bf672bf0c4005805f2198ad555488ddc27e99134973"
+}

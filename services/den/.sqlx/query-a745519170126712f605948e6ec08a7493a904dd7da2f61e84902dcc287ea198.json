@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT MAX(sequence_no) AS \"high_water?: i64\" FROM memory_records WHERE bear_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "high_water?: i64",
+        "ordinal": 0,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "a745519170126712f605948e6ec08a7493a904dd7da2f61e84902dcc287ea198"
+}

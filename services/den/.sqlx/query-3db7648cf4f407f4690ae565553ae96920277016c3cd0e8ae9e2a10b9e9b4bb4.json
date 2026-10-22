@@ -1,0 +1,68 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT memory_id AS \"memory_id!\", logical_path, content_text AS \"content_text!\",\n               sequence_no AS \"sequence_no!\", kind AS \"kind!\", salience AS \"salience!\",\n               metadata_json AS \"metadata_json!\", supersedes_memory_id, invalid_at\n        FROM generic_memory_records AS memory_records\n        WHERE bear_id = ?\n          AND visibility = 'normal'\n          AND invalid_at IS NULL\n          AND COALESCE(json_extract(metadata_json, '$.lifecycle.status'), 'active') != 'archived'\n          AND (scope_type = 'shared' OR scope_profile = ?)\n          AND content_text LIKE ? ESCAPE '\\'\n          AND NOT EXISTS (\n            SELECT 1 FROM memory_records newer\n            WHERE newer.bear_id = memory_records.bear_id\n              AND newer.supersedes_memory_id = memory_records.memory_id\n          )\n        ORDER BY sequence_no DESC\n        LIMIT ?\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "memory_id!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "logical_path",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "content_text!",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "sequence_no!",
+        "ordinal": 3,
+        "type_info": "Integer"
+      },
+      {
+        "name": "kind!",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "salience!",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "metadata_json!",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "supersedes_memory_id",
+        "ordinal": 7,
+        "type_info": "Text"
+      },
+      {
+        "name": "invalid_at",
+        "ordinal": 8,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "3db7648cf4f407f4690ae565553ae96920277016c3cd0e8ae9e2a10b9e9b4bb4"
+}

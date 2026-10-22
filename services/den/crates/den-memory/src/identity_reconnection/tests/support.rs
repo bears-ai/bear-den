@@ -119,6 +119,17 @@ pub(super) async fn seed_context(
             )
             .await
             .unwrap();
+        if status != "active" {
+            crate::mark_memory_record_lifecycle(
+                store,
+                &row.memory_id,
+                status,
+                Some("preserve original lifecycle"),
+            )
+            .await
+            .unwrap();
+        }
+        // Finish ordinary fixture setup before attaching its protected audience.
         for relation in ["audience", "subject"] {
             append_relation(
                 store,
@@ -129,16 +140,6 @@ pub(super) async fn seed_context(
                 "curate",
                 Some("original-reviewer"),
                 Some("high"),
-            )
-            .await
-            .unwrap();
-        }
-        if status != "active" {
-            crate::mark_memory_record_lifecycle(
-                store,
-                &row.memory_id,
-                status,
-                Some("preserve original lifecycle"),
             )
             .await
             .unwrap();

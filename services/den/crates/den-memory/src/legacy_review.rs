@@ -57,64 +57,59 @@ pub struct ReauthoredHatEntry {
     pub promotion_id: Uuid,
 }
 
-// sqlx-dynamic: per-Bear SQLite has no compile-time schema; these are static
-// predicates composed only with bound values. Canonical scope columns, not
-// logical paths or metadata, decide which records may be inspected.
-const REVIEWABLE: &str = "m.bear_id = ? AND m.scope_type = 'profile_local'
-    AND m.visibility = 'normal' AND m.invalid_at IS NULL
-    AND COALESCE(json_extract(m.metadata_json, '$.lifecycle.status'), 'active')
-        NOT IN ('archived', 'archive-candidate')
-    AND NOT EXISTS (
-        SELECT 1 FROM memory_records newer WHERE newer.bear_id = m.bear_id
-          AND newer.supersedes_memory_id = m.memory_id
-    )
-    AND NOT EXISTS (
-        SELECT 1 FROM memory_access_rules rules WHERE rules.bear_id = m.bear_id
-          AND rules.src_memory_id = m.memory_id
-    )";
-
 pub async fn inventory_page(
     store: &BearMemoryStore,
     before: Option<i64>,
     limit: i64,
 ) -> Result<LegacyReviewPage, DenError> {
-    let buckets = sqlx::query_as::<_, LegacyInventoryBucket>(
-        "SELECT scope_profile, count(*) AS total,
-                sum(CASE WHEN visibility = 'normal' AND invalid_at IS NULL
-                  AND COALESCE(json_extract(metadata_json, '$.lifecycle.status'), 'active')
-                      NOT IN ('archived', 'archive-candidate')
-                  AND NOT EXISTS (
-                    SELECT 1 FROM memory_records newer
-                    WHERE newer.bear_id = memory_records.bear_id
-                      AND newer.supersedes_memory_id = memory_records.memory_id
-                  )
-                  AND NOT EXISTS (
-                    SELECT 1 FROM memory_access_rules rules
-                    WHERE rules.bear_id = memory_records.bear_id
-                      AND rules.src_memory_id = memory_records.memory_id
-                  ) THEN 1 ELSE 0 END) AS reviewable
-         FROM memory_records WHERE bear_id = ? AND scope_type = 'profile_local'
-         GROUP BY scope_profile ORDER BY scope_profile",
+    let bear_id = store.bear_id().to_string();
+    let buckets = sqlx::query_as!(
+        LegacyInventoryBucket,
+        r#"
+        SELECT scope_profile, count(*) AS "total!: i64",
+               sum(CASE WHEN visibility = 'normal' AND invalid_at IS NULL
+                 AND COALESCE(json_extract(metadata_json, '$.lifecycle.status'), 'active')
+                     NOT IN ('archived', 'archive-candidate')
+                 AND NOT EXISTS (
+                   SELECT 1 FROM memory_records newer
+                   WHERE newer.bear_id = memory_records.bear_id
+                     AND newer.supersedes_memory_id = memory_records.memory_id
+                 ) THEN 1 ELSE 0 END) AS "reviewable!: i64"
+        FROM generic_memory_records AS memory_records
+        WHERE bear_id = ? AND scope_type = 'profile_local'
+        GROUP BY scope_profile ORDER BY scope_profile
+        "#,
+        bear_id,
     )
-    .bind(store.bear_id().to_string())
     .fetch_all(store.pool())
     .await
     .map_err(|error| DenError::System(format!("inventory legacy memory: {error}")))?;
-    let sql = format!(
-        "SELECT m.memory_id, m.scope_profile, m.logical_path, m.kind,
-                m.content_text, m.sequence_no FROM memory_records m
-         WHERE {REVIEWABLE} AND (? IS NULL OR m.sequence_no < ?)
-         ORDER BY m.sequence_no DESC LIMIT ?"
-    );
     let limit = limit.clamp(1, 100);
-    let candidates = sqlx::query_as::<_, LegacyCandidate>(&sql)
-        .bind(store.bear_id().to_string())
-        .bind(before)
-        .bind(before)
-        .bind(limit)
-        .fetch_all(store.pool())
-        .await
-        .map_err(|error| DenError::System(format!("page legacy review candidates: {error}")))?;
+    let candidates = sqlx::query_as!(
+        LegacyCandidate,
+        r#"
+        SELECT m.memory_id AS "memory_id!", m.scope_profile, m.logical_path,
+               m.kind AS "kind!", m.content_text AS "content_text!", m.sequence_no AS "sequence_no!"
+        FROM generic_memory_records m
+        WHERE m.bear_id = ? AND m.scope_type = 'profile_local'
+          AND m.visibility = 'normal' AND m.invalid_at IS NULL
+          AND COALESCE(json_extract(m.metadata_json, '$.lifecycle.status'), 'active')
+              NOT IN ('archived', 'archive-candidate')
+          AND NOT EXISTS (
+              SELECT 1 FROM memory_records newer WHERE newer.bear_id = m.bear_id
+                AND newer.supersedes_memory_id = m.memory_id
+          )
+          AND (? IS NULL OR m.sequence_no < ?)
+        ORDER BY m.sequence_no DESC LIMIT ?
+        "#,
+        bear_id,
+        before,
+        before,
+        limit,
+    )
+    .fetch_all(store.pool())
+    .await
+    .map_err(|error| DenError::System(format!("page legacy review candidates: {error}")))?;
     let next_before = (candidates.len() as i64 == limit)
         .then(|| candidates.last().map(|candidate| candidate.sequence_no))
         .flatten();
@@ -129,18 +124,40 @@ pub async fn candidate(
     store: &BearMemoryStore,
     memory_id: &str,
 ) -> Result<LegacyCandidate, DenError> {
-    let sql = format!(
-        "SELECT m.memory_id, m.scope_profile, m.logical_path, m.kind,
-                m.content_text, m.sequence_no FROM memory_records m
-         WHERE {REVIEWABLE} AND m.memory_id = ?"
-    );
-    sqlx::query_as::<_, LegacyCandidate>(&sql)
-        .bind(store.bear_id().to_string())
-        .bind(memory_id)
-        .fetch_optional(store.pool())
-        .await
-        .map_err(|error| DenError::System(format!("inspect legacy review candidate: {error}")))?
-        .ok_or_else(|| DenError::NotFound("reviewable legacy record not found".into()))
+    load_candidate(store.pool(), store.bear_id(), memory_id).await
+}
+
+async fn load_candidate<'e, E>(
+    executor: E,
+    bear_id: Uuid,
+    memory_id: &str,
+) -> Result<LegacyCandidate, DenError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
+    let bear_id = bear_id.to_string();
+    sqlx::query_as!(
+        LegacyCandidate,
+        r#"
+        SELECT m.memory_id AS "memory_id!", m.scope_profile, m.logical_path,
+               m.kind AS "kind!", m.content_text AS "content_text!", m.sequence_no AS "sequence_no!"
+        FROM generic_memory_records m
+        WHERE m.bear_id = ? AND m.scope_type = 'profile_local' AND m.memory_id = ?
+          AND m.visibility = 'normal' AND m.invalid_at IS NULL
+          AND COALESCE(json_extract(m.metadata_json, '$.lifecycle.status'), 'active')
+              NOT IN ('archived', 'archive-candidate')
+          AND NOT EXISTS (
+              SELECT 1 FROM memory_records newer WHERE newer.bear_id = m.bear_id
+                AND newer.supersedes_memory_id = m.memory_id
+          )
+        "#,
+        bear_id,
+        memory_id,
+    )
+    .fetch_optional(executor)
+    .await
+    .map_err(|error| DenError::System(format!("inspect legacy review candidate: {error}")))?
+    .ok_or_else(|| DenError::NotFound("reviewable legacy record not found".into()))
 }
 
 pub async fn reauthor_into_hat(
@@ -179,18 +196,7 @@ pub async fn reauthor_into_hat(
         .begin()
         .await
         .map_err(|error| DenError::System(format!("begin legacy reauthoring: {error}")))?;
-    let source_sql = format!(
-        "SELECT m.memory_id, m.scope_profile, m.logical_path, m.kind,
-                m.content_text, m.sequence_no FROM memory_records m
-         WHERE {REVIEWABLE} AND m.memory_id = ?"
-    );
-    let source = sqlx::query_as::<_, LegacyCandidate>(&source_sql)
-        .bind(store.bear_id().to_string())
-        .bind(&review.source_memory_id)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|error| DenError::System(format!("validate legacy record for review: {error}")))?
-        .ok_or_else(|| DenError::NotFound("reviewable legacy record not found".into()))?;
+    let source = load_candidate(&mut *tx, store.bear_id(), &review.source_memory_id).await?;
     let already_promoted: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM memory_promotions p JOIN memory_records target
           ON target.bear_id = p.bear_id AND target.memory_id = p.target_memory_id
@@ -208,23 +214,40 @@ pub async fn reauthor_into_hat(
             "this legacy record was already reviewed into this hat".into(),
         ));
     }
-    let head: Option<String> = sqlx::query_scalar(
-        "SELECT memory_id FROM memory_records WHERE bear_id = ? AND scope_type = 'hat'
-           AND scope_hat_id = ? AND logical_path = ? AND visibility = 'normal'
-           AND invalid_at IS NULL
-           AND COALESCE(json_extract(metadata_json, '$.lifecycle.status'), 'active')
-               NOT IN ('archived', 'archive-candidate')
-           AND NOT EXISTS (SELECT 1 FROM memory_records newer
-               WHERE newer.bear_id = memory_records.bear_id
-                 AND newer.supersedes_memory_id = memory_records.memory_id)
-           ORDER BY sequence_no DESC LIMIT 1",
+    let bear_id = store.bear_id().to_string();
+    let target_hat = review.target_hat.to_string();
+    // Select the physical head first, then gate it inside this transaction. A
+    // classified head must neither resurrect an old version nor be invalidated.
+    let head = sqlx::query!(
+        r#"
+        SELECT m.memory_id AS "memory_id!", EXISTS (
+            SELECT 1 FROM generic_memory_records generic
+            WHERE generic.bear_id = m.bear_id AND generic.memory_id = m.memory_id
+              AND generic.visibility = 'normal' AND generic.invalid_at IS NULL
+              AND COALESCE(json_extract(generic.metadata_json, '$.lifecycle.status'), 'active')
+                  NOT IN ('archived', 'archive-candidate')
+              AND NOT EXISTS (
+                  SELECT 1 FROM memory_records newer WHERE newer.bear_id = m.bear_id
+                    AND newer.supersedes_memory_id = m.memory_id
+              )
+        ) AS "eligible!: bool"
+        FROM memory_records m
+        WHERE m.bear_id = ? AND m.scope_type = 'hat' AND m.scope_hat_id = ? AND m.logical_path = ?
+        ORDER BY m.sequence_no DESC LIMIT 1
+        "#,
+        bear_id,
+        target_hat,
+        path,
     )
-    .bind(store.bear_id().to_string())
-    .bind(review.target_hat.to_string())
-    .bind(&path)
     .fetch_optional(&mut *tx)
     .await
     .map_err(|error| DenError::System(format!("read hat head for legacy review: {error}")))?;
+    if head.as_ref().is_some_and(|head| !head.eligible) {
+        return Err(DenError::Authorization(
+            "hat target is not an active, generic-readable head".into(),
+        ));
+    }
+    let head = head.map(|head| head.memory_id);
     if head.as_deref() != review.expected_head.map(|id| id.to_string()).as_deref() {
         return Err(DenError::ValidationError(
             "hat entry changed since review; refresh before replacing it".into(),

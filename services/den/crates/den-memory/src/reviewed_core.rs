@@ -47,37 +47,36 @@ pub struct ReviewedCoreEntry {
     pub reviewer: UserId,
 }
 
-// sqlx-dynamic: SQLite is per-Bear at runtime. Each value is bound and this
-// predicate checks canonical columns and access rules, not a guessed path.
-const REVIEWABLE: &str = "bear_id = ? AND scope_type = 'hat' AND scope_hat_id = ?
-    AND visibility = 'normal' AND invalid_at IS NULL
-    AND COALESCE(json_extract(metadata_json, '$.lifecycle.status'), 'active')
-        NOT IN ('archived', 'archive-candidate')
-    AND NOT EXISTS (
-        SELECT 1 FROM memory_records newer WHERE newer.bear_id = memory_records.bear_id
-          AND newer.supersedes_memory_id = memory_records.memory_id
-    )
-    AND NOT EXISTS (
-        SELECT 1 FROM memory_access_rules rules WHERE rules.bear_id = memory_records.bear_id
-          AND rules.src_memory_id = memory_records.memory_id
-    )";
-
 pub async fn candidates(
     store: &BearMemoryStore,
     hat_id: HatId,
     limit: i64,
 ) -> Result<Vec<ReviewCandidate>, DenError> {
-    let query = format!(
-        "SELECT memory_id, kind, content_text FROM memory_records WHERE {REVIEWABLE}
-         ORDER BY sequence_no DESC LIMIT ?"
-    );
-    sqlx::query_as::<_, ReviewCandidate>(&query)
-        .bind(store.bear_id().to_string())
-        .bind(hat_id.to_string())
-        .bind(limit.clamp(1, 100))
-        .fetch_all(store.pool())
-        .await
-        .map_err(|error| DenError::System(format!("list reviewable hat entries: {error}")))
+    let bear_id = store.bear_id().to_string();
+    let hat_id = hat_id.to_string();
+    let limit = limit.clamp(1, 100);
+    sqlx::query_as!(
+        ReviewCandidate,
+        r#"
+        SELECT m.memory_id AS "memory_id!", m.kind AS "kind!", m.content_text AS "content_text!"
+        FROM generic_memory_records m
+        WHERE m.bear_id = ? AND m.scope_type = 'hat' AND m.scope_hat_id = ?
+          AND m.visibility = 'normal' AND m.invalid_at IS NULL
+          AND COALESCE(json_extract(m.metadata_json, '$.lifecycle.status'), 'active')
+              NOT IN ('archived', 'archive-candidate')
+          AND NOT EXISTS (
+              SELECT 1 FROM memory_records newer WHERE newer.bear_id = m.bear_id
+                AND newer.supersedes_memory_id = m.memory_id
+          )
+        ORDER BY m.sequence_no DESC LIMIT ?
+        "#,
+        bear_id,
+        hat_id,
+        limit,
+    )
+    .fetch_all(store.pool())
+    .await
+    .map_err(|error| DenError::System(format!("list reviewable hat entries: {error}")))
 }
 
 pub async fn candidate(
@@ -85,18 +84,80 @@ pub async fn candidate(
     hat_id: HatId,
     memory_id: Uuid,
 ) -> Result<ReviewCandidate, DenError> {
-    let query = format!(
-        "SELECT memory_id, kind, content_text FROM memory_records WHERE {REVIEWABLE}
-         AND memory_id = ?"
-    );
-    sqlx::query_as::<_, ReviewCandidate>(&query)
-        .bind(store.bear_id().to_string())
-        .bind(hat_id.to_string())
-        .bind(memory_id.to_string())
-        .fetch_optional(store.pool())
-        .await
-        .map_err(|error| DenError::System(format!("read reviewable hat entry: {error}")))?
-        .ok_or_else(|| DenError::NotFound("reviewable hat entry not found".into()))
+    load_candidate(store.pool(), store.bear_id(), hat_id, memory_id).await
+}
+
+async fn load_candidate<'e, E>(
+    executor: E,
+    bear_id: Uuid,
+    hat_id: HatId,
+    memory_id: Uuid,
+) -> Result<ReviewCandidate, DenError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
+    let bear_id = bear_id.to_string();
+    let hat_id = hat_id.to_string();
+    let memory_id = memory_id.to_string();
+    sqlx::query_as!(
+        ReviewCandidate,
+        r#"
+        SELECT m.memory_id AS "memory_id!", m.kind AS "kind!", m.content_text AS "content_text!"
+        FROM generic_memory_records m
+        WHERE m.bear_id = ? AND m.scope_type = 'hat' AND m.scope_hat_id = ?
+          AND m.memory_id = ? AND m.visibility = 'normal' AND m.invalid_at IS NULL
+          AND COALESCE(json_extract(m.metadata_json, '$.lifecycle.status'), 'active')
+              NOT IN ('archived', 'archive-candidate')
+          AND NOT EXISTS (
+              SELECT 1 FROM memory_records newer WHERE newer.bear_id = m.bear_id
+                AND newer.supersedes_memory_id = m.memory_id
+          )
+        "#,
+        bear_id,
+        hat_id,
+        memory_id,
+    )
+    .fetch_optional(executor)
+    .await
+    .map_err(|error| DenError::System(format!("read reviewable hat entry: {error}")))?
+    .ok_or_else(|| DenError::NotFound("reviewable hat entry not found".into()))
+}
+
+// Select the physical head before gating its body: a denied head must not make
+// an older generic version look current, or make the path appear writable.
+async fn load_core_head(
+    connection: &mut sqlx::SqliteConnection,
+    bear_id: Uuid,
+    path: &str,
+) -> Result<Option<CoreHead>, DenError> {
+    let bear_id = bear_id.to_string();
+    let head_id = sqlx::query_scalar!(
+        r#"SELECT memory_id AS "memory_id!" FROM memory_records
+           WHERE bear_id = ? AND scope_type = 'shared' AND logical_path = ?
+           ORDER BY sequence_no DESC LIMIT 1"#,
+        bear_id,
+        path,
+    )
+    .fetch_optional(&mut *connection)
+    .await?;
+    let Some(head_id) = head_id else {
+        return Ok(None);
+    };
+    let head = sqlx::query_as!(
+        CoreHead,
+        r#"
+        SELECT memory_id AS "memory_id!", content_text AS "content_text!",
+               visibility AS "visibility!", invalid_at,
+               COALESCE(json_extract(metadata_json, '$.lifecycle.status'), 'active') AS "lifecycle_status!: String"
+        FROM generic_memory_records WHERE bear_id = ? AND memory_id = ?
+        "#,
+        bear_id,
+        head_id,
+    )
+    .fetch_optional(&mut *connection)
+    .await?
+    .ok_or_else(|| DenError::Authorization("core target is not generic-readable".into()))?;
+    Ok(Some(head))
 }
 
 pub async fn current_core_head(
@@ -104,17 +165,8 @@ pub async fn current_core_head(
     kind: &str,
 ) -> Result<Option<CoreHead>, DenError> {
     let path = LogicalMemoryPath::shared_core(kind).to_logical_path();
-    sqlx::query_as::<_, CoreHead>(
-        "SELECT memory_id, content_text, visibility, invalid_at,
-                COALESCE(json_extract(metadata_json, '$.lifecycle.status'), 'active') AS lifecycle_status
-         FROM memory_records WHERE bear_id = ? AND scope_type = 'shared' AND logical_path = ?
-         ORDER BY sequence_no DESC LIMIT 1",
-    )
-    .bind(store.bear_id().to_string())
-    .bind(path)
-    .fetch_optional(store.pool())
-    .await
-    .map_err(|error| DenError::System(format!("read current core entry: {error}")))
+    let mut connection = store.pool().acquire().await?;
+    load_core_head(&mut connection, store.bear_id(), &path).await
 }
 
 pub async fn promote(
@@ -150,18 +202,13 @@ pub async fn promote(
         .begin()
         .await
         .map_err(|error| DenError::System(format!("begin reviewed core promotion: {error}")))?;
-    let source_sql = format!(
-        "SELECT memory_id, kind, content_text FROM memory_records WHERE {REVIEWABLE}
-         AND memory_id = ?"
-    );
-    let source = sqlx::query_as::<_, ReviewCandidate>(&source_sql)
-        .bind(store.bear_id().to_string())
-        .bind(review.hat_id.to_string())
-        .bind(review.source_memory_id.to_string())
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|error| DenError::System(format!("validate core review source: {error}")))?
-        .ok_or_else(|| DenError::NotFound("reviewable hat entry not found".into()))?;
+    let source = load_candidate(
+        &mut *tx,
+        store.bear_id(),
+        review.hat_id,
+        review.source_memory_id,
+    )
+    .await?;
     let promoted: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM memory_promotions p JOIN memory_records target
            ON target.bear_id = p.bear_id AND target.memory_id = p.target_memory_id
@@ -177,17 +224,7 @@ pub async fn promote(
             "this hat entry was already promoted to Bear core".into(),
         ));
     }
-    let head: Option<CoreHead> = sqlx::query_as(
-        "SELECT memory_id, content_text, visibility, invalid_at,
-                COALESCE(json_extract(metadata_json, '$.lifecycle.status'), 'active') AS lifecycle_status
-         FROM memory_records WHERE bear_id = ? AND scope_type = 'shared' AND logical_path = ?
-         ORDER BY sequence_no DESC LIMIT 1",
-    )
-    .bind(store.bear_id().to_string())
-    .bind(&path)
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(|error| DenError::System(format!("check core head before review: {error}")))?;
+    let head = load_core_head(&mut tx, store.bear_id(), &path).await?;
     if head.as_ref().is_some_and(|head| {
         head.visibility != "normal"
             || head.invalid_at.is_some()

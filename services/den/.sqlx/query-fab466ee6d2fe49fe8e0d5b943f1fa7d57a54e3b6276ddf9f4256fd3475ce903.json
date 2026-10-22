@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO memory_relations (\n            link_id, bear_id, sequence_no, src_memory_id, entity_id, relation,\n            qualifiers_json, author_profile, state, created_at\n        ) VALUES (?, ?, ?, ?, ?, ?, '{}', 'curate', 'active', ?)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "fab466ee6d2fe49fe8e0d5b943f1fa7d57a54e3b6276ddf9f4256fd3475ce903"
+}

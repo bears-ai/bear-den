@@ -287,7 +287,7 @@ async fn unreviewable_and_access_bearing_sources_never_cross_into_hat() {
         Resolution::Resolved(entity) => entity.entity_id,
         other => panic!("expected resolved surface, got {other:?}"),
     };
-    append_relation(
+    let rule = append_relation(
         &store,
         &gated.memory_id,
         &surface,
@@ -299,7 +299,21 @@ async fn unreviewable_and_access_bearing_sources_never_cross_into_hat() {
     )
     .await
     .unwrap();
+    let bear_id = store.bear_id().to_string();
+    sqlx::query!(
+        "UPDATE memory_access_rules SET state = 'retracted' WHERE bear_id = ? AND link_id = ?",
+        bear_id,
+        rule.link_id,
+    )
+    .execute(store.pool())
+    .await
+    .unwrap();
     assert!(review_candidates(&store, 10).await.unwrap().is_empty());
+    assert!(
+        review_candidate(&store, Uuid::parse_str(&gated.memory_id).unwrap())
+            .await
+            .is_err()
+    );
     for id in [&hidden.memory_id, &profile.memory_id, &gated.memory_id] {
         assert!(promote_reviewed_to_hat(
             &store,

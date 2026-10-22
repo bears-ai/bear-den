@@ -226,7 +226,8 @@ const MODELS_FLASH_MESSAGE_KEY: &str = "bear_models_flash_message";
 const MODELS_FLASH_ERROR_KEY: &str = "bear_models_flash_error";
 
 const BEAR_BUNDLE_FORMAT: &str = "bear";
-const BEAR_BUNDLE_VERSION: u32 = 3;
+// Older readers do not enforce permanent personal-publication protection.
+const BEAR_BUNDLE_VERSION: u32 = 4;
 mod advanced_models;
 mod bundle_io;
 mod identity_reconnection;
@@ -1115,6 +1116,8 @@ async fn rewrite_imported_memory_bear_id(
         "user_identity_receipts",
         "personal_memory_settings",
         "personal_memory_candidates",
+        "personal_memory_publications",
+        "personal_memory_retractions",
         "entity_handles",
         "memory_relations",
         "memory_access_rules",

@@ -382,33 +382,34 @@ async fn full_bundle_import_rewrites_generation_ownership_not_historical_origins
         .unwrap();
     assert_eq!(parked.resolution, den_memory::ResolutionState::Provisional);
     assert!(parked.superseded_by_entity_id.is_none());
-    for (memory_id, person, content) in [
+    let expected_contents = [
         (
             fixture.private_record.as_str(),
-            fixture.alice.as_str(),
             "private-memory-canary-never-render",
         ),
-        (
-            bob_memory.as_str(),
-            fixture.bob.as_str(),
-            "bob-private-roundtrip",
-        ),
-        (
-            local_memory.as_str(),
-            displaced.entity_id(),
-            "destination-private-roundtrip",
-        ),
+        (bob_memory.as_str(), "bob-private-roundtrip"),
+        (local_memory.as_str(), "destination-private-roundtrip"),
+    ];
+    assert!(
+        den_memory::test_support::canonical_record_contents_match(&store, &expected_contents)
+            .await
+            .unwrap(),
+        "import and reconnection must preserve every private body"
+    );
+    for (memory_id, person) in [
+        (fixture.private_record.as_str(), fixture.alice.as_str()),
+        (bob_memory.as_str(), fixture.bob.as_str()),
+        (local_memory.as_str(), displaced.entity_id()),
     ] {
-        let record = den_memory::get_memory_record_by_id(
+        // Administrative inspection is not an audience override, even after reconnecting Alice.
+        assert!(den_memory::get_memory_record_by_id(
             fixture.state.memory_stores().unwrap(),
             imported.id,
             memory_id,
         )
         .await
         .unwrap()
-        .unwrap();
-        assert_eq!(record.memory_id, memory_id);
-        assert_eq!(record.content_text, content);
+        .is_none());
         let rules = den_memory::list_access_rules_for_source(&store, memory_id)
             .await
             .unwrap();

@@ -7,7 +7,7 @@ pub(super) fn denied() -> DenError {
     DenError::Authorization("Current authenticated personal-memory identity required.".into())
 }
 
-pub(super) async fn ensure_current(
+pub(crate) async fn ensure_current(
     connection: &mut SqliteConnection,
     store: &BearMemoryStore,
     binding: &AuthenticatedUserEntity,
@@ -45,7 +45,7 @@ pub(super) async fn ensure_current(
     Ok(())
 }
 
-pub(super) async fn write_transaction(
+pub(crate) async fn write_transaction(
     store: &BearMemoryStore,
     binding: &AuthenticatedUserEntity,
 ) -> Result<Transaction<'static, Sqlite>, DenError> {

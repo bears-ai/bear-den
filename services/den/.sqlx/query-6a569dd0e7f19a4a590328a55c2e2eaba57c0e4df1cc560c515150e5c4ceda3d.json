@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE memory_access_rules SET state = ? WHERE bear_id = ? AND src_memory_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "6a569dd0e7f19a4a590328a55c2e2eaba57c0e4df1cc560c515150e5c4ceda3d"
+}

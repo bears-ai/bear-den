@@ -5,7 +5,7 @@ use std::path::Path;
 use den_core::DenError;
 use sqlx::{sqlite::SqliteConnectOptions, Connection, SqliteConnection};
 
-use crate::migrate::MEMORY_LINKS_VIEW_SQL;
+use crate::{migrate::MEMORY_LINKS_VIEW_SQL, personal_facts::GENERIC_MEMORY_RECORDS_VIEW_SQL};
 
 /// Reject executable imported schema before initialization, migration, or quarantine writes.
 ///
@@ -47,14 +47,17 @@ async fn inspect_schema(connection: &mut SqliteConnection) -> Result<(), DenErro
     .fetch_all(&mut *connection)
     .await
     .map_err(schema_error)?;
-    // SQLite omits IF NOT EXISTS from the stored CREATE VIEW statement.
-    let expected_view = normalized_view_sql(&MEMORY_LINKS_VIEW_SQL.replacen(
-        "CREATE VIEW IF NOT EXISTS",
-        "CREATE VIEW",
-        1,
-    ));
+    // SQLite omits IF NOT EXISTS from stored CREATE VIEW statements.
     for view in views {
-        if view.name != "memory_links" || normalized_view_sql(&view.definition) != expected_view {
+        let expected = match view.name.as_str() {
+            "memory_links" => Some(MEMORY_LINKS_VIEW_SQL),
+            "generic_memory_records" => Some(GENERIC_MEMORY_RECORDS_VIEW_SQL),
+            _ => None,
+        };
+        let expected = expected.map(|sql| {
+            normalized_view_sql(&sql.replacen("CREATE VIEW IF NOT EXISTS", "CREATE VIEW", 1))
+        });
+        if expected.as_deref() != Some(normalized_view_sql(&view.definition).as_str()) {
             return Err(DenError::ValidationError(format!(
                 "imported memory schema contains a noncanonical view: {}",
                 view.name
@@ -65,7 +68,10 @@ async fn inspect_schema(connection: &mut SqliteConnection) -> Result<(), DenErro
     let virtual_table = sqlx::query_scalar!(
         r#"
         SELECT CAST(name AS TEXT) AS "name!: String" FROM pragma_table_list
-        WHERE "schema" = 'main' AND type NOT IN ('table', 'view')
+        WHERE "schema" = 'main' AND (
+            type NOT IN ('table', 'view')
+            OR (name = 'generic_memory_records' COLLATE NOCASE AND type <> 'view')
+        )
         LIMIT 1
         "#,
     )
@@ -74,7 +80,7 @@ async fn inspect_schema(connection: &mut SqliteConnection) -> Result<(), DenErro
     .map_err(schema_error)?;
     if let Some(name) = virtual_table {
         return Err(DenError::ValidationError(format!(
-            "imported memory schema contains a virtual or shadow table: {name}"
+            "imported memory schema contains a virtual, shadow, or reserved table: {name}"
         )));
     }
     // Canonical memory tables have no foreign keys. Cascades are executable schema too:

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM memory_access_rules WHERE bear_id = ? AND src_memory_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "27483b180f7415c2318072d16b1d6bc48700e5f72d5edb79df28073252cf87f0"
+}

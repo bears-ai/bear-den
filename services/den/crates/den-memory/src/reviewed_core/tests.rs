@@ -21,6 +21,130 @@ fn review(hat_id: HatId, source_memory_id: Uuid, expected_head: Option<Uuid>) ->
 }
 
 #[tokio::test]
+async fn protected_heads_cannot_be_read_or_replaced_after_rule_withdrawal() {
+    let store = new_test_store().await;
+    let hat = HatId::new(Uuid::new_v4());
+    let person = crate::create_entity(
+        &store,
+        "person",
+        Some("Ryan"),
+        crate::ResolutionState::Resolved,
+        crate::EntityTrust::Asserted,
+        None,
+        &json!({}),
+    )
+    .await
+    .unwrap();
+    for core in [false, true] {
+        let source_path = if core {
+            LogicalMemoryPath::hat(hat, "source")
+        } else {
+            LogicalMemoryPath::source_local(
+                crate::MemorySource::Conversation(Uuid::new_v4()),
+                "source",
+            )
+        };
+        let target_path = if core {
+            LogicalMemoryPath::shared_core("finding")
+        } else {
+            LogicalMemoryPath::hat(hat, "finding")
+        };
+        let source = append_memory_record(
+            &store,
+            &source_path,
+            "finding",
+            "curate",
+            None,
+            "reviewable source",
+            &json!({}),
+        )
+        .await
+        .unwrap();
+        let old = append_memory_record(
+            &store,
+            &target_path,
+            "finding",
+            "curate",
+            None,
+            "older generic head",
+            &json!({}),
+        )
+        .await
+        .unwrap();
+        let head = append_memory_record(
+            &store,
+            &target_path,
+            "finding",
+            "curate",
+            None,
+            "protected newest head",
+            &json!({}),
+        )
+        .await
+        .unwrap();
+        let rule = crate::append_relation(
+            &store,
+            &head.memory_id,
+            &person.entity_id,
+            "audience",
+            &json!({}),
+            "curate",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let source_id = Uuid::parse_str(&source.memory_id).unwrap();
+        let bear_id = store.bear_id().to_string();
+        for withdrawn in [false, true] {
+            if withdrawn {
+                sqlx::query!(
+                    "UPDATE memory_access_rules SET state = 'retracted' WHERE bear_id = ? AND link_id = ?",
+                    bear_id,
+                    rule.link_id,
+                ).execute(store.pool()).await.unwrap();
+            }
+            for expected in [
+                None,
+                Some(Uuid::parse_str(&old.memory_id).unwrap()),
+                Some(Uuid::parse_str(&head.memory_id).unwrap()),
+            ] {
+                if core {
+                    assert!(matches!(
+                        current_core_head(&store, "finding").await,
+                        Err(DenError::Authorization(_))
+                    ));
+                    assert!(matches!(
+                        promote(&store, review(hat, source_id, expected)).await,
+                        Err(DenError::Authorization(_))
+                    ));
+                } else {
+                    assert!(matches!(
+                        crate::hat_promotion::current_hat_head(&store, hat, "finding").await,
+                        Err(DenError::Authorization(_))
+                    ));
+                    assert!(matches!(
+                        crate::hat_promotion::promote_reviewed_to_hat(
+                            &store,
+                            source_id,
+                            hat,
+                            "finding",
+                            "new reviewed text",
+                            UserId::new(42),
+                            false,
+                            expected,
+                            "reviewed safely"
+                        )
+                        .await,
+                        Err(DenError::Authorization(_))
+                    ));
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn reviewed_hat_to_core_is_atomic_and_does_not_widen_other_raw_sources() {
     let store = new_test_store().await;
     let hat = HatId::new(Uuid::new_v4());
