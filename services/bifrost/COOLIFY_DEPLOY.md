@@ -12,6 +12,45 @@ Model availability starts with the **live provider catalog** and is filtered by 
 
 The root compose stack also runs `bears-bifrost-valkey` (`valkey/valkey-bundle`) for Bifrost Redis/Valkey-compatible storage. Bifrost uses it as the `vector_store` for direct hash caching (`semantic_cache` with `dimension: 1`), and Den sends `x-bf-session-id`, `x-bf-cache-key`, and `x-bf-cache-type: direct` on LLM requests.
 
+## Personal-context retention review
+
+**2026-10-23, repository and pinned-upstream source review only; not live deployment verification or an approved provider policy.** The [personal-memory plan](../../docs/roadmap/USER_ASSOCIATED_BEAR_MEMORY_PLAN.md#approved-v1-policy-amendment-2026-10-23) keeps remembered-name provider integration disabled. This review changes no config, environment, Compose, stored data or service. It does not prevent personal details supplied in ordinary conversation text from going through ordinary inference today.
+
+The question is not whether the model can see a preferred name needed for a response; it must see the input used for inference. The question is **which additional copies are retained, who controls them, and what a later Den deletion can actually remove**. Hats are unrelated to these retention boundaries.
+
+### Checked-in behavior and pinned defaults
+
+| Layer | Evidence and consequence |
+| --- | --- |
+| Bifrost version/routing | [Dockerfile](Dockerfile) uses `maximhq/bifrost:v1.6.4`; [config](config.json) declares OpenAI as its provider. Root Compose permits an image override. This is not verification of a running image, route, provider account or agreement. |
+| Gateway response cache | Config enables `semantic_cache` in direct-only mode (`dimension: 1`, no embedding provider), TTL **10 minutes**, namespace `BearsDirectCache`, `exclude_system_prompt: false`. Den sends conversation-qualified `x-bf-cache-key` and `x-bf-cache-type: direct` in [the LLM client](../den/crates/den-llm/src/client.rs). Inputs participate in hash matching, but cached responses/stream chunks can contain names. **A hashed cache key does not anonymize the stored answer.** |
+| Gateway content logs | Config does not explicitly disable content logging or select a log-retention interval. Pinned Bifrost defaults enable logging and leave content logging enabled; an omitted `logs_store` uses stored configuration if present, otherwise SQLite `logs.db` under the config directory. No finite log lifetime is established by this repository. Stored/live settings and existing logs were **not inspected**. |
+| Gateway disk/backups | [Root Compose](../../docker-compose.yaml) mounts named volumes for Bifrost `/app/data` and Valkey `/data`. Mounts make persistence possible, not proof of actual Valkey snapshots/AOF, existing retained content, or backup expiry. |
+| Provider response storage | Den's `to_responses_body` does **not** set `store: false`. OpenAI documents default Responses application-state storage; setting `store: false` is separate from gateway logging/caching and provider abuse-monitoring retention. No account-level override is established here. |
+
+Upstream evidence is pinned to the source associated with the v1.6.4 release, commit `c4cd51af26e0e870d4d16d006d1257c08822fd13`: [client/log-store defaults and configuration loading](https://github.com/maximhq/bifrost/blob/c4cd51af26e0e870d4d16d006d1257c08822fd13/transports/bifrost-http/lib/config.go), [response-cache storage](https://github.com/maximhq/bifrost/blob/c4cd51af26e0e870d4d16d006d1257c08822fd13/plugins/semanticcache/utils.go), [stream-cache storage](https://github.com/maximhq/bifrost/blob/c4cd51af26e0e870d4d16d006d1257c08822fd13/plugins/semanticcache/stream.go), and [conditional log cleanup](https://github.com/maximhq/bifrost/blob/c4cd51af26e0e870d4d16d006d1257c08822fd13/transports/bifrost-http/server/server.go).
+
+**Implementation caution:** upstream [request cache controls](https://github.com/maximhq/bifrost/blob/c4cd51af26e0e870d4d16d006d1257c08822fd13/docs/features/semantic-caching.mdx) distinguish reads from writes: `x-bf-cache-no-store: true` skips new writes but can still serve existing hits. Simply setting that header, omitting it on fallback, or marking headers sensitive in Debug is not a tested read/write bypass. Any future policy must hold across every retry/fallback send and include existing-copy cleanup where promised.
+
+### Provider controls are separate
+
+Official OpenAI documentation, checked 2026-10-23, describes:
+
+- **Training:** API content is not used to train/improve models unless the customer explicitly opts in. That does **not** mean no storage.
+- **Abuse monitoring:** default logs can contain prompts/responses and are retained for up to **30 days**, with stated legal/safety exceptions. Approved **Modified Abuse Monitoring / Zero Data Retention** arrangements change this, subject to account, endpoint and feature limitations.
+- **Responses application state:** default retention is **30 days** (the documentation says stored responses are kept for at least 30 days in the applicable cases). `store: false` addresses this application-state storage, not all other retention.
+- **Provider prompt caching:** reuse of model-prefix computation/KV state, **not replay of a Bifrost cached answer**. Controls/retention differ by model and organization; current docs describe GPU-local cached state with a maximum 24-hour application-state retention limit and no manual cache-clear operation. Minimum cache lifetimes are not deletion deadlines. Verify the selected model/account rather than promise a universal “no cache” switch or that ZDR makes every feature storage-free.
+
+Sources: [OpenAI data controls](https://developers.openai.com/api/docs/guides/your-data) and [prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching). These are dated public-policy descriptions, not verification of our account, contractual advice or guarantees for every future provider/model.
+
+### Options for the pending decision
+
+1. **Cloud inference with minimized extra copies:** for protected requests, propose explicit `store: false`, a verified gateway cache read/write bypass, and content-free gateway operational logs. Then explicitly accept or reject the selected provider's abuse-monitoring and model-prefix-cache retention. This simplifies local deletion but loses gateway replay savings and payload-level troubleshooting; it need not disable caching of unrelated requests or all provider prefix computation.
+2. **Retain scoped gateway caching/logging:** possible only with demonstrated Bear/user audience isolation, bounded retention, dependency-aware invalidation/deletion and a defined backup policy. This preserves some performance/debugging benefits but creates additional body-bearing stores that Den must manage. It is not currently an implemented protected-data contract.
+3. **Require stronger external retention guarantees:** select an eligible provider/account arrangement, or an appropriately operated local model route, whose actual terms meet the chosen requirements. Local deployment still needs its own logging/cache/backup policy and may involve capability, cost or throughput tradeoffs.
+
+No option is approved by this review. First choose the acceptable provider-side retention promise and local-copy policy; then verify effective deployment/account settings and test request, retry, cache-hit and deletion behavior. Den deletion can remove Den-controlled bodies/copies and prevent reuse, but cannot retroactively recall already-transmitted input or independently downloaded backups. Continue implementation behind the disabled projection gate while this policy is being decided.
+
 ## Prerequisites
 
 - Coolify v4+

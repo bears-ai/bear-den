@@ -117,6 +117,8 @@ Acceptance checks:
 
 Support reliable user correction without guessing or destructive surprises.
 
+**2026-10-23 planning clarification:** broader forgetting, aging and automatic expiry are being scoped in the [draft forgetting plan](BEAR_MEMORY_FORGETTING_PLAN.md). Explicit owner-requested personal-body/derived-copy erasure remains in the [active user-associated memory plan](USER_ASSOCIATED_BEAR_MEMORY_PLAN.md#approved-v1-policy-amendment-2026-10-23); neither this older workstream nor the new skeleton authorizes retention durations or automatic deletion.
+
 Deliverables:
 
 - User intents: "forget that", "update that", "only remember this for this project".
