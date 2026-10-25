@@ -14,7 +14,7 @@ The root compose stack also runs `bears-bifrost-valkey` (`valkey/valkey-bundle`)
 
 ## Personal-context retention review
 
-**2026-10-23, repository and pinned-upstream source review only; not live deployment verification or an approved provider policy.** The [personal-memory plan](../../docs/roadmap/USER_ASSOCIATED_BEAR_MEMORY_PLAN.md#approved-v1-policy-amendment-2026-10-23) keeps remembered-name provider integration disabled. This review changes no config, environment, Compose, stored data or service. It does not prevent personal details supplied in ordinary conversation text from going through ordinary inference today.
+**2026-10-23, repository and pinned-upstream source review only; not live deployment verification or a provider-retention guarantee.** The [personal-memory plan](../../docs/roadmap/USER_ASSOCIATED_BEAR_MEMORY_PLAN.md#approved-v1-policy-amendment-2026-10-23) keeps remembered-name provider integration disabled. This review changes no config, environment, Compose, stored data or service. It does not prevent personal details supplied in ordinary conversation text from going through ordinary inference today.
 
 The question is not whether the model can see a preferred name needed for a response; it must see the input used for inference. The question is **which additional copies are retained, who controls them, and what a later Den deletion can actually remove**. Hats are unrelated to these retention boundaries.
 
@@ -43,13 +43,17 @@ Official OpenAI documentation, checked 2026-10-23, describes:
 
 Sources: [OpenAI data controls](https://developers.openai.com/api/docs/guides/your-data) and [prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching). These are dated public-policy descriptions, not verification of our account, contractual advice or guarantees for every future provider/model.
 
-### Options for the pending decision
+### Proportionate v1 baseline and reference options
+
+After this review, the user clarified that we trust users not to divulge extremely sensitive information. The [memory plan's proportionality clarification](../../docs/roadmap/USER_ASSOCIATED_BEAR_MEMORY_PLAN.md#proportionate-protection-for-v1-2026-10-23) treats preferred-name v1 as ordinary non-secret personal context using the normal configured model/gateway boundary. Special zero-retention enrollment, blanket cache bypass or payload-log prohibition is **not a v1 prerequisite**. This is not a claim that providers retain nothing, approval of every possible future data category, or permission to change Compose/provider configuration.
+
+The options below remain reference material for future operational hardening or stronger use cases, not mandatory work to unblock preferred-name v1. Ordinary Bear/user audience checks, correct cache association and the approved cleanup/non-resurrection obligations for in-scope Den-controlled copies still apply.
 
 1. **Cloud inference with minimized extra copies:** for protected requests, propose explicit `store: false`, a verified gateway cache read/write bypass, and content-free gateway operational logs. Then explicitly accept or reject the selected provider's abuse-monitoring and model-prefix-cache retention. This simplifies local deletion but loses gateway replay savings and payload-level troubleshooting; it need not disable caching of unrelated requests or all provider prefix computation.
 2. **Retain scoped gateway caching/logging:** possible only with demonstrated Bear/user audience isolation, bounded retention, dependency-aware invalidation/deletion and a defined backup policy. This preserves some performance/debugging benefits but creates additional body-bearing stores that Den must manage. It is not currently an implemented protected-data contract.
 3. **Require stronger external retention guarantees:** select an eligible provider/account arrangement, or an appropriately operated local model route, whose actual terms meet the chosen requirements. Local deployment still needs its own logging/cache/backup policy and may involve capability, cost or throughput tradeoffs.
 
-No option is approved by this review. First choose the acceptable provider-side retention promise and local-copy policy; then verify effective deployment/account settings and test request, retry, cache-hit and deletion behavior. Den deletion can remove Den-controlled bodies/copies and prevent reuse, but cannot retroactively recall already-transmitted input or independently downloaded backups. Continue implementation behind the disabled projection gate while this policy is being decided.
+The review itself does not activate any option or change existing settings. Stronger retention arrangements can be evaluated separately when needed; they are not another approval gate for ordinary preferred-name processing. Preserve truthful deployment disclosures and test request/cache association and in-scope deletion behavior. Den deletion must remove the in-scope Den-controlled bodies/copies and prevent reuse, but cannot retroactively recall already-transmitted input or independently downloaded backups. Personal-memory integration remains disabled because the functional identity/audience and removal safeguards are not yet wired, not because a special provider-retention decision is outstanding.
 
 ## Prerequisites
 
