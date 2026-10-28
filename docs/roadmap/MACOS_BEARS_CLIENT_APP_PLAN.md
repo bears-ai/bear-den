@@ -1,20 +1,20 @@
 # Bears app client evolution roadmap
 
-**Status:** Draft — architecture direction approved; UI design and AHP-versus-AG-UI evaluation must precede implementation.
-**Date:** 2026-10-09.
+**Status:** Active — AHP 1.0 selected; first text-only Apple client slice implemented in source, with native macOS acceptance and release still pending.
+**Date:** 2026-10-28.
 **Topic:** [BearWire and ACP](../topics/bearwire-acp.md); related domain homes: [Docket and task execution](../topics/docket.md) and [Bear memory and hats](../topics/bear-memory-hats.md).
-**Implementation home:** `apps/apple/Bears/`, with Den API/runtime edges as needed. This document records intended work, not delivered capabilities or a release commitment.
+**Implementation home:** `apps/apple/Bears/`, `services/den/crates/den-api/src/v1/native/`, and the existing Den channel runtime. Current source/test evidence is separated below from follow-on requirements; this is not a release or deployment claim.
 
 ## Product goal and agreed scope
 
 Evolve the existing macOS installer/diagnostics app into a native client for **human interaction with Bears, authorized Bear administration, and Docket task management**. Preserve armature installation/repair as an optional local responsibility rather than make the helper a prerequisite for ordinary app chat or administration.
 
-The project owner has agreed to the architecture below, but has **not selected AHP or AG-UI, approved a UI design, or authorized implementation of the new client surfaces**. The next work is design/research and review. No SDK adoption, production protocol edge, schema/migration, app screen implementation or deployment follows automatically from this roadmap.
+**Decision and implementation authorization (2026-10-28):** select an **Agent Host Protocol (AHP) 1.0 subset** for conversation interaction, alongside versioned `/v1.0` JSON APIs. Build the first Apple client MVP: OAuth login, browse member Bears and their profiles/shared hats, browse authorized conversations, create a new hat-bound conversation, and text chat. This supersedes the 2026-10-09 design/protocol gates: protocol selection and this bounded implementation are no longer undecided or blocked. It does not approve every later surface or declare the MVP release-ready.
 
-In scope for design:
+Broader product requirements, **not completed by this MVP**:
 
 - Native Bear/conversation discovery and hat-aware interaction, with a clear distinction between pending admission, executable owned conversations, and read-only history.
-- Multimodal chat: typed text and media/attachment handling, previews and truthful model/provider capability limits. Evaluate images/documents first; decide whether recorded audio belongs in the first slice during UI design. No assumption that every model accepts every modality.
+- Later multimodal chat: typed media/attachment handling, previews and truthful model/provider capability limits. Evaluate images/documents first; recorded audio needs a separate follow-on scope decision. The current MVP is text-only; no assumption that every model accepts every modality.
 - Docket Jobs, tasks, progress, questions/approvals and authorized lifecycle controls, with artifacts/evidence linked to their canonical owners.
 - Bear administration for authorized humans: identify the initial subset of hats, model settings, Connections, membership and review workflows rather than automatically port every operator page.
 - Native login/session handling, connection/error/reconnect UX, and optionally viewing the same authorized conversation from more than one client.
@@ -28,21 +28,21 @@ Explicit non-goals:
 - Exposing provider credentials to models or model-controlled processes, rebuilding Docket inside the app, or introducing an independently writable session/permission database.
 - Implementing both AHP and AG-UI in the first slice, a generic protocol/plugin framework, or generative UI/MCP Apps as a prerequisite for native Chat/Docket screens.
 
-## Approved architecture; interaction protocol remains open
+## Selected architecture and protocol rationale
 
 | Responsibility | Boundary |
 | --- | --- |
-| Human authentication | OAuth 2.0 Authorization Code with PKCE through the system authentication browser; human tokens in Keychain. Reconcile actual Den client registration, scopes, refresh and revocation before implementation. |
-| Bear administration and Docket commands | Versioned HTTPS JSON APIs with typed contracts/OpenAPI. UI controls issue explicit human commands to Den services; they do not ask a model to perform ordinary CRUD or lifecycle actions. |
-| Conversations and agent interaction | Select **AHP or AG-UI** after the evaluation gate. A thin Den edge projects canonical conversation/run/obligation state and routes validated commands to existing services. |
-| Task/status updates | Canonical snapshots and scoped events. Decide how the selected interaction transport and domain subscriptions coexist; an update is not execution authority. |
-| Attachment transfer | Authorized HTTPS upload/download plus typed, bounded references and message parts. Define integrity, MIME/size, ownership, retention and model-delivery rules before claiming multimodal support. |
+| Human authentication | OAuth Authorization Code + S256 PKCE via the system authentication browser; public client registered per Den, human access token in Keychain. No client secret or refresh-token flow. |
+| Discovery and human commands | HTTPS JSON `/v1.0` APIs. MVP: Bear discovery, conversation/hat inventory, hat-bound creation and paged history. Bear-admin mutations and Docket APIs/UI remain follow-ons; UI commands must call canonical services, not ask a model to do CRUD. |
+| Conversations and agent interaction | AHP 1.0 JSON-RPC over an OAuth-authenticated WebSocket at `/v1.0/agent-host`. A thin Den edge projects canonical conversations and invokes the existing channel runtime. This is a text-only subset, not a complete AHP host. |
+| Task/status updates | MVP chat snapshots and ordered actions are derived views. Docket subscriptions, permissions/questions and live multi-client reconciliation remain unimplemented follow-ons; an update is not execution authority. |
+| Attachment transfer | Not in the MVP. Later authorized HTTPS transfer and typed refs need integrity, MIME/size, ownership, retention and actual model-delivery contracts. |
 | Local work-surface management | Existing armature installation and ACP/BearWire boundaries remain separate. Local tools require a separately verified, explicitly enabled trusted work surface. |
 
 ```text
 Apple app
-  ├── Human API client ── HTTPS JSON ── Den administration/Docket services
-  ├── Conversation client ── AHP OR AG-UI ── Den conversation/run services
+  ├── Human API client ── /v1.0 HTTPS JSON ── Den canonical services
+  ├── Conversation client ── AHP 1.0 subset / WebSocket ── Den channel runtime
   └── macOS local services ── install/update/diagnose armature
 
 Editor ── ACP ── armature ── BearWire ── Den
@@ -54,92 +54,70 @@ An ordinary app conversation is a conversation **channel**, not an armature. A c
 
 Provider keys remain behind runtime credential wrappers and canonical Connections; app identity tokens and provider credentials are separate. Follow the [approved credential-mediation plan](HATS_AND_SESSION_MEMORY_BOUNDARIES_PLAN.md#runtime-mediated-credentials-and-external-key-management-planned). The app must not fetch provider keys to call inference services itself or place them in prompts, tool results, logs or helper/subprocess environments.
 
-## Gate 0 — UI design and interaction model
+### Why AHP, not ACP, direct BearWire or AG-UI?
 
-**Open; no navigation or screen design is selected.** Spend time on the product model before choosing a wire protocol based on its sample UI.
+- **ACP plus BearWire remains the editor/local-work path.** Requiring a spawned local armature and workspace tools for remote chat couples ordinary human interaction to a macOS process/filesystem boundary that is unsuitable as an iOS prerequisite. Helper installation is optional, not login or chat setup.
+- **Direct BearWire is not the human OAuth API today.** Its current authentication requires a Bear-scoped Armature token and its methods encode trusted work-surface/session obligations. Reusing the Den runtime behind a human channel edge is preferable to pretending the Apple client is an armature or relaxing that authentication contract.
+- **AHP versus AG-UI:** AG-UI supplies useful run/event/shared-state vocabulary. AHP's stateful session/chat resources, snapshots, ordered actions and reconnect model are a closer fit for a long-lived native conversation browser, with an [upstream Swift client](https://github.com/microsoft/agent-host-protocol/tree/spec/v1.0.0/clients/swift/AgentHostProtocol) available as integration evidence. This is a fit/maintenance decision, not a claim that AG-UI cannot support Swift or that AHP is more exhaustive. Neither protocol owns Den authority or Docket state.
+- **Review baseline:** upstream [AHP tag `spec/v1.0.0`](https://github.com/microsoft/agent-host-protocol/tree/spec/v1.0.0). The wire negotiates `1.0.0`; do not infer optional/experimental features from that version alone. The current `BearsClient` is a small custom Swift implementation with **no AHP SDK dependency**, not the complete upstream host/client SDK.
+- **Agenthesia is reference-only.** Its GPL-3.0 licensing and macOS 26 target are not a drop-in fit for Bears' [PolyForm Noncommercial license](../../LICENSE.md) and macOS 13 baseline. Do not copy or link its code without a licensing change or separately compatible permission; observing UX/protocol ideas is not code reuse. It is not a dependency of this implementation.
 
-Deliverables:
+## First slice in source — not a released app
 
-- A reviewed information architecture distinguishing conversations, Docket work, Bear management/reviews, and local app/helper settings. Candidate tabs/rails are design hypotheses, not implementation instructions.
-- Clickable/wireframe flows for connecting/logging in; choosing a Bear/hat; pending admission; text/image/document composition; streaming/cancellation; history/reconnect; answering a question/approval; creating/organizing/monitoring a Job/task; and permitted Bear-admin actions.
-- Explicit handling of source identity and ownership: active conversation versus historical inspection, conversation versus Work transcript, current hat, and who may issue an action. Avoid selectable stance vocabulary and do not equate a Bear's charter with a separate entity.
-- Task detail designs that distinguish task completion, turn completion, run state, attempts, blocked/checkpoint state and settled evidence. Decide how Chat and Docket link without silently granting access or copying private content between them.
-- State/error designs covering a second client resolving an approval, stale edits, expired/revoked login or membership, missing media/model support, upload failure, disconnected/submitted-but-unacknowledged commands, and a missing/broken optional helper. Remote chat/admin must remain usable without the helper.
-- Review keyboard/accessibility behavior and content-first native rendering. Separate private attachments from explicitly shared content; make audience and provider data-sharing consequences visible at the relevant action.
-- Identify the smallest first-release journeys and administration subset, what remains accessible through the existing web UI, and what is deferred. Decide recorded-audio and notification requirements rather than assuming either.
+The SwiftUI main window now provides connection/login, member Bear navigation, a read-only profile/shared-hat view, conversation inventory and new-hat selection, plus text chat. Connection and optional Armature settings remain separate. `Shared/Client` owns platform-neutral typed HTTP/OAuth/AHP models and reducers; `BearsApp/Client` owns macOS model, views, browser and Keychain integration. This is groundwork for a future iOS shared core, **not an iOS app target or validated iOS build**.
 
-**Exit:** the project owner reviews the prototype/journeys, first-slice scope and unresolved UX questions. Approval of the architecture alone does not pass this gate.
+The [native API route inventory](../../services/den/crates/den-api/src/ROUTES.md#native-apple-client-first-slice) is the endpoint reference. Current limits:
 
-## Gate 1 — AHP versus AG-UI evaluation
+- `/v1.0/bears` returns current memberships; the profile UI displays supplied Bear name/description, membership role and shared hats, not an administration editor. Inventory is bounded to 100 visible conversations and is not a complete paginated catalog.
+- JSON creation requires `bear_id`, `hat_id` and a non-nil `request_id`. Retrying that owner/Bear-scoped command with the same hat returns the same conversation; changing its hat conflicts rather than rebinding it. No implicit default-hat or unbound intermediate source is created.
+- Visibility is not execution authority. Den rechecks active login/scopes, membership, canonical source ownership and execution policy. Admin-readable, archived and Work history does not become sendable because it is listed.
+- AHP supports root/session/chat snapshots, initialize/subscribe/unsubscribe, snapshot reconnect, text `chat/turnStarted`, same-connection `chat/turnCancelled`, and assistant response parts/deltas/terminal errors. It does not implement `createSession`, `createChat`, `listSessions`, `fetchTurns` or general AHP authentication methods; discovery/creation/history use JSON APIs, and OAuth authenticates the WebSocket upgrade.
+- Chat has one running turn per connection and canonical source exclusion across supported runtime admission paths. Receipt is not acceptance: the client waits for the matching accepted action or rejection. Sends are never automatically replayed. Unknown outcomes require canonical-history refresh; a persisted turn ID is not a new send.
+- Reconnect obtains fresh snapshots, not a durable action log or resumable inference. Disconnect cancels the connection's turn and finalizes canonical partial text/terminal outcome; another client cannot cancel that turn. Server sequence numbers are not durable replay cursors. There is **no live multi-client fan-out or draft synchronization**.
+- Input is text-only (32 KiB); protocol input frames are bounded to 64 KiB. Chat snapshots are bounded to 10,000 interaction rows / 1 MiB of transcript text; larger sources require paged JSON history (default 50, maximum 100 rows per page). This is not unlimited offline transcript storage.
+- **Unavailable:** permission/question replies, subagents, refs/resource transfer, attachments/images/documents/audio, local tools, Wasmer/local sandbox and Docket or Bear-admin screens. An approval-required or paused runtime continuation fails explicitly; it is not silently auto-approved. Typed parts in a protocol do not establish multimodal model support.
 
-**Open; neither candidate is preferred by this roadmap.** Evaluate both against the approved journeys, not feature lists alone. Record released spec/SDK versions and unsupported behaviors; SDK version and protocol version may differ.
+## OAuth and deployment contract
 
-| Criterion | Evidence required for both candidates |
-| --- | --- |
-| Native Swift integration | Typed models, viable client/transport/reconnect story, concurrency/accessibility integration, dependencies/license/maintenance and supported deployment targets. Existing SDK availability is useful evidence, not automatic selection. |
-| Canonical state and reconnect | Initial snapshots/history paging, ordered updates, gap recovery, retention, restart and reconciliation without transcript duplication or an independent writable session store. |
-| Multiple clients | Same-human observation/interaction, server acceptance/rejection, stable request identities and deterministic resolution of two clients answering one obligation. No cross-human inventory, draft or transcript leakage. |
-| Human control | Streaming, cancel/resume/steering, structured questions and approvals mapped to exact Den runs/obligations; duplicate/stale decisions and disconnect fail safely. No optimistic UI action is treated as an accepted grant or settled task. |
-| Multimodal content | Typed message parts and attachment/content refs, byte transfer, authorization/retention and capability degradation. Verify actual runtime/model delivery, not merely that the protocol can label a file. |
-| Docket integration | Links, snapshots/events and explicit human commands using Docket's canonical IDs/revisions/attempts. Assess extension costs without flattening Jobs/tasks into chats or adopting experimental automation semantics as authority. |
-| Identity and safety | Native public-client OAuth/PKCE fit, endpoint authentication, scoped subscriptions, owner/hat checks, read-only history, credential isolation and no implicit local tools. |
-| Implementation/operational cost | Thin Den-edge work, reusable service calls, event persistence/projection, conformance fixtures, version negotiation, Swift SDK gaps and future compatibility/migration cost. |
+Register the app **manually on each Den** as an active public client: `public=true`, `trusted=false`, exact redirect `bears://oauth/callback`, allowed scopes `profile:read data:read data:write`. Use the operator's OAuth client management UI; provide the resulting public client ID in app Connection settings. No embedded secret, dynamic client registration, Armature token or provider key is needed. Native public clients require S256 PKCE; state and callback destination are validated. Untrusted consent is tied to the authenticated browser session.
 
-Start with a written comparison. If evidence requires code, obtain agreement on a **bounded research spike** using deterministic fixtures/mock services; a spike is not production adoption and must not silently add SDKs to the app or change Den authority.
+The current server issues approximately one-hour access tokens and no public-client refresh credential; the app requests reauthorization on expiry/401. Tokens are stored in non-synchronizing, device-only Keychain items scoped by normalized Den URL and client ID; preferences contain only connection settings. Sign out cancels local activity and attempts Keychain deletion, reporting deletion failure; it **does not revoke the token server-side** or end the browser's Den session. Operator token revocation/client deactivation remains a separate server action.
 
-Use the same scenarios for each candidate: one real-hat conversation, text plus an authorized image/document, persisted history and next-turn replay, reconnect during a streamed turn, two clients observing it, one contested approval, a read-only-history denial, and a linked Docket task whose canonical state is refreshed. Include rejected/stale actions and credential-bearing provider errors without exposing secret bytes. Do not require real-time media, external agents or a full operator console.
+Use the **actual API deployment root**, including any configured path prefix, not an assumed web address. The default listeners differ: web `PORT=3000`, API `API_PORT=3001` with `RUN_API=true`. Production requires HTTPS (the client allows HTTP only for `localhost`/`127.0.0.1`). Ingress must route `/oauth/*` and `/v1.0/*` to the API, including **WebSocket Upgrade** at `/v1.0/agent-host`. The browser authorization page needs the web login/session: use a shared public origin with correct routing, or deliberately configure trusted web/API sibling hosts, shared session backing/keys and `SESSION_COOKIE_DOMAIN` in `.env`. Host-only cookies do not cross sibling hosts; do not broaden cookies to untrusted subdomains. Merely exposing the web listener does not expose this API. See [build/setup guidance](../../apps/apple/Bears/BUILDING.md#den-and-oauth-setup).
 
-**Exit:** a reviewed recommendation identifies one protocol, the minimal supported surface, unavailable features, stable version/SDK choices, Den mappings, transport and failure semantics. Record the decision and rationale here or in a linked ADR. AHP and AG-UI are alternatives; do not stack them by default. Neither may bypass canonical services to make a demo work.
+## Validation checkpoint — 2026-10-28
 
-Research starting points, not decisions or implemented support:
+Source evidence: `den-api/src/v1/native/{conversations,history,access}.rs`, its unit/database/AHP connection tests, `den-oauth` authorization/PKCE/exchange tests, `den-runtime/src/native_runtime/channel_turn/`, and `apps/apple/Bears/{Shared/Client,BearsApp/Client,Tests}`.
 
-- [AHP specification](https://microsoft.github.io/agent-host-protocol/) and [Swift client](https://github.com/microsoft/agent-host-protocol/tree/main/clients/swift/AgentHostProtocol).
-- [AHP channel stability/versioning](https://github.com/microsoft/agent-host-protocol/blob/main/docs/specification/versioning.md): evaluate the selected released surface, particularly optional/experimental channels, rather than assuming every channel is mature.
-- [AG-UI documentation](https://docs.ag-ui.com/introduction): confirm concrete native-client and multimodal/reconnect behavior against the selected version.
+The implementation effort reports these focused results (not a serving deployment):
 
-## Gate 2 — Native API, identity and media contracts
+- Standard `SQLX_OFFLINE=true` Cargo tests with `--locked --offline`, against disposable `DATABASE_URL=postgres://bears:bears@127.0.0.1:5432/den`: **57 OAuth, 18 native API and 9 channel-runtime tests pass**. Runtime fixtures inspect canonical persistence and first/next model requests, including tool exchanges, cancellation/failure and source exclusion; they are not live-provider inference.
+- **30 shared-core Swift tests pass** in Linux Docker using Swift 5.10.1. Apple sources have syntax-only checks; those are not SwiftUI/AppKit/Security type-checking or a native macOS build.
+- **17 model/composer fake-dependency tests** were reported passing in the earlier isolated harness. They do not establish a macOS `BearsAppTests` run. Platform/browser/Keychain tests remain unrun on macOS.
+- The browser source-admission regression and strict all-target Clippy for `den-api`, `den-oauth`, `den-runtime`, `den-service` and `den-web` pass. The production Alpine/musl image builds using `SQLX_OFFLINE=true`; the Dockerfile's online-SQLx default requires a reachable build database and failed without one. This is image-build evidence, not a serving deployment.
 
-**After UI/protocol evaluation; still planning, not implementation.** Inventory existing server routes/services and specify the missing native-client contracts. Current browser-cookie/form flows are not automatically an authenticated public-client API.
+**Not verified:** native Mac compile/tests, system-browser callback, actual Keychain behavior, DMG/signing/notarization, real-provider chat, deployed proxy/WebSocket ingress or end-to-end release acceptance. The added [macOS CI lane](../../.github/workflows/apple-client.yml) builds/tests the native package and creates an unsigned development DMG; it has not run here, so its existence is not evidence of a green run. No app release or Den deployment is implied.
 
-- Define the approved Bear-admin and Docket JSON queries/commands using existing service authorization, typed domain IDs, cursor pagination, resource revisions and mutation idempotency. User actions must report accepted/pending/settled outcomes accurately; retries cannot double-create a message, Job or approval.
-- Specify OAuth client registration, PKCE callback handling, scopes, token refresh/revocation and Keychain lifecycle. Keep the installation/code-token flow separate from general human administration; never embed a confidential-client secret.
-- Define the interaction-protocol projection/command mappings and event subscription boundaries. Preserve canonical transcript versus user-visible history distinctions, source admission and immutable hat/owner bindings; reject unsupported forks/moves/cross-chat attachments instead of inventing authority.
-- Define media upload/download/content-ref contracts and the bounded set of message parts delivered to models. Reuse artifact/storage owners where appropriate, but do not let a private upload become shared or model-visible solely because the human can preview it.
-- Specify minimal server/client capabilities and compatibility errors independently of armature version. The app must explain unsupported media/protocol/admin features, not silently fall back to a more privileged route.
+## Remaining delivery and acceptance
 
-**Exit:** reviewed contracts, denial/consistency matrix, identified gaps and narrowly scoped server/app implementation tasks. Reuse existing dependencies and patterns; any necessary new SDK belongs in the narrow owning layer.
+- [ ] Run the added macOS CI lane and type-check/test `Bears`; verify the supported Apple Silicon/macOS 13 baseline and record native results.
+- [ ] Exercise browser consent/cancel/state denial, Keychain save/load/removal failure, hourly reauthorization and local logout against an actual configured Den.
+- [ ] Verify member/profile/conversation navigation, explicit hat-bound creation/retry, read-only denial, text streaming/stop, partial failure, reconnect without send replay, and next-turn canonical history with a live provider. Repeat ordinary chat with no helper installed.
+- [ ] Validate actual ingress/WebSocket Upgrade and shared-cookie/login configuration; test scope, source, membership and hat denial at the deployed boundary. Build a DMG and test its URL callback, signing and distribution separately.
+- [ ] Design and specify follow-on structured permissions/questions, subagents and reference/resource behavior before advertising them. Local Wasmer execution additionally needs an explicit trusted work-surface attachment, WASI/runtime limits, filesystem/network grants and platform/distribution validation; the protocol alone supplies none of those. Live multi-client observation/control needs canonical subscriptions, gap recovery and contested-action tests, not an optimistic app cache.
+- [ ] Add image/document uploads and typed content refs only with authorization, retention, preview limits and verified next-model-request delivery. Recorded audio and notifications need separate scope decisions; real-time voice/video remains excluded.
+- [ ] Design human Docket listing/detail/commands/status and the first authorized Bear-admin subset over canonical JSON services, including stale revisions and evidence/settlement boundaries. Neither is implemented in this app.
+- [ ] Review native accessibility/error UX and release engineering; any future iOS/iPadOS UI, local-work integration, multi-Den UX or offline mode is separate work. No actual iOS target, local sandbox or queued-offline mutation support is delivered.
 
-## Gate 3 — Implementation authorization
-
-**Blocked until Gates 0–2 are reviewed.** Before coding the product expansion, confirm the UI design, selected protocol, first-release journeys/API scope, acceptance tests and rollout approach with the project owner. This plan does not initiate migrations, dependencies, service/deployment changes or native screens.
-
-Conditional delivery sequence once approved:
-
-1. Human login, authorized Bear discovery and one hat-bound text conversation; optional helper management remains functional and independent.
-2. Selected protocol's live/history/reconnect behavior, scoped approvals/questions and canonical multi-client reconciliation.
-3. The agreed image/document and any separately approved recorded-audio slice, with secure uploads, truthful previews and verified next-model-request construction.
-4. First-slice Docket listing/detail/human commands and live status, preserving attempts, revisions and evidence/settlement boundaries.
-5. The approved Bear-admin subset and polish: accessibility, failure recovery, compatibility, native packaging/signing/update validation.
-
-**Acceptance before release:** native macOS build/tests and reviewed UI flows; server API/protocol conformance and restart/replay tests; two-human/two-hat/source/Connection denial checks; two-client approval and command-race checks; multimodal persistence and next-model-request assertions; no runtime-managed credentials in app/model/log projections; Docket snapshot/event gap recovery and stale-command rejection; ordinary app usage without an installed helper. Live provider/storage and deployment evidence must be recorded separately from mock/unit checks. Real-time voice/video and external agent interoperability remain excluded.
-
-## Immediate next work and open decisions
-
-- [ ] Agree on user journeys and the first administration/Docket scope.
-- [ ] Explore UI navigation and produce prototypes for the happy, denied, stale and disconnected states.
-- [ ] Compare AHP and AG-UI using the matrix above; decide whether a bounded spike is needed.
-- [ ] Review the UI and protocol recommendation before committing to native API/SDK implementation.
-- [ ] Specify contracts and seek implementation approval only after those design decisions.
-
-Open: navigation and source/hat presentation; initial admin controls; recorded audio; single-Den versus multi-Den first scope; draft synchronization/privacy; offline inspection versus queued mutations; exact event/media transport; selected spec/SDK and extension requirements. Notifications are a design question, not a push-infrastructure prerequisite. No protocol winner is recorded yet.
+The former design-first gates are superseded for the authorized text MVP, not retroactively satisfied for every broader requirement. Future slices still need bounded contracts, denial/consistency tests and explicit scope review; full AHP conformance is not an MVP exit criterion.
 
 ## Relationship to earlier plans
 
-This design-first roadmap is the home for the agreed app expansion. The [installer-focused macOS app plan](BEARS_MACOS_APP_IMPLEMENTATION_PLAN.md) remains background for helper packaging/update work, and the [channel plan](DEN_CHANNELS_IMPLEMENTATION_PLAN.md) supplies the channel-versus-armature distinction. [Current Bear/hat behavior](../topics/bear-memory-hats.md) and [Docket behavior](../topics/docket.md) remain the contract; older stance/profile sketches do not override them.
+This active roadmap is the home for the agreed app expansion and the dated AHP decision. The [installer-focused macOS app plan](BEARS_MACOS_APP_IMPLEMENTATION_PLAN.md) remains background for helper packaging/update work, and the [channel plan](DEN_CHANNELS_IMPLEMENTATION_PLAN.md) supplies the channel-versus-armature distinction. [Current Bear/hat behavior](../topics/bear-memory-hats.md) and [Docket behavior](../topics/docket.md) remain the contract; older stance/profile sketches do not override them.
 
 ## Earlier installer-first proposal (historical)
 
-The remaining material is preserved for design history only. Its phases, paths, suggested CLI commands, BearWire-as-app assumptions and stance/A2A references are **not the selected implementation backlog**. Reconcile useful installer/platform details against current code before reuse. The current scope and gates above take precedence; in particular, ordinary app interaction is not committed to BearWire/ACP, real-time media and external agent interoperability are excluded, and no UI or AHP/AG-UI choice is made by this document.
+The remaining material is preserved for design history only. Its phases, paths, suggested CLI commands, BearWire-as-app assumptions and stance/A2A references are **not the selected implementation backlog**. Reconcile useful installer/platform details against current code before reuse. The active scope and 2026-10-28 decision above take precedence: ordinary app interaction uses the AHP subset plus JSON APIs, ACP/BearWire is optional local-work integration, and real-time media/external agent interoperability remain excluded. Undecided/gated language in earlier proposals is historical, not a blocker on the authorized text MVP.
 
 ## Goal
 

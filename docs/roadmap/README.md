@@ -8,11 +8,11 @@ The older [planning hub](PLAN.md) contains useful priorities and delivery histor
 
 ## Draft design and protocol work
 
-- [Bears app client evolution](MACOS_BEARS_CLIENT_APP_PLAN.md) — agreed separation of human administration/Docket APIs, a conversation client and optional local armature management. UI design and AHP-versus-AG-UI evaluation remain open; implementation is gated on review and approval. Real-time voice/video and external agent interoperability are excluded.
-
 - [Bear memory forgetting](BEAR_MEMORY_FORGETTING_PLAN.md) — draft skeleton requested 2026-10-23 for broader aging, expiry, retention and forgetting. No schedules or automation approved. Explicit owner-requested personal-body/derived-copy erasure remains required by the active user-associated memory plan; it is not deferred here.
 
 ## Active product delivery
+
+- [Bears app client evolution](MACOS_BEARS_CLIENT_APP_PLAN.md) — active (2026-10-28): AHP 1.0 subset plus `/v1.0` JSON APIs selected; source implements public-client OAuth, Bear/profile/conversation browsing, explicit new hat-bound conversation creation and text chat. ACP/BearWire local work remains optional; shared Swift core is future iOS groundwork, not an iOS app target. Focused server/core tests pass; native Mac compile/tests, browser/Keychain, DMG, live-provider/proxy acceptance and release remain pending. Permissions, subagents, refs/resources, attachments, live multi-client, Docket and Bear-admin UI are follow-ons, not implemented MVP features. Real-time voice/video and external agent interoperability remain excluded.
 
 - [Cabinet implementation](CABINET_IMPLEMENTATION_PLAN.md) — shared Den knowledge, page policy/review, artifacts and recall. [Phase 5](CABINET_IMPLEMENTATION_PLAN.md#phase-5--distinct-cabinet-surface-and-external-mcp) is in progress: code/test implementation includes the Cabinet-only entrypoint, distinct UI/cross-host links, page discussion/history and an initial authenticated read-only MCP adapter. The approved root Compose `cabinet` profile, production image and isolated local-HTTPS acceptance are validated; actual public-host rollout and native-browser/live-storage acceptance remain open. It does not extract Cabinet from Den. Bear administration remains Cabinet-aware and hands off live content details/manipulation. Current behavior and delivery caveats live in the [Cabinet guide](../guides/cabinet.md).
 

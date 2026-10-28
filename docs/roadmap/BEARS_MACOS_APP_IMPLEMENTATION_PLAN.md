@@ -1,8 +1,8 @@
 # Bears macOS app implementation plan
 
-Status: proposed implementation plan.
+Status: historical installer-first proposal; packaging/platform background, not the active client backlog.
 
-**Scope note (2026-10-09):** the [Bears app client evolution roadmap](MACOS_BEARS_CLIENT_APP_PLAN.md) is now the home for native Bear administration, multimodal chat and Docket management. Its architecture direction is agreed, but UI design and AHP-versus-AG-UI evaluation/approval must precede implementation. This older installer-first proposal is packaging/platform background, not authority to start the expanded client or require a helper for ordinary app interactions. Real-time voice/video and external agent interoperability are not in the new app scope.
+**Scope note (2026-10-28):** the [active Bears app client evolution roadmap](MACOS_BEARS_CLIENT_APP_PLAN.md) records the selected **AHP 1.0 subset plus `/v1.0` JSON APIs** and the authorized first text MVP: OAuth, Bear/profile/conversation browsing, new hat-bound conversation creation and chat. Source and focused test evidence exist; native macOS compilation, browser/Keychain, packaging and release acceptance remain pending. The old UI/protocol-selection gates are superseded for that slice. The installer/update/diagnostics material below is historical design context, not evidence that Sparkle, logging or distribution milestones shipped. ACP/BearWire local work is optional and helper installation is not a prerequisite for remote app interaction. Docket, Bear-admin controls, multimodal content and other broader requirements remain follow-ons; no actual iOS app target is delivered. Real-time voice/video and external agent interoperability remain excluded.
 
 This plan captures the current scope, implementation shape, and phased delivery path for a native macOS Bears app that distributes and updates the ACP adapter for end users.
 
