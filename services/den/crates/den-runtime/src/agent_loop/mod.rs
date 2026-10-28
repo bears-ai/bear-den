@@ -43,6 +43,7 @@ pub use assembler::{
     assemble_native_turn_messages_for_bear, projected_memory_session_diagnostic,
     recalled_memory_session_diagnostic, AssembleTurnContext, AssembledNativeTurn,
 };
+pub(crate) use assembler::{assemble_native_turn_with_input, CurrentInputPersistence};
 pub use budget::{
     classify_tool_budget_class, evaluate_turn_budget, evaluate_turn_context_budget, tool_signature,
     tool_signature_from_call, PostMutationVerificationWindow, ToolBudgetClass,
@@ -102,6 +103,8 @@ pub use tool_policy::{
     maybe_pause_for_tool_approval, provider_tool_is_den_web_fetch, provider_tool_requires_approval,
     provider_tool_supports_unilateral_execution, record_approval_decision,
 };
+#[cfg(test)]
+pub(crate) use transcript::spawn_persist_native_agent_step;
 pub use transcript::{
     spawn_persist_incomplete_acp_tool_results, spawn_persist_web_chat_interrupted_turn,
     spawn_persist_web_chat_turn,

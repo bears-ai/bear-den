@@ -12,6 +12,9 @@ use uuid::Uuid;
 use den_core::DenError;
 use den_protocol::{RuntimeApprovalDecision, RuntimeContinuation, RuntimeToolResultStatus};
 
+mod source;
+pub use source::ConversationTurnLease;
+
 const ACTIVE_TURN_TTL: Duration = Duration::from_mins(10);
 
 fn poisoned_lock(what: &str) -> DenError {

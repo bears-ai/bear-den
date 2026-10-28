@@ -2,6 +2,7 @@
 
 use std::collections::VecDeque;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Instant;
 
@@ -617,6 +618,7 @@ pub struct BearChannelSseProxyStream {
     flush_task: Option<tokio::task::JoinHandle<()>>,
     empty_terminal_error_emitted: bool,
     browser_visible_assistant_emitted: bool,
+    source_lease: Option<Arc<den_service::tool_turns::ConversationTurnLease>>,
 }
 
 impl BearChannelSseProxyStream {
@@ -646,7 +648,16 @@ impl BearChannelSseProxyStream {
             flush_task: None,
             empty_terminal_error_emitted: false,
             browser_visible_assistant_emitted: false,
+            source_lease: None,
         }
+    }
+
+    pub(crate) fn with_source_lease(
+        mut self,
+        lease: Arc<den_service::tool_turns::ConversationTurnLease>,
+    ) -> Self {
+        self.source_lease = Some(lease);
+        self
     }
 
     fn queue_terminal_error_if_needed(&mut self) -> bool {
@@ -684,7 +695,11 @@ impl BearChannelSseProxyStream {
         let user_id = self.user_id;
         let conversation_id = self.conversation_id.clone();
         let request_id = self.request_id;
+        let source_lease = self.source_lease.clone();
         self.flush_task = Some(tokio::spawn(async move {
+            // A disconnected browser may drop this proxy while the flush is
+            // still running. Retain exclusion until its last canonical write.
+            let _source_lease = source_lease;
             persistence
                 .flush(
                     &pool,

@@ -508,9 +508,23 @@ pub async fn assemble_native_turn_messages_for_bear(
     Ok(assemble_native_turn_for_bear(ctx, bear).await?.messages)
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum CurrentInputPersistence {
+    AppendToTranscript,
+    AlreadyPersisted { sequence: i64 },
+}
+
 pub async fn assemble_native_turn_for_bear(
     ctx: AssembleTurnContext<'_>,
     bear: &Bear,
+) -> Result<AssembledNativeTurn, DenError> {
+    assemble_native_turn_with_input(ctx, bear, CurrentInputPersistence::AppendToTranscript).await
+}
+
+pub(crate) async fn assemble_native_turn_with_input(
+    ctx: AssembleTurnContext<'_>,
+    bear: &Bear,
+    current_input: CurrentInputPersistence,
 ) -> Result<AssembledNativeTurn, DenError> {
     if bear.id != ctx.bear_id {
         return Err(DenError::Authorization(
@@ -700,6 +714,13 @@ pub async fn assemble_native_turn_for_bear(
     let transcript_cutoff = compaction_state
         .as_ref()
         .and_then(|state| state.compacted_seq_cutoff);
+    if let CurrentInputPersistence::AlreadyPersisted { sequence } = current_input {
+        if transcript_cutoff.is_some_and(|cutoff| cutoff >= sequence) {
+            return Err(DenError::ValidationError(
+                "current persisted input was compacted during turn admission".into(),
+            ));
+        }
+    }
     let transcript_messages = if compaction_active && transcript_cutoff.is_some() {
         load_transcript_messages_after_seq(
             ctx.pool,
@@ -719,13 +740,19 @@ pub async fn assemble_native_turn_for_bear(
     messages.extend(transcript_messages);
     if let Some(human) = ctx.human_message.map(str::trim).filter(|s| !s.is_empty()) {
         budget_components.current_user_input_chars = human.chars().count() as u32;
-        messages.push(ChatMessage {
-            role: "user".to_string(),
-            content: Some(human.to_string()),
-            tool_call_id: None,
-            name: None,
-            tool_calls: None,
-        });
+        if matches!(current_input, CurrentInputPersistence::AppendToTranscript) {
+            messages.push(ChatMessage {
+                role: "user".to_string(),
+                content: Some(human.to_string()),
+                tool_call_id: None,
+                name: None,
+                tool_calls: None,
+            });
+        } else {
+            budget_components.transcript_chars = budget_components
+                .transcript_chars
+                .saturating_sub(budget_components.current_user_input_chars);
+        }
     }
     budget_components.tool_message_chars = ctx
         .tool_messages

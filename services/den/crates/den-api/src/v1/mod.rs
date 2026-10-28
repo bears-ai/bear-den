@@ -1,3 +1,4 @@
+mod native;
 pub mod oauth;
 pub mod profile;
 pub mod user;
@@ -10,4 +11,5 @@ pub fn router() -> Router<DenState> {
         .merge(profile::router())
         .merge(user::router())
         .merge(oauth::router())
+        .merge(native::router())
 }

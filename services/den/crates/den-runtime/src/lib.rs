@@ -70,6 +70,8 @@ mod primary_model;
 pub use agent_loop::summarize_recent_loop_control_replay_profile;
 pub use primary_model::set_bifrost_client;
 
+/// Typed canonical terminal records and their interaction-history projection.
+pub mod channel_lifecycle;
 /// The native runtime provider: profile turns, OpenAI streaming, web-chat loop.
 pub mod native_runtime;
 

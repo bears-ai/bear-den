@@ -70,6 +70,7 @@ pub fn spawn_persist_native_agent_step(
     assistant_text: String,
     tool_calls: &[ChatToolCall],
     preauthorized_call_id: Option<&str>,
+    source_lease: Option<std::sync::Arc<den_service::tool_turns::ConversationTurnLease>>,
 ) {
     if assistant_text.trim().is_empty() && tool_calls.is_empty() {
         return;
@@ -84,7 +85,8 @@ pub fn spawn_persist_native_agent_step(
         request_id.clone(),
         client_session_id,
         false,
-    );
+    )
+    .with_turn_lease(source_lease);
     if !assistant_text.trim().is_empty() {
         spawn_persist_assistant_output(
             context.clone(),
@@ -290,6 +292,7 @@ pub fn spawn_persist_abandoned_native_tool_results(
     request_id: Option<String>,
     tool_calls: &[ChatToolCall],
     reason: &str,
+    source_lease: Option<std::sync::Arc<den_service::tool_turns::ConversationTurnLease>>,
 ) {
     if tool_calls.is_empty() {
         return;
@@ -304,7 +307,8 @@ pub fn spawn_persist_abandoned_native_tool_results(
         request_id.clone(),
         client_session_id,
         false,
-    );
+    )
+    .with_turn_lease(source_lease);
     for call in tool_calls {
         spawn_persist_model_tool_result(
             context.clone(),

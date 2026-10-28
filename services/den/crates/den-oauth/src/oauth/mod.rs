@@ -13,12 +13,19 @@
 #![allow(clippy::should_implement_trait)]
 #![allow(clippy::too_many_arguments)]
 
+mod consent;
 pub mod db;
 pub mod endpoints;
 pub mod error;
+mod exchange;
 pub mod jwt;
+mod pkce;
 pub mod router;
 pub mod utils;
+
+#[cfg(test)]
+#[path = "tests/support.rs"]
+pub(crate) mod test_support;
 
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;

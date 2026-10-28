@@ -20,6 +20,7 @@ production = ["den-core/production", "den-http/production"]
 den-core = { path = "../den-core" }
 den-http = { path = "../den-http" }
 axum = { workspace = true, features = ["json", "query", "form"] }
+axum-login.workspace = true
 base64.workspace = true
 bytes.workspace = true
 jsonwebtoken = "9.3.0"
@@ -43,3 +44,5 @@ minijinja-embed.workspace = true
 [dev-dependencies]
 den-core = { path = "../den-core", features = ["test-util"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+sqlx = { workspace = true, features = ["migrate"] }
+tower = { workspace = true, features = ["util"] }

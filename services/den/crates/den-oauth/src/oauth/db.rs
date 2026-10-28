@@ -10,7 +10,7 @@ use crate::oauth::{
     OAuthRefreshToken, OAuthScope, UserAccessToken,
 };
 use den_http::errors::CustomError;
-use sqlx::PgPool;
+use sqlx::{Executor, PgPool, Postgres};
 use time::{Duration, OffsetDateTime};
 
 // =============================================================================
@@ -332,8 +332,8 @@ pub async fn create_authorization_code(
 ///
 /// # Returns
 /// The authorization code if valid, or an OAuth error
-pub async fn get_and_validate_authorization_code(
-    pool: &PgPool,
+pub async fn get_and_validate_authorization_code<'e>(
+    executor: impl Executor<'e, Database = Postgres>,
     code: &str,
     client_id: i32,
     redirect_uri: &str,
@@ -350,7 +350,7 @@ pub async fn get_and_validate_authorization_code(
         client_id,
         redirect_uri
     )
-    .fetch_optional(pool)
+    .fetch_optional(executor)
     .await
     .map_err(|e| OAuthError::ServerError(format!("Database error: {e}")))?;
 
@@ -390,7 +390,18 @@ pub async fn get_and_validate_authorization_code(
 /// # Arguments
 /// * `pool` - Database connection pool
 /// * `code_id` - Authorization code database ID
-pub async fn mark_authorization_code_used(pool: &PgPool, code_id: i32) -> Result<(), CustomError> {
+pub async fn mark_authorization_code_used<'e>(
+    executor: impl Executor<'e, Database = Postgres>,
+    code_id: i32,
+) -> Result<(), CustomError> {
+    mark_authorization_code_used_checked(executor, code_id).await?;
+    Ok(())
+}
+
+pub(super) async fn mark_authorization_code_used_checked<'e>(
+    executor: impl Executor<'e, Database = Postgres>,
+    code_id: i32,
+) -> Result<(), sqlx::Error> {
     sqlx::query!(
         r#"
         UPDATE oauth_authorization_codes
@@ -399,7 +410,7 @@ pub async fn mark_authorization_code_used(pool: &PgPool, code_id: i32) -> Result
         "#,
         code_id
     )
-    .execute(pool)
+    .execute(executor)
     .await?;
 
     Ok(())
@@ -442,8 +453,8 @@ pub async fn cleanup_expired_authorization_codes(pool: &PgPool) -> Result<u64, C
 ///
 /// # Returns
 /// The database ID of the created access token
-pub async fn create_access_token(
-    pool: &PgPool,
+pub async fn create_access_token<'e>(
+    executor: impl Executor<'e, Database = Postgres>,
     token: &str,
     client_id: i32,
     user_id: i32,
@@ -464,7 +475,7 @@ pub async fn create_access_token(
         scopes_json,
         expires_at
     )
-    .fetch_one(pool)
+    .fetch_one(executor)
     .await?;
 
     Ok(record.id)
@@ -850,8 +861,8 @@ pub async fn get_oauth_token_by_id(
 ///
 /// # Returns
 /// The database ID of the created refresh token
-pub async fn create_refresh_token(
-    pool: &PgPool,
+pub async fn create_refresh_token<'e>(
+    executor: impl Executor<'e, Database = Postgres>,
     token: &str,
     client_id: i32,
     user_id: i32,
@@ -872,7 +883,7 @@ pub async fn create_refresh_token(
         scopes_json,
         expires_at
     )
-    .fetch_one(pool)
+    .fetch_one(executor)
     .await?;
 
     Ok(record.id)

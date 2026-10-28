@@ -451,6 +451,8 @@ pub struct SessionTrackingStream {
     pending_final_gate_message_persistence: Option<FinalGateMessagePersistenceFuture>,
     pending_pause_persistence: Option<PausePersistenceFuture>,
     dispatch_mode: NativeToolDispatchMode,
+    turn_finalizer_owns_persistence: bool,
+    source_lease: Option<Arc<den_service::tool_turns::ConversationTurnLease>>,
     config: Arc<Config>,
     profile: RuntimeContextLabel,
     origin: TurnExecutionOrigin,
@@ -510,11 +512,21 @@ impl SessionTrackingStream {
             pending_final_gate_message_persistence: None,
             pending_pause_persistence: None,
             dispatch_mode,
+            turn_finalizer_owns_persistence: false,
+            source_lease: crate::native_runtime::source_leases::get(
+                &session.client_session_id,
+                session.run_id.as_deref(),
+            ),
             config,
             profile,
             origin: session.origin,
             may_define_task,
         }
+    }
+
+    pub(crate) fn with_turn_finalizer(mut self) -> Self {
+        self.turn_finalizer_owns_persistence = true;
+        self
     }
 
     fn accumulated_tool_calls(&self) -> Vec<ChatToolCall> {
@@ -596,6 +608,7 @@ impl SessionTrackingStream {
             self.request_id.clone(),
             &calls,
             reason,
+            self.source_lease.clone(),
         );
     }
 
@@ -1290,6 +1303,7 @@ impl SessionTrackingStream {
                 self.assistant_text.clone(),
                 &calls,
                 preauthorized_call_id,
+                self.source_lease.clone(),
             );
         }
         if !self.tool_calls.is_empty() {
@@ -1949,7 +1963,11 @@ impl SessionTrackingStream {
         let client_session_id = self.client_session_id.clone();
         let request_id = self.request_id.clone();
         let assistant_text = self.assistant_text.clone();
+        let finalizer_owns_persistence = self.turn_finalizer_owns_persistence;
         self.pending_final_gate_message_persistence = Some(Box::pin(async move {
+            if finalizer_owns_persistence {
+                return Ok(None);
+            }
             persist_native_assistant_output_with_id(
                 pool,
                 bear_id,

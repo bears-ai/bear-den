@@ -22,7 +22,6 @@ use crate::{
     agent_loop::{
         classify_tool_budget_class, evaluate_turn_budget, pending_tool_calls,
         provider_tool_supports_unilateral_execution, run_agent_step_stream,
-        spawn_persist_web_chat_interrupted_turn, spawn_persist_web_chat_turn,
         tool_call_finished_event, tool_call_finished_event_for_content,
         tool_call_finished_event_for_incomplete, tool_result_content_indicates_error,
         tool_signature_from_call, AgentLoopSessionStore, AgentStepOverflowContext,
@@ -85,6 +84,8 @@ pub struct NativeWebChatLoopStream {
     turn_timeout_sleep: Pin<Box<tokio::time::Sleep>>,
     turn_start_message_len: usize,
     transcript_persisted: bool,
+    managed_persistence: bool,
+    pending_persistence: Option<futures::future::BoxFuture<'static, Result<(), DenError>>>,
 }
 
 fn turn_timeout_event() -> RuntimeStreamEvent {
@@ -130,10 +131,58 @@ impl NativeWebChatLoopStream {
             turn_timeout_sleep: Box::pin(tokio::time::sleep(wall_clock_limit)),
             turn_start_message_len,
             transcript_persisted: false,
+            managed_persistence: false,
+            pending_persistence: None,
         }
     }
 
+    #[cfg(test)]
+    pub(super) fn expire_deadline_for_test(&mut self) {
+        self.turn_timeout_sleep
+            .as_mut()
+            .reset(tokio::time::Instant::now());
+    }
+
+    pub(super) fn with_managed_persistence(mut self, managed: bool) -> Self {
+        self.managed_persistence = managed;
+        self
+    }
+
+    fn finish_execution(&mut self) {
+        if let LoopPhase::ExecutingTools { results, .. } = &mut self.phase {
+            let completed = std::mem::take(results);
+            self.runtime
+                .session_store
+                .update(&self.runtime.session_key, |session| {
+                    session.messages.extend(completed);
+                });
+        }
+        self.phase = LoopPhase::Finished;
+    }
+
+    pub(super) fn interrupt(&mut self) {
+        self.finish_execution();
+        self.pending_out.clear();
+    }
+
+    pub(super) fn current_turn_messages(&self) -> Vec<ChatMessage> {
+        self.runtime
+            .session_store
+            .get(&self.runtime.session_key)
+            .map(|session| {
+                session
+                    .messages
+                    .into_iter()
+                    .skip(self.turn_start_message_len)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     fn persist_completed_turn(&mut self) {
+        if self.managed_persistence {
+            return;
+        }
         if self.transcript_persisted {
             return;
         }
@@ -141,16 +190,7 @@ impl NativeWebChatLoopStream {
         let Some(session) = self.runtime.session_store.get(&self.runtime.session_key) else {
             return;
         };
-        spawn_persist_web_chat_turn(
-            self.runtime.pool.clone(),
-            self.runtime.bear_id,
-            self.runtime.user_id,
-            self.runtime.conversation_id.clone(),
-            self.runtime.session_id.clone(),
-            self.runtime.request_id.clone(),
-            &session.messages,
-            self.turn_start_message_len,
-        );
+        self.schedule_tool_persistence();
         let pool = self.runtime.pool.clone();
         let config = self.runtime.config.clone();
         let bear_id = self.runtime.bear_id;
@@ -167,25 +207,32 @@ impl NativeWebChatLoopStream {
         });
     }
 
-    fn persist_interrupted_turn(&mut self, reason: &str) {
+    fn persist_interrupted_turn(&mut self, _reason: &str) {
+        if self.managed_persistence {
+            return;
+        }
         if self.transcript_persisted {
             return;
         }
         self.transcript_persisted = true;
-        let Some(session) = self.runtime.session_store.get(&self.runtime.session_key) else {
-            return;
-        };
-        spawn_persist_web_chat_interrupted_turn(
-            self.runtime.pool.clone(),
-            self.runtime.bear_id,
-            self.runtime.user_id,
-            self.runtime.conversation_id.clone(),
-            self.runtime.session_id.clone(),
-            self.runtime.request_id.clone(),
-            &session.messages,
-            self.turn_start_message_len,
-            reason,
-        );
+        self.schedule_tool_persistence();
+    }
+
+    fn schedule_tool_persistence(&mut self) {
+        let runtime = self.runtime.clone();
+        let messages = self.current_turn_messages();
+        self.pending_persistence = Some(Box::pin(async move {
+            super::channel_turn::tool_transcript::ToolTranscript {
+                pool: &runtime.pool,
+                bear: runtime.bear_id,
+                user: runtime.user_id,
+                external: &runtime.conversation_id,
+                session: &runtime.session_id,
+                request: &runtime.request_id,
+            }
+            .persist(&messages)
+            .await
+        }));
     }
 
     fn emit_incomplete_tool_outcomes(&mut self, calls: &[ChatToolCall], reason: &str) {
@@ -223,7 +270,16 @@ impl NativeWebChatLoopStream {
         stream: RuntimeEventStream,
         session: &crate::agent_loop::AgentLoopSession,
     ) -> RuntimeEventStream {
-        Box::pin(SessionTrackingStream::new(
+        Self::wrap_step_stream_for_owner(runtime, stream, session, false)
+    }
+
+    pub(crate) fn wrap_step_stream_for_owner(
+        runtime: &NativeWebChatLoopRuntime,
+        stream: RuntimeEventStream,
+        session: &crate::agent_loop::AgentLoopSession,
+        managed: bool,
+    ) -> RuntimeEventStream {
+        let stream = SessionTrackingStream::new(
             stream,
             session,
             runtime.session_store.clone(),
@@ -237,7 +293,12 @@ impl NativeWebChatLoopStream {
             runtime.config.clone(),
             RuntimeContextLabel::ChannelConversation,
             NativeToolDispatchMode::ServerSideInProcess,
-        ))
+        );
+        Box::pin(if managed {
+            stream.with_turn_finalizer()
+        } else {
+            stream
+        })
     }
 
     fn begin_tool_execution(&mut self, calls: Vec<ChatToolCall>) {
@@ -252,6 +313,7 @@ impl NativeWebChatLoopStream {
 
     fn begin_next_step(&mut self) {
         let runtime = self.runtime.clone();
+        let managed = self.managed_persistence;
         self.pending_out.push_back(status_event("Continuing…"));
         self.phase = LoopPhase::StartingNextStep(Box::pin(async move {
             let session = runtime
@@ -265,8 +327,8 @@ impl NativeWebChatLoopStream {
                 session_store: runtime.session_store.clone(),
             };
             let raw = run_agent_step_stream(&runtime.llm, &session, Some(overflow)).await?;
-            Ok(NativeWebChatLoopStream::wrap_step_stream(
-                &runtime, raw, &session,
+            Ok(NativeWebChatLoopStream::wrap_step_stream_for_owner(
+                &runtime, raw, &session, managed,
             ))
         }));
     }
@@ -431,9 +493,24 @@ impl Stream for NativeWebChatLoopStream {
     type Item = Result<RuntimeStreamEvent, DenError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if let Some(persistence) = self.pending_persistence.as_mut() {
+            match persistence.as_mut().poll(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(result) => {
+                    self.pending_persistence = None;
+                    if let Err(error) = result {
+                        self.interrupt();
+                        return Poll::Ready(Some(Err(error)));
+                    }
+                }
+            }
+        }
         if let Some(event) = self.pending_out.pop_front() {
             self.touch_outbound();
             return Poll::Ready(Some(Ok(event)));
+        }
+        if matches!(self.phase, LoopPhase::Finished) {
+            return Poll::Ready(None);
         }
         let turn_timed_out = self.turn_timeout_sleep.as_mut().poll(cx).is_ready();
         if !turn_timed_out {
@@ -451,9 +528,9 @@ impl Stream for NativeWebChatLoopStream {
                 let pending = pending_tool_calls(&session.messages);
                 self.emit_incomplete_tool_outcomes(&pending, "turn_timeout");
             }
+            self.finish_execution();
             self.persist_interrupted_turn("turn_timeout");
             self.pending_out.push_back(turn_timeout_event());
-            self.phase = LoopPhase::Finished;
             self.touch_outbound();
             return Poll::Ready(self.pending_out.pop_front().map(Ok));
         }
@@ -481,6 +558,9 @@ impl Stream for NativeWebChatLoopStream {
                         }),
                     ))) => {
                         self.saw_turn_completed = true;
+                        if self.managed_persistence {
+                            continue;
+                        }
                         self.touch_outbound();
                         return Poll::Ready(Some(Ok(event)));
                     }
@@ -521,6 +601,10 @@ impl Stream for NativeWebChatLoopStream {
                             }
                             self.persist_completed_turn();
                             self.phase = LoopPhase::Finished;
+                            if self.pending_persistence.is_some() {
+                                cx.waker().wake_by_ref();
+                                return Poll::Pending;
+                            }
                             if let Some(event) = self.pending_out.pop_front() {
                                 return Poll::Ready(Some(Ok(event)));
                             }

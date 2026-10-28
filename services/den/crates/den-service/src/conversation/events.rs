@@ -31,6 +31,19 @@ pub struct ConversationPersistenceContext {
     pub request_id: Option<String>,
     pub persistence_scope_id: String,
     pub skip_persistence: bool,
+    _turn_lease: Option<std::sync::Arc<crate::tool_turns::ConversationTurnLease>>,
+}
+
+impl ConversationPersistenceContext {
+    /// Detached transcript writes remain part of their originating turn until
+    /// their final database operation has completed, even after controller exit.
+    pub fn with_turn_lease(
+        mut self,
+        lease: Option<std::sync::Arc<crate::tool_turns::ConversationTurnLease>>,
+    ) -> Self {
+        self._turn_lease = lease;
+        self
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -695,6 +708,7 @@ pub fn canonical_persistence_context(
         request_id,
         persistence_scope_id,
         skip_persistence,
+        _turn_lease: None,
     }
 }
 

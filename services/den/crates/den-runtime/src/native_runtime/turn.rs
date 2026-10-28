@@ -55,12 +55,11 @@ use super::web_chat_loop::{NativeWebChatLoopRuntime, NativeWebChatLoopStream};
 
 use crate::{
     agent_loop::{
-        agent_loop_control_profile_fingerprint, agent_loop_session_key,
-        assemble_native_turn_for_bear, classify_tool_budget_class, evaluate_checkpoint_trigger,
-        evaluate_turn_budget, latest_grounding_probe_signal_for_tool_call,
-        objective_orientation_allowed_for_origin, projected_memory_session_diagnostic,
-        provider_tool_is_den_web_fetch, recalled_memory_session_diagnostic,
-        record_approval_decision, record_checkpoint_request,
+        agent_loop_control_profile_fingerprint, agent_loop_session_key, classify_tool_budget_class,
+        evaluate_checkpoint_trigger, evaluate_turn_budget,
+        latest_grounding_probe_signal_for_tool_call, objective_orientation_allowed_for_origin,
+        projected_memory_session_diagnostic, provider_tool_is_den_web_fetch,
+        recalled_memory_session_diagnostic, record_approval_decision, record_checkpoint_request,
         record_grounding_probe_result_decision, resolve_agent_loop_control, run_agent_step_stream,
         tool_result_content_indicates_error, tool_signature_from_call,
         AgentLoopControlResolutionInput, AgentLoopSession, AgentLoopSessionStore,
@@ -435,6 +434,7 @@ pub fn native_client_run_exists(
 
 pub fn remove_native_client_run(client_session_id: &str, run_id: &str) {
     SESSION_STORE.remove_client_run(client_session_id, run_id);
+    super::source_leases::remove(client_session_id, run_id);
 }
 
 pub fn update_native_client_session_cached_activity_plan_projection(
@@ -520,6 +520,7 @@ pub async fn record_native_client_tool_result(
         .get(&session_key)
         .ok_or_else(|| DenError::System("native agent loop session not found".into()))?;
     require_ordinary_session_source(pool, (&session).into()).await?;
+    let _source_lease = super::source_leases::acquire(pool, &session).await?;
     if let Some(approval_request_id) = approval_request_id {
         let approve = matches!(status, RuntimeToolResultStatus::Ok);
         record_approval_decision(
@@ -834,7 +835,7 @@ fn wrap_session_stream(
     client_session_id: &str,
     request_id: Option<String>,
 ) -> RuntimeEventStream {
-    Box::pin(SessionTrackingStream::new(
+    let stream: RuntimeEventStream = Box::pin(SessionTrackingStream::new(
         stream,
         session,
         SESSION_STORE.clone(),
@@ -848,7 +849,11 @@ fn wrap_session_stream(
         config,
         profile,
         NativeToolDispatchMode::DeferToClient,
-    ))
+    ));
+    match super::source_leases::get(client_session_id, session.run_id.as_deref()) {
+        Some(lease) => Box::pin(super::channel_turn::hold_conversation_turn(stream, lease)),
+        None => stream,
+    }
 }
 
 struct BuildSessionInput<'a> {
@@ -891,6 +896,19 @@ fn native_turn_control_profile(
 async fn build_session(
     deps: &NativeRuntimeDeps<'_>,
     input: BuildSessionInput<'_>,
+) -> Result<AgentLoopSession, DenError> {
+    build_session_with_input(
+        deps,
+        input,
+        crate::agent_loop::CurrentInputPersistence::AppendToTranscript,
+    )
+    .await
+}
+
+async fn build_session_with_input(
+    deps: &NativeRuntimeDeps<'_>,
+    input: BuildSessionInput<'_>,
+    current_input: crate::agent_loop::CurrentInputPersistence,
 ) -> Result<AgentLoopSession, DenError> {
     let BuildSessionInput {
         origin,
@@ -962,7 +980,7 @@ async fn build_session(
     .await?;
     let supports_reasoning_effort = capabilities.supports_reasoning_effort;
     let include_prompt_memory = defaults.include_prompt_memory;
-    let assembled = assemble_native_turn_for_bear(
+    let assembled = crate::agent_loop::assemble_native_turn_with_input(
         AssembleTurnContext {
             pool: deps.pool,
             config: deps.config,
@@ -985,6 +1003,7 @@ async fn build_session(
             native_runtime: true,
         },
         &bear,
+        current_input,
     )
     .await?;
     if assembled.primary_model != primary_model {
@@ -1360,8 +1379,23 @@ pub struct NativeWebChatTurnParams<'a> {
 pub async fn start_native_web_chat_turn_event_stream(
     params: NativeWebChatTurnParams<'_>,
 ) -> Result<RuntimeEventStream, DenError> {
+    Ok(Box::pin(
+        start_web_chat_turn(
+            params,
+            crate::agent_loop::CurrentInputPersistence::AppendToTranscript,
+            false,
+        )
+        .await?,
+    ))
+}
+
+pub(super) async fn start_web_chat_turn(
+    params: NativeWebChatTurnParams<'_>,
+    current_input: crate::agent_loop::CurrentInputPersistence,
+    managed: bool,
+) -> Result<NativeWebChatLoopStream, DenError> {
     let assembly_started = std::time::Instant::now();
-    let session = build_session(
+    let session = build_session_with_input(
         params.deps,
         BuildSessionInput {
             origin: den_core::TurnExecutionOrigin::ChannelConversation,
@@ -1385,6 +1419,7 @@ pub async fn start_native_web_chat_turn_event_stream(
             technical_budget_recovery_start_payload: None,
             tool_messages: Vec::new(),
         },
+        current_input,
     )
     .await?;
     tracing::info!(
@@ -1421,13 +1456,16 @@ pub async fn start_native_web_chat_turn_event_stream(
         session_store: SESSION_STORE.clone(),
         tool_invoker: params.tool_invoker.clone(),
     };
-    let step_stream = NativeWebChatLoopStream::wrap_step_stream(&runtime, stream, &session);
+    let step_stream = if managed {
+        NativeWebChatLoopStream::wrap_step_stream_for_owner(&runtime, stream, &session, true)
+    } else {
+        NativeWebChatLoopStream::wrap_step_stream(&runtime, stream, &session)
+    };
     let turn_start_message_len = session.messages.len();
-    Ok(Box::pin(NativeWebChatLoopStream::new(
-        runtime,
-        step_stream,
-        turn_start_message_len,
-    )))
+    Ok(
+        NativeWebChatLoopStream::new(runtime, step_stream, turn_start_message_len)
+            .with_managed_persistence(managed),
+    )
 }
 
 pub async fn start_native_client_turn_event_stream(
@@ -1455,6 +1493,18 @@ pub async fn start_native_turn_event_stream(
     let materialized =
         materialize_runtime_conversation_if_needed(&runtime_conversations, &request).await?;
     let conversation_id = materialized.conversation_id;
+    let canonical_source = conversation_persistence::get_conversation_for_external_id(
+        request.sqlx_pool,
+        request.bear_id,
+        &conversation_id,
+    )
+    .await?
+    .ok_or_else(|| DenError::Authorization("canonical turn source is missing".into()))?;
+    let source_lease = den_service::tool_turns::ConversationTurnLease::acquire(
+        request.sqlx_pool,
+        canonical_source.id,
+    )
+    .await?;
     let client_session_id = request.session_id;
     let work_run_id = if matches!(origin, den_core::TurnExecutionOrigin::AuthorizedWorkRun(_)) {
         work_runs::get_live_work_run_by_session(request.sqlx_pool, client_session_id)
@@ -1564,6 +1614,9 @@ pub async fn start_native_turn_event_stream(
         Some(stream) => stream,
         None => run_agent_step_stream(&llm, &session, Some(overflow)).await?,
     };
+    if let Some(run_id) = session.run_id.as_deref() {
+        super::source_leases::insert(client_session_id, run_id, source_lease.clone());
+    }
     let stream = wrap_session_stream(
         stream,
         &session,
@@ -1587,7 +1640,10 @@ pub async fn start_native_turn_event_stream(
         client_tools: request.client_tools.clone(),
         stream_tokens: request.stream_tokens,
     };
-    Ok(stream)
+    Ok(Box::pin(super::channel_turn::hold_conversation_turn(
+        stream,
+        source_lease,
+    )))
 }
 
 fn tool_observation_from_call(
@@ -2235,6 +2291,7 @@ pub async fn continue_native_client_turn_event_stream(
 
     require_continuation_binding(request.sqlx_pool, (&prior_session).into(), request.binding)
         .await?;
+    let source_lease = super::source_leases::acquire(request.sqlx_pool, &prior_session).await?;
 
     tracing::debug!(
         event = "native_turn_continue",
@@ -2496,6 +2553,7 @@ pub async fn continue_native_client_turn_event_stream(
     } else {
         Box::pin(stream::iter(prefix_events).chain(stream)) as RuntimeEventStream
     };
+    super::source_leases::insert(client_session_id, run_id, source_lease);
     let stream = wrap_session_stream(
         stream,
         &session,

@@ -1494,6 +1494,11 @@ async fn chat_send_native_inner(
         canonical_conversation.id,
     )
     .await?;
+    let source_lease = den_service::tool_turns::ConversationTurnLease::acquire(
+        state.sqlx_pool(),
+        canonical_conversation.id,
+    )
+    .await?;
     let turn_binding_id =
         hats::turn_binding::NativeTurnSource::Conversation(canonical_conversation.id)
             .binding_id(BearId::new(bear.id));
@@ -1637,7 +1642,8 @@ async fn chat_send_native_inner(
         body.bear_id,
         conv_id,
         state.sqlx_pool().clone(),
-    );
+    )
+    .with_source_lease(source_lease);
     chat_sse_response(stream, request_id).map_err(Into::into)
 }
 
@@ -1700,6 +1706,8 @@ mod model_availability_tests;
 mod model_configuration_tests;
 #[cfg(test)]
 mod native_stream_tests;
+#[cfg(test)]
+mod source_admission_tests;
 #[cfg(test)]
 mod new_bear_chat_journey_tests;
 

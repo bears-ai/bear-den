@@ -28,7 +28,10 @@ pub fn init_template_env() -> &'static Environment<'static> {
         #[cfg(not(feature = "production"))]
         {
             // In development, load templates from filesystem for hot reload
-            env.set_loader(minijinja::path_loader("crates/den-oauth/src/templates"));
+            env.set_loader(minijinja::path_loader(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/src/templates"
+            )));
         }
 
         env
@@ -133,22 +136,12 @@ pub fn parse_scopes(scope_string: Option<&str>) -> Option<Vec<String>> {
     })
 }
 
-/// Helper function to create CSRF token (placeholder implementation)
+/// Generate consent entropy; the consent module owns session storage and validation.
 pub fn generate_csrf_token() -> String {
-    // In a real implementation, this would generate a cryptographically secure token
-    // and store it in the session for validation
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let mut hasher = DefaultHasher::new();
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos()
-        .hash(&mut hasher);
-
-    format!("csrf_{:x}", hasher.finish())
+    format!(
+        "csrf_{}",
+        crate::oauth::utils::generate_secure_random_string(64)
+    )
 }
 
 #[cfg(test)]

@@ -7,6 +7,12 @@
 //! Curate (`memory_curate_executor`) may add an internal briefing turn via
 //! `run_native_curate_briefing_collect_assistant_text`.
 
+mod channel_turn;
+pub(crate) mod source_leases;
+pub use channel_turn::{
+    hold_conversation_turn, persist_channel_input, start_native_channel_turn, NativeChannelTurn,
+    PersistedChannelInput,
+};
 mod curate_briefing;
 pub mod legacy_memory_tools;
 mod openai_stream;
