@@ -64,7 +64,7 @@ pub async fn stage_owner_preferred_name(
             || candidate.source_bear_id() != binding.bear_id()
             || candidate.source_user_id() != binding.user_id()
             || candidate.source_binding_generation() != binding.authority_generation
-            || candidate.preferred_name() != &name
+            || candidate.preferred_name() != Some(&name)
         {
             return Err(denied());
         }

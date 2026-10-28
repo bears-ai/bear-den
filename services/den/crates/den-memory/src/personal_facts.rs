@@ -16,10 +16,12 @@ pub use types::{
 };
 pub use write::publish_preferred_name;
 
-pub(crate) use read::{ensure_generic_mutation_allowed, publication_access};
+pub(crate) use read::{ensure_generic_mutation_allowed, publication, publication_access};
 pub(crate) use retract::retract_for_capture_disable;
 
-pub(crate) const GENERIC_MEMORY_RECORDS_VIEW_SQL: &str = r"
+/// Previous canonical definition is accepted only by the read-only import gate;
+/// migration replaces it before the imported store becomes available to readers.
+pub(crate) const LEGACY_GENERIC_MEMORY_RECORDS_VIEW_SQL: &str = r"
 CREATE VIEW IF NOT EXISTS generic_memory_records AS
     SELECT r.* FROM memory_records r
     WHERE NOT EXISTS (
@@ -31,9 +33,32 @@ CREATE VIEW IF NOT EXISTS generic_memory_records AS
     )
 ";
 
+pub(crate) const GENERIC_MEMORY_RECORDS_VIEW_SQL: &str = r"
+CREATE VIEW IF NOT EXISTS generic_memory_records AS
+    SELECT r.* FROM memory_records r
+    WHERE NOT EXISTS (
+        SELECT 1 FROM memory_access_rules a
+        WHERE a.bear_id = r.bear_id AND a.src_memory_id = r.memory_id
+    ) AND NOT EXISTS (
+        SELECT 1 FROM personal_memory_publications p
+        WHERE p.bear_id = r.bear_id AND p.memory_id = r.memory_id
+    ) AND NOT EXISTS (
+        SELECT 1 FROM personal_memory_candidates c
+        JOIN personal_memory_erasures e
+          ON e.bear_id = c.bear_id AND e.person_entity_id = c.person_entity_id
+            AND c.sequence_no < e.sequence_no
+        WHERE c.bear_id = r.bear_id AND c.source_kind = 'conversation'
+          AND c.source_memory_id = r.memory_id
+    )
+";
+
 pub(crate) async fn recreate_generic_view(
     pool: &sqlx::SqlitePool,
 ) -> Result<(), den_core::DenError> {
+    let mut tx = pool.begin().await?;
+    sqlx::query!("DROP VIEW IF EXISTS generic_memory_records")
+        .execute(&mut *tx)
+        .await?;
     sqlx::query!(
         r"
         CREATE VIEW IF NOT EXISTS generic_memory_records AS
@@ -44,11 +69,19 @@ pub(crate) async fn recreate_generic_view(
             ) AND NOT EXISTS (
                 SELECT 1 FROM personal_memory_publications p
                 WHERE p.bear_id = r.bear_id AND p.memory_id = r.memory_id
+            ) AND NOT EXISTS (
+                SELECT 1 FROM personal_memory_candidates c
+                JOIN personal_memory_erasures e
+                  ON e.bear_id = c.bear_id AND e.person_entity_id = c.person_entity_id
+                    AND c.sequence_no < e.sequence_no
+                WHERE c.bear_id = r.bear_id AND c.source_kind = 'conversation'
+                  AND c.source_memory_id = r.memory_id
             )
         ",
     )
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(())
 }
 

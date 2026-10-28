@@ -150,6 +150,10 @@ async fn reconnection_aba_invalidates_every_old_owner_action(pool: PgPool) {
             ),
         ),
         ("retract", form(&page.body, "retract", "acknowledged=true")),
+        (
+            "erase",
+            form(&page.body, "erase-names", "acknowledged=true"),
+        ),
     ];
     let before = f.inspect().await.current.unwrap().fact_id;
     let store = f

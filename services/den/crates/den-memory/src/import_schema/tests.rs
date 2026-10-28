@@ -26,6 +26,25 @@ impl Fixture {
     }
 }
 
+#[test]
+fn current_and_legacy_generic_views_are_the_only_accepted_generic_definitions() {
+    for definition in [
+        GENERIC_MEMORY_RECORDS_VIEW_SQL,
+        LEGACY_GENERIC_MEMORY_RECORDS_VIEW_SQL,
+    ] {
+        let stored = definition.replacen("CREATE VIEW IF NOT EXISTS", "CREATE VIEW", 1);
+        assert!(canonical_view_definition("generic_memory_records", &stored));
+    }
+    assert!(!canonical_view_definition(
+        "generic_memory_records",
+        MEMORY_LINKS_VIEW_SQL
+    ));
+    assert!(!canonical_view_definition(
+        "unknown_imported_view",
+        GENERIC_MEMORY_RECORDS_VIEW_SQL
+    ));
+}
+
 #[tokio::test]
 async fn canonical_schema_is_accepted_without_changing_the_file() {
     Fixture::new().await.validate().await.unwrap();

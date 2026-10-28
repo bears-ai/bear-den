@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM bearwire_events e WHERE e.bear_id = $1\n                AND EXISTS (\n                    SELECT 1 FROM jsonb_array_elements(\n                        CASE WHEN jsonb_typeof(e.event_json->'den_context_dependencies'->'personal_facts') = 'array'\n                             THEN e.event_json->'den_context_dependencies'->'personal_facts'\n                             ELSE '[]'::jsonb END\n                    ) d WHERE d->>'bear_id' = $2 AND d->>'fact_id' = ANY($3)\n                )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8d1890ef80cd2485903c325923849ab607218abcacb3935333ba352d5f9fb40a"
+}

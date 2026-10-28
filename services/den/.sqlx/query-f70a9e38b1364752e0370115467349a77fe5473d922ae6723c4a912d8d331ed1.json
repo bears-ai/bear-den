@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE personal_memory_erasures SET cleanup_complete = 1\n          WHERE bear_id = ? AND person_entity_id = ? AND recorded_on_bear_id = ?\n            AND erasure_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "f70a9e38b1364752e0370115467349a77fe5473d922ae6723c4a912d8d331ed1"
+}

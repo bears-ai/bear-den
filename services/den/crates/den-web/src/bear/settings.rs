@@ -226,9 +226,9 @@ const MODELS_FLASH_MESSAGE_KEY: &str = "bear_models_flash_message";
 const MODELS_FLASH_ERROR_KEY: &str = "bear_models_flash_error";
 
 const BEAR_BUNDLE_FORMAT: &str = "bear";
-// v4 introduced permanent personal-publication protection. v5 additionally requires
-// typed direct-owner provenance and revision-aware consent; older writers cannot preserve them.
-const BEAR_BUNDLE_VERSION: u32 = 5;
+// v4 introduced permanent publication protection; v5 added direct-owner provenance/consent.
+// v6 requires erased-body/source-evidence guards and a preserved erasure ledger.
+const BEAR_BUNDLE_VERSION: u32 = 6;
 mod advanced_models;
 mod bundle_io;
 mod identity_reconnection;
@@ -1120,6 +1120,7 @@ async fn rewrite_imported_memory_bear_id(
         "personal_memory_candidate_reviews",
         "personal_memory_publications",
         "personal_memory_retractions",
+        "personal_memory_erasures",
         "entity_handles",
         "memory_relations",
         "memory_access_rules",

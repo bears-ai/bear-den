@@ -245,7 +245,7 @@ async fn bundle_import_rejects_destination_catalog_errors_before_setup() {
 }
 
 #[test]
-fn backup_ui_describes_v5_bundle_model_references_and_fresh_authorization() {
+fn backup_ui_describes_v6_bundle_model_references_and_fresh_authorization() {
     let mut env = minijinja::Environment::new();
     env.add_template("bear/_manage.html", "{% block manage %}{% endblock %}")
         .unwrap();
@@ -264,7 +264,7 @@ fn backup_ui_describes_v5_bundle_model_references_and_fresh_authorization() {
             reconnection_intent => Vec::<portable_hats::ReconnectionIntent>::new(),
         })
         .unwrap();
-    assert!(page.contains(".bear v5 bundle"));
+    assert!(page.contains(".bear v6 bundle"));
     assert!(page.contains("Named model configurations, Bear default and hat overrides"));
     assert!(page.contains("remapped IDs, validated against the destination catalog"));
     assert!(page.contains("No — re-authorize on the destination"));
@@ -277,7 +277,7 @@ fn legacy_manifest(version: u32) -> String {
 
 #[test]
 fn old_bundles_still_read_and_new_bundles_preserve_named_configurations() {
-    for version in [1, 2, 3, 4] {
+    for version in [1, 2, 3, 4, 5] {
         let bytes =
             build_bear_bundle(&legacy_manifest(version), b"nonempty sqlite fixture").unwrap();
         let (manifest, _) = read_bear_bundle(&bytes).unwrap();

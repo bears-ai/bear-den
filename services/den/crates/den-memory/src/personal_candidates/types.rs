@@ -150,6 +150,8 @@ pub enum CandidateState {
     Expired,
     /// Derived from the immutable publication decision, not a separately writable status.
     Published,
+    /// Permanent erasure marker takes precedence over publication and review history.
+    Erased,
 }
 
 /// Only construct at the trusted service boundary with current membership locks held.
@@ -236,7 +238,7 @@ pub enum CandidateSource {
 pub struct PersonalCandidate {
     pub(super) id: PersonalCandidateId,
     pub(super) person_entity_id: String,
-    pub(super) preferred_name: PreferredName,
+    pub(super) preferred_name: Option<PreferredName>,
     pub(super) state: CandidateState,
     pub(super) latest_review: Option<CandidateReviewReceipt>,
     pub(super) source: CandidateSource,
@@ -254,8 +256,9 @@ impl PersonalCandidate {
     pub fn person_entity_id(&self) -> &str {
         &self.person_entity_id
     }
-    pub fn preferred_name(&self) -> &PreferredName {
-        &self.preferred_name
+    /// Erased candidates retain only provenance and decision references, never a value.
+    pub fn preferred_name(&self) -> Option<&PreferredName> {
+        self.preferred_name.as_ref()
     }
     pub fn state(&self) -> CandidateState {
         self.state

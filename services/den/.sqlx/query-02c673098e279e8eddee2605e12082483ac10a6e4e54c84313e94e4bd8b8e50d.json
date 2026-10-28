@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO personal_memory_erasures (\n            erasure_id, bear_id, person_entity_id, request_id, sequence_no,\n            expected_head_memory_id, expected_latest_candidate_id, expected_capture_revision,\n            recorded_on_bear_id, actor_user_id, authority_generation, created_at\n        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 12
+    },
+    "nullable": []
+  },
+  "hash": "02c673098e279e8eddee2605e12082483ac10a6e4e54c84313e94e4bd8b8e50d"
+}

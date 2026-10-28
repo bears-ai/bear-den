@@ -25,6 +25,7 @@ mod manager;
 mod migrate;
 mod observations;
 pub mod personal_candidates;
+pub mod personal_erasure;
 pub mod personal_facts;
 mod proposals;
 mod records;

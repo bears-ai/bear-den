@@ -75,7 +75,10 @@ pub(super) async fn publish_for_binding(
             conversation_id,
             memory_id,
         } => {
-            if candidate.state() != CandidateState::Published {
+            if !matches!(
+                candidate.state(),
+                CandidateState::Published | CandidateState::Erased
+            ) {
                 locked.lock_owned_conversation(conversation_id).await?;
             }
             VerifiedPersonalSource::for_authorized_conversation(binding, conversation_id, memory_id)

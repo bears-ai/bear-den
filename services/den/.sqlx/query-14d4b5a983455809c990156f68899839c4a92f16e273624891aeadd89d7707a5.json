@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        CREATE VIEW IF NOT EXISTS generic_memory_records AS\n            SELECT r.* FROM memory_records r\n            WHERE NOT EXISTS (\n                SELECT 1 FROM memory_access_rules a\n                WHERE a.bear_id = r.bear_id AND a.src_memory_id = r.memory_id\n            ) AND NOT EXISTS (\n                SELECT 1 FROM personal_memory_publications p\n                WHERE p.bear_id = r.bear_id AND p.memory_id = r.memory_id\n            ) AND NOT EXISTS (\n                SELECT 1 FROM personal_memory_candidates c\n                JOIN personal_memory_erasures e\n                  ON e.bear_id = c.bear_id AND e.person_entity_id = c.person_entity_id\n                    AND c.sequence_no < e.sequence_no\n                WHERE c.bear_id = r.bear_id AND c.source_kind = 'conversation'\n                  AND c.source_memory_id = r.memory_id\n            )\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "14d4b5a983455809c990156f68899839c4a92f16e273624891aeadd89d7707a5"
+}

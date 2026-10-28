@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT EXISTS (\n            SELECT 1 FROM personal_memory_candidates c\n            JOIN personal_memory_erasures e\n              ON e.bear_id = c.bear_id AND e.person_entity_id = c.person_entity_id\n                AND c.sequence_no < e.sequence_no\n            WHERE c.bear_id = ? AND c.source_kind = 'conversation'\n              AND c.source_memory_id = ?\n        ) AS \"erased_source!: bool\",\n        EXISTS (\n            SELECT 1 FROM personal_memory_publications p\n            WHERE p.bear_id = ? AND p.memory_id = ?\n        ) AS \"personal_publication!: bool\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "erased_source!: bool",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "personal_publication!: bool",
+        "ordinal": 1,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "3f8de3ec5bfea34dd76c75567281625ba10902d7f1b37bb249a097620bfda1e8"
+}

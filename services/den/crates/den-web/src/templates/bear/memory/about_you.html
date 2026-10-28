@@ -45,7 +45,7 @@
   {% else %}
   <p>No preferred name has been approved for you on this Bear.</p>
   {% endif %}
-  <p class="form-hint">To correct a name, stage a new request below and approve it separately. Retraction stops use of that version; it is not deletion. Requests and decision history are retained. Explicit erasure is not available here.</p>
+  <p class="form-hint">To correct a name, stage a new request below and approve it separately. Retraction stops use of that version; it is not deletion. Retraction retains name bodies and decision history. Use the separate erasure action below to remove stored name bodies.</p>
 </div>
 {% if request_token %}
 <div class="box">
@@ -61,10 +61,10 @@
 {% endif %}
 <div class="box">
   <h3>Recent preferred-name requests</h3>
-  <p class="form-hint">Showing up to the 100 most recent requests for your current identity on this Bear. Older requests may not be shown; this is not a complete history. A previous approval is not proof that its name is still active.</p>
+  <p class="form-hint">Showing up to the 100 most recent requests for your current identity on this Bear. Older requests may not be shown; this is not a complete history or export. A previous approval is not proof that its name is still active.</p>
   {% for candidate in candidates %}
   <section class="box" aria-label="Preferred-name request">
-    <h4>{{ candidate.name | e }}</h4>
+    <h4>{% if candidate.name %}{{ candidate.name | e }}{% else %}Erased preferred-name request{% endif %}</h4>
     <p>{{ candidate.state | e }}</p>
     {% if candidate.approve %}
     <form id="publish-{{ candidate.id | e }}" method="post" action="/bear/{{ bear.slug | urlencode }}/memory/about-you/publish">
@@ -84,6 +84,24 @@
   <p>No requests in this recent window.</p>
   {% endfor %}
   <p class="form-hint">Rejecting or closing a request does not erase its retained history. Deferring does not approve a name; you can approve a pending or deferred request separately.</p>
+</div>
+{% if erasure_cleanup_pending %}
+<div class="box" role="status">
+  <h3>Erasure cleanup pending</h3>
+  <p>Some tracked derived copies still need cleanup. Erasure is not complete while cleanup is pending. Refresh About you to retry cleanup.</p>
+  <p><a href="/bear/{{ bear.slug | urlencode }}/memory/about-you">Retry cleanup</a></p>
+</div>
+{% endif %}
+<div class="box">
+  <h3>Erase stored preferred names</h3>
+  <p>This erases all of your stored preferred-name candidate bodies and all current and historical preferred-name fact body versions for this identity on this Bear, and cleans up tracked derived copies. Capture is disabled. Erasure covers all stored preferred-name history, not just the 100 recent requests shown above.</p>
+  <p>Unlike retraction, erasure removes name bodies; content-free audit records remain. Tracked derived-copy cleanup can remain pending and is retried when you open this page.</p>
+  <p>Original human conversation history is separate and is not erased by this action. This cannot recall input already sent to a provider or remove existing backups. This is not a forensic disk scrub.</p>
+  <form id="erase-names" method="post" action="/bear/{{ bear.slug | urlencode }}/memory/about-you/erase">
+    <input type="hidden" name="token" value="{{ erase_token }}">
+    <p><label><input type="checkbox" name="acknowledged" value="true" required> Erase all my stored preferred-name bodies and tracked derived copies for this Bear, and disable capture. I understand the history, provider, and backup limits above.</label></p>
+    <button type="submit">Erase all stored preferred names</button>
+  </form>
 </div>
 {% endif %}
 {% endblock %}

@@ -38,6 +38,14 @@ pub(crate) async fn source_is_eligible(
                        THEN COALESCE(json_extract(m.metadata_json, '$.lifecycle.status'), 'active') = 'active'
                        ELSE 0 END
               AND NOT EXISTS (
+                  SELECT 1 FROM personal_memory_candidates c
+                  JOIN personal_memory_erasures e
+                    ON e.bear_id = c.bear_id AND e.person_entity_id = c.person_entity_id
+                      AND c.sequence_no < e.sequence_no
+                  WHERE c.bear_id = m.bear_id AND c.source_kind = 'conversation'
+                    AND c.source_memory_id = m.memory_id AND c.source_conversation_id = m.scope_source_id
+              )
+              AND NOT EXISTS (
                   SELECT 1 FROM memory_records newer
                   WHERE newer.bear_id = m.bear_id AND newer.supersedes_memory_id = m.memory_id
               )

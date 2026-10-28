@@ -6,6 +6,7 @@
 
 mod authority;
 mod context;
+mod erasure;
 mod intake;
 mod management;
 mod publication;

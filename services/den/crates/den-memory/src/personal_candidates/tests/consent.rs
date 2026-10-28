@@ -41,7 +41,7 @@ async fn explicit_opt_in_records_current_epoch_and_minimized_typed_provenance() 
     let before = next_sequence(&store).await;
     let candidate = stage(&store, &alice, source, "  Alice  ").await;
     assert!(capture_enabled(&store, &alice).await.unwrap());
-    assert_eq!(candidate.preferred_name().as_str(), "Alice");
+    assert_eq!(candidate.preferred_name().unwrap().as_str(), "Alice");
     assert_eq!(candidate.person_entity_id(), alice.entity_id());
     assert_eq!(candidate.state(), CandidateState::Pending);
     assert_eq!(candidate.fact_type(), CandidateFactType::PreferredName);

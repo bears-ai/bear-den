@@ -51,6 +51,10 @@ pub(super) fn router() -> Router<AppState> {
             "/bear/{slug}/memory/about-you/retract",
             post(submit).layer(Extension(Operation::Retract)),
         )
+        .route_with_tsr(
+            "/bear/{slug}/memory/about-you/erase",
+            post(submit).layer(Extension(Operation::Erase)),
+        )
         .layer(Extension(Registry::default()))
         .layer(middleware::map_response(views::private))
 }
@@ -158,6 +162,12 @@ impl Intent {
                     return Err("Confirm retraction. Retraction does not erase retained history.");
                 }
                 Ok(OwnerMemoryAction::Retract { expected_head })
+            }
+            Self::ErasePreferredNames { request_id } => {
+                if !form.acknowledged {
+                    return Err("Separately confirm erasing all stored preferred-name bodies and tracked derived copies, with capture disabled.");
+                }
+                Ok(OwnerMemoryAction::ErasePreferredNames { request_id })
             }
         }
     }

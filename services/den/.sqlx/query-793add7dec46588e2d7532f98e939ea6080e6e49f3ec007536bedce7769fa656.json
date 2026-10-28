@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT memory_id FROM personal_memory_publications\n          WHERE bear_id = ? AND person_entity_id = ? AND fact_type = 'preferred_name'\n            AND sequence_no < ? ORDER BY sequence_no, memory_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "memory_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "793add7dec46588e2d7532f98e939ea6080e6e49f3ec007536bedce7769fa656"
+}

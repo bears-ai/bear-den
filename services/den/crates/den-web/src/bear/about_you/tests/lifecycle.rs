@@ -198,7 +198,10 @@ async fn validation_and_rendering_are_escaped_and_keep_private_headers(pool: PgP
     assert!(page
         .body
         .contains("Showing up to the 100 most recent requests"));
-    assert!(page.body.contains("Explicit erasure is not available here"));
+    assert!(page.body.contains("Erase all stored preferred names"));
+    assert!(page
+        .body
+        .contains("Original human conversation history is separate"));
     assert!(!page.body.contains("name=\"expected"));
     assert!(!page.body.contains("name=\"candidate_id\""));
     let response = f
@@ -223,6 +226,8 @@ fn content_headings_and_error_recovery_have_clean_markup() {
         capture_enabled => true,
         capture_token => Uuid::new_v4().to_string(),
         request_token => Uuid::new_v4().to_string(),
+        erase_token => Uuid::new_v4().to_string(),
+        erasure_cleanup_pending => false,
         candidates => Vec::<minijinja::Value>::new(),
     };
     let page = render("bear/memory/about_you.html", common.clone());
@@ -232,6 +237,7 @@ fn content_headings_and_error_recovery_have_clean_markup() {
         "<h3>Current preferred name</h3>",
         "<h3>Request a preferred name</h3>",
         "<h3>Recent preferred-name requests</h3>",
+        "<h3>Erase stored preferred names</h3>",
     ] {
         assert!(page.contains(heading), "missing complete heading {heading}");
     }

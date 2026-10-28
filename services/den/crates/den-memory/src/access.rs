@@ -95,7 +95,9 @@ impl AccessContext {
 
 /// Whether `src_memory_id` may be surfaced under `ctx`.
 ///
-/// - No access-rule history ⇒ always visible.
+/// - Erasure-marked source evidence ⇒ hidden, even from its authenticated owner.
+/// - Permanent publications must pass eligibility and verified-owner checks before any grant.
+/// - No access-rule history and no permanent protection ⇒ visible.
 /// - Historical rules but no active rules ⇒ hidden.
 /// - `audience` rules ⇒ at least one addressed entity must match; bound user identities
 ///   require a verified binding for the same Bear, user, and entity.
@@ -107,16 +109,17 @@ pub async fn record_visible(
     src_memory_id: &str,
     ctx: &AccessContext,
 ) -> Result<bool, DenError> {
-    let rules = list_access_rules_for_source(store, src_memory_id).await?;
-    if rules.is_empty() {
-        return Ok(!has_access_rule_history_for_source(store, src_memory_id).await?);
-    }
-    if ctx.is_empty() {
+    // Scoped readers use base records, so permanent protection must precede the no-ACL grant.
+    let protection = record_protection(store, src_memory_id).await?;
+    if protection.erased_source {
         return Ok(false);
     }
-    if let Some(publication) =
-        crate::personal_facts::publication_access(store, src_memory_id).await?
-    {
+    if protection.personal_publication {
+        let Some(publication) =
+            crate::personal_facts::publication_access(store, src_memory_id).await?
+        else {
+            return Ok(false);
+        };
         if !publication.eligible
             || ctx
                 .authenticated_user
@@ -125,6 +128,13 @@ pub async fn record_visible(
         {
             return Ok(false);
         }
+    }
+    let rules = list_access_rules_for_source(store, src_memory_id).await?;
+    if rules.is_empty() {
+        return Ok(!has_access_rule_history_for_source(store, src_memory_id).await?);
+    }
+    if ctx.is_empty() {
+        return Ok(false);
     }
     if let Some(verified) = &ctx.authenticated_user {
         if verified.bear_id != BearId::from(store.bear_id()) {
@@ -195,6 +205,44 @@ pub async fn record_visible(
     }
 
     Ok(!has_audience || audience_matches)
+}
+
+#[derive(sqlx::FromRow)]
+struct RecordProtection {
+    erased_source: bool,
+    personal_publication: bool,
+}
+
+/// Body-free classification by exact Bear/source IDs and the immutable erasure boundary.
+/// Cleanup completion, current consent and ACL presence cannot undo this protection.
+async fn record_protection(
+    store: &BearMemoryStore,
+    memory_id: &str,
+) -> Result<RecordProtection, DenError> {
+    let bear_id = store.bear_id().to_string();
+    Ok(sqlx::query_as!(
+        RecordProtection,
+        r#"
+        SELECT EXISTS (
+            SELECT 1 FROM personal_memory_candidates c
+            JOIN personal_memory_erasures e
+              ON e.bear_id = c.bear_id AND e.person_entity_id = c.person_entity_id
+                AND c.sequence_no < e.sequence_no
+            WHERE c.bear_id = ? AND c.source_kind = 'conversation'
+              AND c.source_memory_id = ?
+        ) AS "erased_source!: bool",
+        EXISTS (
+            SELECT 1 FROM personal_memory_publications p
+            WHERE p.bear_id = ? AND p.memory_id = ?
+        ) AS "personal_publication!: bool"
+        "#,
+        bear_id,
+        memory_id,
+        bear_id,
+        memory_id,
+    )
+    .fetch_one(store.pool())
+    .await?)
 }
 
 async fn current_verified_binding(

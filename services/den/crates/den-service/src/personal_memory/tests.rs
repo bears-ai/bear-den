@@ -1,4 +1,5 @@
 mod context;
+mod erasure;
 mod guards;
 mod intake;
 mod locks;

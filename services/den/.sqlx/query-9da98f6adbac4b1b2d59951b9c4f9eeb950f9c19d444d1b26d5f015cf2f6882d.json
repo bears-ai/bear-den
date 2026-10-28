@@ -1,0 +1,68 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT erasure_id, person_entity_id, sequence_no, expected_head_memory_id,\n                  expected_latest_candidate_id, expected_capture_revision,\n                  recorded_on_bear_id, actor_user_id AS \"actor_user_id!: i32\", authority_generation\n           FROM personal_memory_erasures WHERE bear_id = ? AND request_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "erasure_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "person_entity_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "sequence_no",
+        "ordinal": 2,
+        "type_info": "Integer"
+      },
+      {
+        "name": "expected_head_memory_id",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "expected_latest_candidate_id",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "expected_capture_revision",
+        "ordinal": 5,
+        "type_info": "Integer"
+      },
+      {
+        "name": "recorded_on_bear_id",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "actor_user_id!: i32",
+        "ordinal": 7,
+        "type_info": "Integer"
+      },
+      {
+        "name": "authority_generation",
+        "ordinal": 8,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "9da98f6adbac4b1b2d59951b9c4f9eeb950f9c19d444d1b26d5f015cf2f6882d"
+}

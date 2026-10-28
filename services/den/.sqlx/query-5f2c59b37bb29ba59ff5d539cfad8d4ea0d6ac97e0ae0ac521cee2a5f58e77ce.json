@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE memory_records SET content_text = '', invalid_at = COALESCE(invalid_at, ?)\n          WHERE bear_id = ? AND memory_id IN (\n              SELECT memory_id FROM personal_memory_publications\n              WHERE bear_id = ? AND person_entity_id = ? AND fact_type = 'preferred_name'\n          )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "5f2c59b37bb29ba59ff5d539cfad8d4ea0d6ac97e0ae0ac521cee2a5f58e77ce"
+}

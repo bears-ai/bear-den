@@ -5,7 +5,10 @@ use std::path::Path;
 use den_core::DenError;
 use sqlx::{sqlite::SqliteConnectOptions, Connection, SqliteConnection};
 
-use crate::{migrate::MEMORY_LINKS_VIEW_SQL, personal_facts::GENERIC_MEMORY_RECORDS_VIEW_SQL};
+use crate::{
+    migrate::MEMORY_LINKS_VIEW_SQL,
+    personal_facts::{GENERIC_MEMORY_RECORDS_VIEW_SQL, LEGACY_GENERIC_MEMORY_RECORDS_VIEW_SQL},
+};
 
 /// Reject executable imported schema before initialization, migration, or quarantine writes.
 ///
@@ -49,15 +52,7 @@ async fn inspect_schema(connection: &mut SqliteConnection) -> Result<(), DenErro
     .map_err(schema_error)?;
     // SQLite omits IF NOT EXISTS from stored CREATE VIEW statements.
     for view in views {
-        let expected = match view.name.as_str() {
-            "memory_links" => Some(MEMORY_LINKS_VIEW_SQL),
-            "generic_memory_records" => Some(GENERIC_MEMORY_RECORDS_VIEW_SQL),
-            _ => None,
-        };
-        let expected = expected.map(|sql| {
-            normalized_view_sql(&sql.replacen("CREATE VIEW IF NOT EXISTS", "CREATE VIEW", 1))
-        });
-        if expected.as_deref() != Some(normalized_view_sql(&view.definition).as_str()) {
+        if !canonical_view_definition(&view.name, &view.definition) {
             return Err(DenError::ValidationError(format!(
                 "imported memory schema contains a noncanonical view: {}",
                 view.name
@@ -102,6 +97,24 @@ async fn inspect_schema(connection: &mut SqliteConnection) -> Result<(), DenErro
         )));
     }
     Ok(())
+}
+
+fn canonical_view_definition(name: &str, definition: &str) -> bool {
+    // Older canonical bundles are safe to inspect read-only. Store migration replaces the
+    // legacy generic view before returning a usable store; arbitrary imported views still fail.
+    let expected: &[&str] = match name {
+        "memory_links" => &[MEMORY_LINKS_VIEW_SQL],
+        "generic_memory_records" => &[
+            GENERIC_MEMORY_RECORDS_VIEW_SQL,
+            LEGACY_GENERIC_MEMORY_RECORDS_VIEW_SQL,
+        ],
+        _ => &[],
+    };
+    let definition = normalized_view_sql(definition);
+    expected.iter().any(|sql| {
+        normalized_view_sql(&sql.replacen("CREATE VIEW IF NOT EXISTS", "CREATE VIEW", 1))
+            == definition
+    })
 }
 
 fn normalized_view_sql(sql: &str) -> String {

@@ -16,7 +16,7 @@ const MAX_AGE_SECONDS: i64 = 15 * 60;
 pub(super) const MAX_PAGES_PER_SCOPE: usize = 4;
 pub(super) const MAX_PAGES_PER_ACTOR: usize = 8;
 pub(super) const MAX_PAGES: usize = 64;
-// At most four actions for each of 100 candidates plus capture/request/retraction.
+// At most four actions for each of 100 candidates plus capture/request/retraction/erasure.
 const MAX_ACTIONS_PER_PAGE: usize = 512;
 pub(super) const UNAVAILABLE: &str = "This form expired, changed, or belongs to another session. Refresh About you and review the current state.";
 
@@ -37,6 +37,7 @@ pub(super) enum Operation {
     Publish,
     Review,
     Retract,
+    Erase,
 }
 
 #[derive(Clone, Copy)]
@@ -57,6 +58,9 @@ pub(super) enum Intent {
     Retract {
         expected_head: PersonalFactId,
     },
+    ErasePreferredNames {
+        request_id: Uuid,
+    },
 }
 
 impl Intent {
@@ -67,6 +71,7 @@ impl Intent {
             Self::Publish { .. } => Operation::Publish,
             Self::Review { .. } => Operation::Review,
             Self::Retract { .. } => Operation::Retract,
+            Self::ErasePreferredNames { .. } => Operation::Erase,
         }
     }
 }

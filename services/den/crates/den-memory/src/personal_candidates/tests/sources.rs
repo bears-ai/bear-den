@@ -309,7 +309,10 @@ async fn staging_neither_decodes_copies_nor_interprets_the_source_body_as_author
     .unwrap();
     assert!(crate::fetch_record_by_id(&store, &id).await.is_err());
     let candidate = stage(&store, &alice, source, "Minimized value only").await;
-    assert_eq!(candidate.preferred_name().as_str(), "Minimized value only");
+    assert_eq!(
+        candidate.preferred_name().unwrap().as_str(),
+        "Minimized value only"
+    );
     let bytes = sqlx::query_scalar!(
         r#"SELECT hex(content_text) AS "bytes!: String" FROM memory_records WHERE memory_id = ?"#,
         id,

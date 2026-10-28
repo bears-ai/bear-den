@@ -63,6 +63,15 @@ pub(super) async fn lock_member(
 }
 
 impl LockedMember {
+    pub(super) fn connection(&mut self) -> &mut sqlx::PgConnection {
+        &mut self.transaction
+    }
+
+    pub(super) async fn commit(self) -> Result<(), DenError> {
+        self.transaction.commit().await?;
+        Ok(())
+    }
+
     pub(super) async fn lock_owned_conversation(
         &mut self,
         conversation_id: Uuid,

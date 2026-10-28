@@ -19,6 +19,7 @@ mod consistency;
 mod export;
 mod history;
 mod personal_candidates;
+mod personal_erasure;
 mod routes;
 mod session;
 mod templates;

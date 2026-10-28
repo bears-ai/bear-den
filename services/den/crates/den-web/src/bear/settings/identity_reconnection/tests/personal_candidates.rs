@@ -22,7 +22,8 @@ fn imported_candidate_state(state: CandidateState) -> CandidateState {
         CandidateState::Withdrawn
         | CandidateState::Rejected
         | CandidateState::Expired
-        | CandidateState::Published => state,
+        | CandidateState::Published
+        | CandidateState::Erased => state,
     }
 }
 
@@ -392,7 +393,7 @@ async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_p
     assert_eq!(response.status(), StatusCode::OK);
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     let (manifest, memory) = crate::bear::settings::bundle_io::read_bear_bundle(&bytes).unwrap();
-    assert_eq!(manifest.version, 5);
+    assert_eq!(manifest.version, 6);
     let identities = core::list_identities(&source).await.unwrap();
     let original_identity = identities
         .iter()
@@ -725,7 +726,7 @@ async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_p
         conversation,
         Uuid::parse_str(&note.memory_id).unwrap(),
     );
-    let name = originals[0].preferred_name().clone();
+    let name = originals[0].preferred_name().unwrap().clone();
     assert!(matches!(
         stage_preferred_name(&destination, &proof, name.clone()).await,
         Err(den_core::DenError::Authorization(_))

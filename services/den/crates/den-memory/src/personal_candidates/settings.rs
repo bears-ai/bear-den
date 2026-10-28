@@ -20,7 +20,7 @@ pub(crate) async fn enabled(
     )
 }
 
-pub(super) async fn setting_inside(
+pub(crate) async fn setting_inside(
     connection: &mut SqliteConnection,
     bear_id: &str,
     person_entity_id: &str,
@@ -129,14 +129,28 @@ async fn set_capture(
             return Err(super::authority::denied());
         }
     }
+    write_capture_inside(&mut tx, &bear_id, binding, capture_enabled, &now_rfc3339()?).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Shared transaction-local consent write; callers retain the authority writer fence.
+/// Erasure uses the same revision allocation and retraction semantics as explicit opt-out.
+pub(crate) async fn write_capture_inside(
+    connection: &mut SqliteConnection,
+    bear_id: &str,
+    binding: &AuthenticatedUserEntity,
+    capture_enabled: bool,
+    updated_at: &str,
+) -> Result<(), DenError> {
+    let person_entity_id = binding.entity_id();
     let revision = sqlx::query_scalar!(
         r#"UPDATE bear_sequence SET next_sequence = next_sequence + 1 WHERE id = 1
            RETURNING next_sequence - 1 AS "revision!: i64""#,
     )
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut *connection)
     .await?;
     let actor = binding.user_id().get();
-    let updated_at = now_rfc3339()?;
     sqlx::query!(
         r"
         INSERT INTO personal_memory_settings (
@@ -157,7 +171,7 @@ async fn set_capture(
         bear_id,
         actor,
     )
-    .execute(&mut *tx)
+    .execute(&mut *connection)
     .await?;
     if !capture_enabled {
         sqlx::query!(
@@ -175,19 +189,18 @@ async fn set_capture(
             bear_id,
             person_entity_id,
         )
-        .execute(&mut *tx)
+        .execute(&mut *connection)
         .await?;
         crate::personal_facts::retract_for_capture_disable(
-            &mut tx,
-            &bear_id,
+            connection,
+            bear_id,
             person_entity_id,
             actor,
             binding.authority_generation,
-            &updated_at,
+            updated_at,
         )
         .await?;
     }
-    tx.commit().await?;
     Ok(())
 }
 

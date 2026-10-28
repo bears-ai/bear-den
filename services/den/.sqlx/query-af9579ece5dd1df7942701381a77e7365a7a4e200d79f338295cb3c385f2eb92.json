@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT erasure_id, sequence_no FROM personal_memory_erasures\n          WHERE bear_id = ? AND person_entity_id = ? AND recorded_on_bear_id = ?\n            AND cleanup_complete = 0\n          ORDER BY sequence_no, erasure_id LIMIT ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "erasure_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "sequence_no",
+        "ordinal": 1,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "af9579ece5dd1df7942701381a77e7365a7a4e200d79f338295cb3c385f2eb92"
+}

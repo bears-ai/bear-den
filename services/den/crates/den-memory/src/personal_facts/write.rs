@@ -82,7 +82,7 @@ pub async fn publish_preferred_name(
     let memory_id = fact_id.to_string();
     let previous_memory_id = previous_fact_id.map(|id| id.to_string());
     let created_at = now_rfc3339()?;
-    let value = candidate.preferred_name().as_str();
+    let value = candidate.preferred_name().ok_or_else(invalid)?.as_str();
     // The value is the minimal fact, not a prompt/template or a transcript copy. Its category
     // supplies semantics to a future explicitly authorized projector; no projection is enabled.
     sqlx::query!(

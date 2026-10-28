@@ -86,6 +86,7 @@ async fn all_personal_states_remain_outside_generic_records_proposals_observatio
         current_candidate(&store, &alice, candidate.id())
             .await
             .preferred_name()
+            .unwrap()
             .as_str(),
         value
     );
@@ -169,6 +170,7 @@ async fn ordinary_admin_inspection_and_search_cannot_load_candidate_bodies() {
         current_candidate(&inspection_store, &owner, candidate.id())
             .await
             .preferred_name()
+            .unwrap()
             .as_str(),
         value
     );

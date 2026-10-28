@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT EXISTS (\n            SELECT 1 FROM generic_memory_records m WHERE m.bear_id = ? AND m.memory_id = ?\n              AND m.scope_type = 'source_local' AND m.scope_source_kind = 'conversation'\n              AND m.scope_source_id = ? AND m.visibility = 'normal' AND m.invalid_at IS NULL\n              AND CASE WHEN json_valid(m.metadata_json)\n                       THEN COALESCE(json_extract(m.metadata_json, '$.lifecycle.status'), 'active') = 'active'\n                       ELSE 0 END\n              AND NOT EXISTS (\n                  SELECT 1 FROM personal_memory_candidates c\n                  JOIN personal_memory_erasures e\n                    ON e.bear_id = c.bear_id AND e.person_entity_id = c.person_entity_id\n                      AND c.sequence_no < e.sequence_no\n                  WHERE c.bear_id = m.bear_id AND c.source_kind = 'conversation'\n                    AND c.source_memory_id = m.memory_id AND c.source_conversation_id = m.scope_source_id\n              )\n              AND NOT EXISTS (\n                  SELECT 1 FROM memory_records newer\n                  WHERE newer.bear_id = m.bear_id AND newer.supersedes_memory_id = m.memory_id\n              )\n        ) AS \"eligible!: bool\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "eligible!: bool",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "73e3d256198e352d19b33c7df21b1e8782bbd5466c84c7a40abb469f45a03fe0"
+}

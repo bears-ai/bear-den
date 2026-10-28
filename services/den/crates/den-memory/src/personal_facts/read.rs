@@ -22,7 +22,7 @@ pub(super) fn relation_ids() -> Result<(&'static str, &'static str), DenError> {
 }
 
 #[derive(sqlx::FromRow)]
-pub(super) struct PublicationRow {
+pub(crate) struct PublicationRow {
     pub memory_id: String,
     pub person_entity_id: String,
     pub candidate_id: String,
@@ -71,7 +71,7 @@ impl PublicationRow {
 /// One shape covers current-head lookup, immutable receipt lookup, and classification checks.
 /// No body is selected here. Ordering is the publication decision's sequence, so a missing
 /// canonical head cannot make an older value current again.
-pub(super) async fn publication(
+pub(crate) async fn publication(
     connection: &mut SqliteConnection,
     bear_id: &str,
     person_entity_id: Option<&str>,
@@ -90,6 +90,9 @@ pub(super) async fn publication(
              AND CASE WHEN json_valid(r.metadata_json)
                       THEN COALESCE(json_extract(r.metadata_json, '$.lifecycle.status'), 'active') = 'active'
                       ELSE 0 END
+             AND NOT EXISTS (SELECT 1 FROM personal_memory_erasures e
+                 WHERE e.bear_id = p.bear_id AND e.person_entity_id = p.person_entity_id
+                   AND p.sequence_no < e.sequence_no)
              AND NOT EXISTS (SELECT 1 FROM personal_memory_publications later
                  WHERE later.bear_id = p.bear_id AND later.person_entity_id = p.person_entity_id
                    AND later.sequence_no > p.sequence_no)

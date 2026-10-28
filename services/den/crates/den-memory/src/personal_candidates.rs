@@ -32,7 +32,9 @@ pub use types::{
 
 pub(crate) use authority::{ensure_current, write_transaction};
 pub(crate) use read::get_inside;
-pub(crate) use settings::{enabled, quarantine_imported, quarantine_person};
+pub(crate) use settings::{
+    enabled, quarantine_imported, quarantine_person, setting_inside, write_capture_inside,
+};
 pub(crate) use source::candidate_source_is_eligible;
 
 #[cfg(test)]

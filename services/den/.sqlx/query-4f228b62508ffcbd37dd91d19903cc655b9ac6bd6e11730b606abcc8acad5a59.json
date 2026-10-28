@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE conversation_compaction_artifacts a SET artifact_json = $4\n              FROM conversations c\n              WHERE a.conversation_id = c.id AND c.bear_id = $1\n                AND EXISTS (\n                    SELECT 1 FROM jsonb_array_elements(\n                        CASE WHEN jsonb_typeof(a.artifact_json->'den_context_dependencies'->'personal_facts') = 'array'\n                             THEN a.artifact_json->'den_context_dependencies'->'personal_facts'\n                             ELSE '[]'::jsonb END\n                    ) d WHERE d->>'bear_id' = $2 AND d->>'fact_id' = ANY($3)\n                )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "TextArray",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4f228b62508ffcbd37dd91d19903cc655b9ac6bd6e11730b606abcc8acad5a59"
+}

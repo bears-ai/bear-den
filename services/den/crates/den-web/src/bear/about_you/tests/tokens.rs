@@ -49,6 +49,16 @@ fn forms_accept_only_tokens_names_and_explicit_acknowledgement() {
     }
     .action(form(false))
     .is_err());
+    let request_id = Uuid::new_v4();
+    assert!(Intent::ErasePreferredNames { request_id }
+        .action(form(false))
+        .is_err());
+    for _ in 0..2 {
+        assert!(matches!(
+            Intent::ErasePreferredNames { request_id }.action(form(true)).unwrap(),
+            OwnerMemoryAction::ErasePreferredNames { request_id: actual } if actual == request_id
+        ));
+    }
     let forged = serde_json::json!({"token": token.0, "actor": 8, "expected_head": fact.0});
     assert!(serde_json::from_value::<ActionForm>(forged).is_err());
     assert!(Intent::Capture(true)
@@ -68,11 +78,21 @@ async fn registry_is_bounded_scoped_and_preserves_request_ids_without_consuming_
     let registry = Registry::default();
     let token = ActionNonce::new();
     let request_id = Uuid::new_v4();
+    let erase_token = ActionNonce::new();
+    let erase_request_id = Uuid::new_v4();
     registry
         .register(
             Scope::new(f.bear_id, f.owner, "session-one".into()),
             f.inspect().await.owner,
-            vec![(token, Intent::Request { request_id })],
+            vec![
+                (token, Intent::Request { request_id }),
+                (
+                    erase_token,
+                    Intent::ErasePreferredNames {
+                        request_id: erase_request_id,
+                    },
+                ),
+            ],
         )
         .unwrap();
     let authorize = |operation, bear, actor, session: &str| {
@@ -112,6 +132,29 @@ async fn registry_is_bounded_scoped_and_preserves_request_ids_without_consuming_
             .unwrap();
         assert!(
             matches!(action, OwnerMemoryAction::RequestPreferredName { request_id: actual, .. } if actual == request_id)
+        );
+    }
+    assert!(registry
+        .authorize(
+            erase_token,
+            Operation::Request,
+            f.bear_id,
+            f.owner,
+            "session-one"
+        )
+        .is_err());
+    for _ in 0..2 {
+        let pending = registry
+            .authorize(
+                erase_token,
+                Operation::Erase,
+                f.bear_id,
+                f.owner,
+                "session-one",
+            )
+            .unwrap();
+        assert!(
+            matches!(pending.intent, Intent::ErasePreferredNames { request_id: actual } if actual == erase_request_id)
         );
     }
     let actions = (0..513)

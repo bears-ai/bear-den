@@ -212,6 +212,29 @@ CREATE TABLE IF NOT EXISTS personal_memory_retractions (
     PRIMARY KEY (bear_id, memory_id)
 );
 
+-- Content-free all-owner erasure boundary. Owning bear_id may be rebased on import.
+-- recorded_on_bear_id/actor/generation remain historical audit, never destination authority.
+-- The sequence boundary permanently covers prior candidate/publication IDs and recovers
+-- the original affected fact locators without retaining names or independently writable lists.
+CREATE TABLE IF NOT EXISTS personal_memory_erasures (
+    erasure_id TEXT NOT NULL PRIMARY KEY,
+    bear_id TEXT NOT NULL,
+    person_entity_id TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    sequence_no INTEGER NOT NULL,
+    expected_head_memory_id TEXT NULL,
+    expected_latest_candidate_id TEXT NULL,
+    expected_capture_revision INTEGER NOT NULL CHECK (expected_capture_revision >= 0),
+    cleanup_complete INTEGER NOT NULL DEFAULT 0 CHECK (cleanup_complete IN (0, 1)),
+    recorded_on_bear_id TEXT NOT NULL,
+    actor_user_id INTEGER NOT NULL,
+    authority_generation INTEGER NOT NULL CHECK (authority_generation > 0),
+    created_at TEXT NOT NULL,
+    UNIQUE (bear_id, request_id)
+);
+CREATE INDEX IF NOT EXISTS idx_personal_memory_erasures_owner
+    ON personal_memory_erasures (bear_id, person_entity_id, sequence_no);
+
 CREATE TABLE IF NOT EXISTS entity_handles (
     handle_id TEXT PRIMARY KEY,
     bear_id TEXT NOT NULL,
@@ -288,6 +311,13 @@ CREATE VIEW IF NOT EXISTS generic_memory_records AS
     ) AND NOT EXISTS (
         SELECT 1 FROM personal_memory_publications p
         WHERE p.bear_id = r.bear_id AND p.memory_id = r.memory_id
+    ) AND NOT EXISTS (
+        SELECT 1 FROM personal_memory_candidates c
+        JOIN personal_memory_erasures e
+          ON e.bear_id = c.bear_id AND e.person_entity_id = c.person_entity_id
+            AND c.sequence_no < e.sequence_no
+        WHERE c.bear_id = r.bear_id AND c.source_kind = 'conversation'
+          AND c.source_memory_id = r.memory_id
     );
 
 CREATE TABLE IF NOT EXISTS memory_promotions (

@@ -44,7 +44,7 @@ struct ReviewView {
 #[derive(Serialize)]
 struct CandidateView {
     id: String,
-    name: String,
+    name: Option<String>,
     state: &'static str,
     approve: Option<ActionNonce>,
     reviews: Vec<ReviewView>,
@@ -57,6 +57,7 @@ fn candidate_state(state: CandidateState) -> &'static str {
         CandidateState::Rejected => "Rejected",
         CandidateState::Expired => "Closed as expired",
         CandidateState::Withdrawn => "Withdrawn",
+        CandidateState::Erased => "Erased",
         CandidateState::Quarantined => "Quarantined; a fresh request is needed before approval",
         CandidateState::Published => {
             "Previously approved; see the current name above for active status"
@@ -81,6 +82,9 @@ pub(super) async fn page(
     };
     let expected_head = inspection.current.as_ref().map(|head| head.fact_id);
     let capture_token = token(Intent::Capture(!inspection.capture_enabled));
+    let erase_token = token(Intent::ErasePreferredNames {
+        request_id: Uuid::new_v4(),
+    });
     let request_token = inspection.capture_enabled.then(|| {
         token(Intent::Request {
             request_id: Uuid::new_v4(),
@@ -145,7 +149,10 @@ pub(super) async fn page(
             }
             CandidateView {
                 id: id.to_string(),
-                name: candidate.preferred_name().as_str().to_owned(),
+                name: candidate
+                    .preferred_name()
+                    .filter(|_| candidate_state_value != CandidateState::Erased)
+                    .map(|name| name.as_str().to_owned()),
                 state: candidate_state(candidate_state_value),
                 approve: (inspection.capture_enabled
                     && matches!(
@@ -175,7 +182,8 @@ pub(super) async fn page(
     }
     crate::render_template(state, "bear/memory/about_you.html", auth, context! {
         can_manage_bear, manage_title => "About you", capture_enabled => inspection.capture_enabled,
-        capture_token, request_token, current, candidates,
+        capture_token, request_token, erase_token, current, candidates,
+        erasure_cleanup_pending => inspection.erasure_cleanup_pending,
         ..bear_nav_context(bear, "memory"),
     }).await
 }

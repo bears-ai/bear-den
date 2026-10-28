@@ -72,6 +72,9 @@ pub async fn migrate_bear_sqlite_schema(pool: &SqlitePool) -> Result<(), DenErro
     // imports such as `summaries/`, `logs/`, and `decisions/` keep their richer kind.
     normalize_legacy_import_hashed_kinds(pool).await?;
 
+    // IF NOT EXISTS at bootstrap cannot replace the previous canonical view. Refresh it
+    // atomically so retained erasure-marked evidence never becomes generic model input.
+    crate::personal_facts::recreate_generic_view(pool).await?;
     Ok(())
 }
 

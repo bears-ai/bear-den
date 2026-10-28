@@ -14,7 +14,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::{
-    authority, publication, review, CandidateReviewDecision, CandidateReviewId,
+    authority, erasure, publication, review, CandidateReviewDecision, CandidateReviewId,
     CandidateReviewReceipt, PersonalCandidate, PersonalCandidateId, PersonalFactHead,
     PersonalFactId, PreferredName, PublicationReceipt,
 };
@@ -24,6 +24,8 @@ use super::{
 pub struct PersonalMemoryOwner {
     binding: AuthenticatedUserEntity,
     capture_revision: PersonalCaptureRevision,
+    erasure_head: Option<PersonalFactId>,
+    erasure_latest_candidate: Option<PersonalCandidateId>,
 }
 
 impl fmt::Debug for PersonalMemoryOwner {
@@ -39,6 +41,7 @@ pub struct PersonalMemoryInspection {
     pub capture_enabled: bool,
     pub current: Option<PersonalFactHead>,
     pub candidates: Vec<PersonalCandidate>,
+    pub erasure_cleanup_pending: bool,
 }
 
 #[derive(Debug)]
@@ -60,6 +63,9 @@ pub enum OwnerMemoryAction {
     Retract {
         expected_head: PersonalFactId,
     },
+    ErasePreferredNames {
+        request_id: Uuid,
+    },
 }
 
 /// A completed operation's receipt is historical, not a claim of current fact activity.
@@ -70,6 +76,7 @@ pub enum OwnerMemoryReceipt {
     Published(PublicationReceipt),
     Reviewed(CandidateReviewReceipt),
     Retracted(bool),
+    Erased(den_memory::personal_erasure::PersonalErasureReceipt),
 }
 
 /// Load only the authenticated member's own state. Bear Admin has no ownership override.
@@ -82,21 +89,30 @@ pub async fn inspect_personal_memory(
     let pool = pool.clone();
     let stores = stores.clone();
     tokio::spawn(async move {
-        let locked = authority::lock_member(&pool, bear_id, user_id).await?;
+        let mut locked = authority::lock_member(&pool, bear_id, user_id).await?;
         let store = stores.store_for_bear(bear_id.as_uuid()).await?;
         let binding = resolve_authenticated_user_entity(&store, user_id).await?;
+        let cleaned = erasure::prepare_pending(&mut locked, &store, &binding).await?;
         let capture = personal_candidates::capture_setting(&store, &binding).await?;
         let current = personal_facts::current_preferred_name(&store, &binding).await?;
         let candidates = personal_candidates::list_candidates(&store, &binding, 100).await?;
-        drop(locked);
+        locked.commit().await?;
+        erasure::acknowledge_committed(&pool, &store, &binding, &cleaned).await?;
+        let erasure_cleanup_pending =
+            !den_memory::personal_erasure::pending_erasure_cleanups(&store, &binding, 1)
+                .await?
+                .is_empty();
         Ok(PersonalMemoryInspection {
             owner: PersonalMemoryOwner {
                 binding,
                 capture_revision: capture.revision,
+                erasure_head: current.as_ref().map(|head| head.fact_id),
+                erasure_latest_candidate: candidates.first().map(PersonalCandidate::id),
             },
             capture_enabled: capture.enabled,
             current,
             candidates,
+            erasure_cleanup_pending,
         })
     })
     .await
@@ -128,6 +144,14 @@ pub async fn apply_owner_memory_action(
         let mut locked = authority::lock_member(&pool, bear_id, user_id).await?;
         let store = stores.store_for_bear(bear_id.as_uuid()).await?;
         let binding = &owner.binding;
+        let mut cleaned = erasure::prepare_pending(&mut locked, &store, binding).await?;
+        if cleaned.len() == 100 {
+            locked.commit().await?;
+            erasure::acknowledge_committed(&pool, &store, binding, &cleaned).await?;
+            return Err(DenError::ValidationError(
+                "Personal-memory cleanup is still pending; refresh About you before another action.".into(),
+            ));
+        }
         let receipt = match action {
             OwnerMemoryAction::SetCapture(enabled) => {
                 personal_candidates::set_capture_enabled_if_current(
@@ -177,8 +201,20 @@ pub async fn apply_owner_memory_action(
             OwnerMemoryAction::Retract { expected_head } => OwnerMemoryReceipt::Retracted(
                 personal_facts::retract_preferred_name(&store, binding, expected_head).await?,
             ),
+            OwnerMemoryAction::ErasePreferredNames { request_id } => {
+                let erased = den_memory::personal_erasure::erase_preferred_name_memory(
+                    &store, binding, request_id, owner.erasure_head,
+                    owner.erasure_latest_candidate, owner.capture_revision,
+                ).await?;
+                erasure::clean_receipt(locked.connection(), binding, &erased).await?;
+                if !cleaned.iter().any(|receipt| receipt.erasure_id == erased.erasure_id) {
+                    cleaned.push(erased.clone());
+                }
+                OwnerMemoryReceipt::Erased(erased)
+            },
         };
-        drop(locked);
+        locked.commit().await?;
+        erasure::acknowledge_committed(&pool, &store, binding, &cleaned).await?;
         Ok(receipt)
     })
     .await

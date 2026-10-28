@@ -16,6 +16,7 @@ use tower_sessions_sqlx_store::PostgresStore;
 use uuid::Uuid;
 
 mod authority;
+mod erasure;
 mod lifecycle;
 mod quota;
 mod tokens;
@@ -245,11 +246,15 @@ impl Fixture {
     }
 
     async fn inspect(&self) -> PersonalMemoryInspection {
+        self.inspect_as(self.owner).await
+    }
+
+    async fn inspect_as(&self, actor: UserId) -> PersonalMemoryInspection {
         personal_memory::inspect_personal_memory(
             self.state.sqlx_pool(),
             self.state.memory_stores().unwrap(),
             self.bear_id,
-            self.owner,
+            actor,
         )
         .await
         .unwrap()

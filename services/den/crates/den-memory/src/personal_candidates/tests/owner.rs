@@ -42,7 +42,7 @@ async fn owner_intake_requires_opt_in_and_never_creates_source_or_generic_conten
         candidate.source_binding_generation(),
         alice.authority_generation
     );
-    assert_eq!(candidate.preferred_name().as_str(), "Alice");
+    assert_eq!(candidate.preferred_name().unwrap().as_str(), "Alice");
     assert_eq!(generic_snapshot(&store).await, generic_before);
     assert!(
         crate::personal_facts::current_preferred_name(&store, &alice)

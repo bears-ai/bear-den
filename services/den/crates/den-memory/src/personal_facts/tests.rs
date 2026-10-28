@@ -22,6 +22,7 @@ use crate::{
 
 mod atomicity;
 mod authority;
+mod erasure;
 mod fixtures;
 mod isolation;
 mod lifecycle;

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE personal_memory_candidates SET state = 'withdrawn', value_text = ''\n          WHERE bear_id = ? AND person_entity_id = ? AND fact_type = 'preferred_name'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "e92cd5034f581bae8ad2a08267d197720acd30b8326a58601a479b9cede95fe7"
+}

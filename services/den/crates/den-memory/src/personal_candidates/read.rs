@@ -71,9 +71,11 @@ impl CandidateRow {
             "withdrawn" => CandidateState::Withdrawn,
             "quarantined" => CandidateState::Quarantined,
             "published" => CandidateState::Published,
+            "erased" => CandidateState::Erased,
             _ => return Err(invalid_candidate()),
         };
         let state = match (base_state, latest_review.map(|review| review.decision)) {
+            (CandidateState::Erased, _) => CandidateState::Erased,
             (CandidateState::Published, _) => CandidateState::Published,
             (_, Some(CandidateReviewDecision::Reject)) => CandidateState::Rejected,
             (_, Some(CandidateReviewDecision::Expire)) => CandidateState::Expired,
@@ -83,10 +85,15 @@ impl CandidateRow {
             // Withdrawal/import quarantine cannot be undone by a historical defer/resume.
             (base_state, _) => base_state,
         };
-        let preferred_name = PreferredName::new(&self.value_text)?;
-        if preferred_name.as_str() != self.value_text {
-            return Err(invalid_candidate());
-        }
+        let preferred_name = if state == CandidateState::Erased {
+            None
+        } else {
+            let name = PreferredName::new(&self.value_text)?;
+            if name.as_str() != self.value_text {
+                return Err(invalid_candidate());
+            }
+            Some(name)
+        };
         let source = match (
             self.source_kind.as_str(),
             self.source_conversation_id,
@@ -134,7 +141,10 @@ pub(crate) async fn get_inside(
         CandidateRow,
         r#"
         SELECT c.candidate_id, c.person_entity_id, c.fact_type, c.value_text, c.evidence_kind, c.retention,
-               CASE WHEN EXISTS (SELECT 1 FROM personal_memory_publications p
+               CASE WHEN EXISTS (SELECT 1 FROM personal_memory_erasures e
+                    WHERE e.bear_id = c.bear_id AND e.person_entity_id = c.person_entity_id
+                      AND c.sequence_no < e.sequence_no) THEN 'erased'
+                    WHEN EXISTS (SELECT 1 FROM personal_memory_publications p
                     WHERE p.bear_id = c.bear_id AND p.candidate_id = c.candidate_id)
                     THEN 'published' ELSE c.state END AS "state!: String",
                r.id AS "latest_review_id?: String", r.decision AS "latest_review_decision?: String",
@@ -192,7 +202,10 @@ pub async fn list_candidates(
         CandidateRow,
         r#"
         SELECT c.candidate_id, c.person_entity_id, c.fact_type, c.value_text, c.evidence_kind, c.retention,
-               CASE WHEN EXISTS (SELECT 1 FROM personal_memory_publications p
+               CASE WHEN EXISTS (SELECT 1 FROM personal_memory_erasures e
+                    WHERE e.bear_id = c.bear_id AND e.person_entity_id = c.person_entity_id
+                      AND c.sequence_no < e.sequence_no) THEN 'erased'
+                    WHEN EXISTS (SELECT 1 FROM personal_memory_publications p
                     WHERE p.bear_id = c.bear_id AND p.candidate_id = c.candidate_id)
                     THEN 'published' ELSE c.state END AS "state!: String",
                r.id AS "latest_review_id?: String", r.decision AS "latest_review_decision?: String",
