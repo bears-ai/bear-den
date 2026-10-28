@@ -19,6 +19,7 @@ mod authority;
 mod consent;
 mod deduplication;
 mod isolation;
+mod owner;
 
 mod reconnection;
 mod review;

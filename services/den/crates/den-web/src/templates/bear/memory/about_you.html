@@ -1,0 +1,89 @@
+{% extends "bear/_manage.html" %}
+{% set memory_subnav = "about_you" %}
+{% block manage %}
+{% include "bear/memory/_memory_nav.html" %}
+{% if error %}
+<div class="box" role="alert">
+  <h2>Check the current state</h2>
+  <p>{{ error | e }}</p>
+  <p><a href="/bear/{{ bear.slug | urlencode }}/memory/about-you">Refresh About you</a></p>
+</div>
+{% else %}
+<div class="box">
+  <h2>About you</h2>
+  <p>Manage your preferred name for this Bear. These controls show only your own requests and name; being a Bear admin does not grant access to another person's controls.</p>
+  <p class="form-hint">Saving here does not yet make your name available in model conversations. This page does not enable personal-context integration.</p>
+  <p class="form-hint">Forms expire after 15 minutes. Only the four most recent pages for this Bear session retain their forms; account-wide or server capacity may retire older forms sooner. A retired form is rejected, never assigned a new request.</p>
+</div>
+<div class="box">
+  <h3>Preferred-name capture</h3>
+  <p>Capture is <strong>{% if capture_enabled %}on{% else %}off{% endif %}</strong> for you on this Bear. It starts off. Enabling it lets you stage a request below; each name still needs your separate approval.</p>
+  <form id="capture" method="post" action="/bear/{{ bear.slug | urlencode }}/memory/about-you/capture">
+    <input type="hidden" name="token" value="{{ capture_token }}">
+    {% if capture_enabled %}
+    <p>Turning capture off withdraws pending requests and retracts your current preferred name. Turning it on again restores neither.</p>
+    <p><label><input type="checkbox" name="acknowledged" value="true" required> I want to turn capture off, withdraw pending requests, and retract my current name.</label></p>
+    <button type="submit">Turn capture off</button>
+    {% else %}
+    <p><label><input type="checkbox" name="acknowledged" value="true" required> I allow preferred-name requests for me on this Bear.</label></p>
+    <button type="submit">Enable capture</button>
+    {% endif %}
+  </form>
+</div>
+<div class="box">
+  <h3>Current preferred name</h3>
+  {% if current %}
+  <p>Status: <strong>{{ current.state | e }}</strong></p>
+  {% if current.name %}<p>{{ current.name | e }}</p>{% endif %}
+  {% if current.retract %}
+  <form id="retract" method="post" action="/bear/{{ bear.slug | urlencode }}/memory/about-you/retract">
+    <input type="hidden" name="token" value="{{ current.retract }}">
+    <p><label><input type="checkbox" name="acknowledged" value="true" required> Retract this current name. I understand retained history is not erased.</label></p>
+    <button type="submit">Retract preferred name</button>
+  </form>
+  {% endif %}
+  {% else %}
+  <p>No preferred name has been approved for you on this Bear.</p>
+  {% endif %}
+  <p class="form-hint">To correct a name, stage a new request below and approve it separately. Retraction stops use of that version; it is not deletion. Requests and decision history are retained. Explicit erasure is not available here.</p>
+</div>
+{% if request_token %}
+<div class="box">
+  <h3>Request a preferred name</h3>
+  <form id="request-name" method="post" action="/bear/{{ bear.slug | urlencode }}/memory/about-you/request">
+    <input type="hidden" name="token" value="{{ request_token }}">
+    <p><label for="preferred-name">What would you like to be called?</label></p>
+    <p><input id="preferred-name" name="name" type="text" required aria-describedby="preferred-name-hint" autocomplete="nickname"></p>
+    <p id="preferred-name-hint" class="form-hint">1–128 UTF-8 bytes, without control characters. Staging does not approve or replace your current name.</p>
+    <button type="submit">Stage preferred-name request</button>
+  </form>
+</div>
+{% endif %}
+<div class="box">
+  <h3>Recent preferred-name requests</h3>
+  <p class="form-hint">Showing up to the 100 most recent requests for your current identity on this Bear. Older requests may not be shown; this is not a complete history. A previous approval is not proof that its name is still active.</p>
+  {% for candidate in candidates %}
+  <section class="box" aria-label="Preferred-name request">
+    <h4>{{ candidate.name | e }}</h4>
+    <p>{{ candidate.state | e }}</p>
+    {% if candidate.approve %}
+    <form id="publish-{{ candidate.id | e }}" method="post" action="/bear/{{ bear.slug | urlencode }}/memory/about-you/publish">
+      <input type="hidden" name="token" value="{{ candidate.approve }}">
+      <p><label><input type="checkbox" name="acknowledged" value="true" required> I approve remembering this name for me on this Bear, replacing any current preferred name.</label></p>
+      <button type="submit">Approve preferred name</button>
+    </form>
+    {% endif %}
+    {% for review in candidate.reviews %}
+    <form id="{{ review.kind }}-{{ candidate.id | e }}" method="post" action="/bear/{{ bear.slug | urlencode }}/memory/about-you/review">
+      <input type="hidden" name="token" value="{{ review.token }}">
+      <button type="submit">{{ review.label | e }}</button>
+    </form>
+    {% endfor %}
+  </section>
+  {% else %}
+  <p>No requests in this recent window.</p>
+  {% endfor %}
+  <p class="form-hint">Rejecting or closing a request does not erase its retained history. Deferring does not approve a name; you can approve a pending or deferred request separately.</p>
+</div>
+{% endif %}
+{% endblock %}

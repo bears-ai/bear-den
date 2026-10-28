@@ -44,6 +44,7 @@ fn assert_preserved(
         original.source_conversation_id()
     );
     assert_eq!(actual.source_memory_id(), original.source_memory_id());
+    assert_eq!(actual.source(), original.source());
     assert_eq!(actual.source_user_id(), original.source_user_id());
     assert_eq!(
         actual.source_binding_generation(),
@@ -182,6 +183,25 @@ async fn assert_source_unchanged(
         let row = rows.iter().find(|row| row.id() == original.id()).unwrap();
         assert_preserved(row, original, original.state());
     }
+}
+
+// Keep the additional intake future out of the already-large round-trip state machine.
+fn stage_owner_request<'a>(
+    store: &'a den_memory::BearMemoryStore,
+    binding: &'a den_memory::AuthenticatedUserEntity,
+    request_id: Uuid,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = PersonalCandidate> + Send + 'a>> {
+    Box::pin(async move {
+        den_memory::personal_candidates::stage_owner_preferred_name(
+            store,
+            &den_memory::personal_candidates::VerifiedOwnerSource::for_authorized_owner_request(
+                binding, request_id,
+            ),
+            PreferredName::new("Direct owner request preserved across move").unwrap(),
+        )
+        .await
+        .unwrap()
+    })
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -327,12 +347,27 @@ async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_p
         assert_eq!(reviewed.latest_review_id(), Some(receipt.review_id));
         originals.push(reviewed);
     }
+    let direct_request_id = Uuid::new_v4();
+    let direct = stage_owner_request(&source, &current, direct_request_id).await;
+    originals.push(direct);
     for row in &originals {
         assert_eq!(row.person_entity_id(), alice.entity_id());
         assert_eq!(row.source_bear_id(), fixture.bear_id);
         assert_eq!(row.source_user_id(), fixture.actor);
-        assert_eq!(row.source_conversation_id(), conversation);
-        assert_eq!(row.source_memory_id().to_string(), note.memory_id);
+        match row.source() {
+            den_memory::personal_candidates::CandidateSource::Conversation {
+                conversation_id,
+                memory_id,
+            } => {
+                assert_eq!(conversation_id, conversation);
+                assert_eq!(memory_id.to_string(), note.memory_id);
+            }
+            den_memory::personal_candidates::CandidateSource::OwnerRequest { request_id } => {
+                assert_eq!(request_id, direct_request_id);
+                assert!(row.source_conversation_id().is_none());
+                assert!(row.source_memory_id().is_none());
+            }
+        }
     }
 
     assert_source_unchanged(&source, &current, &originals, publication).await;
@@ -357,6 +392,7 @@ async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_p
     assert_eq!(response.status(), StatusCode::OK);
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     let (manifest, memory) = crate::bear::settings::bundle_io::read_bear_bundle(&bytes).unwrap();
+    assert_eq!(manifest.version, 5);
     let identities = core::list_identities(&source).await.unwrap();
     let original_identity = identities
         .iter()
@@ -641,8 +677,8 @@ async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_p
     .is_err());
     let replay_proof = VerifiedPersonalSource::for_authorized_conversation(
         &owner,
-        imported_candidate.source_conversation_id(),
-        imported_candidate.source_memory_id(),
+        imported_candidate.source_conversation_id().unwrap(),
+        imported_candidate.source_memory_id().unwrap(),
     );
     assert_eq!(
         publish_preferred_name(&destination, &replay_proof, publication.candidate_id, None)
@@ -710,8 +746,11 @@ async fn real_bundle_import_quarantines_candidates_without_rewriting_person_or_p
         fresh.source_binding_generation(),
         receipt.resulting_generation
     );
-    assert_eq!(fresh.source_conversation_id(), conversation);
-    assert_eq!(fresh.source_memory_id().to_string(), note.memory_id);
+    assert_eq!(fresh.source_conversation_id(), Some(conversation));
+    assert_eq!(
+        fresh.source_memory_id().unwrap().to_string(),
+        note.memory_id
+    );
     assert!(capture_enabled(&destination, &owner).await.unwrap());
     let rows = list_candidates(&destination, &owner, 100).await.unwrap();
     assert_eq!(rows.len(), originals.len() + 1);

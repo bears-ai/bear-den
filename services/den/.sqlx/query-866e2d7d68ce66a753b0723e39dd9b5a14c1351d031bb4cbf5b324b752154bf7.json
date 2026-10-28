@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "CREATE TEMP TABLE personal_memory_candidates AS\n              SELECT candidate_id, bear_id, person_entity_id, sequence_no, fact_type, value_text,\n                  evidence_kind, retention, source_conversation_id, source_memory_id,\n                  source_bear_id, source_user_id, source_binding_generation, state, created_at,\n                  withdrawn_at, withdrawn_on_bear_id, withdrawn_by_user_id\n              FROM main.personal_memory_candidates",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "866e2d7d68ce66a753b0723e39dd9b5a14c1351d031bb4cbf5b324b752154bf7"
+}

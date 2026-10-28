@@ -27,8 +27,11 @@ async fn stages_only_for_the_canonical_owner_without_hat_sharing_or_publication(
         .unwrap();
     let binding = fixture.binding(fixture.owner).await;
     assert_eq!(candidate.person_entity_id(), binding.entity_id());
-    assert_eq!(candidate.source_conversation_id(), fixture.conversation);
-    assert_eq!(candidate.source_memory_id(), fixture.source);
+    assert_eq!(
+        candidate.source_conversation_id(),
+        Some(fixture.conversation)
+    );
+    assert_eq!(candidate.source_memory_id(), Some(fixture.source));
     let after = fetch_record_by_id(&store, &fixture.source.to_string())
         .await
         .unwrap()

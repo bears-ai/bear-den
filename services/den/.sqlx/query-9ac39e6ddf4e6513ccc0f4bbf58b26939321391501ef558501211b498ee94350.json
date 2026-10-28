@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "CREATE UNIQUE INDEX IF NOT EXISTS idx_personal_memory_candidates_pending\n              ON personal_memory_candidates (bear_id, person_entity_id, source_conversation_id, source_memory_id, fact_type, value_text)\n              WHERE state = 'pending'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "9ac39e6ddf4e6513ccc0f4bbf58b26939321391501ef558501211b498ee94350"
+}

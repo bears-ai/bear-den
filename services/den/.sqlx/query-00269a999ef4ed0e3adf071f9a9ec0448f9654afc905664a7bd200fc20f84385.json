@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DROP TABLE main.personal_memory_settings",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "00269a999ef4ed0e3adf071f9a9ec0448f9654afc905664a7bd200fc20f84385"
+}

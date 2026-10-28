@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "CREATE INDEX IF NOT EXISTS idx_personal_memory_candidates_owner\n              ON personal_memory_candidates (bear_id, person_entity_id, sequence_no)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "e19680d705fc2bd6cacf319ddb82c0df68a4e2dd0bde58896a8e420b475332d4"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "CREATE TABLE IF NOT EXISTS main.personal_memory_settings (\n            bear_id TEXT NOT NULL,\n            person_entity_id TEXT NOT NULL,\n            capture_enabled INTEGER NOT NULL CHECK (capture_enabled IN (0, 1)),\n            capture_revision INTEGER NOT NULL DEFAULT 0 CHECK (capture_revision >= 0),\n            authority_generation INTEGER NOT NULL CHECK (authority_generation > 0),\n            updated_at TEXT NOT NULL,\n            updated_on_bear_id TEXT NOT NULL,\n            updated_by_user_id INTEGER NULL,\n            PRIMARY KEY (bear_id, person_entity_id)\n        )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "5675ea400466bd90e4760d9944a81d1667bf91b8a4bec08f361a94ad05b6854d"
+}

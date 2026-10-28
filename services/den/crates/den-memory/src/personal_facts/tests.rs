@@ -25,6 +25,7 @@ mod authority;
 mod fixtures;
 mod isolation;
 mod lifecycle;
+mod owner;
 mod publication;
 mod revision;
 mod support;

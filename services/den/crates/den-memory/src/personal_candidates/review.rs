@@ -5,14 +5,15 @@ use super::{
     authority::{denied, write_transaction},
     read::{get_inside, withdraw_inside},
     settings::enabled,
-    source::source_is_eligible,
+    source::candidate_source_is_eligible,
     CandidateReviewDecision, CandidateReviewId, CandidateReviewReceipt, CandidateState,
     PersonalCandidateId,
 };
 use crate::{clock::now_rfc3339, AuthenticatedUserEntity, BearMemoryStore};
 
-/// Trusted owner decision only. The service must lock canonical source ownership through
-/// Defer/Resume; SQLite additionally checks current consent and the exact live source note.
+/// Trusted owner decision only. The service must lock membership and conversation-source
+/// ownership through Defer/Resume; SQLite checks current consent, origin generation and, for
+/// conversation evidence only, the exact live source note.
 /// Reject/Expire close unpublished candidates without requiring their historical source.
 ///
 /// A matching latest action returns its original immutable receipt, even after withdrawal,
@@ -64,13 +65,7 @@ pub async fn review_candidate(
                     binding.authority_generation,
                 )
                 .await?
-                || !source_is_eligible(
-                    &mut tx,
-                    &bear_id,
-                    candidate.source_conversation_id(),
-                    candidate.source_memory_id(),
-                )
-                .await?
+                || !candidate_source_is_eligible(&mut tx, &bear_id, candidate.source()).await?
             {
                 return Err(denied());
             }

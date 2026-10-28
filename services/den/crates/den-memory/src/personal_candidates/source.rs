@@ -2,6 +2,23 @@ use den_core::DenError;
 use sqlx::SqliteConnection;
 use uuid::Uuid;
 
+/// Owner requests have no note to validate. Their authority is the protected candidate's
+/// actor/host/generation plus the caller's verified current binding and consent, checked by
+/// publication/review. Generic note metadata can never select this provenance variant.
+pub(crate) async fn candidate_source_is_eligible(
+    connection: &mut SqliteConnection,
+    bear_id: &str,
+    source: super::CandidateSource,
+) -> Result<bool, DenError> {
+    match source {
+        super::CandidateSource::Conversation {
+            conversation_id,
+            memory_id,
+        } => source_is_eligible(connection, bear_id, conversation_id, memory_id).await,
+        super::CandidateSource::OwnerRequest { .. } => Ok(true),
+    }
+}
+
 /// Source evidence is an exact current note, never a path, body, or identity claim.
 pub(crate) async fn source_is_eligible(
     connection: &mut SqliteConnection,

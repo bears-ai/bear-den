@@ -5,8 +5,11 @@ use den_core::{
     DenError,
 };
 use den_memory::{
-    personal_candidates::{self, CandidateState, VerifiedPersonalSource},
-    personal_facts, resolve_authenticated_user_entity, MemoryStoreManager,
+    personal_candidates::{
+        self, CandidateSource, CandidateState, VerifiedOwnerSource, VerifiedPersonalSource,
+    },
+    personal_facts, resolve_authenticated_user_entity, AuthenticatedUserEntity, BearMemoryStore,
+    MemoryStoreManager,
 };
 use sqlx::PgPool;
 
@@ -16,8 +19,9 @@ use super::{authority, PersonalCandidateId, PersonalFactHead, PersonalFactId, Pu
 ///
 /// `user_id` must come from the trusted server principal, never model/client-selected
 /// identity. The candidate ID is only a locator; its protected source supplies provenance.
-/// New decisions require current membership, binding, and an owned active conversation.
-/// Memory rechecks capture, candidate generation, exact source eligibility and head CAS
+/// New decisions require current membership and binding. Conversation evidence additionally
+/// requires an owned active conversation; direct owner requests never invent conversation rights.
+/// Memory rechecks capture, candidate generation, typed source eligibility and head CAS
 /// while atomically publishing the fact and invalidating any previous version.
 ///
 /// A published candidate replays its immutable receipt without requiring its original
@@ -39,26 +43,9 @@ pub async fn publish_preferred_name(
         let mut locked = authority::lock_member(&pool, bear_id, user_id).await?;
         let store = stores.store_for_bear(bear_id.as_uuid()).await?;
         let binding = resolve_authenticated_user_entity(&store, user_id).await?;
-        let candidate = personal_candidates::get_candidate(&store, &binding, candidate_id)
-            .await?
-            .ok_or_else(|| {
-                DenError::Authorization(
-                    "Personal-memory approval requires an owned candidate.".into(),
-                )
-            })?;
-        if candidate.state() != CandidateState::Published {
-            locked
-                .lock_owned_conversation(candidate.source_conversation_id())
-                .await?;
-        }
-        let source = VerifiedPersonalSource::for_authorized_conversation(
-            &binding,
-            candidate.source_conversation_id(),
-            candidate.source_memory_id(),
-        );
-        let published =
-            personal_facts::publish_preferred_name(&store, &source, candidate_id, expected_head)
-                .await;
+        let published = publish_for_binding(
+            &mut locked, &store, &binding, candidate_id, expected_head,
+        ).await;
         drop(locked);
         published
     })
@@ -69,6 +56,35 @@ pub async fn publish_preferred_name(
                 .into(),
         )
     })?
+}
+
+pub(super) async fn publish_for_binding(
+    locked: &mut authority::LockedMember,
+    store: &BearMemoryStore,
+    binding: &AuthenticatedUserEntity,
+    candidate_id: PersonalCandidateId,
+    expected_head: Option<PersonalFactId>,
+) -> Result<PublicationReceipt, DenError> {
+    let candidate = personal_candidates::get_candidate(store, binding, candidate_id)
+        .await?
+        .ok_or_else(|| {
+            DenError::Authorization("Personal-memory approval requires an owned candidate.".into())
+        })?;
+    let source = match candidate.source() {
+        CandidateSource::Conversation {
+            conversation_id,
+            memory_id,
+        } => {
+            if candidate.state() != CandidateState::Published {
+                locked.lock_owned_conversation(conversation_id).await?;
+            }
+            VerifiedPersonalSource::for_authorized_conversation(binding, conversation_id, memory_id)
+        }
+        CandidateSource::OwnerRequest { request_id } => VerifiedPersonalSource::from(
+            &VerifiedOwnerSource::for_authorized_owner_request(binding, request_id),
+        ),
+    };
+    personal_facts::publish_preferred_name(store, &source, candidate_id, expected_head).await
 }
 
 /// Read the authenticated member's current head, including retracted/suppressed states.

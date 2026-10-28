@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "CREATE TEMP TABLE personal_memory_settings AS\n          SELECT bear_id, person_entity_id, capture_enabled, authority_generation,\n                 updated_at, updated_on_bear_id, updated_by_user_id\n          FROM main.personal_memory_settings",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "ec861f73a0ea2aca5fe0fdbfa8f841ff6c7ca0fa86b6f33b56b6e442e272561c"
+}

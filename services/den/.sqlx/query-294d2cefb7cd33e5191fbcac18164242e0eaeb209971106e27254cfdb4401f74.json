@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            CREATE TABLE IF NOT EXISTS main.personal_memory_candidates (\n                candidate_id TEXT NOT NULL PRIMARY KEY,\n                bear_id TEXT NOT NULL,\n                person_entity_id TEXT NOT NULL,\n                sequence_no INTEGER NOT NULL,\n                fact_type TEXT NOT NULL CHECK (fact_type = 'preferred_name'),\n                value_text TEXT NOT NULL,\n                evidence_kind TEXT NOT NULL CHECK (evidence_kind = 'explicit_user_request'),\n                retention TEXT NOT NULL CHECK (retention = 'durable'),\n                source_kind TEXT NOT NULL DEFAULT 'conversation' CHECK (source_kind IN ('conversation', 'owner_request')),\n                source_conversation_id TEXT NULL,\n                source_memory_id TEXT NULL,\n                source_request_id TEXT NULL,\n                source_bear_id TEXT NOT NULL,\n                source_user_id INTEGER NOT NULL,\n                source_binding_generation INTEGER NOT NULL,\n                state TEXT NOT NULL CHECK (state IN ('pending', 'withdrawn', 'quarantined')),\n                created_at TEXT NOT NULL,\n                withdrawn_at TEXT NULL,\n                withdrawn_on_bear_id TEXT NULL,\n                withdrawn_by_user_id INTEGER NULL,\n                CHECK (\n                    (source_kind = 'conversation' AND source_conversation_id IS NOT NULL\n                     AND source_memory_id IS NOT NULL AND source_request_id IS NULL)\n                    OR (source_kind = 'owner_request' AND source_conversation_id IS NULL\n                        AND source_memory_id IS NULL AND source_request_id IS NOT NULL)\n                ),\n                UNIQUE (bear_id, source_request_id)\n            )\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "294d2cefb7cd33e5191fbcac18164242e0eaeb209971106e27254cfdb4401f74"
+}

@@ -6,6 +6,8 @@
 
 mod authority;
 mod context;
+mod intake;
+mod management;
 mod publication;
 mod review;
 #[cfg(test)]
@@ -28,10 +30,15 @@ pub use context::{
 };
 pub use den_memory::{
     personal_candidates::{
-        CandidateReviewDecision, CandidateReviewId, CandidateReviewReceipt, PersonalCandidate,
-        PersonalCandidateId, PreferredName,
+        CandidateReviewDecision, CandidateReviewId, CandidateReviewReceipt, CandidateSource,
+        CandidateState, PersonalCandidate, PersonalCandidateId, PreferredName,
     },
     personal_facts::{PersonalFactHead, PersonalFactId, PersonalFactState, PublicationReceipt},
+};
+pub use intake::stage_owner_preferred_name;
+pub use management::{
+    apply_owner_memory_action, inspect_personal_memory, OwnerMemoryAction, OwnerMemoryReceipt,
+    PersonalMemoryInspection, PersonalMemoryOwner,
 };
 pub use publication::{current_preferred_name, publish_preferred_name, retract_preferred_name};
 pub use review::review_candidate;

@@ -8,8 +8,8 @@ use uuid::Uuid;
 use super::{
     authority::{ensure_current, write_transaction},
     types::{
-        CandidateReviewDecision, CandidateReviewId, CandidateReviewReceipt, CandidateState,
-        PersonalCandidate, PersonalCandidateId, PreferredName,
+        CandidateReviewDecision, CandidateReviewId, CandidateReviewReceipt, CandidateSource,
+        CandidateState, PersonalCandidate, PersonalCandidateId, PreferredName,
     },
 };
 use crate::{clock::now_rfc3339, AuthenticatedUserEntity, BearMemoryStore};
@@ -25,8 +25,10 @@ pub(super) struct CandidateRow {
     state: String,
     latest_review_id: Option<String>,
     latest_review_decision: Option<String>,
-    source_conversation_id: String,
-    source_memory_id: String,
+    source_kind: String,
+    source_conversation_id: Option<String>,
+    source_memory_id: Option<String>,
+    source_request_id: Option<String>,
     source_bear_id: String,
     source_user_id: i32,
     source_binding_generation: i64,
@@ -85,16 +87,31 @@ impl CandidateRow {
         if preferred_name.as_str() != self.value_text {
             return Err(invalid_candidate());
         }
+        let source = match (
+            self.source_kind.as_str(),
+            self.source_conversation_id,
+            self.source_memory_id,
+            self.source_request_id,
+        ) {
+            ("conversation", Some(conversation), Some(memory), None) => {
+                CandidateSource::Conversation {
+                    conversation_id: Uuid::parse_str(&conversation)
+                        .map_err(|_| invalid_candidate())?,
+                    memory_id: Uuid::parse_str(&memory).map_err(|_| invalid_candidate())?,
+                }
+            }
+            ("owner_request", None, None, Some(request)) => CandidateSource::OwnerRequest {
+                request_id: Uuid::parse_str(&request).map_err(|_| invalid_candidate())?,
+            },
+            _ => return Err(invalid_candidate()),
+        };
         Ok(PersonalCandidate {
             id,
             person_entity_id: self.person_entity_id,
             preferred_name,
             state,
             latest_review,
-            source_conversation_id: Uuid::parse_str(&self.source_conversation_id)
-                .map_err(|_| invalid_candidate())?,
-            source_memory_id: Uuid::parse_str(&self.source_memory_id)
-                .map_err(|_| invalid_candidate())?,
+            source,
             source_bear_id: BearId::new(
                 Uuid::parse_str(&self.source_bear_id).map_err(|_| invalid_candidate())?,
             ),
@@ -121,7 +138,9 @@ pub(crate) async fn get_inside(
                     WHERE p.bear_id = c.bear_id AND p.candidate_id = c.candidate_id)
                     THEN 'published' ELSE c.state END AS "state!: String",
                r.id AS "latest_review_id?: String", r.decision AS "latest_review_decision?: String",
-               c.source_conversation_id, c.source_memory_id, c.source_bear_id,
+               c.source_kind, c.source_conversation_id AS "source_conversation_id?: String",
+               c.source_memory_id AS "source_memory_id?: String", c.source_request_id AS "source_request_id?: String",
+               c.source_bear_id,
                c.source_user_id AS "source_user_id!: i32", c.source_binding_generation, c.created_at, c.withdrawn_at
         FROM personal_memory_candidates c
         LEFT JOIN personal_memory_candidate_reviews r ON r.id = (
@@ -177,7 +196,9 @@ pub async fn list_candidates(
                     WHERE p.bear_id = c.bear_id AND p.candidate_id = c.candidate_id)
                     THEN 'published' ELSE c.state END AS "state!: String",
                r.id AS "latest_review_id?: String", r.decision AS "latest_review_decision?: String",
-               c.source_conversation_id, c.source_memory_id, c.source_bear_id,
+               c.source_kind, c.source_conversation_id AS "source_conversation_id?: String",
+               c.source_memory_id AS "source_memory_id?: String", c.source_request_id AS "source_request_id?: String",
+               c.source_bear_id,
                c.source_user_id AS "source_user_id!: i32", c.source_binding_generation, c.created_at, c.withdrawn_at
         FROM personal_memory_candidates c
         LEFT JOIN personal_memory_candidate_reviews r ON r.id = (

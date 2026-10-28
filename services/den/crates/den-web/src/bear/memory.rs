@@ -65,6 +65,7 @@ mod usability_tests;
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .merge(super::about_you::router())
         .route_with_tsr("/bear/{slug}/memory", get(dashboard_view))
         .route_with_tsr(
             "/bear/{slug}/memory/review-queue/clear",

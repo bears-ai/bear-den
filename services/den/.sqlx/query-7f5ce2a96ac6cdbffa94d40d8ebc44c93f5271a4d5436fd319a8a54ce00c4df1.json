@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE bear_sequence SET next_sequence = next_sequence + 1 WHERE id = 1\n           RETURNING next_sequence - 1 AS \"sequence_no!: i64\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "sequence_no!: i64",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7f5ce2a96ac6cdbffa94d40d8ebc44c93f5271a4d5436fd319a8a54ce00c4df1"
+}

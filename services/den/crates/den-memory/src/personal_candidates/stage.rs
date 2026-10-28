@@ -5,7 +5,10 @@ use super::{
     authority::{denied, write_transaction},
     read::get_inside,
     settings::enabled,
-    types::{PersonalCandidate, PersonalCandidateId, PreferredName, VerifiedPersonalSource},
+    types::{
+        CandidateSource, PersonalCandidate, PersonalCandidateId, PreferredName,
+        VerifiedPersonalSource,
+    },
 };
 use crate::{clock::now_rfc3339, BearMemoryStore};
 
@@ -16,6 +19,13 @@ pub async fn stage_preferred_name(
     source: &VerifiedPersonalSource,
     name: PreferredName,
 ) -> Result<PersonalCandidate, DenError> {
+    let CandidateSource::Conversation {
+        conversation_id,
+        memory_id,
+    } = source.source
+    else {
+        return Err(denied());
+    };
     let binding = &source.binding;
     let mut tx = write_transaction(store, binding).await?;
     let bear_id = store.bear_id().to_string();
@@ -32,24 +42,20 @@ pub async fn stage_preferred_name(
             "Personal-memory candidate capture is disabled.".into(),
         ));
     }
-    let conversation_id = source.conversation_id.to_string();
-    let source_memory_id = source.memory_id.to_string();
-    let eligible = super::source::source_is_eligible(
-        &mut tx,
-        &bear_id,
-        source.conversation_id,
-        source.memory_id,
-    )
-    .await?;
+    let source_memory_id = memory_id.to_string();
+    let eligible =
+        super::source::source_is_eligible(&mut tx, &bear_id, conversation_id, memory_id).await?;
     if !eligible {
         return Err(denied());
     }
+    let conversation_id = conversation_id.to_string();
     let value_text = name.as_str();
     let previous = sqlx::query_scalar!(
         r"
         SELECT candidate_id FROM personal_memory_candidates
         WHERE bear_id = ? AND person_entity_id = ? AND source_conversation_id = ?
-          AND source_memory_id = ? AND fact_type = 'preferred_name' AND value_text = ? AND state = 'pending'
+          AND source_memory_id = ? AND source_kind = 'conversation'
+          AND fact_type = 'preferred_name' AND value_text = ? AND state = 'pending'
         ",
         bear_id,
         person_entity_id,

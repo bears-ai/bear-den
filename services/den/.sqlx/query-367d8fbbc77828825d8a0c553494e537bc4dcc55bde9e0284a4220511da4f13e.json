@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT candidate_id FROM personal_memory_candidates WHERE bear_id = ? AND source_request_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "candidate_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "367d8fbbc77828825d8a0c553494e537bc4dcc55bde9e0284a4220511da4f13e"
+}

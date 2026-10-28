@@ -9,14 +9,14 @@ use super::{
 use crate::{
     clock::now_rfc3339,
     personal_candidates::{
-        enabled, get_inside, source_is_eligible, write_transaction, CandidateState,
+        candidate_source_is_eligible, enabled, get_inside, write_transaction, CandidateState,
         PersonalCandidateId, VerifiedPersonalSource,
     },
     BearMemoryStore,
 };
 
 /// Trusted explicit owner approval only. There is no automatic Curate/model caller.
-/// The service keeps current membership and canonical source ownership locked through this
+/// The service keeps current membership and any conversation-source ownership locked through this
 /// transaction. A retry returns its immutable original decision, never reactivates old content.
 pub async fn publish_preferred_name(
     store: &BearMemoryStore,
@@ -51,8 +51,7 @@ pub async fn publish_preferred_name(
     ) || candidate.source_bear_id() != binding.bear_id()
         || candidate.source_user_id() != binding.user_id()
         || candidate.source_binding_generation() != binding.authority_generation
-        || candidate.source_conversation_id() != source.conversation_id
-        || candidate.source_memory_id() != source.memory_id
+        || candidate.source() != source.source
         || !enabled(
             &mut tx,
             &bear_id,
@@ -60,7 +59,7 @@ pub async fn publish_preferred_name(
             binding.authority_generation,
         )
         .await?
-        || !source_is_eligible(&mut tx, &bear_id, source.conversation_id, source.memory_id).await?
+        || !candidate_source_is_eligible(&mut tx, &bear_id, source.source).await?
     {
         return Err(invalid());
     }

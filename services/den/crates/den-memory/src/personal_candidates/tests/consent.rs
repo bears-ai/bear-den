@@ -47,8 +47,11 @@ async fn explicit_opt_in_records_current_epoch_and_minimized_typed_provenance() 
     assert_eq!(candidate.fact_type(), CandidateFactType::PreferredName);
     assert_eq!(candidate.evidence(), CandidateEvidence::ExplicitUserRequest);
     assert_eq!(candidate.retention(), CandidateRetention::Durable);
-    assert_eq!(candidate.source_conversation_id(), source.conversation);
-    assert_eq!(candidate.source_memory_id(), source.memory);
+    assert_eq!(
+        candidate.source_conversation_id(),
+        Some(source.conversation)
+    );
+    assert_eq!(candidate.source_memory_id(), Some(source.memory));
     assert_eq!(candidate.source_bear_id(), alice.bear_id());
     assert_eq!(candidate.source_user_id(), ALICE);
     assert_eq!(
@@ -122,7 +125,7 @@ async fn opt_out_withdraws_pending_and_quarantined_only_for_this_person_without_
     assert_eq!(state(&store, bobs.id()).await, CandidateState::Pending);
     assert!(capture_enabled(&store, &bob).await.unwrap());
     set_capture_enabled(&store, &alice, true).await.unwrap();
-    assert_eq!(next_sequence(&store).await, sequence);
+    assert_eq!(next_sequence(&store).await, sequence + 2);
     let history = list_candidates(&store, &alice, 100).await.unwrap();
     assert_eq!(history.len(), 3);
     assert!(history
@@ -192,4 +195,116 @@ async fn lists_are_newest_first_bounded_and_include_protected_history() {
     let bounded = list_candidates(&store, &alice, u32::MAX).await.unwrap();
     assert_eq!(bounded.len(), 100);
     assert_eq!(bounded.last().unwrap().id(), ids[3]);
+}
+
+#[tokio::test]
+async fn capture_revision_cas_rejects_stale_forms_after_disabled_and_enabled_aba() {
+    let store = new_test_store().await;
+    let alice = person(&store, ALICE).await;
+    let initial = capture_setting(&store, &alice).await.unwrap();
+    assert!(!initial.enabled);
+    assert_eq!(initial.revision.get(), 0);
+    assert!(PersonalCaptureRevision::try_from(-1).is_err());
+    let before = snapshot(&store).await;
+    assert_eq!(capture_setting(&store, &alice).await.unwrap(), initial);
+    assert_eq!(snapshot(&store).await, before);
+
+    set_capture_enabled_if_current(&store, &alice, true, initial.revision)
+        .await
+        .unwrap();
+    let first_enabled = capture_setting(&store, &alice).await.unwrap();
+    assert!(first_enabled.enabled);
+    assert!(first_enabled.revision.get() > initial.revision.get());
+    let before = snapshot(&store).await;
+    assert_denied(set_capture_enabled_if_current(&store, &alice, true, initial.revision).await);
+    assert_eq!(snapshot(&store).await, before);
+    assert_eq!(
+        capture_setting(&store, &alice).await.unwrap(),
+        first_enabled
+    );
+
+    set_capture_enabled_if_current(&store, &alice, false, first_enabled.revision)
+        .await
+        .unwrap();
+    let disabled = capture_setting(&store, &alice).await.unwrap();
+    assert!(!disabled.enabled);
+    assert!(disabled.revision.get() > first_enabled.revision.get());
+    assert_denied(set_capture_enabled_if_current(&store, &alice, true, initial.revision).await);
+    assert_eq!(capture_setting(&store, &alice).await.unwrap(), disabled);
+    set_capture_enabled_if_current(&store, &alice, true, disabled.revision)
+        .await
+        .unwrap();
+    let reenabled = capture_setting(&store, &alice).await.unwrap();
+    assert!(reenabled.enabled);
+    assert!(reenabled.revision.get() > disabled.revision.get());
+    let before = snapshot(&store).await;
+    assert_denied(
+        set_capture_enabled_if_current(&store, &alice, false, first_enabled.revision).await,
+    );
+    assert_eq!(snapshot(&store).await, before);
+    assert_eq!(capture_setting(&store, &alice).await.unwrap(), reenabled);
+}
+
+#[tokio::test]
+async fn unconditional_capture_writes_always_advance_only_the_owners_revision() {
+    let store = new_test_store().await;
+    let alice = opted_in(&store, ALICE).await;
+    let bob = opted_in(&store, BOB).await;
+    let bobs_setting = capture_setting(&store, &bob).await.unwrap();
+    let mut previous = capture_setting(&store, &alice).await.unwrap();
+    for enabled in [true, false, false, true, true] {
+        let sequence = next_sequence(&store).await;
+        set_capture_enabled(&store, &alice, enabled).await.unwrap();
+        let current = capture_setting(&store, &alice).await.unwrap();
+        assert_eq!(current.enabled, enabled);
+        assert_eq!(current.revision.get(), sequence);
+        assert!(current.revision.get() > previous.revision.get());
+        assert_eq!(next_sequence(&store).await, sequence + 1);
+        assert_eq!(capture_setting(&store, &bob).await.unwrap(), bobs_setting);
+        previous = current;
+    }
+}
+
+#[tokio::test]
+async fn concurrent_capture_cas_writers_cannot_both_consume_the_same_revision() {
+    let store = new_test_store().await;
+    let alice = person(&store, ALICE).await;
+    let initial = capture_setting(&store, &alice).await.unwrap();
+    let sequence = next_sequence(&store).await;
+    let (first, second) = tokio::join!(
+        set_capture_enabled_if_current(&store, &alice, true, initial.revision),
+        set_capture_enabled_if_current(&store, &alice, true, initial.revision),
+    );
+    match (first, second) {
+        (Ok(()), rejected) | (rejected, Ok(())) => assert_denied(rejected),
+        _ => panic!("exactly one consent write must consume a revision"),
+    }
+    assert!(capture_setting(&store, &alice).await.unwrap().enabled);
+    assert_eq!(next_sequence(&store).await, sequence + 1);
+}
+
+#[tokio::test]
+async fn old_generation_consent_is_disabled_without_resetting_its_head_revision() {
+    let store = new_test_store().await;
+    let alice = opted_in(&store, ALICE).await;
+    let old = capture_setting(&store, &alice).await.unwrap();
+    revoke(&store, &alice).await;
+    assert_denied(capture_setting(&store, &alice).await);
+    assert_denied(set_capture_enabled_if_current(&store, &alice, true, old.revision).await);
+    let fresh = reconnect(
+        &store,
+        alice.entity_id(),
+        ALICE,
+        ReplacementConsent::NoReplacement,
+    )
+    .await;
+    let current = capture_setting(&store, &fresh).await.unwrap();
+    assert!(!current.enabled);
+    assert_eq!(current.revision, old.revision);
+    set_capture_enabled_if_current(&store, &fresh, true, current.revision)
+        .await
+        .unwrap();
+    let renewed = capture_setting(&store, &fresh).await.unwrap();
+    assert!(renewed.enabled);
+    assert!(renewed.revision.get() > old.revision.get());
 }

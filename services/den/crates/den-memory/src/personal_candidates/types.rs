@@ -8,6 +8,36 @@ use uuid::Uuid;
 
 use crate::AuthenticatedUserEntity;
 
+/// Opaque owner-setting CAS token, allocated from the Bear's sequence on every consent write.
+/// Zero denotes an absent or migrated pre-revision setting, never an opt-in grant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PersonalCaptureRevision(i64);
+
+impl PersonalCaptureRevision {
+    pub fn get(self) -> i64 {
+        self.0
+    }
+}
+
+impl TryFrom<i64> for PersonalCaptureRevision {
+    type Error = DenError;
+
+    fn try_from(value: i64) -> Result<Self, Self::Error> {
+        if value < 0 {
+            return Err(DenError::ValidationError(
+                "Personal-memory capture revisions must be nonnegative.".into(),
+            ));
+        }
+        Ok(Self(value))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CaptureSetting {
+    pub enabled: bool,
+    pub revision: PersonalCaptureRevision,
+}
+
 /// Deliberately not serializable or automatically printable into diagnostics/model context.
 #[derive(Clone, PartialEq, Eq)]
 pub struct PreferredName(String);
@@ -122,14 +152,14 @@ pub enum CandidateState {
     Published,
 }
 
-/// Only construct at the trusted service boundary after verifying the canonical conversation
-/// belongs to the authenticated principal. Keep its source/rights locks through staging.
-/// The SQLite boundary rechecks both the identity snapshot and exact source-note membership.
+/// Only construct at the trusted service boundary with current membership locks held.
+/// Conversation provenance additionally requires verified canonical conversation ownership;
+/// direct settings provenance comes only from the distinct `VerifiedOwnerSource` boundary.
+/// SQLite rechecks the identity snapshot, consent and any exact source-note membership.
 #[derive(Clone)]
 pub struct VerifiedPersonalSource {
     pub(crate) binding: AuthenticatedUserEntity,
-    pub(crate) conversation_id: Uuid,
-    pub(crate) memory_id: Uuid,
+    pub(crate) source: CandidateSource,
 }
 
 impl VerifiedPersonalSource {
@@ -140,10 +170,64 @@ impl VerifiedPersonalSource {
     ) -> Self {
         Self {
             binding: binding.clone(),
-            conversation_id,
-            memory_id: source_memory_id,
+            source: CandidateSource::Conversation {
+                conversation_id,
+                memory_id: source_memory_id,
+            },
         }
     }
+}
+
+/// Direct human-settings authority, constructed only after the service locks current membership.
+/// A request locator is not itself a grant; SQLite rechecks the exact binding and capture consent.
+#[derive(Clone)]
+pub struct VerifiedOwnerSource {
+    pub(crate) binding: AuthenticatedUserEntity,
+    pub(crate) request_id: Uuid,
+    pub(crate) capture_revision: Option<PersonalCaptureRevision>,
+}
+
+impl VerifiedOwnerSource {
+    pub fn for_authorized_owner_request(
+        binding: &AuthenticatedUserEntity,
+        request_id: Uuid,
+    ) -> Self {
+        Self {
+            binding: binding.clone(),
+            request_id,
+            capture_revision: None,
+        }
+    }
+
+    /// Bind a management request to the consent snapshot shown to the owner.
+    /// Staging checks this revision before either replaying or inserting a candidate.
+    pub fn with_capture_revision(mut self, expected: PersonalCaptureRevision) -> Self {
+        self.capture_revision = Some(expected);
+        self
+    }
+}
+
+impl From<&VerifiedOwnerSource> for VerifiedPersonalSource {
+    fn from(source: &VerifiedOwnerSource) -> Self {
+        Self {
+            binding: source.binding.clone(),
+            source: CandidateSource::OwnerRequest {
+                request_id: source.request_id,
+            },
+        }
+    }
+}
+
+/// Immutable protected provenance, not authority inferred from generic memory or transcript text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CandidateSource {
+    Conversation {
+        conversation_id: Uuid,
+        memory_id: Uuid,
+    },
+    OwnerRequest {
+        request_id: Uuid,
+    },
 }
 
 /// Owner-authorized projection. No generic Serialize implementation: callers must deliberately
@@ -155,8 +239,7 @@ pub struct PersonalCandidate {
     pub(super) preferred_name: PreferredName,
     pub(super) state: CandidateState,
     pub(super) latest_review: Option<CandidateReviewReceipt>,
-    pub(super) source_conversation_id: Uuid,
-    pub(super) source_memory_id: Uuid,
+    pub(super) source: CandidateSource,
     pub(super) source_bear_id: BearId,
     pub(super) source_user_id: UserId,
     pub(super) source_binding_generation: i64,
@@ -189,11 +272,22 @@ impl PersonalCandidate {
     pub fn retention(&self) -> CandidateRetention {
         CandidateRetention::Durable
     }
-    pub fn source_conversation_id(&self) -> Uuid {
-        self.source_conversation_id
+    pub fn source(&self) -> CandidateSource {
+        self.source
     }
-    pub fn source_memory_id(&self) -> Uuid {
-        self.source_memory_id
+    pub fn source_conversation_id(&self) -> Option<Uuid> {
+        match self.source {
+            CandidateSource::Conversation {
+                conversation_id, ..
+            } => Some(conversation_id),
+            CandidateSource::OwnerRequest { .. } => None,
+        }
+    }
+    pub fn source_memory_id(&self) -> Option<Uuid> {
+        match self.source {
+            CandidateSource::Conversation { memory_id, .. } => Some(memory_id),
+            CandidateSource::OwnerRequest { .. } => None,
+        }
     }
     pub fn source_bear_id(&self) -> BearId {
         self.source_bear_id

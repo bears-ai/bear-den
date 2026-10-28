@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT CAST(name AS TEXT) AS \"name!: String\" FROM pragma_table_info('personal_memory_candidates')",
+  "describe": {
+    "columns": [
+      {
+        "name": "name!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "6b20c945df3a56536663b270453758a79117ff77a14fe4ffd80561b7ee6a63df"
+}

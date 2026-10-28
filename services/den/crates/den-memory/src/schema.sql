@@ -124,6 +124,7 @@ CREATE TABLE IF NOT EXISTS personal_memory_settings (
     bear_id TEXT NOT NULL,
     person_entity_id TEXT NOT NULL,
     capture_enabled INTEGER NOT NULL CHECK (capture_enabled IN (0, 1)),
+    capture_revision INTEGER NOT NULL DEFAULT 0 CHECK (capture_revision >= 0),
     authority_generation INTEGER NOT NULL CHECK (authority_generation > 0),
     updated_at TEXT NOT NULL,
     updated_on_bear_id TEXT NOT NULL,
@@ -139,8 +140,10 @@ CREATE TABLE IF NOT EXISTS personal_memory_candidates (
     value_text TEXT NOT NULL,
     evidence_kind TEXT NOT NULL CHECK (evidence_kind = 'explicit_user_request'),
     retention TEXT NOT NULL CHECK (retention = 'durable'),
-    source_conversation_id TEXT NOT NULL,
-    source_memory_id TEXT NOT NULL,
+    source_kind TEXT NOT NULL DEFAULT 'conversation' CHECK (source_kind IN ('conversation', 'owner_request')),
+    source_conversation_id TEXT NULL,
+    source_memory_id TEXT NULL,
+    source_request_id TEXT NULL,
     source_bear_id TEXT NOT NULL,
     source_user_id INTEGER NOT NULL,
     source_binding_generation INTEGER NOT NULL,
@@ -148,7 +151,14 @@ CREATE TABLE IF NOT EXISTS personal_memory_candidates (
     created_at TEXT NOT NULL,
     withdrawn_at TEXT NULL,
     withdrawn_on_bear_id TEXT NULL,
-    withdrawn_by_user_id INTEGER NULL
+    withdrawn_by_user_id INTEGER NULL,
+    CHECK (
+        (source_kind = 'conversation' AND source_conversation_id IS NOT NULL
+         AND source_memory_id IS NOT NULL AND source_request_id IS NULL)
+        OR (source_kind = 'owner_request' AND source_conversation_id IS NULL
+            AND source_memory_id IS NULL AND source_request_id IS NOT NULL)
+    ),
+    UNIQUE (bear_id, source_request_id)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_personal_memory_candidates_pending
     ON personal_memory_candidates (bear_id, person_entity_id, source_conversation_id, source_memory_id, fact_type, value_text)

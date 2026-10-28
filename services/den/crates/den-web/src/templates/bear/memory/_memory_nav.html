@@ -1,5 +1,6 @@
 <nav class="bear-memory-subnav" style="margin: 0.5rem 0 1rem;">
   <a href="/bear/{{ bear.slug | e }}/memory"{% if memory_subnav == "dashboard" %} aria-current="page"{% endif %}>Dashboard</a> ·
+  <a href="/bear/{{ bear.slug | urlencode }}/memory/about-you"{% if memory_subnav == "about_you" %} aria-current="page"{% endif %}>About you</a> ·
   <a href="/bear/{{ bear.slug | e }}/memory/recent"{% if memory_subnav == "recent" %} aria-current="page"{% endif %}>Recent</a> ·
   <a href="/bear/{{ bear.slug | e }}/memory/search"{% if memory_subnav == "search" %} aria-current="page"{% endif %}>Search</a> ·
   <a href="/bear/{{ bear.slug | e }}/memory/browse"{% if memory_subnav == "browse" %} aria-current="page"{% endif %}>Browse</a>{% if can_manage_bear %} ·

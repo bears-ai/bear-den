@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DROP TABLE IF EXISTS temp.personal_memory_candidates",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "4c6290242627c72f55eb0e23630b7ad77bc87e32b62bbb48d5c6a1f4297cafe0"
+}

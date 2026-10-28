@@ -89,7 +89,7 @@ async fn exact_note_must_belong_to_this_bear_even_with_a_matching_conversation_u
     let local = note_in(&store, foreign.conversation).await;
     reject_source(&store, &alice, foreign).await;
     let candidate = stage(&store, &alice, local, "Alice").await;
-    assert_eq!(candidate.source_memory_id(), local.memory);
+    assert_eq!(candidate.source_memory_id(), Some(local.memory));
 }
 
 #[tokio::test]
@@ -151,7 +151,7 @@ async fn only_normal_visibility_and_active_valid_lifecycle_metadata_are_admissib
             )
             .await
             .source_memory_id(),
-            memory
+            Some(memory)
         );
     }
 }
@@ -215,7 +215,7 @@ async fn invalidation_and_any_superseder_reject_the_exact_old_note_without_follo
         stage(&store, &alice, newer, "Alice")
             .await
             .source_memory_id(),
-        newer.memory
+        Some(newer.memory)
     );
 }
 

@@ -72,13 +72,13 @@ fn manifest_preview_does_not_inflate_sqlite_or_claim_its_crc_was_validated() {
 }
 
 #[test]
-fn personal_publication_exports_require_v4_and_future_formats_fail_closed() {
-    assert_eq!(BEAR_BUNDLE_VERSION, 4);
+fn direct_owner_exports_require_v5_and_future_formats_fail_closed() {
+    assert_eq!(BEAR_BUNDLE_VERSION, 5);
     let bytes = preview_fixture();
     let (mut manifest, memory) = read_bear_bundle(&bytes).unwrap();
     manifest.version = BEAR_BUNDLE_VERSION;
     let current = build_bear_bundle(&serde_yml::to_string(&manifest).unwrap(), &memory).unwrap();
-    assert_eq!(read_bear_bundle(&current).unwrap().0.version, 4);
+    assert_eq!(read_bear_bundle(&current).unwrap().0.version, 5);
     manifest.version += 1;
     let future = build_bear_bundle(&serde_yml::to_string(&manifest).unwrap(), &memory).unwrap();
     assert!(read_bear_bundle(&future).is_err());

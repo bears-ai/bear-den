@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT candidate_id FROM personal_memory_candidates\n        WHERE bear_id = ? AND person_entity_id = ? AND source_conversation_id = ?\n          AND source_memory_id = ? AND source_kind = 'conversation'\n          AND fact_type = 'preferred_name' AND value_text = ? AND state = 'pending'\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "candidate_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "ac0ee2c666209b96befbf5ab0898695b68f03c05960767636af9bad839215a1a"
+}

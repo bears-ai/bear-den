@@ -66,10 +66,14 @@ async fn opt_out_withdrawal_failure_rolls_back_consent_and_every_candidate_trans
     let bobs = stage(&store, &bob, source, "Bob").await;
     inject_failure(&store, FailurePoint::CandidateWithdrawal).await;
     let before = snapshot(&store).await;
+    let capture_before = capture_setting(&store, &alice).await.unwrap();
     for _ in 0..2 {
         assert_database_error(set_capture_enabled(&store, &alice, false).await);
         assert_eq!(snapshot(&store).await, before);
-        assert!(capture_enabled(&store, &alice).await.unwrap());
+        assert_eq!(
+            capture_setting(&store, &alice).await.unwrap(),
+            capture_before
+        );
     }
     clear_failure(&store).await;
     set_capture_enabled(&store, &alice, false).await.unwrap();

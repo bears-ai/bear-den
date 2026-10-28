@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO main.personal_memory_settings (\n            bear_id, person_entity_id, capture_enabled, authority_generation,\n            updated_at, updated_on_bear_id, updated_by_user_id\n        ) SELECT bear_id, person_entity_id, capture_enabled, authority_generation,\n                 updated_at, updated_on_bear_id, updated_by_user_id\n          FROM personal_memory_settings",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "07af7fbe817a259112045726dc054df24f9aa2fdc6eb7bddea75229265d71a2d"
+}

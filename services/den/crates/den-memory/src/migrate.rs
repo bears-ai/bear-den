@@ -1,4 +1,4 @@
-use sqlx::SqlitePool;
+use sqlx::{SqliteConnection, SqlitePool};
 
 use den_core::DenError;
 
@@ -27,6 +27,7 @@ pub async fn migrate_bear_sqlite_schema(pool: &SqlitePool) -> Result<(), DenErro
     add_adr0041_record_columns_if_missing(pool, &columns).await?;
     add_verified_proposal_hat_column_if_missing(pool).await?;
     ensure_memory_harvest_marks(pool).await?;
+    upgrade_personal_candidate_sources(pool).await?;
 
     // Retire the legacy record→record `memory_links` base table; relations now live in
     // `memory_relations`/`memory_access_rules` with `memory_links` as a read view (ADR-0042 §7).
@@ -71,6 +72,167 @@ pub async fn migrate_bear_sqlite_schema(pool: &SqlitePool) -> Result<(), DenErro
     // imports such as `summaries/`, `logs/`, and `decisions/` keep their richer kind.
     normalize_legacy_import_hashed_kinds(pool).await?;
 
+    Ok(())
+}
+
+/// Add the zero baseline without changing historical consent/audit. Rebuilding through a
+/// transaction-local shadow keeps every statement SQLx-checkable against the final schema;
+/// ADD COLUMN cannot be prepared against a schema where the column already exists.
+async fn upgrade_personal_capture_revision(
+    connection: &mut SqliteConnection,
+) -> Result<(), DenError> {
+    let columns = sqlx::query_scalar!(
+        r#"SELECT CAST(name AS TEXT) AS "name!: String" FROM pragma_table_info('personal_memory_settings')"#,
+    )
+    .fetch_all(&mut *connection)
+    .await?;
+    if columns.iter().any(|column| column == "capture_revision") {
+        return Ok(());
+    }
+    sqlx::query!(
+        r"CREATE TEMP TABLE personal_memory_settings AS
+          SELECT bear_id, person_entity_id, capture_enabled, authority_generation,
+                 updated_at, updated_on_bear_id, updated_by_user_id
+          FROM main.personal_memory_settings",
+    )
+    .execute(&mut *connection)
+    .await?;
+    sqlx::query!("DROP TABLE main.personal_memory_settings")
+        .execute(&mut *connection)
+        .await?;
+    sqlx::query!(
+        r"CREATE TABLE IF NOT EXISTS main.personal_memory_settings (
+            bear_id TEXT NOT NULL,
+            person_entity_id TEXT NOT NULL,
+            capture_enabled INTEGER NOT NULL CHECK (capture_enabled IN (0, 1)),
+            capture_revision INTEGER NOT NULL DEFAULT 0 CHECK (capture_revision >= 0),
+            authority_generation INTEGER NOT NULL CHECK (authority_generation > 0),
+            updated_at TEXT NOT NULL,
+            updated_on_bear_id TEXT NOT NULL,
+            updated_by_user_id INTEGER NULL,
+            PRIMARY KEY (bear_id, person_entity_id)
+        )",
+    )
+    .execute(&mut *connection)
+    .await?;
+    sqlx::query!(
+        r"INSERT INTO main.personal_memory_settings (
+            bear_id, person_entity_id, capture_enabled, authority_generation,
+            updated_at, updated_on_bear_id, updated_by_user_id
+        ) SELECT bear_id, person_entity_id, capture_enabled, authority_generation,
+                 updated_at, updated_on_bear_id, updated_by_user_id
+          FROM personal_memory_settings",
+    )
+    .execute(&mut *connection)
+    .await?;
+    sqlx::query!("DROP TABLE IF EXISTS temp.personal_memory_settings")
+        .execute(connection)
+        .await?;
+    Ok(())
+}
+
+/// SQLite cannot relax NOT NULL in place. Rebuild only the protected candidate table;
+/// immutable reviews/publications and identity/import audit tables are not rewritten.
+async fn upgrade_personal_candidate_sources(pool: &SqlitePool) -> Result<(), DenError> {
+    let mut tx = pool.begin().await?;
+    // Take the writer fence before inspecting: concurrent store openers must not both rebuild.
+    sqlx::query!("UPDATE bear_sequence SET next_sequence = next_sequence WHERE id = 1")
+        .execute(&mut *tx)
+        .await?;
+    upgrade_personal_capture_revision(&mut tx).await?;
+    // CAST removes virtual-table column origins, which SQLx cannot resolve via table metadata.
+    let columns = sqlx::query_scalar!(
+        r#"SELECT CAST(name AS TEXT) AS "name!: String" FROM pragma_table_info('personal_memory_candidates')"#,
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    if !columns.iter().any(|column| column == "source_kind") {
+        // A transaction-local TEMP table shadows the canonical name only on this pinned
+        // connection. The copy uses columns shared by both schemas, so each statement can
+        // be SQLx-checked against the canonical schema without a fake migration-time table.
+        sqlx::query!(
+            r"CREATE TEMP TABLE personal_memory_candidates AS
+              SELECT candidate_id, bear_id, person_entity_id, sequence_no, fact_type, value_text,
+                  evidence_kind, retention, source_conversation_id, source_memory_id,
+                  source_bear_id, source_user_id, source_binding_generation, state, created_at,
+                  withdrawn_at, withdrawn_on_bear_id, withdrawn_by_user_id
+              FROM main.personal_memory_candidates",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!("DROP TABLE main.personal_memory_candidates")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query!(
+            r"
+            CREATE TABLE IF NOT EXISTS main.personal_memory_candidates (
+                candidate_id TEXT NOT NULL PRIMARY KEY,
+                bear_id TEXT NOT NULL,
+                person_entity_id TEXT NOT NULL,
+                sequence_no INTEGER NOT NULL,
+                fact_type TEXT NOT NULL CHECK (fact_type = 'preferred_name'),
+                value_text TEXT NOT NULL,
+                evidence_kind TEXT NOT NULL CHECK (evidence_kind = 'explicit_user_request'),
+                retention TEXT NOT NULL CHECK (retention = 'durable'),
+                source_kind TEXT NOT NULL DEFAULT 'conversation' CHECK (source_kind IN ('conversation', 'owner_request')),
+                source_conversation_id TEXT NULL,
+                source_memory_id TEXT NULL,
+                source_request_id TEXT NULL,
+                source_bear_id TEXT NOT NULL,
+                source_user_id INTEGER NOT NULL,
+                source_binding_generation INTEGER NOT NULL,
+                state TEXT NOT NULL CHECK (state IN ('pending', 'withdrawn', 'quarantined')),
+                created_at TEXT NOT NULL,
+                withdrawn_at TEXT NULL,
+                withdrawn_on_bear_id TEXT NULL,
+                withdrawn_by_user_id INTEGER NULL,
+                CHECK (
+                    (source_kind = 'conversation' AND source_conversation_id IS NOT NULL
+                     AND source_memory_id IS NOT NULL AND source_request_id IS NULL)
+                    OR (source_kind = 'owner_request' AND source_conversation_id IS NULL
+                        AND source_memory_id IS NULL AND source_request_id IS NOT NULL)
+                ),
+                UNIQUE (bear_id, source_request_id)
+            )
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!(
+            r"
+            INSERT INTO main.personal_memory_candidates (
+                candidate_id, bear_id, person_entity_id, sequence_no, fact_type, value_text,
+                evidence_kind, retention, source_conversation_id, source_memory_id,
+                source_bear_id, source_user_id, source_binding_generation, state, created_at,
+                withdrawn_at, withdrawn_on_bear_id, withdrawn_by_user_id
+            )
+            SELECT candidate_id, bear_id, person_entity_id, sequence_no, fact_type, value_text,
+                evidence_kind, retention, source_conversation_id, source_memory_id,
+                source_bear_id, source_user_id, source_binding_generation, state, created_at,
+                withdrawn_at, withdrawn_on_bear_id, withdrawn_by_user_id
+            FROM personal_memory_candidates
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!("DROP TABLE IF EXISTS temp.personal_memory_candidates")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query!(
+            r"CREATE UNIQUE INDEX IF NOT EXISTS idx_personal_memory_candidates_pending
+              ON personal_memory_candidates (bear_id, person_entity_id, source_conversation_id, source_memory_id, fact_type, value_text)
+              WHERE state = 'pending'",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!(
+            r"CREATE INDEX IF NOT EXISTS idx_personal_memory_candidates_owner
+              ON personal_memory_candidates (bear_id, person_entity_id, sequence_no)",
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
     Ok(())
 }
 

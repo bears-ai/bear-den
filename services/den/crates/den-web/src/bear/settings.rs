@@ -226,8 +226,9 @@ const MODELS_FLASH_MESSAGE_KEY: &str = "bear_models_flash_message";
 const MODELS_FLASH_ERROR_KEY: &str = "bear_models_flash_error";
 
 const BEAR_BUNDLE_FORMAT: &str = "bear";
-// Older readers do not enforce permanent personal-publication protection.
-const BEAR_BUNDLE_VERSION: u32 = 4;
+// v4 introduced permanent personal-publication protection. v5 additionally requires
+// typed direct-owner provenance and revision-aware consent; older writers cannot preserve them.
+const BEAR_BUNDLE_VERSION: u32 = 5;
 mod advanced_models;
 mod bundle_io;
 mod identity_reconnection;
