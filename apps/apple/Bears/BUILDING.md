@@ -1,176 +1,163 @@
-# Building the Bears macOS app scaffold
+# Building and testing the Bears Apple client
 
-This is the current lightweight build path for local testing.
+The [active app plan](../../../docs/roadmap/MACOS_BEARS_CLIENT_APP_PLAN.md) selects AHP 1.0 plus `/v1.0` JSON APIs. Source now contains the first OAuth/Bear/profile/conversation/text-chat slice. These are instructions for local validation, **not evidence of a successful native build, DMG or released app**.
 
-## Current approach
+## Prerequisites and targets
 
-The repo now includes a Swift Package manifest at:
+- Apple Silicon Mac running macOS 13+ for the preview UI (Intel displays an unsupported-architecture screen).
+- Xcode with Swift 5.10 or a compatible toolchain (for example Xcode 15.3+).
+- A reachable Den API with the matching native routes and a manually registered public OAuth client (below).
+- **No `bear-armature`, ACP client, local workspace or sandbox is required for remote login/chat.** Optional Armature settings retain the earlier install/repair workflow.
 
-- `apps/apple/Bears/Package.swift`
+`Package.swift` exposes the platform-neutral `BearsClient` library and, on macOS, the `Bears` executable backed by `BearsApp`. Strict concurrency checking is enabled. The manifest's iOS deployment declaration is shared-core groundwork, not an actual iOS app target or evidence of an iOS build. `Shared/Client/` has no upstream AHP SDK dependency; the custom wire models target the bounded `spec/v1.0.0` subset, not every AHP host capability.
 
-It builds a minimal macOS executable app target named `BearsApp`.
+## Den and OAuth setup
 
-## Prerequisites
+### 1. Route the actual API origin
 
-- Xcode 15+ or a compatible Swift 5.10 toolchain
-- macOS 13+
-- a local `bear-armature` executable available to copy into package resources; the app still accepts the legacy bundled resource name `bears-acp-adapter`
+Use the API **deployment root**, including any ingress path prefix, in the app's **Connection → Den API URL** field. Do not append `/v1.0`, `/oauth` or `/agent-host`: the client appends endpoint paths.
 
-## Prepare the bundled adapter resource
+Den defaults to separate web/API listeners: `PORT=3000` for web, `API_PORT=3001` for API with `RUN_API=true`. A deployment may publish a different HTTPS origin/port. Do not assume `http://localhost:3000` exposes the API. The client requires HTTPS except for `http://localhost` and `http://127.0.0.1` development URLs. Environment/deployment settings belong in `.env`, not compiled app defaults.
 
-## Adapter source options
+Ingress must route all of these to the API listener:
 
-The app now supports two adapter-install sources:
+- `/oauth/authorize`, `/oauth/token`, `/oauth/userinfo`;
+- `/v1.0/bears`, `/v1.0/chat/conversations`, `/v1.0/chat/history`;
+- **WebSocket Upgrade at `/v1.0/agent-host`**, preserving the bearer `Authorization` header and the long-lived connection. An ordinary HTTP-only proxy route is insufficient.
 
-1. a bundled adapter resource inside the app target, if present;
-2. a downloaded macOS adapter artifact, if no bundled adapter is present.
+The authorization browser also needs web login pages/assets and a valid Den browser session. Either publish web and API paths behind one correctly routed public origin, or deliberately configure trusted sibling web/API hosts with matching session backing/keys and an appropriate `SESSION_COOKIE_DOMAIN`. Host-only cookies do not cross sibling hosts; broaden a cookie domain only when every included host is trusted. Keep `WEB_SERVER_URL` and `API_SERVER_URL` consistent with the deployed routes. Login redirect loops or missing consent can indicate incorrect routing/session cookies, not an app credential problem. The native JSON/WebSocket clients use bearer tokens, not browser cookies.
 
-This preview app is currently intended only for Apple Silicon Macs.
+The [API route inventory](../../../services/den/crates/den-api/src/ROUTES.md#native-apple-client-first-slice) documents the implemented edge. No deployment, proxy or Compose change is performed by these instructions.
 
-### Optional local bundled adapter for development
+### 2. Manually register a public client on each Den
 
-Use the helper script to prepare the bundled adapter resource automatically:
+As a Den operator, use web **OAuth clients** (`/admin/oauth_clients/`) to create an active native client with:
+
+| Setting | Value |
+| --- | --- |
+| Public client | `public=true` (PKCE; no client secret) |
+| Trusted client | `trusted=false` (retain human consent) |
+| Exact redirect URI | `bears://oauth/callback` |
+| Allowed/requested scopes | `profile:read data:read data:write` |
+
+Copy that Den's public client ID into **Public OAuth client ID**, save the connection, then choose **Sign in with Den**. There is no dynamic registration or globally pre-provisioned app client ID. Do not paste a Bear-scoped Armature token, provider credential or confidential-client secret into this field. The older [OAuth module guide](../../../services/den/crates/den-oauth/src/oauth/README.md) includes confidential-client examples; those secret-based examples are not the native app configuration.
+
+The system authentication browser uses Authorization Code + S256 PKCE with secure random verifier/state. The client checks callback scheme/host/path/state before code exchange. Den requires public-client S256 PKCE and binds untrusted consent to the authenticated browser session. The app requests an ephemeral browser session; existing Safari login state is not guaranteed to be reused. The generated app bundle registers the `bears` URL scheme; verify callback delivery with the packaged app on a real Mac rather than assuming `swift run` establishes the complete bundle/Launch Services behavior.
+
+### 3. Token lifetime and sign out
+
+Current access tokens last about **one hour**. Public clients receive no refresh credential and the app has no refresh flow; sign in again after expiry or an invalid-token response.
+
+Connection URL/client ID are stored in UserDefaults. Tokens are stored only in non-synchronizing, `WhenUnlockedThisDeviceOnly` Keychain items, scoped by normalized Den URL and public client ID. Login is not reported persistent if the Keychain write fails. **Sign out** cancels local activity and attempts to remove the saved token; a deletion failure is shown with a retry action. It does **not** revoke the access token on Den or sign out the browser session. Operator token revocation/client deactivation is a separate server operation. Real Keychain/browser behavior still needs macOS acceptance.
+
+## Build and run
+
+From the package root on macOS:
 
 ```bash
 cd apps/apple/Bears
+swift build --product Bears
+swift run Bears
+```
+
+The main window owns the human client; Settings separates Connection from optional Armature management. Browse a member Bear, inspect its profile/shared hats, select an explicit hat for a new conversation, then chat. Listed history may be read-only: Bear-admin visibility is not permission to send as another owner, and archived/Work transcripts remain inspection-only.
+
+## Tests and current evidence
+
+On macOS, from the package root:
+
+```bash
+swift test
+```
+
+Focused suites:
+
+```bash
+swift test --filter BearsClientTests
+swift test --filter NativeClientModelTests
+swift test --filter ComposerStateTests
+swift test --filter ClientPlatformTests
+```
+
+On Linux, the manifest includes only `BearsClient` and its tests; `swift test` there cannot validate SwiftUI/AppKit/AuthenticationServices/Security or the app target. Platform tests use injected browser/Keychain dependencies where applicable; passing those also does not substitute for real browser/Keychain acceptance.
+
+**Reported implementation checkpoint, 2026-10-28:**
+
+- 30 shared-core tests pass in Linux Docker with Swift 5.10.1 (HTTP/OAuth/AHP wire and transcript fixtures).
+- Apple source syntax checks pass; this is not native compilation or Apple-framework type-checking.
+- 17 earlier model/composer tests pass with fake dependencies in an isolated harness; no native `BearsAppTests`/platform-suite run is claimed.
+- Focused server tests pass using standard `SQLX_OFFLINE=true`, Cargo `--locked --offline` and disposable `DATABASE_URL=postgres://bears:bears@127.0.0.1:5432/den`: 57 OAuth, 18 native API, 9 channel-runtime tests. Runtime tests capture fake-provider requests and canonical persistence, including next-turn replay, tool exchanges and terminal outcomes; not live-provider inference.
+
+[Apple client CI](../../../.github/workflows/apple-client.yml) now builds/tests the native package and creates an unsigned development DMG on a macOS runner; it has not been executed in this Linux workspace and is not a green-run claim. Focused browser source-admission tests and all-target strict Clippy for the five affected server crates also pass. The production Alpine/musl image builds with `docker build --build-arg SQLX_OFFLINE=true -t bears-den:native-client-validation services/den`; no container was deployed. The Dockerfile's online-SQLx default fails without a build-reachable database, so the offline argument is required for this validation. **Still unverified:** Mac app compile/tests, actual system-browser callback/Keychain, DMG/signing/notarization, live provider, deployed proxy/WebSocket and end-to-end release. No release or deployment follows from the above results.
+
+For focused server reruns from the repository root, configure a **disposable** local Postgres database in `DATABASE_URL` first (database-backed tests create isolated databases; do not use production credentials):
+
+```bash
+SQLX_OFFLINE=true cargo test --manifest-path services/den/Cargo.toml --locked --offline -p den-oauth --lib
+SQLX_OFFLINE=true cargo test --manifest-path services/den/Cargo.toml --locked --offline -p den-api --lib v1::native
+SQLX_OFFLINE=true cargo test --manifest-path services/den/Cargo.toml --locked --offline -p den-runtime --lib native_runtime::channel_turn::tests
+```
+
+### Native acceptance checklist (pending)
+
+- Public-client login, explicit consent/denial/cancel, wrong callback/state rejection, expired token/reauthorization; actual Keychain save/load/removal and visible failure recovery.
+- Member Bear/profile/hat inventory, no-hat state, explicit creation and retry with the same UUID/hat; wrong-owner/archived/Work send denial.
+- Live text stream, stop, partial/failure/empty outcomes and next-turn canonical history. Verify uncertain delivery preserves the draft and **never automatically retries a send**.
+- Disconnect/window close cancels the owned reply; reconnect uses fresh snapshots, not event/send replay or resumable inference. A second client does not receive live fan-out or control another connection's turn.
+- Oversized snapshots can be inspected through paged JSON history. Inventory is capped at 100 visible conversations; this is not a complete catalog/offline sync.
+- Repeat remote login/chat with no helper installed; verify real HTTPS ingress and WebSocket Upgrade before claiming deployed support.
+- Review keyboard/accessibility/error UX; test callback delivery from the packaged app separately from command-line launch.
+
+Permissions/questions, subagents, refs/resources, attachments/multimodal content, local tools, Wasmer/local sandbox, live multi-client, Docket management and Bear-admin editing are **not implemented in this MVP**. They remain scoped roadmap follow-ons, not acceptance items already completed. Real-time voice/video and external agent interoperability are excluded.
+
+## Optional armature install and repair
+
+This workflow is separate from remote chat. The preview can use a bundled `bear-armature` resource (legacy resource filename `bears-acp-adapter`) or download an adapter artifact when no bundle is present. From the package root, optionally prepare a local bundle:
+
+```bash
 bash Scripts/prepare_adapter.sh
 ```
 
-By default the script will:
-
-1. use an existing built adapter at `target/debug/bear-armature` if present;
-2. otherwise use an existing built adapter at `tools/bear-armature/target/debug/bear-armature` if present;
-3. otherwise fall back to `cargo build --manifest-path tools/bear-armature/Cargo.toml` if `cargo` is available.
-
-To prepare a release adapter artifact instead:
+The helper checks existing debug builds before attempting Cargo. Release or explicit prebuilt overrides are available:
 
 ```bash
-cd apps/apple/Bears
 PROFILE=release bash Scripts/prepare_adapter.sh
-```
-
-You can also point at an explicit prebuilt adapter binary:
-
-```bash
-cd apps/apple/Bears
 ADAPTER_BINARY=/path/to/bear-armature bash Scripts/prepare_adapter.sh
 ```
 
-The script places the adapter at:
-
-- `apps/apple/Bears/BearsApp/Resources/Adapter/bears-acp-adapter`
-
-### Remote download fallback
-
-If no bundled adapter is present, the app will try to download a macOS adapter artifact.
-
-## Important: publishing a rebuilt package requires a version bump
-
-The GitHub release/update-site flow is version-driven. If you rebuild the adapter package and want GitHub to publish a new package artifact at the release/update URL, you must:
-
-1. bump `version` in `tools/bear-armature/Cargo.toml`
-2. update the relevant Cargo lockfile if dependency resolution changes
-3. rebuild and republish the release assets
-
-If you only change packaging or installer scripts without bumping the adapter version, the existing published release/tag may be reused and the app can keep downloading an older `.pkg` built with stale packaging behavior.
-
-When debugging install path or package-script changes, always treat this version bump as part of the publish step.
-
-By default it uses the macOS update manifest:
-
-- `https://bears-ai.github.io/bear-den/bears-acp-adapter/stable/macos.json`
-
-The app reads `version` and `pkg_url` from that manifest, uses the version as the update reference, and downloads the package from `pkg_url`.
-
-You can override that for development with either:
+It places the resource at `BearsApp/Resources/Adapter/bears-acp-adapter`. Without a bundle, the existing download flow uses `https://bears-ai.github.io/bear-den/bears-acp-adapter/stable/macos.json`, reading its `version` and `pkg_url`. Development overrides:
 
 ```bash
-BEARS_ADAPTER_MANIFEST_URL=https://example.com/path/to/macos.json xcrun swift run Bears
+BEARS_ADAPTER_MANIFEST_URL=https://example.com/path/to/macos.json swift run Bears
+BEARS_ADAPTER_DOWNLOAD_URL=https://example.com/path/to/bears-acp-adapter-aarch64-apple-darwin.pkg swift run Bears
 ```
 
-or a direct package URL:
-
-```bash
-BEARS_ADAPTER_DOWNLOAD_URL=https://example.com/path/to/bears-acp-adapter-aarch64-apple-darwin.pkg xcrun swift run Bears
-```
-
-The app now supports either:
-
-- a direct macOS Mach-O adapter binary, or
-- a macOS installer package (`.pkg`)
-
-When given a `.pkg`, the app invokes the system installer targeting `/`, and macOS may prompt for administrator credentials.
-
-## Build
-
-From the package root:
-
-```bash
-cd apps/apple/Bears
-swift build
-```
+The install flow accepts a Mach-O adapter binary or `.pkg`; a `.pkg` invokes the system installer targeting `/` and may prompt for administrator credentials. Publishing a rebuilt adapter package requires bumping `version` in `tools/bear-armature/Cargo.toml`, updating the lockfile if resolution changes and rebuilding/republishing release assets. Packaging-script changes alone can otherwise leave the existing version/tag/download in use. None of this is a prerequisite to app OAuth or text chat.
 
 ## Version metadata and regression tests
 
-The app probes `bear-armature version --json` for installed/bundled binary metadata. Current source implements that configuration-free command: one JSON object on stdout with version/build facts, no Den authentication or browser/network probing. Human `--version` output remains on stderr. The app retains text fallback for older `bear-armature` and `bears-acp-adapter` binaries; it checks each stream independently and does not treat arbitrary diagnostic text as a version.
-
-On macOS, run the app-side parser/probe regressions from this package root:
+The optional install manager probes `bear-armature version --json`: one JSON object on stdout, with no Den authentication or browser/network probing. Human `--version` output remains on stderr. The app checks both streams independently, retains legacy text fallback and rejects diagnostics as a version. On macOS:
 
 ```bash
 swift test --filter AdapterVersionReaderTests
 ```
 
-From the repository root, run the binary CLI contract tests:
+Binary CLI regressions, from repository root:
 
 ```bash
 cargo test --manifest-path tools/bear-armature/Cargo.toml --locked --test version_cli
 ```
 
-A version-probe failure does not itself prove the installation is corrupt. The app now reports the actual launch/probe/parse failure; inspect the installed executable path and full diagnostics for permissions, architecture, quarantine, missing-file or incompatible-version output. These are source changes, not evidence that an existing app/package contains the fix. Rebuild the app to receive parser/diagnostic improvements, and rebuild/release the armature package to supply JSON introspection to older apps. Publishing that package still requires the version bump described above.
-
-## Run
-
-```bash
-cd apps/apple/Bears
-swift run Bears
-```
-
-## Package layout note
-
-The Swift sources needed by the executable target have now been consolidated under:
-
-- `apps/apple/Bears/BearsApp/`
-
-That keeps the initial Swift Package setup simple and gives the first local build a better chance of succeeding.
+A probe failure is not proof of corruption. Inspect its executable path and launch/probe/parse diagnostics for permissions, architecture, quarantine or missing/incompatible files. Source fixes are not evidence that a published app/package contains them; rebuild/release the relevant artifact and obey the adapter version-bump rule above.
 
 ## Building a distributable DMG
 
-A first-pass DMG packaging script now exists at:
-
-- `packaging/macos/build-dmg.sh`
-
-From the repo root:
+On macOS, from repository root:
 
 ```bash
 ./packaging/macos/build-dmg.sh --app-version 0.1.0
 ```
 
-This produces:
+The script is intended to build the release `Bears` executable, wrap it in `Bears.app`, include resources and register the `bears` URL scheme, then create `dist/macos/Bears-0.1.0.dmg` with an `/Applications` symlink. An optional `--application-identity` (or `MACOS_APPLICATION_CERT_IDENTITY`) enables Developer ID Application signing/verification; without it, the app is unsigned. **This checkpoint has not run a Mac build or produced/validated that DMG.**
 
-- `dist/macos/Bears-0.1.0.dmg`
-
-The script currently builds a release SwiftPM executable, wraps it into a minimal `Bears.app`, and creates a DMG containing that app plus an `/Applications` symlink.
-
-## Current limitations
-
-This is still an intentionally lightweight package-based scaffold for early testing and first-pass distribution.
-
-Not yet complete:
-
-- Developer ID signing for `Bears.app`
-- DMG signing/notarization flow
-- Sparkle integration
-- automated app release publishing to gh-pages
-- Xcode project/workspace configuration for shipping builds
-
-The current goal is to make the SwiftUI shell, install flow, and downloadable DMG testable as quickly as possible.
+Shipping distribution still needs actual native build/resource/callback validation, signing/notarization and release acceptance. Sparkle and automated app publishing are not delivered by the text-client slice. Do not treat packaging source or the added CI lane as a signed/notarized release.

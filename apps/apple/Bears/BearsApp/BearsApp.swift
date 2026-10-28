@@ -1,11 +1,29 @@
 import SwiftUI
 
 @main
+@MainActor
 struct BearsApp: App {
+    @StateObject private var client = NativeClientModel.live()
+
     var body: some Scene {
-        WindowGroup {
+        Window("Bears", id: "bears-client") {
             if Self.isSupportedArchitecture {
-                OverviewView()
+                NativeClientView(model: client)
+            } else {
+                UnsupportedArchitectureView()
+            }
+        }
+        .commands { ClientCommands(model: client) }
+
+        Settings {
+            if Self.isSupportedArchitecture {
+                TabView {
+                    ConnectionSettingsView(model: client)
+                        .tabItem { Label("Connection", systemImage: "network") }
+                    OverviewView()
+                        .tabItem { Label("Armature", systemImage: "wrench.and.screwdriver") }
+                }
+                .frame(width: 720, height: 650)
             } else {
                 UnsupportedArchitectureView()
             }

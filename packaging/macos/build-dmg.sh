@@ -136,6 +136,11 @@ build_app_bundle() {
   if [ -d "$source_root/BearsApp/Resources" ]; then
     cp -R "$source_root/BearsApp/Resources/." "$resources_dir/"
   fi
+  # Keep SwiftPM's resource bundle relocatable as well as the existing raw helper resources.
+  for resource_bundle in "$source_root"/.build/release/*.bundle; do
+    [ -d "$resource_bundle" ] || continue
+    cp -R "$resource_bundle" "$resources_dir/"
+  done
 
   printf 'APPL????' >"$pkginfo_path"
 
@@ -170,6 +175,17 @@ build_app_bundle() {
   <string>public.app-category.developer-tools</string>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>$bundle_id.oauth</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>CFBundleURLSchemes</key>
+      <array><string>bears</string></array>
+    </dict>
+  </array>
 </dict>
 </plist>
 EOF

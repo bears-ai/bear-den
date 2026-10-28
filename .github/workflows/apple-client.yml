@@ -1,0 +1,45 @@
+name: Bears Apple client
+
+on:
+  pull_request:
+    paths:
+      - "apps/apple/Bears/**"
+      - "packaging/macos/build-dmg.sh"
+      - ".github/workflows/apple-client.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/apple/Bears/**"
+      - "packaging/macos/build-dmg.sh"
+      - ".github/workflows/apple-client.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: Native build, tests and unsigned DMG
+    runs-on: macos-15
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/apple/Bears
+    steps:
+      - uses: actions/checkout@v5
+      - name: Report Apple toolchain
+        run: |
+          uname -m
+          xcrun swift --version
+      - name: Build and test native app and shared client
+        run: swift test --parallel
+      - name: Build unsigned development DMG
+        working-directory: .
+        run: ./packaging/macos/build-dmg.sh --app-version 0.1.0 --output dist/macos/Bears-ci.dmg
+      - name: Upload unsigned development artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bears-unsigned-macos
+          path: dist/macos/Bears-ci.dmg
+          if-no-files-found: error
+          retention-days: 7
