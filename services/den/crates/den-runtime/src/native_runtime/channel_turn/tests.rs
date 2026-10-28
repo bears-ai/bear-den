@@ -1,6 +1,6 @@
 use super::*;
 use serde_json::Value;
-#[path = "support.rs"]
+#[path = "tests/support.rs"]
 mod support;
 use std::{sync::atomic::Ordering, time::Duration};
 use support::{Fixture, Reply};
